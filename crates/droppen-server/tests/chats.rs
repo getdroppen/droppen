@@ -207,6 +207,27 @@ async fn new_api_chat(server: &common::TestServer) -> String {
     value["id"].as_str().expect("id").to_string()
 }
 
+/// The API backend answers with a text-only completion: an attachment is
+/// refused at the route rather than silently dropped, and no chat is made.
+#[tokio::test]
+async fn an_api_chat_refuses_attachments() {
+    let server = common::TestServer::start().await;
+    let (status, raw) = server
+        .json(
+            "POST",
+            "/api/chats/new",
+            &json!({ "backend": "api", "images": ["/uploads/u/a.png"], "files": ["/uploads/u/notes.txt"] }),
+        )
+        .await;
+    assert_eq!(status, 400, "{raw}");
+    let body: Value = serde_json::from_str(&raw).expect("json");
+    assert_eq!(body["error"], "attachments are not supported in api chats");
+    assert!(
+        server.get_json("/api/chats").await["chats"].as_array().expect("chats").is_empty(),
+        "nothing was created"
+    );
+}
+
 /// Every `data:` payload of an SSE body, parsed. Keep-alive comments and blank
 /// lines are skipped exactly as the browser skips them.
 fn frames(body: &str) -> Vec<Value> {

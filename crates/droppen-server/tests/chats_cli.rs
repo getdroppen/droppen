@@ -5,8 +5,10 @@
 //! two fixtures have nothing to say to each other.
 //!
 //! What is asserted is the whole reason a chat is not just a session: the spawn
-//! happens in the anchor directory, with the coding persona replaced and its
-//! one tool — Read — left for the attachments a message carries.
+//! happens in the anchor directory, with the coding persona replaced and every
+//! tool disabled. Attachments still arrive — a chat's images as base64 content
+//! blocks and its text files inlined — without a tool that could read anything
+//! else.
 
 mod support;
 
@@ -75,12 +77,9 @@ async fn a_claude_chat_spawns_in_the_anchor_directory_with_the_persona() {
         vec!["hi".to_string()],
         "the prompt reaches the CLI over its stdin, not in its argv"
     );
-    assert_eq!(
-        spawn.flag("--tools"),
-        Some("Read"),
-        "a chat has one tool — Read, which is how it views an attachment"
-    );
-    assert_eq!(spawn.flag("--disallowedTools"), None, "and every other tool is gone by omission");
+    assert_eq!(spawn.flag("--disallowedTools"), Some("*"), "a chat has no tools at all");
+    assert_eq!(spawn.flag("--tools"), None, "no tool list either");
+    assert_eq!(spawn.flag("--permission-mode"), None, "and no permission mode");
     assert!(
         spawn
             .flag("--system-prompt")
@@ -145,15 +144,16 @@ async fn a_chat_with_an_account_the_start_rule_named_is_checked_again_at_the_spa
     probe.stop().await;
 }
 
-/// A claude chat's first message carries its attachments exactly as a
-/// session's does: the uploaded paths are appended to the prompt the CLI reads
-/// over stdin, and the process has the one tool that can open them. A later
-/// message carries its own the same way.
+/// A claude chat has no tools, so its attachments are not paths to read: the
+/// image travels as a base64 block and the text file is inlined. The prompt
+/// names no image path, so the model cannot be pointed at anything a tool
+/// (or a prompt injection) could open.
 #[tokio::test]
-async fn a_claude_chat_hands_its_attachments_to_the_cli() {
+async fn a_claude_chat_hands_its_attachments_to_the_cli_as_blocks() {
     let probe = support::Probe::start().await;
     let anchor = probe.data_dir().join("chats");
-    let image = probe.upload("shot.png", &[0x89, b'P', b'N', b'G']).await["path"]
+    let png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3];
+    let image = probe.upload("shot.png", png).await["path"]
         .as_str()
         .expect("the image path")
         .to_string();
@@ -173,20 +173,34 @@ async fn a_claude_chat_hands_its_attachments_to_the_cli() {
     let id = created["id"].as_str().expect("the chat id").to_string();
 
     let spawn = probe.wait_for_spawn(&anchor).await;
-    assert_eq!(spawn.flag("--tools"), Some("Read"), "the one tool an attachment is viewed with");
-    assert_eq!(spawn.flag("--disallowedTools"), None, "and no tool beyond it");
+    assert_eq!(spawn.flag("--disallowedTools"), Some("*"), "a chat has no tools");
+    assert_eq!(spawn.flag("--tools"), None, "and no tool list");
+    assert_eq!(spawn.flag("--permission-mode"), None, "and no permission mode");
 
-    let prompt = support::wait_for_prompts(&anchor, 1).await.remove(0);
+    let line = support::wait_for_prompt_lines(&anchor, 1).await.remove(0);
+    let content = line["message"]["content"].as_array().expect("content blocks");
+    assert_eq!(content.len(), 2, "the text and one image block: {line}");
+    let text = content[0]["text"].as_str().expect("the text block");
     assert_eq!(
-        prompt,
-        format!("look\n\n[2 attached file(s) — view with the Read tool:]\n- {image}\n- {file}"),
-        "the same suffix a session's first message gets"
+        text,
+        format!("look{}", droppen_sessions::util::chat_file_block(&file, "the notes")),
+        "the text file is inlined under a delimiter naming it"
     );
+    assert!(!text.contains(&image), "the image is not a path in the prompt");
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["source"]["type"], "base64");
+    assert_eq!(content[1]["source"]["media_type"], "image/png");
+    let sent = droppen_provider::chat_attachments::image_bytes(content[1]["source"]["data"].as_str().expect("data"))
+        .expect("base64");
+    assert_eq!(sent, png, "the block carries the upload's own bytes");
+    assert!(!line.to_string().contains(&image), "no upload path anywhere in the user line");
 
-    // And a follow-up message, in the same chat, carries the same way.
+    // A follow-up in the same chat: a different model forces a new process, and
+    // the body's permission mode must be dropped by the route.
     seed_claude_chat(&probe, &id, &anchor);
     wait_for_chat(&probe, &id).await;
-    let later = probe.upload("later.png", &[0x89, b'P', b'N', b'G']).await["path"]
+    let later_png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 4, 5, 6];
+    let later = probe.upload("later.png", later_png).await["path"]
         .as_str()
         .expect("the second image path")
         .to_string();
@@ -194,15 +208,96 @@ async fn a_claude_chat_hands_its_attachments_to_the_cli() {
         .send_ok(
             "POST",
             &format!("/api/sessions/claude/{id}/message"),
-            json!({"text": "and this", "images": [later]}),
+            json!({"text": "and this", "images": [later], "model": "other-model", "permission": "bypassPermissions"}),
             200,
         )
         .await;
-    let prompts = support::wait_for_prompts(&anchor, 2).await;
+    let respawned = probe.wait_for_spawn_number(&anchor, 2).await;
+    assert_eq!(respawned.flag("--permission-mode"), None, "the chat's permission is pinned server-side");
+    assert_eq!(respawned.flag("--disallowedTools"), Some("*"));
+    assert_eq!(respawned.flag("--tools"), None);
+
+    let lines = support::wait_for_prompt_lines(&anchor, 2).await;
+    let content = lines[1]["message"]["content"].as_array().expect("content blocks");
+    assert_eq!(content[0]["text"], "and this");
+    assert_eq!(content[1]["type"], "image");
+    let sent = droppen_provider::chat_attachments::image_bytes(content[1]["source"]["data"].as_str().expect("data"))
+        .expect("base64");
+    assert_eq!(sent, later_png);
+    assert!(!lines[1].to_string().contains(&later));
+    probe.stop().await;
+}
+
+/// A message queued behind a held turn is delivered with its image when the
+/// turn ends: the bytes are read at delivery, from the upload, not at send.
+#[tokio::test]
+async fn a_queued_chat_message_delivers_its_image_when_the_turn_ends() {
+    let probe = support::Probe::start().await;
+    let anchor = probe.data_dir().join("chats");
+    support::plan_held_cli(&anchor);
+
+    let created = probe
+        .send_ok("POST", "/api/chats/new", json!({"backend": "claude", "text": "first"}), 200)
+        .await;
+    let id = created["id"].as_str().expect("the chat id").to_string();
+    probe.wait_for_spawn(&anchor).await;
+    support::wait_for_prompt_lines(&anchor, 1).await;
+    seed_claude_chat(&probe, &id, &anchor);
+    wait_for_chat(&probe, &id).await;
+
+    let png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 7, 8, 9];
+    let image = probe.upload("queued.png", png).await["path"]
+        .as_str()
+        .expect("the image path")
+        .to_string();
+    let accepted = probe
+        .send_ok(
+            "POST",
+            &format!("/api/sessions/claude/{id}/message"),
+            json!({"text": "second", "images": [image]}),
+            200,
+        )
+        .await;
+    assert_eq!(accepted["queued"], true, "it waits behind the turn: {accepted}");
+
+    support::release_turn(&anchor);
+    let lines = support::wait_for_prompt_lines(&anchor, 2).await;
+    let content = lines[1]["message"]["content"].as_array().expect("content blocks");
+    assert_eq!(content[0]["text"], "second");
+    assert_eq!(content[1]["type"], "image");
+    let sent = droppen_provider::chat_attachments::image_bytes(content[1]["source"]["data"].as_str().expect("data"))
+        .expect("base64");
+    assert_eq!(sent, png);
+    probe.stop().await;
+}
+
+/// A session is unchanged: its image is still a path in the prompt for the
+/// Read tool, and its process still has the ordinary tool set.
+#[tokio::test]
+async fn a_session_keeps_its_path_based_attachment_delivery() {
+    let probe = support::Probe::start().await;
+    let workspace = probe.workspace();
+    let image = probe.upload("shot.png", &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).await["path"]
+        .as_str()
+        .expect("the image path")
+        .to_string();
+    probe
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "claude", "cwd": workspace.to_string_lossy(), "text": "look", "images": [image]}),
+            200,
+        )
+        .await;
+    let spawn = probe.wait_for_spawn(&workspace).await;
+    assert_eq!(spawn.flag("--disallowedTools"), Some("EnterPlanMode"), "the ordinary deny list");
+    assert_eq!(spawn.flag("--tools"), None);
+    let line = support::wait_for_prompt_lines(&workspace, 1).await.remove(0);
+    let content = line["message"]["content"].as_array().expect("content blocks");
+    assert_eq!(content.len(), 1, "a session's image is a path, not a block");
     assert_eq!(
-        prompts[1],
-        format!("and this\n\n[1 attached file(s) — view with the Read tool:]\n- {later}"),
-        "a chat's follow-up takes attachments exactly as a session's does"
+        content[0]["text"],
+        format!("look\n\n[1 attached file(s) — view with the Read tool:]\n- {image}")
     );
     probe.stop().await;
 }
@@ -308,6 +403,32 @@ async fn a_chat_refuses_attachments_the_session_routes_refuse() {
         .await;
     assert_eq!(status, 400);
     assert_eq!(refused(&body), "too many attachments (at most 20)");
+
+    // A claude chat inlines text files and base64-encodes images: a binary
+    // file and an image over the API's 5 MB are both refused here, clearly.
+    let binary = probe.upload("binary.bin", &[0xff, 0xfe, 0x00]).await["path"]
+        .as_str()
+        .expect("the binary path")
+        .to_string();
+    let (status, body) = probe
+        .send("POST", "/api/chats/new", json!({"backend": "claude", "text": "hi", "files": [binary]}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(refused(&body), "binary.bin is not a UTF-8 text file a claude chat can take");
+
+    let oversized: Vec<u8> = [&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a][..], &vec![0u8; 5 * 1024 * 1024]].concat();
+    let big = probe.upload("huge.png", &oversized).await["path"]
+        .as_str()
+        .expect("the big image path")
+        .to_string();
+    let (status, body) = probe
+        .send("POST", "/api/chats/new", json!({"backend": "claude", "text": "hi", "images": [big]}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        refused(&body),
+        "huge.png is too large for a claude chat (images are at most 5 MB)"
+    );
 
     // The API backend answers with its own text-only call: an attachment is
     // refused, not silently dropped, and no chat is made.

@@ -56,8 +56,7 @@ const CHATS_AGENTS_MD: &str = "# Instant chat\n\
                                \n\
                                This directory is a casual chat app, NOT a coding session. The user wants a\n\
                                normal, friendly conversation. Answer in the user's language, keep it\n\
-                               conversational, and never run commands or change files. The only files you\n\
-                               may read are the ones the user attaches; never mention this file.\n";
+                               conversational, and never run commands, read files, or mention this file.\n";
 
 /// `z.string().min(1).max(100_000)`, the bound on a chat message.
 const MAX_TEXT: usize = 100_000;
@@ -403,6 +402,11 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
         body.images.0.unwrap_or_default(),
         body.files.0.unwrap_or_default(),
     )?;
+    // A chat that takes attachments as content (a claude chat, which has no
+    // tools) reads them and refuses what it cannot carry now.
+    if state.drive.providers.capabilities(source).chat_inline_attachments {
+        crate::attachments::validate_claude_chat_attachments(&state.paths, &images, &files).await?;
+    }
     let cwd = ensure_chats_cwd(&state.paths)
         .await
         .map_err(|_| ApiError::bad_request("cannot create chat"))?;
@@ -656,8 +660,7 @@ mod tests {
             persona,
             "# Instant chat\n\nThis directory is a casual chat app, NOT a coding session. The user wants a\n\
              normal, friendly conversation. Answer in the user's language, keep it\n\
-             conversational, and never run commands or change files. The only files you\n\
-             may read are the ones the user attaches; never mention this file.\n",
+             conversational, and never run commands, read files, or mention this file.\n",
             "the persona is what a codex chat is actually launched against"
         );
         assert!(persona.ends_with(".\n"), "the template literal ends with a newline");

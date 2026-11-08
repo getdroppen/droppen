@@ -314,6 +314,11 @@ export function ChatHome() {
               {t("choosing account…")}
             </div>
           )}
+          {backend === "claude" && (
+            <p data-attachment-hint="" className="mb-1 px-2.5 font-mono text-2xs text-faint">
+              {t("claude chats take PNG/JPEG/GIF/WebP images up to 5 MB and UTF-8 text files up to 100 KB — other files are refused")}
+            </p>
+          )}
           <ComposerBox
             attachments={attachments}
             allowAttach={backend !== "api"}

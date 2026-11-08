@@ -800,14 +800,40 @@ pub fn plan_forked_transcript(dir: &Path, target: &Path, body: &str) {
 /// the fake keeps. Lines that are not user messages — the `control_request` an
 /// interrupt sends — are skipped, because they are not what anybody asked for.
 pub fn prompts(dir: &Path) -> Vec<String> {
+    prompt_lines(dir)
+        .iter()
+        .filter_map(|line| line["message"]["content"][0]["text"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Every stream-json `user` line the fake `claude` read, parsed — the whole
+/// content block list, for a message whose images are blocks rather than text.
+pub fn prompt_lines(dir: &Path) -> Vec<Value> {
     let Ok(raw) = std::fs::read_to_string(dir.join("stdin.jsonl")) else {
         return vec![];
     };
     raw.lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|line| line.get("type").and_then(Value::as_str) == Some("user"))
-        .filter_map(|line| line["message"]["content"][0]["text"].as_str().map(str::to_owned))
         .collect()
+}
+
+/// Wait until the fake `claude` has read `count` user lines, and return them.
+pub async fn wait_for_prompt_lines(dir: &Path, count: usize) -> Vec<Value> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let seen = prompt_lines(dir);
+        if seen.len() >= count {
+            return seen;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the CLI in {} was handed {} prompt line(s), not {count}: {seen:?}",
+            dir.display(),
+            seen.len()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 /// Wait until the fake `claude` has read `count` prompts, and return them.

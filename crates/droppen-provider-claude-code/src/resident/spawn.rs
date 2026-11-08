@@ -13,22 +13,21 @@ use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
 use droppen_instance::paths::{ClaudeRoot, Paths};
 
-/// The instant-chat settings: the persona, and the one tool an attachment
-/// needs.
+/// The instant-chat settings: the persona, and no tools at all.
 ///
-/// A chat used to disable every tool (`--disallowedTools *`), which also took
-/// away the Read tool claude views an attachment with — a session's image and
-/// file paths are handed to the model in the prompt with "view with the Read
-/// tool", and a chat could not. `--tools Read` is the narrow replacement: Read
-/// is the whole set, so nothing can run, write or search, while the paths the
-/// prompt names are actually readable. The CLI variadic flag comes last in
-/// [`claude_resident_flags`] so it cannot swallow the flag after it.
+/// A chat's images are delivered as base64 image blocks in the stream-json
+/// user line, and its text files are inlined into the prompt, so nothing has
+/// to be read from disk by the model. `--disallowedTools *` is the only safe
+/// answer: a Read tool would be bounded by the user's own CLI settings (allow
+/// rules, `defaultMode`), not by this server's uploads directory. The variadic
+/// flag comes last in [`claude_resident_flags`] so it cannot swallow the flag
+/// after it.
 fn claude_chat_flags() -> Vec<String> {
     vec![
         "--system-prompt".into(),
         CHAT_SYSTEM_PROMPT.into(),
-        "--tools".into(),
-        "Read".into(),
+        "--disallowedTools".into(),
+        "*".into(),
     ]
 }
 
@@ -46,6 +45,21 @@ const RESIDENT_DISALLOWED_TOOLS: [&str; 2] = ["EnterPlanMode", "ExitPlanMode"];
 /// claude has no image flag; it views every attachment through the Read tool.
 pub(super) fn with_claude_attachments(text: &str, options: &SendOptions) -> String {
     claude_prompt(text, &options.images, &options.files)
+}
+
+/// The prompt a claude run's next user line starts from, and the upload paths
+/// that travel beside it.
+///
+/// A session's attachments become paths in the prompt for Read, exactly as they
+/// always have. A chat has no tools at all: its text stays the user's words,
+/// and the upload paths are carried to the driver, which reads them at delivery
+/// into base64 image blocks and inlined UTF-8 file contents.
+fn claude_prompt_and_attachments(text: &str, options: &SendOptions) -> (String, Vec<String>, Vec<String>) {
+    if options.chat {
+        (text.to_string(), options.images.clone(), options.files.clone())
+    } else {
+        (with_claude_attachments(text, options), Vec::new(), Vec::new())
+    }
 }
 
 /// The settings half of a resident's command line: everything after the
@@ -82,10 +96,8 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
     // Prepare every process for later screenshots, even when its first prompt
     // is text-only. Adding this flag later would require a process restart.
     args.extend(["--add-dir".into(), paths.uploads_dir().to_string_lossy().into_owned()]);
-    // The variadic flag goes last, whichever it is: a chat's `--tools` replaces
-    // the deny list rather than adding to it, and neither may swallow the flag
-    // that follows. A chat cannot enter plan mode because `Read` is its whole
-    // tool set, so the plan tools do not need naming.
+    // One `--disallowedTools`, not two: it is variadic, so it goes last, and a
+    // chat's `*` already covers the plan tools.
     if options.chat {
         args.extend(claude_chat_flags());
     } else {
@@ -116,7 +128,9 @@ pub(super) fn claude_recipe(paths: &Paths, cwd: Option<&str>, options: &SendOpti
             account: login.account,
             credential: login.credential,
             chat: options.chat,
-            chat_reads: options.chat,
+            // Never written by this build; read only to replace a resident the
+            // intermediate Read-enabled build left behind.
+            chat_reads: false,
             uploads: true,
             questions: true,
         },
@@ -295,10 +309,11 @@ impl super::ClaudeCodeRuns {
         let (mut env, login) = self.resume_claude_env(id, options).await?;
         self.notify_decorate(id, &mut env).await;
         let recipe = claude_recipe(&self.host.paths, cwd, options, env, login);
-        // claude has no image flag, so every attachment reaches it as a path in
-        // the prompt, which travels over stdin.
-        let prompt = with_claude_attachments(text, options);
-        let delivery = self.deliver(gate, id, &prompt, recipe, options.message_id.clone()).await?;
+        // A session's attachments reach claude as paths in the prompt, which
+        // travels over stdin; a chat's reach the driver as paths beside it and
+        // become content blocks at delivery.
+        let (prompt, images, files) = claude_prompt_and_attachments(text, options);
+        let delivery = self.deliver(gate, id, &prompt, images, files, recipe, options.message_id.clone()).await?;
         Ok(Sent { queued: delivery.queued })
     }
 
@@ -348,8 +363,8 @@ impl super::ClaudeCodeRuns {
         self.notify_decorate(&id, &mut env).await;
         let login = self.login_of(chosen).await;
         let recipe = claude_recipe(&self.host.paths, Some(cwd), options, env, login);
-        let prompt = with_claude_attachments(text, options);
-        self.deliver(gate, &id, &prompt, recipe, options.message_id.clone()).await?;
+        let (prompt, images, files) = claude_prompt_and_attachments(text, options);
+        self.deliver(gate, &id, &prompt, images, files, recipe, options.message_id.clone()).await?;
         Ok(id)
     }
 }
@@ -520,21 +535,22 @@ mod tests {
         assert!(with_claude_attachments("hello", &options).starts_with("hello\n\n[1 attached file(s)"));
     }
 
-    /// A chat gets the persona and exactly one tool: Read, which is what an
-    /// attachment's path in the prompt is viewed with. Every other tool is
-    /// gone by omission rather than by a deny list, so there is no
-    /// `--disallowedTools` on a chat's line at all.
     #[test]
-    fn chat_flags_replace_the_persona_and_leave_only_read() {
+    fn chat_flags_replace_the_persona_and_disable_every_tool() {
         let mut options = options();
         options.chat = true;
         let args = claude_resident_flags(&paths(), &options);
-        assert!(!args.contains(&"--disallowedTools".to_string()), "a chat names the tool it has, not the ones it has not: {args:?}");
-        assert!(!args.contains(&"*".to_string()), "and no wildcard deny list: {args:?}");
+        assert!(args.contains(&"--disallowedTools".to_string()));
+        assert_eq!(args.iter().filter(|a| *a == "*").count(), 1);
+        assert!(!args.contains(&"--tools".to_string()), "a chat never gets a tool list: {args:?}");
         assert!(args.contains(&CHAT_SYSTEM_PROMPT.to_string()));
-        // The variadic flag is last, which is what replaces the `--` guard:
-        // with no positional argument there is nothing left for it to eat.
-        assert_eq!(args[args.len() - 2..], ["--tools", "Read"]);
+        // The variadic flags are last, which is what replaces the `--` guard:
+        // with no positional argument there is nothing left for them to eat.
+        assert_eq!(args.last().expect("a flag"), "*");
+        // One `--disallowedTools`, not a second for the plan tools: `*` covers
+        // them, and two of a variadic flag is a question for the CLI's parser
+        // nobody needs to ask.
+        assert_eq!(args.iter().filter(|a| *a == "--disallowedTools").count(), 1);
     }
 
     /// The prompt tool is what lets claude ask a question at all, and the plan
@@ -553,18 +569,15 @@ mod tests {
             assert!(recipe.fingerprint.questions);
             // Whichever variadic flag ends the line, the flag and its values
             // are the end of it: nothing after can be swallowed.
-            let variadic = if chat {
-                recipe.args.iter().position(|arg| arg == "--tools").expect("a tool list")
-            } else {
-                recipe.args.iter().position(|arg| arg == "--disallowedTools").expect("a deny list")
-            };
-            let listed = &recipe.args[variadic + 1..];
+            let disallowed = recipe.args.iter().position(|arg| arg == "--disallowedTools").expect("a deny list");
+            let listed = &recipe.args[disallowed + 1..];
             assert!(
                 listed.iter().all(|arg| !arg.starts_with("--")),
                 "the variadic list is the end of the line: {listed:?}"
             );
             if chat {
-                assert_eq!(listed, ["Read"]);
+                assert_eq!(listed, ["*"]);
+                assert!(!recipe.args.contains(&"--tools".to_string()));
             } else {
                 assert_eq!(listed, ["EnterPlanMode", "ExitPlanMode"]);
             }
@@ -577,23 +590,54 @@ mod tests {
         assert!(wants.satisfied_by(&older), "a resident from before the flag is not restarted for it");
     }
 
-    /// A chat resident from before `--tools Read` has the chat persona but no
-    /// way to open an attachment. The message wants Read, so it does not fit;
-    /// the reverse is fine — a process with Read takes a message that needs
-    /// nothing. Ordinary sessions never want it.
+    /// A chat resident from the intermediate build that ran `--tools Read` is
+    /// replaced, even though it carries the chat persona and the same account:
+    /// Read there is bounded by the user's own CLI settings, not by uploads.
+    /// Main's zero-tool chats and this build's chats fit.
     #[test]
-    fn a_chat_without_read_does_not_fit_a_message_that_needs_it() {
+    fn a_chat_from_the_read_enabled_build_is_replaced() {
         let wants = claude_recipe(&paths(), None, &SendOptions { chat: true, ..options() }, Env::new(), ClaudeLogin::default()).fingerprint;
-        assert!(wants.chat_reads);
-        let older = resident::Fingerprint {
+        assert!(!wants.chat_reads, "this build never writes the tombstone");
+        let intermediate = resident::Fingerprint {
+            chat_reads: true,
+            ..wants.clone()
+        };
+        assert!(!wants.satisfied_by(&intermediate), "the Read tool must not survive the upgrade");
+        let main = resident::Fingerprint {
             chat_reads: false,
             ..wants.clone()
         };
-        assert!(!wants.satisfied_by(&older), "the prompt's attachment path would be unreadable");
-        assert!(older.satisfied_by(&wants), "a process with Read is never refused for it");
+        assert!(wants.satisfied_by(&main), "main's chats have no tools either");
 
+        // The tombstone is read and never written, so rows of this build stay
+        // the bytes they always were.
+        let row = serde_json::to_value(&wants).expect("encode");
+        assert!(row.get("chat_reads").is_none(), "the tombstone is not serialized");
+        let old = serde_json::from_str::<resident::Fingerprint>(r#"{"chat":true,"chat_reads":true}"#).expect("read an old row");
+        assert!(old.chat_reads, "an old row still says it had Read");
+    }
+
+    /// A chat never fits a process started with a permission mode, whatever
+    /// the body asked for: the route drops it, and a resident an earlier build
+    /// started with one is replaced by a process that has none.
+    #[test]
+    fn a_chat_never_fits_a_process_with_a_permission_mode() {
+        let wants = claude_recipe(&paths(), None, &SendOptions { chat: true, ..options() }, Env::new(), ClaudeLogin::default()).fingerprint;
+        let escalated = resident::Fingerprint {
+            permission: Some("bypassPermissions".into()),
+            ..wants.clone()
+        };
+        assert!(!wants.satisfied_by(&escalated));
+        assert!(
+            wants.differences(&escalated).contains("no permission mode"),
+            "and the report says so: {}",
+            wants.differences(&escalated)
+        );
         let session = claude_recipe(&paths(), None, &options(), Env::new(), ClaudeLogin::default()).fingerprint;
-        assert!(!session.chat_reads, "a session does not ask for the chat's tool");
+        assert!(session.satisfied_by(&resident::Fingerprint {
+            permission: Some("acceptEdits".into()),
+            ..session.clone()
+        }), "sessions keep their permission modes exactly as they were");
     }
 
     #[test]

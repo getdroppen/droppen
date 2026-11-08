@@ -564,11 +564,12 @@ async function auditDevices(theme, view) {
  * The instant-chat home (`features/chat/chat-home.tsx`, docs/ui-spec.md §3):
  * the new-session layout — the question about the middle on a desktop, the
  * composer pinned to the bottom on a phone, one 48rem column — with the
- * backend switch above the composer and the warnings beside it. Five states
+ * backend switch above the composer and the warnings beside it. Six states
  * are captured: claude selected, the api backend with no provider, the
- * signed-out local login, the desktop `/chat` beside the list, and claude
- * with one picture and one file attached (uploaded into the fixture through
- * the composer's own file inputs). The api tab is clicked, because no query
+ * signed-out local login, the desktop `/chat` beside the list, claude with
+ * one picture and one file attached (uploaded into the fixture through the
+ * composer's own file inputs), and the refusal of a binary file the fixture's
+ * chat start answers `400` for. The api tab is clicked, because no query
  * selects a backend.
  */
 async function auditNewChat(theme, view) {
@@ -580,7 +581,7 @@ async function auditNewChat(theme, view) {
   });
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "new-chat", id, actual, expected });
   const snapshots = {};
-  for (const state of ["claude", "api", "signed-out", "list", "attached"]) {
+  for (const state of ["claude", "api", "signed-out", "list", "attached", "refused"]) {
     await page.goto(`${base}ui-audit/index.html?fixture=new-chat&state=${state}&theme=${theme}`);
     await page.evaluate(() => document.fonts.ready);
     // The form is drawn once the accounts' and composer's answers are in; the
@@ -623,6 +624,25 @@ async function auditNewChat(theme, view) {
       await page.waitForSelector('[data-attachment="file"]', { timeout: 5_000 });
       await page.waitForTimeout(250);
     }
+    if (state === "refused") {
+      // A binary file: uploaded, then refused by the chat start, and the
+      // server's own sentence is the notice the state is about.
+      await page.evaluate(() => {
+        const input = document.querySelector("[data-composer] input[type=file]");
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array([0xff, 0xfe, 0x00])], "binary.bin", { type: "application/octet-stream" }));
+        input.files = transfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await page.waitForSelector('[data-attachment="file"]', { timeout: 5_000 });
+      await page.locator("[data-composer] textarea").fill("take this");
+      await page.waitForFunction(() => !document.querySelector('[data-variant="primary"]')?.hasAttribute("disabled"), undefined, {
+        timeout: 5_000,
+      });
+      await page.locator('[data-variant="primary"]').click();
+      await page.waitForSelector('[data-chat-new-column] [data-signal="failed"]', { timeout: 5_000 });
+      await page.waitForTimeout(250);
+    }
     snapshots[state] = await page.evaluate(() => {
       const rect = (e) => {
         if (!e) return null;
@@ -646,6 +666,8 @@ async function auditNewChat(theme, view) {
         send: send ? { rect: rect(send), bg: cs(send).backgroundColor, radius: cs(send).borderRadius } : null,
         textarea: rect(document.querySelector("[data-composer] textarea")),
         attachments: [...document.querySelectorAll("[data-attachment]")].map((e) => e.getAttribute("data-attachment")),
+        failed: [...document.querySelectorAll('[data-chat-new-column] [data-signal="failed"]')].map((e) => (e.textContent ?? "").trim()),
+        hint: (document.querySelector("[data-attachment-hint]")?.textContent ?? "").trim(),
         warnings,
         overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
       };
@@ -689,6 +711,16 @@ async function auditNewChat(theme, view) {
   if (attached !== "file,image") fail("new-chat.attachments", snapshots.attached?.attachments, "one file and one image chip");
   if ((snapshots.claude.attachments ?? []).length !== 0) {
     fail("new-chat.no-attachments", snapshots.claude.attachments, "no chips before anything is attached");
+  }
+  // A claude chat says what it takes before the picker is used; the api
+  // backend has no attachments at all and shows no hint.
+  if (!/PNG\/JPEG\/GIF\/WebP/.test(snapshots.claude.hint ?? "")) {
+    fail("new-chat.attachment-hint", snapshots.claude.hint, "the claude chat's accepted-file note");
+  }
+  if ((snapshots.api.hint ?? "") !== "") fail("new-chat.api-hint", snapshots.api.hint, "no attachment note on the api backend");
+  // And a refused file is the server's sentence, in the failed notice style.
+  if (!(snapshots.refused?.failed ?? []).some((text) => /not a UTF-8 text file/.test(text))) {
+    fail("new-chat.refused", snapshots.refused?.failed, "the refusal notice for a binary file");
   }
   await page.close();
 }

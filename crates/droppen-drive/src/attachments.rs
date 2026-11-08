@@ -32,6 +32,45 @@ fn attachment_missing() -> ApiError {
     )
 }
 
+/// Refuse what a tool-less claude chat cannot take, before anything is
+/// accepted.
+///
+/// A chat's images become base64 content blocks and its non-image files are
+/// inlined as UTF-8 text, so both are read here and the same reads run again
+/// in the driver at delivery. This is where a binary file, an image that is
+/// not PNG/JPEG/GIF/WebP, or anything over the caps becomes a `400` the client
+/// can show, rather than a turn that fails after the send was answered.
+pub(crate) async fn validate_claude_chat_attachments(
+    paths: &Paths,
+    images: &[String],
+    files: &[String],
+) -> Result<(), ApiError> {
+    for path in images {
+        droppen_provider::chat_attachments::read_chat_image(paths, path)
+            .await
+            .map_err(chat_attachment_refusal)?;
+    }
+    let mut total = 0u64;
+    for path in files {
+        droppen_provider::chat_attachments::read_chat_text_file(paths, path, &mut total)
+            .await
+            .map_err(chat_attachment_refusal)?;
+    }
+    Ok(())
+}
+
+/// A read failure at the status the message routes give it: the fence's own
+/// `409`s for a path that is not an upload or is gone, and a `400` for what the
+/// chat cannot carry.
+fn chat_attachment_refusal(error: droppen_provider::chat_attachments::ChatAttachmentError) -> ApiError {
+    use droppen_provider::chat_attachments::ChatAttachmentError as Refused;
+    match error {
+        Refused::OutsideUploads => ApiError::conflict("attachment paths must come from /api/uploads"),
+        Refused::Missing => attachment_missing(),
+        other => ApiError::bad_request(other.to_string()),
+    }
+}
+
 /// Prove every attachment came from `/api/uploads` and is still there, and
 /// return the resolved paths.
 ///

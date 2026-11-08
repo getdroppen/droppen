@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
+use droppen_instance::paths::Paths;
 use droppen_sessions::sidecars::{AgentEntry, SubagentMeta, Subagents};
 use super::claude::tool_display::{display_claude_tool_result, display_claude_tool_use};
 use droppen_sessions::tool_display::{extract_questions, shorten_tool_name};
@@ -402,7 +403,7 @@ impl QueuedMessage {
 /// its own task-notifications through the same queue and does write attachments
 /// for them; those carry `commandMode: "task-notification"` and are the one
 /// thing here that must stay invisible.
-fn queued_command_line(entry: &Json, timestamp: Option<&str>) -> Option<UserLine> {
+fn queued_command_line(entry: &Json, paths: &Paths, timestamp: Option<&str>) -> Option<UserLine> {
     let queued = QueuedMessage::from_entry(entry)?;
     // Another agent's report rides the same queue with the same mode; its
     // `origin` is what says it is not the user. See `peer_message_item`.
@@ -412,7 +413,43 @@ fn queued_command_line(entry: &Json, timestamp: Option<&str>) -> Option<UserLine
     }
     // The queue also carries slash commands and, defensively, notification text
     // under some other mode; `claude_user_item` already classifies all of those.
-    claude_user_item(&queued.text, timestamp)
+    claude_user_item(&queued.text, timestamp, &queued_command_images(entry, paths))
+}
+
+/// The images of a steered chat message, mapped back to their uploads.
+///
+/// A chat's image block carries no path — the prompt names none — so the
+/// transcript is the only record of it. [`images_in_blocks`] finds the upload
+/// by content, which is what lets the steer show a thumbnail like any other
+/// message.
+fn queued_command_images(entry: &Json, paths: &Paths) -> Vec<String> {
+    let Some(Value::Array(blocks)) = entry.get("attachment").and_then(|attachment| attachment.get("prompt")) else {
+        return Vec::new();
+    };
+    let blocks: Vec<Json> = blocks.iter().filter_map(Value::as_object).cloned().collect();
+    images_in_blocks(&blocks, paths)
+}
+
+/// The upload paths behind the `image` blocks in `blocks`, in order, deduped.
+fn images_in_blocks(blocks: &[Json], paths: &Paths) -> Vec<String> {
+    let mut images: Vec<String> = Vec::new();
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("image") {
+            continue;
+        }
+        let Some(data) = block.get("source").and_then(|source| source.get("data")).and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(bytes) = droppen_provider::chat_attachments::image_bytes(data) else {
+            continue;
+        };
+        if let Some(path) = droppen_provider::chat_attachments::upload_path_for_image(paths, &bytes) {
+            if !images.contains(&path) {
+                images.push(path);
+            }
+        }
+    }
+    images
 }
 
 /// The words of a person's message the CLI folded into a running turn, when
@@ -447,7 +484,7 @@ pub(crate) fn absorbed_prompt(entry: &Value) -> Option<String> {
 /// User entries carry several kinds of machine chatter (slash-command metadata,
 /// task notifications, interrupt markers, attached-image suffixes). Turn them
 /// into quiet system lines / thumbnails instead of raw XML walls.
-fn claude_user_item(raw_text: &str, timestamp: Option<&str>) -> Option<UserLine> {
+fn claude_user_item(raw_text: &str, timestamp: Option<&str>, images: &[String]) -> Option<UserLine> {
     static COMMAND: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static COMMAND_STDOUT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     static INTERRUPT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -491,7 +528,13 @@ fn claude_user_item(raw_text: &str, timestamp: Option<&str>) -> Option<UserLine>
     if text.starts_with("<task-notification>") {
         return Some(UserLine::Item(Box::new(task_notification_item(text, timestamp))));
     }
-    Some(UserLine::Item(Box::new(TranscriptItem::user_text(raw_text, timestamp))))
+    let mut item = TranscriptItem::user_text(raw_text, timestamp);
+    // A chat sends its images as blocks and names no path, so the suffix has
+    // none. The blocks themselves found the uploads; show them as thumbnails.
+    if item.images.is_none() && !images.is_empty() {
+        item.images = Some(images.to_vec());
+    }
+    Some(UserLine::Item(Box::new(item)))
 }
 
 /// The diff hunks a transcript entry recorded alongside its tool result.
@@ -960,6 +1003,9 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                 continue;
             }
             let blocks = content_blocks(entry.get("message"));
+            // A chat's images arrive as base64 blocks and name no upload; map
+            // them back by content for the thumbnail.
+            let entry_images = images_in_blocks(&blocks, paths);
             let results = blocks
                 .iter()
                 .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
@@ -968,7 +1014,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             let patch = (results == 1).then(|| structured_patch(&entry)).flatten();
             for block in blocks {
                 match block.get("type").and_then(Value::as_str) {
-                    Some("text") => match claude_user_item(&block_text(&block), timestamp) {
+                    Some("text") => match claude_user_item(&block_text(&block), timestamp, &entry_images) {
                         Some(UserLine::Item(item)) => items.push(*item),
                         Some(UserLine::CommandOutput(body)) => {
                             if let Some(item) = attach_command_output(&mut items, &body, timestamp) {
@@ -1006,7 +1052,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             // Almost every attachment is a reminder the CLI wrote to itself, but
             // one shape — a queued command absorbed into a running turn — is the
             // only record of something the user said. See `queued_command_line`.
-            match queued_command_line(&entry, timestamp) {
+            match queued_command_line(&entry, paths, timestamp) {
                 Some(UserLine::Item(item)) => items.push(*item),
                 Some(UserLine::CommandOutput(body)) => {
                     if let Some(item) = attach_command_output(&mut items, &body, timestamp) {
@@ -1390,6 +1436,25 @@ mod tests {
         let users: Vec<_> = items.iter().filter(|item| item.role == Role::User).collect();
         assert_eq!(users.len(), 1, "only the person's own steer is a user message");
         assert_eq!(users[0].text, "所以结论呢？");
+    }
+
+    /// A chat's image arrives as a base64 block and names no path. The reader
+    /// maps it back to its upload by content, so the message shows the same
+    /// thumbnail a session's does — and never the bytes.
+    #[tokio::test]
+    async fn a_chat_image_block_finds_its_upload_for_the_thumbnail() {
+        let (dir, path) = write_jsonl(&[
+            r#"{"type":"user","cwd":"/w","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"[Image #1] look at this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"cG5nLWJ5dGVz"}}]}}"#,
+        ]);
+        let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+        let upload = paths.uploads_dir().join("u/a.png");
+        std::fs::create_dir_all(upload.parent().expect("parent")).expect("uploads dir");
+        std::fs::write(&upload, b"png-bytes").expect("upload");
+        let items = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "[Image #1] look at this");
+        assert_eq!(items[0].images.as_deref(), Some([upload.to_string_lossy().into_owned()].as_slice()));
+        assert!(!items[0].text.contains("cG5n"), "base64 payload never reaches the transcript");
     }
 
     /// A steer may carry a pasted image, which the CLI records as an inline

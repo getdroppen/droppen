@@ -20,6 +20,7 @@ use droppen_sessions::{Injection, InjectionRunState, SessionRef, Source};
 use droppen_base::time::iso8601;
 use gotcha::Schematic;
 
+pub mod chat_attachments;
 pub mod common;
 pub mod drafts;
 pub mod gate;

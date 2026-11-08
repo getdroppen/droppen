@@ -958,10 +958,18 @@ mod tests {
             questions: true,
             chats: true,
             chat_attachments: true,
+            chat_inline_attachments: true,
             schedules: true,
         };
         assert_eq!(providers.capabilities(Source::Claude), all);
-        assert_eq!(providers.capabilities(Source::Codex), Capabilities { questions: false, ..all });
+        assert_eq!(
+            providers.capabilities(Source::Codex),
+            Capabilities {
+                questions: false,
+                chat_inline_attachments: false,
+                ..all
+            }
+        );
         assert_eq!(providers.capabilities(Source::Acp), Capabilities::default());
     }
 

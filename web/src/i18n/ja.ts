@@ -923,6 +923,7 @@ export const ja: Record<string, string> = {
   // The new-chat form (`features/chat/chat-home.tsx`).
   "What do you want to chat about?": "何について話しますか？",
   "api chats take text only — the attachments were removed": "api チャットはテキストのみです — 添付ファイルは削除されました",
+  "claude chats take PNG/JPEG/GIF/WebP images up to 5 MB and UTF-8 text files up to 100 KB — other files are refused": "claude チャットは PNG/JPEG/GIF/WebP 画像（最大 5 MB）と UTF-8 テキストファイル（最大 100 KB）を受け付けます — それ以外は拒否されます",
   // The desktop app's update, ready (`app/desktop-update.tsx`).
   "restart": "再起動",
   "no room beside the returned message's attachments (at most {{max}}), so these were taken out: {{names}}": "戻されたメッセージの添付を戻すと空きがなくなったため（最大 {{max}} 個）、次の添付を外しました：{{names}}",

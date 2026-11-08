@@ -922,6 +922,7 @@ export const zhCN: Record<string, string> = {
   // The new-chat form (`features/chat/chat-home.tsx`).
   "What do you want to chat about?": "想聊点什么？",
   "api chats take text only — the attachments were removed": "api 聊天只接受文字——已移除附件",
+  "claude chats take PNG/JPEG/GIF/WebP images up to 5 MB and UTF-8 text files up to 100 KB — other files are refused": "claude 聊天接受 PNG/JPEG/GIF/WebP 图片（最大 5 MB）和 UTF-8 文本文件（最大 100 KB）——其他文件会被拒绝",
   // The desktop app's update, ready (`app/desktop-update.tsx`).
   "restart": "重启",
   "no room beside the returned message's attachments (at most {{max}}), so these were taken out: {{names}}": "退回的消息自带的附件放回后已没有空位（最多 {{max}} 个），以下附件已被移出：{{names}}",

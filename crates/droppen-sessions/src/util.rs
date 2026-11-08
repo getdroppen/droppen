@@ -380,10 +380,96 @@ pub struct AttachmentSplit {
     pub files: Vec<FileRef>,
 }
 
+/// The delimiter that inlines one text attachment into a tool-less claude
+/// chat's prompt.
+///
+/// The content is what the model reads; the path names the file to the model
+/// and to the transcript parser, which strips the whole block and shows the
+/// file as an attachment chip. A chat has no Read tool, so this is the only
+/// way a text file's bytes reach it.
+pub fn chat_file_block(path: &str, content: &str) -> String {
+    format!("\n\n----- BEGIN ATTACHED FILE: {path} -----\n{content}\n----- END ATTACHED FILE: {path} -----")
+}
+
+/// The first line of an inlined file block.
+const CHAT_FILE_OPEN: &str = "----- BEGIN ATTACHED FILE: ";
+/// The close's prefix; the path follows, then the dashes.
+const CHAT_FILE_CLOSE: &str = "\n----- END ATTACHED FILE: ";
+
+/// Split the trailing run of inlined file blocks off a chat prompt.
+///
+/// Blocks are generated contiguously at the end of the prompt, so the parser
+/// tries every opener from the last one backwards and keeps the latest that
+/// consumes the rest of the text as blocks. Content that merely mentions an
+/// opener (the user quoted one) leaves the message plain rather than inventing
+/// attachments, and a block whose close names another file is not a block.
+fn parse_chat_file_blocks(raw_text: &str) -> Option<AttachmentSplit> {
+    // No message shorter than the two newlines and the opener can hold one.
+    if raw_text.len() < CHAT_FILE_OPEN.len() + 2 {
+        return None;
+    }
+    let mut best: Option<(usize, Vec<FileRef>)> = None;
+    let mut from = 2;
+    while let Some(rel) = raw_text[from..].find(CHAT_FILE_OPEN) {
+        let opener = from + rel;
+        from = opener + CHAT_FILE_OPEN.len();
+        // A block is only ours when it follows two newlines; anything else is
+        // the user quoting the delimiter. The byte check also proves `opener-2`
+        // is a character boundary before it is sliced on.
+        if raw_text.as_bytes().get(opener - 2..opener) != Some(b"\n\n") {
+            continue;
+        }
+        let start = opener - 2;
+        if let Some(files) = blocks_from(&raw_text[start..]) {
+            // The earliest start that consumes the rest is the whole trailing
+            // run; a later one would leave earlier blocks in the message.
+            if best.as_ref().is_none_or(|(earliest, _)| start < *earliest) {
+                best = Some((start, files));
+            }
+        }
+    }
+    let (start, files) = best?;
+    Some(AttachmentSplit {
+        text: raw_text[..start].to_string(),
+        images: Vec::new(),
+        files,
+    })
+}
+
+/// Parse `text` as nothing but inlined file blocks and whitespace.
+fn blocks_from(mut rest: &str) -> Option<Vec<FileRef>> {
+    let mut files = Vec::new();
+    loop {
+        let at = rest.trim_start();
+        if at.is_empty() {
+            break;
+        }
+        let after = at.strip_prefix(CHAT_FILE_OPEN)?;
+        let (path, after) = after.split_once(" -----\n")?;
+        if path.is_empty() || path.contains('\n') {
+            return None;
+        }
+        let close = format!("{CHAT_FILE_CLOSE}{path} -----");
+        let end = after.find(&close)?;
+        rest = &after[end + close.len()..];
+        files.push(FileRef {
+            name: Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            path: path.to_string(),
+        });
+    }
+    Some(files)
+}
+
 /// Strip the attachment suffix from a message and classify its paths.
 ///
-/// The suffix is the contract between the injector and the transcript parser;
-/// the older "image file(s)" wording still parses.
+/// Two forms are recognised:
+///
+/// * the suffix a session's CLI is given — "view with the Read tool" — at the
+///   very end of the message;
+/// * the inlined text blocks a tool-less claude chat is given, after the
+///   user's words ([`chat_file_block`]).
+///
+/// The older "image file(s)" wording still parses.
 pub fn parse_attachment_suffix(raw_text: &str) -> AttachmentSplit {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
@@ -391,10 +477,10 @@ pub fn parse_attachment_suffix(raw_text: &str) -> AttachmentSplit {
             .expect("valid attachment pattern")
     });
     let Some(caps) = re.captures(raw_text) else {
-        return AttachmentSplit {
+        return parse_chat_file_blocks(raw_text).unwrap_or_else(|| AttachmentSplit {
             text: raw_text.to_string(),
             ..Default::default()
-        };
+        });
     };
     let whole = caps.get(0).expect("group 0 always present");
     let mut images = Vec::new();
@@ -833,6 +919,50 @@ mod tests {
         // A trailing separator, or `/.`, leaves a tail that is not an extension.
         assert!(!is_image_name("dir/"));
         assert!(!is_image_name("dir/."));
+    }
+
+    /// A chat's inlined text attachments come back out of the transcript as
+    /// file chips, and the user's own words are what is left.
+    #[test]
+    fn a_chat_prompt_strips_inlined_files_and_names_them() {
+        let prompt = format!(
+            "what is this?{}{}",
+            chat_file_block("/uploads/u/notes.txt", "line one\nline two"),
+            chat_file_block("/uploads/u/list.md", "- a\n- b")
+        );
+        let split = parse_attachment_suffix(&prompt);
+        assert_eq!(split.text, "what is this?");
+        assert!(split.images.is_empty());
+        assert_eq!(split.files.len(), 2);
+        assert_eq!(split.files[0].path, "/uploads/u/notes.txt");
+        assert_eq!(split.files[0].name, "notes.txt");
+        assert_eq!(split.files[1].path, "/uploads/u/list.md");
+        assert_eq!(split.files[1].name, "list.md");
+    }
+
+    /// The session suffix is still the session suffix: a reader with a Read
+    /// tool is unchanged by the chat form.
+    #[test]
+    fn a_session_suffix_still_classifies_images_and_files() {
+        let prompt = "look\n\n[2 attached file(s) — view with the Read tool:]\n- /u/a.png\n- /u/notes.txt";
+        let split = parse_attachment_suffix(prompt);
+        assert_eq!(split.text, "look");
+        assert_eq!(split.images, ["/u/a.png"]);
+        assert_eq!(split.files[0].path, "/u/notes.txt");
+    }
+
+    /// Text that merely mentions a block opener, or a block whose close names
+    /// another file, is the user's own words: no attachment is invented.
+    #[test]
+    fn a_quoted_or_malformed_block_stays_plain_text() {
+        let quoted = "here is a delimiter: ----- BEGIN ATTACHED FILE: /x -----";
+        assert_eq!(parse_attachment_suffix(quoted).text, quoted);
+        assert!(parse_attachment_suffix(quoted).files.is_empty());
+
+        let malformed = "hi\n\n----- BEGIN ATTACHED FILE: /u/a.txt -----\nbody\n----- END ATTACHED FILE: /u/other.txt -----";
+        let split = parse_attachment_suffix(malformed);
+        assert_eq!(split.text, malformed);
+        assert!(split.files.is_empty());
     }
 
     /// The budget stops the walk without pretending the file ended.

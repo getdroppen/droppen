@@ -17,6 +17,8 @@ droppen-http = { path = "../droppen-http" }
 droppen-instance = { path = "../droppen-instance" }
 droppen-pty = { path = "../droppen-pty" }
 droppen-sessions = { path = "../droppen-sessions" }
+# A chat's images travel as base64 content blocks in the CLI's stream-json.
+base64 = "0.22"
 # The session shim's own command line (`shim::Args`).
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 futures-util = "0.3"

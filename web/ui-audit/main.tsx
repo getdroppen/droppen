@@ -472,6 +472,20 @@ function newChatDevice(signedOut: boolean): Transport {
           isImage: file.type.startsWith("image/"),
         });
       }
+      // The chat start, answering as the server does for what a tool-less
+      // claude chat cannot carry: the refusal state's screenshot is that
+      // notice, not a mocked component.
+      if (new URL(request.url).pathname === "/api/chats/new" && request.method === "POST") {
+        const body = (await request.json()) as { backend?: string; files?: string[] };
+        const refused = (body.files ?? []).find((path) => path.endsWith(".bin"));
+        if (refused) {
+          return Response.json(
+            { error: `${refused.split("/").pop()} is not a UTF-8 text file a claude chat can take` },
+            { status: 400 },
+          );
+        }
+        return Response.json({ kind: body.backend ?? "claude", id: "chat-new" });
+      }
       const answer = answers[new URL(request.url).pathname];
       return answer === undefined ? Response.json({ error: "not here" }, { status: 404 }) : Response.json(answer);
     },

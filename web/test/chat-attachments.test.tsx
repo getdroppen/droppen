@@ -87,7 +87,16 @@ function device(sent: Sent[]): Transport {
         return Response.json({ path: `${UPLOADS}/${file.name}`, name: file.name, isImage: file.type.startsWith("image/") });
       }
       if (url.pathname === "/api/chats/new" && request.method === "POST") {
-        sent.push({ method: "POST", path: url.pathname, body: await request.json() });
+        const body = (await request.json()) as { backend?: string; files?: string[] };
+        sent.push({ method: "POST", path: url.pathname, body });
+        // The server refuses what a tool-less claude chat cannot inline.
+        const refused = (body.files ?? []).find((path) => path.endsWith(".bin"));
+        if (refused) {
+          return Response.json(
+            { error: `${refused.split("/").pop()} is not a UTF-8 text file a claude chat can take` },
+            { status: 400 },
+          );
+        }
         return Response.json({ kind: "claude", id: "chat-1" });
       }
       const answer = answers[url.pathname];
@@ -161,6 +170,8 @@ const paste = async (file: File) => {
 };
 const picture = () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" });
 const notes = () => new File(["a line"], "notes.txt", { type: "text/plain" });
+const binary = () => new File([new Uint8Array([0xff, 0xfe, 0x00])], "binary.bin", { type: "application/octet-stream" });
+const attachmentHint = () => first((n) => n.hasAttribute("data-attachment-hint"));
 
 /** The tab whose label is `name`, from the backend segmented control. */
 const tab = (name: string) =>
@@ -181,6 +192,7 @@ test("the new-chat form uploads a pasted picture and file, and starts the chat w
   t.after(() => page.unmount());
   await until("the composer", () => !!textarea());
   assert.ok(attachButton(), "a CLI chat offers the session composer's attach control");
+  assert.match(attachmentHint()?.textContent ?? "", /PNG\/JPEG\/GIF\/WebP/, "and says what a claude chat takes");
 
   await paste(picture());
   await paste(notes());
@@ -219,6 +231,7 @@ test("the api backend has no attach control, ignores a paste, and says why a swi
   await click(tab("api"));
   await until("the api backend", () => !attachButton());
   assert.equal(chips().length, 0, "the attachment left with the switch");
+  assert.equal(attachmentHint(), undefined, "and the claude-only note is gone with the attach controls");
   await until("the note", () => (container.textContent ?? "").includes("api chats take text only"));
 
   // A paste is ignored entirely: no upload, and nothing to send.
@@ -229,6 +242,30 @@ test("the api backend has no attach control, ignores a paste, and says why a swi
   });
   assert.equal(sent.filter((s) => s.path === "/api/uploads").length, uploads, "no upload was started");
   assert.equal(chips().length, 0);
+  assert.deepEqual(errors, []);
+});
+
+test("a binary file is sent, refused by the start, and shown in the failed style", async (t) => {
+  const sent: Sent[] = [];
+  reset(sent);
+  const { page, errors } = await mount("/chat/new");
+  t.after(() => page.unmount());
+  await until("the composer", () => !!textarea());
+  await paste(binary());
+  await until("the upload", () => sent.some((s) => s.path === "/api/uploads"));
+  await until("the chip", () => chips().length === 1);
+  await type("take this");
+  await until("a sendable form", () => propsOf(sendButton()).disabled === false);
+  await click(sendButton());
+
+  await until("the refusal", () => (container.textContent ?? "").includes("not a UTF-8 text file a claude chat can take"));
+  const start = sent.find((s) => s.path === "/api/chats/new");
+  assert.deepEqual((start?.body as Record<string, unknown>).files, [`${UPLOADS}/binary.bin`]);
+  assert.ok(
+    all().some((n) => n.getAttribute("data-signal") === "failed"),
+    "the server's sentence is the failed notice, not a silent drop",
+  );
+  assert.equal(chips().length, 1, "the refused attachment is put back in the composer");
   assert.deepEqual(errors, []);
 });
 
@@ -289,6 +326,11 @@ for (const source of ["claude", "codex"] as const) {
     t.after(() => page.unmount());
     await until(`the ${source} chat composer`, () => !!textarea());
     assert.ok(attachButton(), "the session composer's attach control is offered in a chat");
+    if (source === "claude") {
+      assert.match(attachmentHint()?.textContent ?? "", /PNG\/JPEG\/GIF\/WebP/, "a claude chat says what it takes");
+    } else {
+      assert.equal(attachmentHint(), undefined, "codex takes what it is given and needs no claude-only note");
+    }
     assert.deepEqual(errors, []);
   });
 }
