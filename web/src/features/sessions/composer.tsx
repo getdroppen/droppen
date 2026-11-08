@@ -187,6 +187,14 @@ export function Composer({
   // run — the same value `ComposerQuota` below is given, for the same reason.
   const choice = useComposerChoice(source, id, detail.cliChoice, detail.account?.id ?? null, undefined, detail.summary.acpAgent);
   const { activeModel, activeEffort, activePermission } = choice;
+  // A window drawn from the machine's offline copy before the machine's own
+  // state has come (`feed-from-copy.ts`): what the session last ran with is not
+  // known yet, and the choice above stands on the defaults. A message sent now
+  // would run under them rather than under the session's own permission. The
+  // text stays editable; nothing leaves, typed or queued, until the state is
+  // here, a round trip later.
+  const awaitingState = detail.fromCopy === true;
+  const canSend = detail.canSend && !awaitingState;
 
   // The checklist sidecar is only ever rewritten by a tool call, so the number
   // of calls in the window is the cheapest "it may have changed" signal there
@@ -388,7 +396,7 @@ export function Composer({
   const queuePaused = (failed || sendRefused) && queue.length > 0;
   const queueHeadAction = localQueueHeadAction({
     source,
-    canSend: detail.canSend,
+    canSend,
     injectionRunning,
     sending: send.isPending,
     steering: codexSteering,
@@ -406,11 +414,12 @@ export function Composer({
   // answering is blocked mid-turn and cannot change. They take effect with the
   // next message that starts a turn, which is why nothing here claims more.
   const answering = composerAnswersQuestion({ questions: detail.questions, row: detail.summary });
-  const sendsAnswer = answering && detail.canSend && queue.length === 0;
+  const sendsAnswer = answering && canSend && queue.length === 0;
   const willQueue =
     !sendsAnswer &&
+    !awaitingState &&
     willQueueSend({
-      canSend: detail.canSend,
+      canSend,
       localQueue: queue.length,
       row: detail.summary,
       injectionRunning,
@@ -441,7 +450,7 @@ export function Composer({
   // The entry stays in the outbox, marked `sending`, until the server answers:
   // a page closed mid-send then knows to ask about it, rather than forgetting it.
   const dispatchEntry = (entry: OutgoingMessage | undefined) => {
-    if (dispatching.current || entry === undefined || !detail.canSend || send.isPending) {
+    if (dispatching.current || entry === undefined || !canSend || send.isPending) {
       return;
     }
     // `unsent` keeps its id, `failed` gets a new one; see `prepareResend`.
@@ -469,7 +478,7 @@ export function Composer({
     if (
       shouldDrainQueue({
         queued: queue.length,
-        canSend: detail.canSend,
+        canSend,
         failed,
         sendFailed: sendRefused,
         sending: send.isPending,
@@ -490,6 +499,7 @@ export function Composer({
       (!message && attachments.length === 0) ||
       send.isPending ||
       shut ||
+      awaitingState ||
       anyFailed
     ) {
       return;
@@ -514,7 +524,7 @@ export function Composer({
     // must find it in one place, not in the outbox *and* the composer.
     setText("");
     // Busy, or already queued messages waiting: preserve order by appending.
-    if (!detail.canSend || queue.length > 0) {
+    if (!canSend || queue.length > 0) {
       setQueue([...queueRef.current, out]);
       return;
     }
@@ -659,9 +669,11 @@ export function Composer({
           placeholder={
             shut
               ? (detail.sendBlockReason ?? t("the device is offline — this is a read-only copy"))
-              : detail.canSend
-                ? `${sendsAnswer ? t("type your answer…") : t("send a message to this session…")} (${sendHint})`
-                : `${detail.sendBlockReason ?? t("session is busy")} — ${t("messages are queued")}`
+              : awaitingState
+                ? t("loading session…")
+                : canSend
+                  ? `${sendsAnswer ? t("type your answer…") : t("send a message to this session…")} (${sendHint})`
+                  : `${detail.sendBlockReason ?? t("session is busy")} — ${t("messages are queued")}`
           }
           chips={<>
             <ComposerChoiceChips source={source} choice={choice} permission={!chat} />
@@ -670,7 +682,7 @@ export function Composer({
             <ChecklistChip source={source} id={id} toolTick={toolTick} />
           </>}
           send={{
-            disabled: send.isPending || shut || anyFailed || (!text.trim() && attachments.length === 0),
+            disabled: send.isPending || shut || awaitingState || anyFailed || (!text.trim() && attachments.length === 0),
             label: sendsAnswer ? t("send as your answer") : willQueue ? t("add to queue") : t("send"),
             busy: send.isPending || sendQueued,
             queues: willQueue,

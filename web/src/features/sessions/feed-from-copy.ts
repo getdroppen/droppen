@@ -23,10 +23,14 @@ type SessionSummary = components["schemas"]["SessionSummary"];
  * them — `endIndex` and `prefixFp`, the marks the live server sends. So the
  * live socket opens with a delta from there (`?since=&fp=`), or, when the
  * session under it is no longer what the copy holds, with a snapshot that
- * replaces it. The state half says only what the copy can vouch for: the
- * list's row, as the machine last listed it, and so whether the session was
- * at rest to take a message. The live state follows the delta and replaces
- * all of it.
+ * replaces it. The state half says only what the copy can vouch for, the
+ * list's row, and is marked as the copy's (`fromCopy`). The copy cannot say
+ * what the session last ran with: the machine reads its model, effort and
+ * permission (`cliChoice`) off fields of the transcript file the copy's items
+ * do not carry. So until the live state replaces this one, which follows the
+ * delta, the composer sends nothing, typed or queued (`composer.tsx`): a
+ * message sent now would go out under the defaults rather than the session's
+ * own choice.
  */
 
 /** What of a session's copy its window is cut from: `SessionCopy`, `lib/hub/mirror.ts`. */
@@ -55,10 +59,7 @@ export function copyFeedState(copy: CopyOfSession, row: SessionSummary, size: nu
     sig: `offline:${copy.seq}`,
     summary: row,
     injection: null,
-    // At rest and this machine's own, as the server's first rules have it: the
-    // composer reads as it will once the live state says the same, and a
-    // session the row shows busy queues what is typed until it does.
-    canSend: row.scope !== "external" && row.status === "idle",
+    canSend: false,
     sendBlockReason: null,
     cliChoice: null,
     contextTokens: null,
@@ -79,6 +80,7 @@ export function copyFeedState(copy: CopyOfSession, row: SessionSummary, size: nu
     // marker the live socket sends the window whole.
     prefixFp: items.some(cutDown) ? null : prefixFp,
     startFp: null,
+    fromCopy: true,
   };
 }
 

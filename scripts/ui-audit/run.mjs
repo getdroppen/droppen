@@ -1304,6 +1304,8 @@ const COPY_BANNER_WORDS = {
   en: "showing the copy saved on this device — updating…",
   "zh-CN": "正在显示这台设备上保存的副本 — 更新中…",
 };
+/** What the composer says while it waits for the machine's state, which it needs before it sends anything (#571's words). */
+const COPY_COMPOSER_WORDS = { en: "loading session…", "zh-CN": "读取会话…" };
 /** The session the fixture draws from its copy: its first and last items' words. */
 const COPY_FIRST_WORDS = "The relay drops idle sockets after a minute.";
 const COPY_LAST_WORDS = "three beats go unanswered";
@@ -1314,7 +1316,9 @@ const COPY_LAST_WORDS = "three beats go unanswered";
  * transcript from its first item to its last, under the banner that says it
  * is the copy saved on this device — its existing words, mono at 11px, whole
  * (no ellipsis, no clip) at a phone's width as on a desktop — and no loading
- * line anywhere. Captured in English and Chinese.
+ * line anywhere. Under it the composer waits for the machine's state: the
+ * text editable, the send button disabled, and the box saying it is loading
+ * the session, not that the session is busy. Captured in English and Chinese.
  */
 async function auditSessionFromCopy(theme, view) {
   const page = await browser.newPage({
@@ -1353,8 +1357,11 @@ async function auditSessionFromCopy(theme, view) {
           lines: Math.round(natural.height / parseFloat(s.lineHeight)),
         };
       }
+      const box = document.querySelector("[data-session-view] textarea");
+      const send = document.querySelector('[data-session-view] button[data-variant="primary"]');
       return {
         banner: words,
+        composer: box ? { placeholder: box.getAttribute("placeholder"), editable: !box.disabled, send: send ? !send.disabled : null } : null,
         opening: document.querySelectorAll("[data-session-opening]").length,
         text: document.body.innerText,
         overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
@@ -1373,6 +1380,10 @@ async function auditSessionFromCopy(theme, view) {
       if (state.banner.cut) fail("session-from-copy.truncated", { ...where, banner: state.banner }, "the banner's words whole");
     }
     if (!text.includes(COPY_FIRST_WORDS) || !text.includes(COPY_LAST_WORDS)) fail("session-from-copy.transcript", where, "the copy's transcript drawn, first item to last");
+    const c = state.composer;
+    if (!c || c.placeholder !== COPY_COMPOSER_WORDS[lang] || !c.editable || c.send !== false) {
+      fail("session-from-copy.composer", { ...where, composer: c }, `an editable box saying "${COPY_COMPOSER_WORDS[lang]}", its send button disabled`);
+    }
     if (state.opening > 0) fail("session-from-copy.opening", { ...where, opening: state.opening }, "no loading line over a drawn transcript");
     if (state.overflow.doc > state.overflow.win + 1) fail("session-from-copy.overflow", { ...where, ...state.overflow }, "no horizontal overflow");
   }

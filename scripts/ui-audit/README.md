@@ -115,7 +115,9 @@ the real session view, routed as the app routes it, while the machine has not
 answered yet) adds, in English and zh-CN: the copy's transcript drawn from its
 first item to its last; over it the banner that says it is the copy saved on
 this device, in its existing words, mono at 11px and whole (no ellipsis, no
-clip) at either width; no loading line anywhere. Outputs
+clip) at either width; no loading line anywhere; and under it the composer
+waiting for the machine's state, its box editable and saying it is loading
+the session (#571's words), its send button disabled. Outputs
 `session-from-copy[-zh-CN]-<theme>-<viewport>.png`.
 
 The fixture deliberately exercises the target state, so on a revision that

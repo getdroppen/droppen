@@ -137,14 +137,10 @@ test("a copy's window is its newest page, with the copy's own resume marker and 
   assert.equal(data.startFp, null, "nobody fingerprinted this start for us");
   assert.equal(data.hasMoreBefore, true);
   assert.equal(data.sig, "offline:7", "the copy's version, as its own snapshot names it");
-  assert.equal(data.canSend, true, "at rest, as the machine last listed it");
-  assert.equal(data.sendBlockReason, null);
+  assert.equal(data.fromCopy, true, "marked as the copy's: what the session last ran with is not known yet");
+  assert.deepEqual([data.canSend, data.sendBlockReason, data.cliChoice], [false, null, null], "so nothing is sent on it");
   assert.equal(data.summary.id, "a");
   assert.deepEqual([data.questions, data.receipts, data.injection, data.account], [[], [], null, null]);
-  const busy = copyFeedState({ state: copy, seq: 7 }, { ...row("a"), status: "running", activity: "working" } as never)!;
-  assert.equal(busy.canSend, false, "a session the row shows busy queues what is typed until the live state says otherwise");
-  const external = copyFeedState({ state: copy, seq: 7 }, { ...row("a"), scope: "external" } as never)!;
-  assert.equal(external.canSend, false, "another instance's session is not this one's to send to");
 
   const short = copyFeedState({ state: copyOf(0, 4), seq: 1 }, row("a") as never)!;
   assert.deepEqual([short.startIndex, short.items.length, short.hasMoreBefore], [0, 4, false], "a whole short session has nothing before it");
@@ -260,12 +256,48 @@ test("the live socket's resume delta merges onto the copy, and its state replace
   assert.deepEqual(data.items.map((i) => (i as { text: string }).text), [...items(0, 9).map((i) => i.text), "item 9 (done)", "item 10"]);
   assert.equal(data.items[0], drawn.items[0], "what the copy held before the overlap stays, by reference");
   assert.deepEqual([data.startIndex, data.endIndex, data.prefixFp, data.sig], [0, 11, "fp8", "live:4"]);
-  sockets[0]!.frame({ type: "state", summary: { ...row("a"), status: "running", title: "renamed" }, canSend: false, sendBlockReason: "a message from Droppen is still running", contextTokens: 1234 });
-  assert.deepEqual([data.canSend, data.sendBlockReason], [true, null], "what the copy's row said");
+  assert.equal(data.fromCopy, true, "a delta is the transcript, not the machine's state");
+  const choice = { model: "sonnet", effort: "low", permission: "plan", at: "2026-11-08T09:00:00Z" };
+  sockets[0]!.frame({ type: "state", summary: { ...row("a"), title: "renamed" }, canSend: true, sendBlockReason: null, cliChoice: choice, contextTokens: 1234 });
   const live = feed.getView().data!;
-  assert.deepEqual([live.canSend, live.sendBlockReason, live.contextTokens], [false, "a message from Droppen is still running", 1234], "the live state replaces it");
+  assert.equal(live.fromCopy, undefined, "the state is the machine's from here on");
+  assert.deepEqual([live.canSend, live.cliChoice, live.contextTokens], [true, choice, 1234], "the live state replaces the copy's");
   assert.equal(live.summary.title, "renamed");
   assert.equal(live.items, data.items, "and leaves the window as it is");
+});
+
+test("the machine's first state ends the copy's mark, even one that says nothing the copy did not; a snapshot, or a state re-read, does too", async (t) => {
+  const { mirror } = await deviceWith(t, ["a"], { a: copyOf(0, 10) });
+  shellWith(t, mirror);
+  await mirror.sessionHeld("claude", "a");
+  // What the copy's own state says, said again by the machine.
+  const same = { summary: row("a"), injection: null, canSend: false, sendBlockReason: null, cliChoice: null, contextTokens: null, contextWindow: 200_000, claudeRoot: null, account: null, rotation: null, receipts: [], questions: [] };
+  const { sockets, deps } = harness({ persist: devicePersistFor("m-1"), fetchState: async () => same });
+  const pool = poolFor(t, deps);
+
+  const a = pool.feed("claude", "a");
+  pool.acquire(a, pin());
+  await flush();
+  sockets[0]!.open();
+  sockets[0]!.frame({ type: "state", ...same });
+  assert.equal(a.getView().data!.fromCopy, undefined, "a state frame");
+  assert.deepEqual(a.getView().data!.items, copyOf(0, 10).items, "over the copy's window, as it is");
+
+  pool.dispose();
+  const again = poolFor(t, deps);
+  const b = again.feed("claude", "a");
+  again.acquire(b, pin());
+  await flush();
+  sockets[1]!.open();
+  sockets[1]!.frame({ type: "snapshot", sig: "live:1", ...same, items: items(0, 2), startIndex: 0, endIndex: 2, totalItems: 2, prefixFp: "fp0", startFp: "s0" });
+  assert.equal(b.getView().data!.fromCopy, undefined, "a snapshot");
+
+  again.dispose();
+  const third = poolFor(t, deps);
+  const c = third.feed("claude", "a");
+  assert.equal(c.getView().data!.fromCopy, true);
+  c.refreshState();
+  await until(() => c.getView().data!.fromCopy === undefined, 1000);
 });
 
 test("a session no longer what the copy holds (its fingerprint differs) is answered with a snapshot that replaces the copy", async (t) => {

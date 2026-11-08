@@ -840,8 +840,9 @@ async function mountNoCopy(): Promise<void> {
  * droppen.app on the machine itself (`live`) opening a session its feed pool
  * does not hold, with a copy of it on this device: the real session view,
  * routed as the app routes it, drawn from the copy at once
- * (`features/sessions/feed-from-copy.ts`) under the banner that says so. The
- * machine never answers here, so the banner stays. The copy is a stand-in for
+ * (`features/sessions/feed-from-copy.ts`) under the banner that says so, its
+ * composer waiting for the machine's state before it sends anything. The
+ * machine never answers here, so both stay. The copy is a stand-in for
  * the machine's offline copy (`MachineMirror`) holding one session, already
  * verified; the device answers the view's own reads with synthetic data only.
  */

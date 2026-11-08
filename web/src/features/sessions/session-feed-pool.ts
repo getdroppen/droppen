@@ -10,6 +10,7 @@ import {
   transcriptDeltaOf,
   transcriptWindowOf,
   trimLiveWindow,
+  type SessionStateFields,
   type TranscriptHistoryPage,
   type TranscriptWindow,
 } from "./session-feed-state.js";
@@ -51,7 +52,28 @@ type Detail = components["schemas"]["SessionDetail"];
 
 /** Client-side session state fed over the websocket. */
 export type FeedState = Omit<Detail, "itemsChanged" | "reset"> &
-  Pick<TranscriptWindow, "prefixFp" | "startFp">;
+  Pick<TranscriptWindow, "prefixFp" | "startFp"> & {
+    /**
+     * The state half is the machine's offline copy's (`feed-from-copy.ts`),
+     * drawn before the machine has said anything: the session's own model,
+     * effort and permission (`cliChoice`) are not known yet, so nothing is
+     * sent until they are. Gone with the machine's first state, whichever way
+     * it comes ({@link liveState}, or a snapshot).
+     */
+    fromCopy?: true;
+  };
+
+/**
+ * `prev` with a state the machine sent folded in (a `state` frame, or a REST
+ * re-read): from here on the state is the machine's own, even when it says
+ * nothing the copy did not.
+ */
+export function liveState(prev: FeedState, fields: Partial<SessionStateFields>): FeedState {
+  const next = applyStateFrame(prev, fields);
+  if (!next.fromCopy) return next;
+  const { fromCopy: _fromCopy, ...live } = next;
+  return live;
+}
 
 /**
  * Whether the socket behind this view is delivering.
@@ -717,8 +739,10 @@ export class SessionFeed {
       });
     } else if (m.type === "state") {
       // Every merge rule, and the reason a frame that says nothing new has
-      // to come back out by identity, is in [`applyStateFrame`].
-      this.setData((prev) => (prev ? applyStateFrame(prev, m) : prev));
+      // to come back out by identity, is in [`applyStateFrame`] — except over
+      // a window drawn from the offline copy, whose state it makes the
+      // machine's ([`liveState`]).
+      this.setData((prev) => (prev ? liveState(prev, m) : prev));
     } else if (m.type === "draft") {
       // Its own store, never the window's state, and only the count of a
       // think in flight out of it (`stream-draft.ts`): nothing in a draft
@@ -853,7 +877,7 @@ export class SessionFeed {
         // one with a signature chain behind it. [`applyStateFrame`] reads the
         // state fields off `fresh` and is blind to the rest of it, which is
         // what makes it the right merge for both writers.
-        this.setData((prev) => (prev ? applyStateFrame(prev, fresh) : prev));
+        this.setData((prev) => (prev ? liveState(prev, fresh) : prev));
       },
       () => undefined,
     );
