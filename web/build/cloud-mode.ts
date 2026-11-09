@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Plugin, ResolvedConfig } from "vite";
-import { inlineScriptSources } from "./service-worker";
+import { CANONICAL_HUB, inlineScriptSources } from "./service-worker";
 
 /**
  * `DROPPEN_WEB_MODE=cloud`: an optional, static-hosting build of the same web
@@ -36,6 +36,12 @@ import { inlineScriptSources } from "./service-worker";
  * operator may point a cloud build at another set of hosts. Nothing here is
  * compiled into a normal (`DROPPEN_WEB_MODE` unset) build, so self-hosted
  * servers and the open distribution are unaffected.
+ *
+ * The app's worker (`sw.js`) is the normal build's, byte for byte, with the
+ * defaults: every build's worker accepts a shell marked with droppen.app's
+ * canonical hub (`CANONICAL_HUB`, in its own source). Only another hub
+ * (`DROPPEN_WEB_HUB_ORIGIN`) is written into it (`fillServiceWorker`), and
+ * that build's worker then differs from the attested one.
  */
 
 /** The environment variable that opts a build into the cloud output. */
@@ -63,7 +69,7 @@ export interface CloudConfig {
 }
 
 const DEFAULTS: CloudConfig = {
-  hubOrigin: "wss://api.droppen.app",
+  hubOrigin: CANONICAL_HUB,
   appOrigin: "https://my.droppen.app",
   siteOrigin: "https://www.droppen.app",
   turnstileOrigin: "https://verify.droppen.app",

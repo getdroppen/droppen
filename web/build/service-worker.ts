@@ -17,10 +17,12 @@ import { join } from "node:path";
  * - `SHELL_SCRIPTS`: the CSP sources (`'sha256-…'`) of the shell's inline
  *   scripts, found as a hub finds them, for the policy the worker serves the
  *   offline shell with;
- * - `HUB_ORIGIN`: in a cloud build (`DROPPEN_WEB_MODE=cloud`), the canonical
- *   machine origin its shell's marker names (`wss://api.droppen.app`), which
- *   the worker accepts in place of this origin's own; empty otherwise, so a
- *   normal build accepts the marker only from the host it was served by;
+ * - `HUB_ORIGIN`: in a cloud build (`DROPPEN_WEB_MODE=cloud`) whose shell's
+ *   marker names a hub other than droppen.app's canonical one
+ *   ({@link CANONICAL_HUB}, which the worker's source names itself and every
+ *   build accepts besides this origin's own), that hub, which the worker then
+ *   accepts too. Empty otherwise — droppen.app's own cloud builds included —
+ *   so their worker is the attested build's, byte for byte;
  * - `LANGUAGES`: each language's translations but English's (`src/i18n/lang-*.ts`),
  *   `{prefix, files}` — its chunk and what that imports beyond the boot set,
  *   and how the chunk's name starts in any build — for the worker to precache
@@ -36,9 +38,20 @@ import { join } from "node:path";
  */
 export type LanguageFiles = Record<string, { prefix: string; files: string[] }>;
 
+/**
+ * droppen.app's canonical machine (API) origin: the marker its cloud builds
+ * write (`build/cloud-mode.ts`'s default), and what `public/sw.js` names as
+ * `CANONICAL_HUB` in every build — the build refuses a worker that names
+ * another, so leaving `HUB_ORIGIN` empty for it is never a mistake.
+ */
+export const CANONICAL_HUB = "wss://api.droppen.app";
+
 export function fillServiceWorker(dir: string, boot: readonly string[], opts: { hubOrigin?: string; cloudBoot?: readonly string[]; languages?: LanguageFiles } = {}): void {
   const file = join(dir, "sw.js");
   let text = readFileSync(file, "utf8");
+  const canonical = `const CANONICAL_HUB = ${JSON.stringify(CANONICAL_HUB)};`;
+  if (!text.includes(canonical)) throw new Error(`${file} has no \`${canonical}\``);
+  const otherHub = opts.hubOrigin && opts.hubOrigin !== CANONICAL_HUB ? opts.hubOrigin : "";
   const integrity: Record<string, string> = {};
   for (const path of filesUnder(dir, "assets")) integrity[`/${path}`] = sha256(readFileSync(join(dir, path)));
   const shell = readFileSync(join(dir, "index.html"));
@@ -48,7 +61,7 @@ export function fillServiceWorker(dir: string, boot: readonly string[], opts: { 
     ["const INTEGRITY = {};", `const INTEGRITY = ${JSON.stringify(integrity)};`],
     ['const SHELL_SHA256 = "";', `const SHELL_SHA256 = ${JSON.stringify(sha256(shell))};`],
     ["const SHELL_SCRIPTS = [];", `const SHELL_SCRIPTS = ${JSON.stringify(inlineScriptSources(shell.toString("utf8")))};`],
-    ['const HUB_ORIGIN = "";', `const HUB_ORIGIN = ${JSON.stringify(opts.hubOrigin ?? "")};`],
+    ['const HUB_ORIGIN = "";', `const HUB_ORIGIN = ${JSON.stringify(otherHub)};`],
     ["const LANGUAGES = {};", `const LANGUAGES = ${JSON.stringify(opts.languages ?? {})};`],
   ];
   for (const [marker, value] of fills) {

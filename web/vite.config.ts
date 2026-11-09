@@ -166,8 +166,10 @@ function precacheBootSet(): Plugin {
     },
     // After every file is written and the public directory copied, so `sw.js`
     // is there to edit and the hashes are of the bytes as served. In a cloud
-    // build the worker is told the marker origin too; the marker itself goes
-    // in later (`cloudBuild`), so the shell it hashes is the build's own.
+    // build the worker is told the marker origin too, written into it only
+    // when it is not droppen.app's canonical hub (every worker accepts that
+    // one); the marker itself goes in later (`cloudBuild`), so the shell it
+    // hashes is the build's own.
     writeBundle(options) {
       fillServiceWorker(options.dir ?? "dist", boot, { hubOrigin: cloud?.hubOrigin, cloudBoot, languages });
     },

@@ -399,7 +399,11 @@ export function siteHubOrigin(site) {
   return `${url.protocol === "https:" ? "wss" : "ws"}://${url.host}`.toLowerCase();
 }
 
-/** droppen.app's canonical machine (API) origin, which every page there dials. */
+/**
+ * droppen.app's canonical machine (API) origin, which every page there dials,
+ * and whose marker every build's service worker accepts for its offline shell
+ * (web/public/sw.js `CANONICAL_HUB`, held to this one by its tests).
+ */
 export const CANONICAL_HUB = "wss://api.droppen.app";
 
 /**
