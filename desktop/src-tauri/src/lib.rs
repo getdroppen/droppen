@@ -66,15 +66,11 @@ fn sidecar_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(droppen_desktop_core::SIDECAR_NAME))
 }
 
-/// Whether the password may live in the keychain. Always, in a release build;
-/// only an end-to-end build reads `DROPPEN_DESKTOP_KEYCHAIN=0`, which its test
-/// runs set so they never touch a real login keychain. Never on Linux yet
-/// (TODO(linux: L3): the Secret Service): there the password is kept in the
-/// file (`credentials.json`, 0600), as when a keychain will not take it.
+/// Whether the password may live in the keychain — on Linux, the Secret
+/// Service. Always, in a release build; only an end-to-end build reads
+/// `DROPPEN_DESKTOP_KEYCHAIN=0`, which its test runs set so they never touch a
+/// real login keychain or keyring.
 fn keychain_allowed() -> bool {
-    if cfg!(not(target_os = "macos")) {
-        return false;
-    }
     #[cfg(feature = "e2e")]
     {
         droppen_desktop_core::credentials::keychain_enabled(std::env::var(droppen_desktop_core::credentials::KEYCHAIN_ENV).ok().as_deref())
@@ -206,8 +202,9 @@ pub fn run() {
     let keychain = keychain_allowed();
     let translocated = std::env::current_exe().map(|exe| web::translocated(&exe)).unwrap_or(false);
     log::info!(
-        "Droppen desktop starting (pid {}, keychain {}{})",
+        "Droppen desktop starting (pid {}, {} {}{})",
         std::process::id(),
+        droppen_desktop_core::credentials::KEYCHAIN,
         if keychain { "on" } else { "off" },
         if translocated { ", run from an App Translocation copy" } else { "" }
     );

@@ -10,16 +10,20 @@
 //! Where it is kept is behind [`KeyStore`] — the seam the future `KeyStore`
 //! interface of `docs/local-aggregator.md` §7.3 grows from:
 //!
-//! * [`KeychainStore`] (macOS): one generic-password item in the user's login
+//! * `KeychainStore` (macOS): one generic-password item in the user's login
 //!   keychain, service [`crate::BUNDLE_ID`], account `local-login:<instance>`.
 //!   The app only ever reads and writes **this one item**, which it created.
+//! * `SecretServiceStore` (Linux), the keychain there: one item in the Secret
+//!   Service's default collection, its attributes `service` and `account` the
+//!   same. It never prompts, and gives up on a Secret Service that does not
+//!   answer in time (`credentials/secret_service.rs`).
 //! * [`FileStore`]: `credentials.json`, 0600, in the app's 0700 support
 //!   directory — the fallback when the keychain will not take or give the item.
 //! * [`LayeredStore`] puts the two together: the keychain first, the file when
 //!   it fails, and the file is removed once the keychain holds the secret.
 //!
 //! Tests and manual test runs turn the keychain off ([`keychain_enabled`]), so
-//! nothing a test does can touch a real keychain.
+//! nothing a test does can touch a real keychain or keyring.
 
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -28,9 +32,19 @@ use std::path::PathBuf;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-/// The environment switch for the keychain: `DROPPEN_DESKTOP_KEYCHAIN=0`
-/// (or `off`, `false`, `no`) keeps the password in the file instead.
+#[cfg(not(target_os = "macos"))]
+pub mod secret_service;
+#[cfg(not(target_os = "macos"))]
+pub use secret_service::SecretServiceStore;
+
+/// The environment switch for the keychain (on Linux, the Secret Service):
+/// `DROPPEN_DESKTOP_KEYCHAIN=0` (or `off`, `false`, `no`) keeps the password
+/// in the file instead.
 pub const KEYCHAIN_ENV: &str = "DROPPEN_DESKTOP_KEYCHAIN";
+
+/// What this platform's keychain is called in the log: its store's
+/// [`KeyStore::kind`].
+pub const KEYCHAIN: &str = if cfg!(target_os = "macos") { "keychain" } else { "Secret Service" };
 
 /// Whether the keychain may be used, from [`KEYCHAIN_ENV`]. On by default.
 pub fn keychain_enabled(value: Option<&str>) -> bool {
@@ -154,11 +168,13 @@ impl KeyStore for FileStore {
 }
 
 /// The macOS keychain: one generic-password item the app itself created.
+#[cfg(target_os = "macos")]
 pub struct KeychainStore {
     service: String,
     account: String,
 }
 
+#[cfg(target_os = "macos")]
 impl KeychainStore {
     /// The item for `instance`'s local login.
     pub fn for_instance(instance: &str) -> Self {
@@ -205,23 +221,13 @@ impl KeyStore for KeychainStore {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-impl KeyStore for KeychainStore {
-    fn kind(&self) -> &'static str {
-        "keychain"
-    }
-
-    fn load(&self) -> Result<Option<Credential>, StoreError> {
-        Err(StoreError("no keychain on this platform".into()))
-    }
-
-    fn save(&self, _credential: &Credential) -> Result<(), StoreError> {
-        Err(StoreError("no keychain on this platform".into()))
-    }
-
-    fn delete(&self) -> Result<(), StoreError> {
-        Ok(())
-    }
+/// This platform's keychain item for `instance`.
+fn keychain_item(instance: &str) -> Box<dyn KeyStore> {
+    #[cfg(target_os = "macos")]
+    let item = KeychainStore::for_instance(instance);
+    #[cfg(not(target_os = "macos"))]
+    let item = SecretServiceStore::for_instance(instance);
+    Box::new(item)
 }
 
 /// The keychain when there is one, the file when it fails.
@@ -247,10 +253,10 @@ impl LayeredStore {
         Self { primary, fallback }
     }
 
-    /// The app's store: the keychain item for `instance` when `keychain` is on,
-    /// over `file`.
+    /// The app's store: the keychain item for `instance` when `keychain` is on
+    /// (on Linux, the Secret Service's), over `file`.
     pub fn for_app(instance: &str, keychain: bool, file: PathBuf) -> Self {
-        let primary: Option<Box<dyn KeyStore>> = keychain.then(|| Box::new(KeychainStore::for_instance(instance)) as Box<dyn KeyStore>);
+        let primary = keychain.then(|| keychain_item(instance));
         Self::new(primary, Box::new(FileStore::new(file)))
     }
 
@@ -347,6 +353,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn the_keychain_item_is_this_builds_own() {
         let item = KeychainStore::for_instance(crate::INSTANCE);
         let expected = if cfg!(feature = "e2e") {
@@ -355,6 +362,11 @@ mod tests {
             ("app.droppen.desktop", "local-login:droppen-app")
         };
         assert_eq!((item.service.as_str(), item.account.as_str()), expected);
+    }
+
+    #[test]
+    fn the_keychain_is_named_in_the_log_as_its_store_is() {
+        assert_eq!(keychain_item(crate::INSTANCE).kind(), KEYCHAIN);
     }
 
     #[test]
