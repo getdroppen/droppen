@@ -4,9 +4,10 @@
 //! `$HOME`, and so is shared by every copy with the same identifier whatever
 //! home it runs under: the web view's data (`~/Library/WebKit/<id>`,
 //! `~/Library/Caches/<id>`), its user defaults and saved window state,
-//! LaunchServices' idea of which app is running, the Keychain item's service,
-//! the launch agent's name, the privacy permissions macOS grants, and the
-//! check that a leftover server is the app's own ([`crate::sidecar`]).
+//! LaunchServices' idea of which app is running, the Keychain item's service
+//! (on Linux, the Secret Service item's), the launch agent's name, the
+//! privacy permissions macOS grants, and the check that a leftover server is
+//! the app's own ([`crate::sidecar`]).
 //!
 //! An end-to-end test build (`desktop/build.sh --e2e`, feature `e2e`) runs on
 //! a Mac where the real Droppen may be running, so it is somebody else
@@ -28,7 +29,8 @@ use crate::dirs::ShellDirs;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
     /// `CFBundleIdentifier` (`identifier` in `tauri.conf.json`); also the
-    /// Keychain service, the support directory's and the launch agent's name.
+    /// Keychain service (the Secret Service item's `service`), the support
+    /// directory's and the launch agent's name.
     pub bundle_id: &'static str,
     /// What the app is called: the bundle's name (`productName`), the logs
     /// folder `~/Library/Logs/<name>`, the menu-bar item's tooltip.

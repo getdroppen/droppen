@@ -27,6 +27,12 @@ minisign-verify = "0.3"
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
 
+# The Secret Service over D-Bus (`src/credentials/secret_service.rs`): the
+# zbus, with the features (its defaults), that Tauri's opener plugin already
+# links on Linux, so the app compiles nothing new for it.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
 [features]
 default = []
 # An end-to-end test build's own identity (`src/identity.rs`): bundle id,

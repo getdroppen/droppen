@@ -284,7 +284,12 @@ password it made up.
    `~/Library/Application Support/app.droppen.desktop/` (0700) instead — on
    Linux, `$XDG_DATA_HOME/app.droppen.desktop/`, by default
    `~/.local/share/app.droppen.desktop/`. The app reads and writes only that
-   item.
+   item. On Linux the keychain is the Secret Service (GNOME Keyring, KWallet,
+   KeePassXC): one item in its default collection, attributes `service`
+   `app.droppen.desktop` and `account` `local-login:droppen-app`. The app
+   never prompts there. If there is no Secret Service, no default collection,
+   only a locked one, or none that answers within 5 s, the password goes to
+   the file instead (`core/src/credentials/secret_service.rs`).
 4. **Only to its own server.** Before the password is sent, the app checks that
    the server answering on the port is its child: the instance's lock (asked of
    the kernel) is held by the child's pid, and the instance's `server.port` —
@@ -422,7 +427,7 @@ whose real Droppen is running without touching it (`core/src/identity.rs`,
 | bundle id — and with it the web view's data, user defaults, saved window state, LaunchServices, privacy permissions, the leftover-server check | `app.droppen.desktop` | `app.droppen.desktop.e2e` |
 | bundle, logs folder, menu-bar tooltip | `Droppen.app`, `~/Library/Logs/Droppen` | `Droppen E2E.app`, `~/Library/Logs/Droppen E2E` |
 | support folder (single-instance lock and socket, `state.json`, `server.pid`, the update's download), launch agent | `…/app.droppen.desktop` | `…/app.droppen.desktop.e2e` |
-| Keychain item | `app.droppen.desktop` / `local-login:droppen-app` | `app.droppen.desktop.e2e` / `local-login:droppen-app-e2e` (and the runs turn the keychain off) |
+| Keychain item (on Linux the Secret Service item's `service` / `account`) | `app.droppen.desktop` / `local-login:droppen-app` | `app.droppen.desktop.e2e` / `local-login:droppen-app-e2e` (and the runs turn the keychain off) |
 | server instance | `droppen-app` | `droppen-app-e2e` |
 | new ports from | 18700–18759 | 18800–18859, never one of the release's |
 | `$HOME` | the account's | refused: only a throwaway one (on Linux, with any `$XDG_DATA_HOME` / `$XDG_STATE_HOME` inside it) |
