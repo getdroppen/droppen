@@ -39,6 +39,9 @@ pub struct Identity {
     pub instance: &'static str,
     /// Where a new port is chosen from ([`crate::port::RANGE`]).
     pub ports: RangeInclusive<u16>,
+    /// The Linux autostart entry's file name: the bundle id is already a
+    /// `.desktop` name, and `<bundle id>.desktop` would say it twice.
+    pub autostart: &'static str,
 }
 
 /// The released app.
@@ -47,6 +50,7 @@ pub const RELEASE: Identity = Identity {
     name: "Droppen",
     instance: "droppen-app",
     ports: 18700..=18759,
+    autostart: "droppen.desktop",
 };
 
 /// An end-to-end test build: nothing in common with [`RELEASE`].
@@ -55,6 +59,7 @@ pub const E2E: Identity = Identity {
     name: "Droppen E2E",
     instance: "droppen-app-e2e",
     ports: 18800..=18859,
+    autostart: "droppen-e2e.desktop",
 };
 
 /// This build's identity.
@@ -79,6 +84,7 @@ const fn same(a: &str, b: &str) -> bool {
 const _: () = assert!(!same(E2E.bundle_id, RELEASE.bundle_id));
 const _: () = assert!(!same(E2E.name, RELEASE.name));
 const _: () = assert!(!same(E2E.instance, RELEASE.instance));
+const _: () = assert!(!same(E2E.autostart, RELEASE.autostart));
 const _: () = assert!(*E2E.ports.start() > *RELEASE.ports.end() || *E2E.ports.end() < *RELEASE.ports.start());
 
 /// An end-to-end build refuses to run unless `$HOME` (`dirs.home`) is a folder
@@ -86,9 +92,10 @@ const _: () = assert!(*E2E.ports.start() > *RELEASE.ports.end() || *E2E.ports.en
 /// [`crate::dirs::account_home`]), nor a folder above it. Under the real home
 /// it would share the release's `~/Library/LaunchAgents`, `~/Downloads` and
 /// the machine-wide files of the server's data directory. Nor unless its
-/// support folder and logs are inside that folder: on Linux an
-/// `$XDG_DATA_HOME` or `$XDG_STATE_HOME` elsewhere — a shell may export the
-/// account's — would put them there, and Tauri the web view's data too.
+/// support folder, logs and config folder are inside that folder: on Linux an
+/// `$XDG_DATA_HOME`, `$XDG_STATE_HOME` or `$XDG_CONFIG_HOME` elsewhere — a
+/// shell may export the account's — would put them there, and Tauri the web
+/// view's data too.
 pub fn check_scratch_home(dirs: &ShellDirs, account: Option<&Path>) -> Result<(), String> {
     let home = &dirs.home;
     if !home.is_absolute() {
@@ -105,7 +112,11 @@ pub fn check_scratch_home(dirs: &ShellDirs, account: Option<&Path>) -> Result<()
             scratch.display()
         ));
     }
-    for (variable, dir) in [("XDG_DATA_HOME", &dirs.support), ("XDG_STATE_HOME", &dirs.logs)] {
+    for (variable, dir) in [
+        ("XDG_DATA_HOME", &dirs.support),
+        ("XDG_STATE_HOME", &dirs.logs),
+        ("XDG_CONFIG_HOME", &dirs.config),
+    ] {
         let inside = dir
             .strip_prefix(home)
             .is_ok_and(|rest| rest.components().all(|part| matches!(part, Component::Normal(_))));
@@ -351,14 +362,18 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let account = root.path().join("home/someone");
         let scratch = root.path().join("tmp/run/home");
-        let xdg = |data: &Path, state: &Path| Xdg::from_values(Some(data.into()), Some(state.into()));
+        let xdg = |data: &Path, state: &Path, config: &Path| Xdg::from_values(Some(data.into()), Some(state.into()), Some(config.into()));
         let check = |xdg: &Xdg| check_scratch_home(&ShellDirs::with_xdg(&scratch, xdg), Some(&account));
-        assert_eq!(check(&xdg(&scratch.join("share"), &scratch.join("state"))), Ok(()));
+        assert_eq!(
+            check(&xdg(&scratch.join("share"), &scratch.join("state"), &scratch.join("config"))),
+            Ok(())
+        );
         // The account's own, or one that climbs out.
         for outside in [
-            xdg(&account.join(".local/share"), &scratch.join("state")),
-            xdg(&scratch.join("share"), &account.join(".local/state")),
-            xdg(&scratch.join("../share"), &scratch.join("state")),
+            xdg(&account.join(".local/share"), &scratch.join("state"), &scratch.join("config")),
+            xdg(&scratch.join("share"), &account.join(".local/state"), &scratch.join("config")),
+            xdg(&scratch.join("share"), &scratch.join("state"), &account.join(".config")),
+            xdg(&scratch.join("../share"), &scratch.join("state"), &scratch.join("config")),
         ] {
             if cfg!(target_os = "macos") {
                 assert_eq!(check(&outside), Ok(()), "macOS reads no XDG variable");
