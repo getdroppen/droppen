@@ -1,3 +1,5 @@
+mod build_config;
+
 fn main() {
     // `cargo build` / `cargo test` of a checkout that has never run build.sh:
     // Tauri insists the sidecar exists, so a debug build gets a placeholder that
@@ -26,9 +28,11 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest)).expect("tauri build script");
 }
 
-/// The bundle identifier this build gets — `tauri.conf.json`, the platform's
-/// `tauri.macos.conf.json` if there is one, then `TAURI_CONFIG` (what
-/// `cargo tauri build --config …` merges in, e.g. `tauri.e2e.conf.json`) —
+/// The bundle identifier this build gets — `tauri.conf.json`, the target
+/// platform's own file if there is one (`tauri.macos.conf.json`,
+/// `tauri.linux.conf.json`: [`build_config::platform_config`]), then
+/// `TAURI_CONFIG` (what `cargo tauri build --config …` merges in, e.g.
+/// `tauri.e2e.conf.json`) —
 /// must be the identity the app is compiled with (`core/src/identity.rs`:
 /// `RELEASE`, or `E2E` with the `e2e` feature). The app refuses to start when
 /// they differ, so a mismatch would ship an app that exits on every launch,
@@ -38,8 +42,9 @@ fn main() {
 fn check_identity() {
     use serde_json::Value;
 
+    let platform = build_config::platform_config(&std::env::var("TARGET").expect("TARGET"));
     println!("cargo:rerun-if-changed=tauri.conf.json");
-    println!("cargo:rerun-if-changed=tauri.macos.conf.json");
+    println!("cargo:rerun-if-changed={platform}");
     println!("cargo:rerun-if-changed=../core/src/identity.rs");
     println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
 
@@ -50,17 +55,13 @@ fn check_identity() {
     let merged = std::env::var("TAURI_CONFIG")
         .ok()
         .map(|text| serde_json::from_str::<Value>(&text).unwrap_or_else(|error| panic!("TAURI_CONFIG: {error}")));
-    let identifier = [read("tauri.conf.json"), read("tauri.macos.conf.json"), merged]
-        .into_iter()
-        .flatten()
-        .filter_map(|config| config.get("identifier").and_then(Value::as_str).map(str::to_string))
-        .last()
-        .expect("tauri.conf.json names an identifier");
+    let configs: Vec<Value> = [read("tauri.conf.json"), read(platform), merged].into_iter().flatten().collect();
+    let identifier = build_config::identifier(&configs).expect("tauri.conf.json names an identifier");
 
     let e2e = std::env::var_os("CARGO_FEATURE_E2E").is_some();
     let identity = if e2e { "E2E" } else { "RELEASE" };
     let source = std::fs::read_to_string("../core/src/identity.rs").expect("../core/src/identity.rs");
-    let expected = bundle_id_of(&source, identity).unwrap_or_else(|| panic!("no bundle_id for {identity} in core/src/identity.rs"));
+    let expected = build_config::bundle_id_of(&source, identity).unwrap_or_else(|| panic!("no bundle_id for {identity} in core/src/identity.rs"));
     if identifier == expected {
         return;
     }
@@ -74,12 +75,4 @@ fn check_identity() {
     } else {
         panic!("{message}");
     }
-}
-
-/// `bundle_id: "…"` of `pub const <name>: Identity = Identity { … };`.
-fn bundle_id_of(source: &str, name: &str) -> Option<String> {
-    let start = source.find(&format!("pub const {name}: Identity = Identity {{"))?;
-    let block = &source[start..start + source[start..].find("};")?];
-    let line = block.lines().find_map(|line| line.trim().strip_prefix("bundle_id: \""))?;
-    Some(line.strip_suffix("\",")?.to_string())
 }
