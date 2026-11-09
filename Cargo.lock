@@ -1695,7 +1695,7 @@ version = "0.1.0"
 
 [[package]]
 name = "droppen-server"
-version = "0.2.137"
+version = "0.2.138"
 dependencies = [
  "axum",
  "clap",
