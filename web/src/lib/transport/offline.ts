@@ -6,7 +6,8 @@
  *
  * - `GET /api/sessions`, a session's detail and its history pages, settings,
  *   accounts and quota come from the copy. A session's state says it cannot
- *   send, and why (`sendBlockReason`), which the composer already shows.
+ *   send, and why (`sendBlockReason`), which the composer already shows, and
+ *   is marked as the copy's (`fromCopy`, {@link offlineState}).
  * - A session's search and its first unread message are worked out over the
  *   copy's items as the machine works them out over the transcript
  *   (`offline-search.ts`); a seen report records nothing but answers with the
@@ -106,7 +107,14 @@ function rowsOf(source: OfflineSource, opts: OfflineOptions): SessionSummary[] {
   return opts.machineOnline?.() ? rows : rows.map(restingRow);
 }
 
-/** The state half of a session as the offline copy has it: read-only. */
+/**
+ * The state half of a session as the offline copy has it: read-only, and
+ * marked as the copy's (`fromCopy`), as its settings are. The copy cannot
+ * say what the session runs with, the account it runs on or its context, so
+ * the page shows none of them (`useMachineStateIn`) until the machine's own
+ * state replaces this one, which the page then waits for when it reaches the
+ * machine again.
+ */
 export function offlineState(row: SessionSummary, reason: string) {
   return {
     summary: row,
@@ -121,6 +129,7 @@ export function offlineState(row: SessionSummary, reason: string) {
     rotation: null,
     receipts: [],
     questions: [],
+    fromCopy: true as const,
   };
 }
 

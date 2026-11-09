@@ -32,7 +32,8 @@ type SessionSummary = components["schemas"]["SessionSummary"];
  * message sent now would go out under the defaults rather than the session's
  * own choice. Nor does anything show what only that state can say — the
  * composer's model, effort and permission, its quota and context, and the
- * header's account (`session-detail.tsx`) — rather than the defaults.
+ * header's account — rather than the defaults (`useMachineStateIn`,
+ * `features/machines/copy-mode.ts`), as on the copy itself.
  */
 
 /** What of a session's copy its window is cut from: `SessionCopy`, `lib/hub/mirror.ts`. */

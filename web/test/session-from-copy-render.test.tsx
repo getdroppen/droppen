@@ -6,6 +6,12 @@
 // the one asked for. They come in with the machine's state, as the composer's
 // choice, quota and context do (`composer-from-copy.test.tsx`).
 //
+// So on the copy itself, the machine away: the real offline transport serves
+// the session (`lib/transport/offline.ts`), and the header names no account
+// and no drift; back on the machine, they come in with its state and not
+// before. Another device in the local app's gateway, read from its copy the
+// same way, names neither either.
+//
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
 import * as React from "react";
@@ -39,10 +45,16 @@ const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query
 const router = await import("@tanstack/react-router");
 const { GlobalFeedProvider } = await import("../src/app/global-feed.js");
 const { MachineProvider } = await import("../src/lib/machines/context.js");
+const { LOCAL } = await import("../src/lib/machines/key.js");
 const registry = await import("../src/lib/machines/registry.js");
 const { constantStore } = await import("../src/lib/machines/store.js");
 const { SessionDetail } = await import("../src/features/sessions/session-detail.js");
+const { feedHubFor } = await import("../src/app/global-feed.js");
+const { offlineTransport } = await import("../src/lib/transport/offline.js");
+const { SwitchingTransport } = await import("../src/lib/transport/switching.js");
+const { openGatewayMachine } = await import("../src/lib/machines/shells/gateway.js");
 type Transport = import("../src/lib/transport/types.js").Transport;
+type OfflineSource = import("../src/lib/transport/offline.js").OfflineSource;
 type AppShell = import("../src/lib/machines/runtime.js").AppShell;
 type MachineInfo = import("../src/lib/machines/runtime.js").MachineInfo;
 
@@ -137,17 +149,46 @@ const shell = {
   setMain: () => undefined,
 };
 
+/**
+ * The machine's offline copy as the offline transport reads it: the list's
+ * row, the session's copy, and the status it last wrote, with the account
+ * the session runs on among its accounts.
+ */
+const copySource: OfflineSource = {
+  whenLoaded: async () => undefined,
+  rows: () => [row as never],
+  row: (source, id) => mirror.row(source, id) as never,
+  status: {
+    state: {
+      asOf: 1,
+      settings: null,
+      accounts: { accounts: [{ ...ACCOUNT, kind: "oauth_token", provider: "claude" }], defaultAccountId: null },
+      quota: { accounts: [], claude: null, codex: null },
+      cli: null,
+      mkEpoch: null,
+    },
+  },
+  session: async (source, id) => mirror.sessionNow(source, id) as never,
+  sessionNow: (source, id) => mirror.sessionNow(source, id) as never,
+  sessionProgress: () => null,
+  onSessionProgress: () => () => undefined,
+  touch: () => undefined,
+  onChange: () => () => undefined,
+};
+const offlineOptions = { user: "cloud:browser", messages: { readOnly: "read-only copy", noCopy: "no copy here", unavailable: "unavailable" }, machineOnline: () => false };
+const driver = (info: MachineInfo) => ({ info: constantStore(info), ensureLive: () => undefined, hold: () => () => undefined, dispose: () => undefined });
+
 /** The session view, routed as the app routes it, on the machine's own page. */
 async function mount(sockets: FakeSocket[]) {
-  registry.openMachine(MACHINE, device(sockets), {
-    info: constantStore(INFO),
-    ensureLive: () => undefined,
-    hold: () => () => undefined,
-    dispose: () => undefined,
-  });
+  registry.openMachine(MACHINE, device(sockets), driver(INFO));
   registry.setShell("hub", MACHINE);
   registry.setCurrentShell(shell as unknown as AppShell);
   localStorage.clear();
+  return render(MACHINE);
+}
+
+/** The session view, routed as the app routes it, on `machine`'s page. */
+async function render(machine: string) {
   const rootRoute = router.createRootRoute({ component: () => <router.Outlet /> });
   const detailRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "sessions/$source/$id", component: SessionDetail });
   const listRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "sessions", component: () => null });
@@ -164,7 +205,7 @@ async function mount(sockets: FakeSocket[]) {
   await React.act(async () => {
     page.render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <MachineProvider machine={MACHINE}>
+        <MachineProvider machine={machine}>
           <GlobalFeedProvider>
             <router.RouterProvider router={routes} />
           </GlobalFeedProvider>
@@ -214,5 +255,74 @@ test("drawn from the copy, the header names no account and no model drift until 
   assert.doesNotMatch(metadataWords(), /no account/);
   await until("the model drift the machine's state shows", () => drift() !== null);
   assert.equal(drift()!.getAttribute("aria-label"), "requested opus, actually running claude-sonnet-5");
+  assert.deepEqual(errors, []);
+});
+
+test("on the copy, the machine away, the header names no account and no model drift; back on the machine, they come with its state and not before", async (t) => {
+  const AWAY = "travel-air";
+  const sockets: FakeSocket[] = [];
+  const info: MachineInfo = { key: AWAY, name: AWAY, state: "offline", since: 0, canManage: true, live: "copy" };
+  // Cloud mode's transport while the machine is away: every read and the
+  // session's feed answered by the offline transport over its copy.
+  const transport = new SwitchingTransport({ live: device(sockets), offline: offlineTransport(copySource, offlineOptions) }, "offline");
+  registry.openMachine(AWAY, transport, driver(info));
+  registry.setShell("hub", AWAY);
+  registry.setCurrentShell({
+    ...shell,
+    home: AWAY,
+    machines: () => constantStore<readonly MachineInfo[]>([info]),
+    machine: (key: string | null | undefined) => (key === AWAY ? { mirror, transport } : null),
+  } as unknown as AppShell);
+  localStorage.clear();
+  const { page, errors } = await render(AWAY);
+  t.after(() => page.unmount());
+  await until("the transcript the copy serves", () => (container.textContent ?? "").includes("item 2"));
+  // Long enough for the accounts (the copy's) and the stored choices (refused) to be in.
+  await settle(150);
+  assert.match(metadataWords(), /main/, "the list's own facts are there");
+  assert.doesNotMatch(metadataWords(), /no account|local|work/, "but no account: not \"no account\" over a session bound to one");
+  assert.equal(drift(), null, "and no word on the model it ran");
+
+  // The machine is back: the page goes to it, and its socket reconnects at once, as the shell has it on a switch.
+  await React.act(async () => {
+    transport.setMode("live");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    feedHubFor(AWAY).kick();
+  });
+  await until("the machine's socket", () => sockets.some((s) => s.url.startsWith("/api/events")));
+  const hub = sockets.find((s) => s.url.startsWith("/api/events"))!;
+  await React.act(async () => hub.open());
+  await until("the session's subscription", () => hub.sent.some((m) => m.type === "sub"));
+  const sub = (hub.sent.find((m) => m.type === "sub")!.feeds as { sub: number; since?: number; fp?: string }[])[0]!;
+  assert.deepEqual([sub.since, sub.fp], [3, "fp0"], "resumed from the copy's own marker");
+  await React.act(async () => {
+    hub.frame({ type: "hello" });
+    hub.frame({ sub: sub.sub, type: "delta", sig: "live:1", fromIndex: 3, items: [], endIndex: 3, totalItems: 3, prefixFp: "fp0" });
+  });
+  await settle(150);
+  assert.doesNotMatch(metadataWords(), /no account|local|work/, "the copy's state still held after the delta: still no account");
+  assert.equal(drift(), null);
+  await React.act(async () => hub.frame({ sub: sub.sub, ...stateFrame }));
+  await until("the account the session runs on", () => metadataWords().includes(ACCOUNT.label));
+  await until("the model drift the machine's state shows", () => drift() !== null);
+  assert.deepEqual(errors, []);
+});
+
+test("another device in the local app's gateway, read from its copy, names no account and no model drift in the header", async (t) => {
+  const OTHER = "m-studio";
+  const info: MachineInfo = { key: OTHER, name: "studio", state: "online", since: 0, canManage: false, live: "copy", readOnly: true };
+  registry.setCurrentShell(null);
+  registry.setShell("local", LOCAL);
+  // The gateway reads another device through the same offline transport, over the copy the install holds.
+  openGatewayMachine(OTHER, offlineTransport(copySource, { ...offlineOptions, machineOnline: () => true }), driver(info));
+  localStorage.clear();
+  const { page, errors } = await render(OTHER);
+  t.after(() => page.unmount());
+  await until("the transcript its copy serves", () => (container.textContent ?? "").includes("item 2"));
+  await settle(150);
+  assert.match(metadataWords(), /studio/, "the device it is on");
+  assert.match(metadataWords(), /main/);
+  assert.doesNotMatch(metadataWords(), /no account|local|work/, "no account: the copy does not say the device's");
+  assert.equal(drift(), null);
   assert.deepEqual(errors, []);
 });
