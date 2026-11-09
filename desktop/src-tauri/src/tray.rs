@@ -5,14 +5,27 @@
 //! Droppen is, open the window, open the page in this device's browser, the
 //! update and its release notes, start at login (with a line to System
 //! Settings → Login Items when macOS needs the user there,
-//! [`crate::login_item`]), quit. Quit is the one way to stop the server;
-//! closing the window is not.
+//! [`crate::login_item`]), quit. Quit stops the server; closing the window
+//! hides it where a tray host would bring it back (see below).
 //!
 //! App menu: the standard macOS menus, in the system's language, plus Reload —
 //! a web view has no address bar to reload from — and the same update items
 //! under *About Droppen* ([`crate::updater`]). macOS only: on Linux it would
 //! be a menu bar inside every window, half of whose items GTK does not have,
-//! and the web view's own editing keys work without it.
+//! and the web view's own editing keys work without it (Ctrl+R and F5 reload
+//! the page there, `init.js`).
+//!
+//! The mark is macOS's black template image, which the system tints for a
+//! light or dark menu bar. A Linux panel draws the image as it is, so there
+//! the mark is white on the app's near-black tile: it reads on a light panel
+//! as the tile and on a dark one as the mark.
+//!
+//! Linux desktops may have no tray host at all (stock GNOME without the
+//! AppIndicator extension), and the item is a StatusNotifierItem, which an
+//! XEmbed-only tray could not show either: [`host_present`] asks the session
+//! bus for an `org.kde.StatusNotifierWatcher` owner. Without one nothing
+//! would bring the window back, so closing it quits ([`quit_without_tray`])
+//! and a launch at login shows the window instead of starting invisibly.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -38,6 +51,124 @@ const AUTOSTART: &str = "autostart";
 const LOGIN_ITEMS: &str = "login-items";
 const QUIT: &str = "quit";
 const RELOAD: &str = "reload";
+
+/// The mark alone: macOS's black template image (the system tints it), and
+/// Linux's white mark on its tile (`icons-src/tray.svg`, `tray-linux.svg`).
+#[cfg(target_os = "macos")]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray.png");
+#[cfg(not(target_os = "macos"))]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray-linux.png");
+
+/// The mark with the update dot (`icons-src/tray-update.svg`,
+/// `tray-update-linux.svg`).
+#[cfg(target_os = "macos")]
+const TRAY_UPDATE_ICON: &[u8] = include_bytes!("../icons/tray-update.png");
+#[cfg(not(target_os = "macos"))]
+const TRAY_UPDATE_ICON: &[u8] = include_bytes!("../icons/tray-update-linux.png");
+
+/// Whether a tray host is there to show the item: macOS's menu bar, or on
+/// Linux an owner of `org.kde.StatusNotifierWatcher` on the session bus.
+///
+/// Only the Status Notifier watcher counts: the item is a StatusNotifierItem,
+/// so an XEmbed-only tray could not show it anyway, and treating that as "no
+/// tray" is the honest answer. A bus that cannot be reached, or does not
+/// answer within a second, is no host: the calls are cheap, but a close
+/// should not wait long for one.
+pub fn host_present() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        sni_watcher_present()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+/// How long a close may wait for the bus: the whole probe, connect and auth
+/// handshake included. `method_timeout` bounds the `NameHasOwner` call only,
+/// and a bus that accepts the socket and then stalls never answers the
+/// handshake, so the probe runs on a thread of its own and this is the wait
+/// (`credentials/secret_service.rs`, L3, for the same reason).
+#[cfg(target_os = "linux")]
+const TRAY_HOST_DEADLINE: Duration = Duration::from_secs(1);
+
+/// Ask the session bus whether anything owns the Status Notifier watcher's
+/// name. Main thread safe: it waits at most [`TRAY_HOST_DEADLINE`] for the
+/// thread doing the round trip; a thread still stuck after that is left to
+/// finish or fail on its own, and reads as no host now.
+#[cfg(target_os = "linux")]
+fn sni_watcher_present() -> bool {
+    sni_watcher_present_at(None)
+}
+
+/// [`sni_watcher_present`]'s wait around [`sni_watcher_at`], for the session
+/// bus or `address` (a test's).
+#[cfg(target_os = "linux")]
+fn sni_watcher_present_at(address: Option<&str>) -> bool {
+    use std::sync::mpsc;
+
+    let address = address.map(str::to_string);
+    let (done, outcome) = mpsc::sync_channel(1);
+    let spawned = std::thread::Builder::new().name("tray-host".into()).spawn(move || {
+        let _ = done.send(sni_watcher_at(address.as_deref()));
+    });
+    if let Err(error) = spawned {
+        log::info!("no tray host: {error}");
+        return false;
+    }
+    match outcome.recv_timeout(TRAY_HOST_DEADLINE) {
+        Ok(Ok(present)) => present,
+        Ok(Err(error)) => {
+            log::info!("no tray host: {error}");
+            false
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            log::info!("no tray host: the session bus did not answer within {}s", TRAY_HOST_DEADLINE.as_secs());
+            false
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            log::info!("no tray host: the bus check ended without an answer");
+            false
+        }
+    }
+}
+
+/// The round trip itself: `address` is the session bus, or a test's bus.
+#[cfg(target_os = "linux")]
+fn sni_watcher_at(address: Option<&str>) -> zbus::Result<bool> {
+    let builder = match address {
+        Some(address) => zbus::blocking::connection::Builder::address(address)?,
+        None => zbus::blocking::connection::Builder::session()?,
+    };
+    let bus = builder.method_timeout(TRAY_HOST_DEADLINE).build()?;
+    let reply = bus.call_method(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        Some("org.freedesktop.DBus"),
+        "NameHasOwner",
+        &("org.kde.StatusNotifierWatcher",),
+    )?;
+    reply.body().deserialize()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn a_bus_that_never_answers_is_no_tray_host() {
+        // Takes the connection and says nothing, not even to the handshake.
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("silent-bus");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        let address = format!("unix:path={}", path.display());
+        let started = Instant::now();
+        assert!(!sni_watcher_present_at(Some(address.as_str())), "a silent bus has no watcher");
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    }
+}
 
 /// The menu items that change after start-up.
 struct Items<R: Runtime> {
@@ -115,10 +246,9 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: 
         menu.insert(item, UPDATE_ITEMS_POSITION + offset)?;
     }
     TrayIconBuilder::with_id(TRAY)
-        // TODO(linux: L6): a template image is macOS's; a Linux panel draws the
-        // black mark as it is, which a dark panel hides.
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-        .icon_as_template(true)
+        .icon(Image::from_bytes(TRAY_ICON)?)
+        // A template image is the system's to tint: macOS only.
+        .icon_as_template(cfg!(target_os = "macos"))
         // "Droppen", or "Droppen E2E" for an end-to-end test build beside it.
         .tooltip(droppen_desktop_core::identity::THIS.name)
         .menu(&menu)
@@ -375,18 +505,22 @@ pub fn quit<R: Runtime>(app: &AppHandle<R>) {
     app.exit(0);
 }
 
+/// What closing the window does on Linux with no tray host: the same quit,
+/// stopping the server — nothing would bring the window back, so leaving the
+/// app running invisibly would not be honest.
+pub fn quit_without_tray<R: Runtime>(app: &AppHandle<R>) {
+    log::info!("closing the window with no tray host: quitting");
+    app.exit(0);
+}
+
 /// The mark with a dot when an update is ready to install, the mark alone
 /// otherwise (`icons-src/tray-update.svg`, `tray.svg`). Main thread.
 pub fn show_update_dot<R: Runtime>(app: &AppHandle<R>, dot: bool) {
     let Some(tray) = app.tray_by_id(TRAY) else { return };
-    let bytes: &[u8] = if dot {
-        include_bytes!("../icons/tray-update.png")
-    } else {
-        include_bytes!("../icons/tray.png")
-    };
+    let bytes = if dot { TRAY_UPDATE_ICON } else { TRAY_ICON };
     if let Ok(icon) = Image::from_bytes(bytes) {
         let _ = tray.set_icon(Some(icon));
-        let _ = tray.set_icon_as_template(true);
+        let _ = tray.set_icon_as_template(cfg!(target_os = "macos"));
     }
 }
 

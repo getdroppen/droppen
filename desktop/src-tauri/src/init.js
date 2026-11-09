@@ -25,11 +25,14 @@
 //      language the app does not speak, while the app's menus take the first
 //      one it does (src-tauri/src/i18n.rs). Only on the app's own pages: the
 //      start-up page (tauri:), a new window's about:blank, and the server's
-//      http://127.0.0.1; any other page keeps WebKit's one language.
+//      http://127.0.0.1; any other page keeps WebKit's one language;
+//   6. on Linux, where there is no app menu, Ctrl+R and F5 reload the app's
+//      pages, as View > Reload does on macOS (src-tauri/src/window.rs).
 //
 // __DROPPEN_NONCE__ is replaced with this launch's nonce when the window is made,
 // __DROPPEN_BRIDGE__ with the update bridge's own token (part 4),
-// __DROPPEN_LANGUAGES__ with the system's languages, comma-separated (part 5).
+// __DROPPEN_LANGUAGES__ with the system's languages, comma-separated (part 5),
+// __DROPPEN_RELOAD_KEYS__ with true on Linux, false elsewhere (part 6).
 //
 // It runs on any http://127.0.0.1 page, whatever its port: the server's port
 // can change while the window lives, and this script is fixed when the window
@@ -80,6 +83,27 @@
     } catch (e) {
       // WebKit's one language stays
     }
+  }
+
+  // 6. Ctrl+R and F5, on the app's pages only (Linux: no app menu has the
+  //    Reload item). Capture, so the page cannot swallow them first.
+  if (__DROPPEN_RELOAD_KEYS__ && (server || location.protocol === "tauri:")) {
+    window.addEventListener(
+      "keydown",
+      function (event) {
+        var ctrlR =
+          (event.ctrlKey || event.metaKey) &&
+          !event.altKey &&
+          !event.shiftKey &&
+          (event.key === "r" || event.key === "R");
+        var f5 = event.key === "F5" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+        if (ctrlR || f5) {
+          event.preventDefault();
+          location.reload();
+        }
+      },
+      true,
+    );
   }
 
   if (!server) return;

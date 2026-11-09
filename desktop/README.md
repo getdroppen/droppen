@@ -23,7 +23,16 @@ app's first-run guide offers, does not run on anything older.
 - **Closing the window** leaves Droppen running in the menu bar. The menu-bar
   item shows the unread count and has *Open Droppen*, *Open in Browser*, the
   update item and *Release Notes*, *Start at Login* and *Quit Droppen*. The
-  Dock icon brings the window back too.
+  Dock icon brings the window back too. On Linux the item is a
+  StatusNotifierItem and only a desktop with a tray host shows it (GNOME needs
+  its AppIndicator extension; an XEmbed-only tray cannot show it): with no
+  host, closing the window quits — stopping the server as *Quit Droppen* does
+  — and a launch at login shows the window instead of starting invisibly. The
+  host is asked again at each close and at login, so one started meanwhile
+  counts. The Linux icon is the mark in white on the app's near-black tile, so
+  it reads on light and dark panels; on macOS it stays the black template
+  image the system tints. Without a GTK menu bar on Linux, Ctrl+R and F5
+  reload the window (`src-tauri/src/init.js`).
 - **Open in Browser** asks the server, with the window's own login, for a
   one-time token (`POST /api/auth/local-open/grant`; single use, 60 s) and
   opens the default browser at the page with it, signed in as this device's

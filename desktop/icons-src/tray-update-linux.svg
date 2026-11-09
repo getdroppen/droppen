@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <!-- tray-linux.svg with the update dot: the web app's warning amber, with a
+       tile-coloured ring that separates it from the white mark on a light
+       panel; on a dark one its colour does. -->
+  <rect x="2" y="2" width="40" height="40" rx="9" ry="9" fill="#0a0a0a"/>
+  <g transform="translate(8.46 8.46) scale(0.846)">
+    <path d="M3 3H16A13 13 0 1 1 3 16Z" fill="#ffffff"/>
+  </g>
+  <circle cx="35" cy="9" r="5.5" fill="#0a0a0a"/>
+  <circle cx="35" cy="9" r="4" fill="#f2a20c"/>
+</svg>

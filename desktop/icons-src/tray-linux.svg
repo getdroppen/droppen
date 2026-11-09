@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+  <!-- The mark in white on the app's near-black tile. A Linux panel draws the
+       image as it is (no template tint), so this reads on a light panel as the
+       tile and on a dark one as the white mark. -->
+  <rect x="2" y="2" width="40" height="40" rx="9" ry="9" fill="#0a0a0a"/>
+  <g transform="translate(8.46 8.46) scale(0.846)">
+    <path d="M3 3H16A13 13 0 1 1 3 16Z" fill="#ffffff"/>
+  </g>
+</svg>
