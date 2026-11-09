@@ -943,6 +943,7 @@ version = "0.1.0"
 dependencies = [
  "block2",
  "droppen-desktop-core",
+ "gio",
  "libc",
  "log",
  "minisign-verify",

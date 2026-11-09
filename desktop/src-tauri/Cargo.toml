@@ -68,5 +68,11 @@ block2 = "0.6"
 objc2-web-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKSnapshotConfiguration"] }
 objc2-app-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSBitmapImageRep", "NSGraphics", "NSImage", "NSImageRep", "NSMenu", "NSResponder", "NSStatusItem", "NSView", "NSWindow"] }
 
+# The version gtk and webkit2gtk already link, so nothing new is compiled:
+# *Open in Browser*'s hand-off on Linux (`linux_browser.rs`) — the default
+# browser, the document portal and the launch, through GIO.
+[target.'cfg(target_os = "linux")'.dependencies]
+gio = "0.18"
+
 [lints]
 workspace = true

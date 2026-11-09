@@ -12,6 +12,8 @@
 //! * [`login_item`] — *Start at Login*: `SMAppService` for a signed app, the
 //!   launch agent for one that is not;
 //! * [`sign_in`] — signing in to Droppen through the system browser;
+//! * `linux_browser` — *Open in Browser*'s hand-off on Linux: the sign-in in
+//!   a page only this user can read, for the default browser;
 //! * [`i18n`] — their words;
 //! * [`updater`] — the app's own updates, from the signed releases: checked
 //!   and downloaded quietly, installed at the next quit;
@@ -30,6 +32,8 @@
 //!   of the URL-fragment and title contract of `droppen_desktop_core::web`.
 
 pub mod i18n;
+#[cfg(target_os = "linux")]
+pub mod linux_browser;
 pub mod login_item;
 pub mod shell;
 pub mod sign_in;
@@ -178,7 +182,11 @@ pub fn run() {
         single::claim(&dirs.support)
     };
     let (_single_lock, single_listener) = match claimed {
-        Ok(Claim::First { lock, listener }) => (Some(lock), listener),
+        Ok(Claim::First { lock, listener }) => {
+            #[cfg(target_os = "linux")]
+            linux_browser::remove_earlier_pages();
+            (Some(lock), listener)
+        }
         // Opened at login while already running (both a login item and a
         // leftover launch agent, say): stay out of the way, no window.
         Ok(Claim::Running) if std::env::args().any(|arg| arg == AUTOSTART_ARG) => {
