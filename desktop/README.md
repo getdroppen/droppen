@@ -424,6 +424,15 @@ again and refuse an app whose files are missing or fail it. A `--sidecar`
 must be the server of the same ref: its `--version` must say `<version>+g<rev>`
 of that commit.
 
+On Linux, Tauri merges `src-tauri/tauri.linux.conf.json` over
+`tauri.conf.json` (each platform's own file; `src-tauri/build.rs` reads the
+same one for its identity check): a `.deb` and an AppImage instead of the app
+and the DMG, `droppen` as the publisher (the `.deb`'s maintainer) for now, the
+`devel` section, no GStreamer plugins in the AppImage (the web app plays no
+media), and the icons without the `@2x` one, which Tauri would install as the
+scale-2 icon of its size (`hicolor/256x256@2`, where a 512-pixel image
+belongs) rather than as the 256-pixel one. No release builds them yet.
+
 Run the unit tests with `cargo test --workspace` here (`core/` holds everything
 testable without a window: port, PATH, the sidecar's lifecycle, instance
 ownership and the listener proof, the credential stores, the login calls, the
@@ -505,7 +514,9 @@ Icons: `icons-src/*.svg` (the mark from `web/public`), rendered with
 `rsvg-convert -w 1024 -h 1024 icons-src/app-icon.svg -o /tmp/app-icon.png &&
 cargo tauri icon /tmp/app-icon.png -o src-tauri/icons` and
 `rsvg-convert -w 44 -h 44 icons-src/tray.svg -o src-tauri/icons/tray.png`
-(keep only the macOS sizes the config lists).
+(keep only the sizes the configs list), then
+`cp src-tauri/icons/128x128@2x.png src-tauri/icons/256x256.png` for Linux's
+config.
 
 ## Signing in to Droppen
 
