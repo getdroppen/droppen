@@ -17,7 +17,7 @@ import { digestOf, filesOf, FORMAT, workerProblems as manifestWorkerProblems } f
 
 const script = process.env.VERIFY_WEB_SCRIPT ?? fileURLToPath(new URL("./verify-web.mjs", import.meta.url));
 const manifestScript = fileURLToPath(new URL("./web-manifest.mjs", import.meta.url));
-const { CANONICAL_HUB, checkedRedirect, markerProblem, pagePolicy, RETIRING_WORKER, scriptPolicy, siteApiOrigin, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
+const { CANONICAL_HUB, checkedRedirect, indexToRoot, markerProblem, pagePolicy, RETIRING_WORKER, scriptPolicy, siteApiOrigin, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
 
 /** `text` as a regular expression that matches it literally: every special escaped. */
 const escapeRegExp = (text) => text.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
@@ -93,6 +93,28 @@ describe("a redirect", () => {
       assert.equal(checkedRedirect(location, from, path, sites), null, `${from}${path} → ${location}`);
     }
     assert.equal(checkedRedirect("https://my.droppen.app/link", "https://droppen.app", "/link", ["https://droppen.app"]), null, "a site this run does not check");
+  });
+  test("/index.html to / on the same site is a static host's, checked as that route", () => {
+    for (const location of ["/", "https://my.droppen.app/", "https://MY.droppen.app:443/", "./"]) {
+      assert.equal(indexToRoot(location, "https://my.droppen.app", "/index.html"), true, location);
+    }
+  });
+  test("anything else from /index.html, or from another path, is not", () => {
+    for (const [location, path] of [
+      ["/?x=1", "/index.html"],
+      ["/#top", "/index.html"],
+      ["/download", "/index.html"],
+      ["/index.html/", "/index.html"],
+      ["https://www.droppen.app/", "/index.html"],
+      ["http://my.droppen.app/", "/index.html"],
+      ["https://my.droppen.app:8443/", "/index.html"],
+      [null, "/index.html"],
+      ["https://[bad", "/index.html"],
+      ["/", "/link"],
+      ["/", "/assets/app.js"],
+    ]) {
+      assert.equal(indexToRoot(location, "https://my.droppen.app", path), false, `${path} → ${location}`);
+    }
   });
 });
 
@@ -570,6 +592,35 @@ describe("verify-web.mjs against a hub", () => {
     } finally {
       rmSync(links, { recursive: true, force: true });
     }
+  });
+
+  describe("a static host that answers /index.html with /", () => {
+    test("passes when / serves the attested shell there, which the worker's table is checked against", async () => {
+      const site = await hub({ redirect: (p) => (p === "/index.html" ? "/" : null) });
+      const r = await verify(["--site", site, "--manifest", manifestFile]);
+      assert.equal(r.code, 0, r.out);
+      assert.match(r.out, /files: +(\d+) of \1 match/);
+      assert.match(r.out, /note: +\/index\.html redirects to \/ on this site, which serves the attested shell/);
+      assert.match(r.out, /worker: +sw\.js lists \d+ assets and the shell, as the manifest has them/);
+    });
+    test("fails when / does not serve the attested shell there", async () => {
+      const cases = [
+        [(p) => (p === "/index.html" ? "/" : p === "/" ? "https://evil.example/" : null), {}],
+        [(p) => (p === "/index.html" ? "/" : null), { marker: "ws://127.0.0.1:1" }],
+      ];
+      for (const [redirect, overrides] of cases) {
+        const site = await hub({ redirect, ...overrides });
+        const r = await verify(["--site", site, "--manifest", manifestFile]);
+        assert.equal(r.code, 1, r.out);
+        assert.match(r.out, /\/index\.html: redirects to \/ on this site, which does not serve the attested shell/);
+      }
+    });
+    test("another redirect of /index.html still fails", async () => {
+      const site = await hub({ redirect: (p) => (p === "/index.html" ? "/download" : null) });
+      const r = await verify(["--site", site, "--manifest", manifestFile]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /\/index\.html: .*HTTP 308 → \/download \(not the same path on another site this run checks\)/);
+    });
   });
 
   describe("droppen.app's three hosts", () => {
