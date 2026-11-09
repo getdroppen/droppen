@@ -10,7 +10,9 @@
 //!
 //! App menu: the standard macOS menus, in the system's language, plus Reload —
 //! a web view has no address bar to reload from — and the same update items
-//! under *About Droppen* ([`crate::updater`]).
+//! under *About Droppen* ([`crate::updater`]). macOS only: on Linux it would
+//! be a menu bar inside every window, half of whose items GTK does not have,
+//! and the web view's own editing keys work without it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,7 +20,9 @@ use std::time::{Duration, Instant};
 
 use droppen_desktop_core::login_item::{self, Note};
 use tauri::image::Image;
-use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -80,6 +84,7 @@ const UPDATE_ITEMS_POSITION: usize = 5;
 /// pointing at it would break — *Start at Login* is off until it is moved.
 pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: bool) -> tauri::Result<()> {
     let words = Lang::system().words();
+    #[cfg(target_os = "macos")]
     app.set_menu(app_menu(app, words)?)?;
 
     let status = MenuItem::with_id(app, "status", words.starting, false, None::<&str>)?;
@@ -87,7 +92,9 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: 
     let open_browser = MenuItem::with_id(app, OPEN_IN_BROWSER, words.open_in_browser, true, None::<&str>)?;
     login.prepare(app, translocated);
     let login_status = login.status(app);
-    log::info!("start at login: macOS says {login_status:?}");
+    if crate::login_item::OFFERED {
+        log::info!("start at login: macOS says {login_status:?}");
+    }
     let shown = login_item::shown(login_status, translocated, false);
     let autostart = CheckMenuItem::with_id(app, AUTOSTART, words.start_at_login, shown.enabled, shown.checked, None::<&str>)?;
     let login_items = MenuItem::with_id(app, LOGIN_ITEMS, words.allow_at_login, true, None::<&str>)?;
@@ -105,11 +112,18 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: 
             &quit_item,
         ],
     )?;
+    // No item rather than one that does nothing (TODO(linux: L5)); the
+    // update's items still go in between the two separators.
+    if !crate::login_item::OFFERED {
+        menu.remove(&autostart)?;
+    }
     let update_items = crate::updater::menu_items(app);
     for (offset, item) in update_items.iter().enumerate() {
         menu.insert(item, UPDATE_ITEMS_POSITION + offset)?;
     }
     TrayIconBuilder::with_id(TRAY)
+        // TODO(linux: L6): a template image is macOS's; a Linux panel draws the
+        // black mark as it is, which a dark panel hides.
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .icon_as_template(true)
         // "Droppen", or "Droppen E2E" for an end-to-end test build beside it.
@@ -155,6 +169,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: 
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn app_menu<R: Runtime>(app: &AppHandle<R>, words: &Words) -> tauri::Result<Menu<R>> {
     let about = AboutMetadata {
         name: Some("Droppen".into()),
@@ -228,7 +243,9 @@ fn app_menu<R: Runtime>(app: &AppHandle<R>, words: &Words) -> tauri::Result<Menu
 /// On the main thread only: it updates menu items, and Tauri's menu calls
 /// block when made from another thread.
 pub fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) -> bool {
-    let Some(login) = app.try_state::<LoginItem>() else { return false };
+    let Some(login) = app.try_state::<LoginItem>().filter(|_| crate::login_item::OFFERED) else {
+        return false;
+    };
     let on = !login.status(app).registered();
     let turned = login.set(app, on);
     if let Some(items) = app.try_state::<Items<R>>() {

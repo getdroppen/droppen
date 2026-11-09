@@ -361,10 +361,43 @@ jobs:
           cache-on-failure: true
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The deadlock-lint gate (`desktop/Cargo.toml`'s
-      # `[workspace.lints.clippy]`), core only: `src-tauri` does not build on
-      # Linux. `-A warnings` keeps the log to the denied lints.
+      # `[workspace.lints.clippy]`), core only: the app crate has a job of its
+      # own, below. `-A warnings` keeps the log to the denied lints.
       - run: cargo clippy --locked --manifest-path desktop/Cargo.toml -p droppen-desktop-core --all-targets -- -A warnings
       - run: cargo test --locked --manifest-path desktop/Cargo.toml -p droppen-desktop-core -- --test-threads=1
+
+  # The desktop app itself (`desktop/src-tauri`, Tauri) on Linux, so that it
+  # keeps building there: its macOS-only paths are gated, and what Linux does
+  # not have yet is a `TODO(linux: …)` in the code. Its own job, apart from
+  # `desktop-core`: it needs the WebKitGTK stack installed and compiles all of
+  # Tauri. Both feature sets, because the end-to-end hooks gate code of their
+  # own. A debug build makes the placeholder sidecar Tauri insists on
+  # (`src-tauri/build.rs`), so no server is built here. Gated on the
+  # `desktop_core` area: everything this reads is under `desktop/` too.
+  desktop-app-linux:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop_core == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Tauri 2's Linux prerequisites (https://v2.tauri.app/start/prerequisites/#linux).
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktop -> target
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The same deadlock-lint gate as `desktop-core`, for the app crate.
+      - run: cargo clippy --locked --manifest-path desktop/Cargo.toml -p droppen-desktop --all-targets -- -A warnings
+      - run: cargo clippy --locked --manifest-path desktop/Cargo.toml -p droppen-desktop --all-targets --features e2e -- -A warnings
+      # One test at a time, as in `desktop-core`.
+      - run: cargo test --locked --manifest-path desktop/Cargo.toml -p droppen-desktop -- --test-threads=1
 
 
   secrets-scan:

@@ -158,7 +158,8 @@ pub fn relaunched() -> bool {
 }
 
 /// Where the app runs from: its executable, if in a bundle, and whether it
-/// can be updated there.
+/// can be updated there. Never in one on Linux, so it never updates there
+/// (TODO(linux: L7): an AppImage's own updates).
 fn place() -> (Option<PathBuf>, Place) {
     let Ok(exe) = std::env::current_exe() else {
         return (None, Place::NotABundle);
@@ -668,12 +669,20 @@ pub fn at_exit<R: Runtime>(app: &AppHandle<R>) {
 /// with the admin password prompt (its privileged install), which a quit must
 /// never show; that prompt is for *Restart to Update* only. (What this cannot
 /// see — a macOS privacy rule refusing the swap — still ends in the prompt.)
+#[cfg(target_os = "macos")]
 fn writable_without_asking(executable: &Path) -> bool {
     let Some(bundle) = executable.ancestors().nth(3) else { return false };
     let Some(folder) = bundle.parent() else { return false };
     swappable(bundle, folder)
 }
 
+/// Never asked on Linux, where the app is never in a bundle ([`place`]).
+#[cfg(not(target_os = "macos"))]
+fn writable_without_asking(_executable: &Path) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
 fn swappable(bundle: &Path, folder: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
@@ -693,6 +702,7 @@ fn swappable(bundle: &Path, folder: &Path) -> bool {
 }
 
 /// A path's BSD file flags (`chflags`), without following a symbolic link.
+#[cfg(target_os = "macos")]
 fn flags(path: &Path) -> Option<u32> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
@@ -858,6 +868,7 @@ mod tests {
         assert!(script.contains(r#","restart-2");"#), "{script}");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_quit_installs_only_where_the_swap_needs_no_admin_password() {
         let dir = tempfile::tempdir().expect("a temp dir");
