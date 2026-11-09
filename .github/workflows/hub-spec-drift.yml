@@ -14,7 +14,10 @@ permissions:
 
 jobs:
   check:
-    runs-on: arc-hub
+    # A hosted runner: all it does is fetch one public document. On the
+    # cluster runner (arc-hub) every scheduled run waited in the queue until
+    # GitHub cancelled it, so the drift it is here to catch went unreported.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

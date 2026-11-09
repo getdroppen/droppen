@@ -552,7 +552,7 @@ export interface paths {
          *     `PasskeySlotRemove` and sends it back as `{grant}`, asking the person for
          *     nothing twice. The chain's lock is held from the slot check to the commit,
          *     so a `PasskeySlotSet` naming the passkey cannot land in between. Recorded
-         *     and told like every change ([`record`]). A current full device.
+         *     and told like every change ([`PasskeyTxWrites::record`]). A current full device.
          */
         delete: operations["remove_passkey"];
         options?: never;
@@ -560,7 +560,7 @@ export interface paths {
         /**
          * Rename Passkey
          * @description `PATCH /v1/passkeys/{id} {label}` → the passkey's row. A current full
-         *     device. Recorded and told like every change ([`record`]).
+         *     device. Recorded and told like every change ([`PasskeyTxWrites::record`]).
          */
         patch: operations["rename_passkey"];
         trace?: never;
@@ -580,7 +580,7 @@ export interface paths {
          *     passkey has none) or changed (§3.6) — after proving it is still the
          *     person ([`Hub::reauthenticate`]: a passkey of the account's, or the current
          *     password where there is one). Recorded and told like every change
-         *     ([`record`]): `password_set` or `password_changed`, by whether the account
+         *     ([`PasskeyTxWrites::record`]): `password_set` or `password_changed`, by whether the account
          *     had one under the lock. A current full device.
          */
         put: operations["set_password"];
@@ -591,7 +591,7 @@ export interface paths {
          *     false}`: the account signs in with its passkeys only — refused without
          *     one (`409 last_credential`, §3.6), and only after proving it is still the
          *     person ([`Hub::reauthenticate`]). Recorded and told like every change
-         *     ([`record`]). A current full device.
+         *     ([`PasskeyTxWrites::record`]). A current full device.
          */
         delete: operations["delete_password"];
         options?: never;
@@ -949,8 +949,8 @@ export interface components {
          *     the retired key's signature is the credential (§3.8 「证据：退役钥签的争议
          *     声明」). A host whose identity key was renewed elsewhere signs, with the key
          *     that renewal retired, a statement over that renewal (`rh/v1
-         *     rotate-dispute`, `rh_proto::chain::rotate_dispute_body`); checked with
-         *     rh-proto against the hub's chain, kept (once per renewal: sending it
+         *     rotate-dispute`, `droppen_proto::chain::rotate_dispute_body`); checked with
+         *     droppen-proto against the hub's chain, kept (once per renewal: sending it
          *     again answers the same), told to the devices (`host_dispute {kind:
          *     "disputed"}`), and — when it disputes a renewal not confirmed on the
          *     device with none confirmed on the device after it — it isolates the host.
