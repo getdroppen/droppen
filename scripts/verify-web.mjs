@@ -52,8 +52,13 @@
 //      Nothing is followed: an answer that redirects passes only when it
 //      sends the browser to the same path on another site this run checks,
 //      where that is checked in turn (droppen.app's `/` goes to www, www's
-//      `/link` to my). The shell is compared after removing the one
-//      thing the hub adds, `<meta name="droppen-hub" content="<origin>" />`
+//      `/link` to my), or, for `/index.html` alone, to `/` on the same site
+//      (a static host's way with the file's own name), which passes only if
+//      `/` serves the attested shell there. Only the statuses a browser
+//      follows (301, 302, 303, 307, 308) count as redirects, and the whole
+//      URL it is sent to must be that path. The shell is compared after
+//      removing the one thing the hub adds,
+//      `<meta name="droppen-hub" content="<origin>" />`
 //      (or its `rh-hub` predecessor for one release) right
 //      after `<head>`, whose origin — where the page signs in and sends all
 //      hub traffic — must be that host's own or the site's canonical API
@@ -390,8 +395,37 @@ export function checkedRedirect(location, site, path, sites) {
     return null;
   }
   if (to.origin === new URL(site).origin || !sites.includes(to.origin)) return null;
-  return `${to.pathname}${to.search}` === path ? to.origin : null;
+  // The whole URL, so an empty `?`, a fragment or a user name in it is not the same path.
+  return to.href === new URL(path, to.origin).href ? to.origin : null;
 }
+
+/**
+ * Whether a redirect from `path` on `site` is the one a static host gives the
+ * shell's file name: `/index.html` to `/` on the same site, with no query or
+ * fragment. Cloudflare's assets do that by default. `/` is a shell route, so
+ * what the browser gets there is checked on this very site, and the file
+ * counts as served only when that check passes; any other redirect of it
+ * still fails.
+ */
+export function indexToRoot(location, site, path) {
+  if (path !== "/index.html" || !location) return false;
+  let to;
+  try {
+    to = new URL(location, `${site}${path}`);
+  } catch {
+    return false;
+  }
+  // The whole URL: an empty `?` or a user name would have the browser ask for another one.
+  return to.href === `${new URL(site).origin}/`;
+}
+
+/**
+ * The statuses a browser follows (the Fetch standard's redirect statuses). Any
+ * other 3xx — 300, 304, 305, 306 — it does not: it shows that answer's own
+ * body, which is then what the person gets at that URL, unchecked.
+ */
+const FOLLOWED = new Set([301, 302, 303, 307, 308]);
+const followed = (error) => FOLLOWED.has(error.status);
 
 /** The hub origin a site's own pages name: `wss://` for https, `ws://` for http. */
 export function siteHubOrigin(site) {
@@ -695,7 +729,7 @@ async function checkSite(opts, site, memo) {
     info = await get(`${site}${BUILD_INFO}`, { json: true, optional: true });
   } catch (error) {
     if (error instanceof Unchecked) throw error;
-    const to = error.status >= 300 && error.status < 400 ? checkedRedirect(error.location, site, BUILD_INFO, opts.sites) : null;
+    const to = followed(error) ? checkedRedirect(error.location, site, BUILD_INFO, opts.sites) : null;
     if (!to) notes.push(`${BUILD_INFO}: ${error.message}`);
     else {
       notes.push(`${BUILD_INFO} redirects to ${to}: the build that one serves`);
@@ -760,6 +794,10 @@ async function checkSite(opts, site, memo) {
   const workers = new Set();
   let worker = null;
   let attestedShell;
+  // `/index.html` answered with `/` on this site (indexToRoot), and the shell
+  // `/` served here when it is the attested one: settled once every check is in.
+  let indexRedirected = false;
+  let rootShell;
   const results = await pool(checks, 6, async (c) => {
     const label = c.asWorker ? `${c.url} (Service-Worker: script)` : c.url;
     let got;
@@ -772,13 +810,19 @@ async function checkSite(opts, site, memo) {
         notes.push(`${c.url}: 404, not checked`);
         return null;
       }
+      // The shell's file name sent to `/` on this site: checked as that route, below.
+      if (!c.route && followed(error) && indexToRoot(error.location, site, c.url)) {
+        indexRedirected = true;
+        return null;
+      }
       // Sent on to the same path on another site of this run: checked there.
-      const to = error.status >= 300 && error.status < 400 ? checkedRedirect(error.location, site, c.url, opts.sites) : null;
+      const to = followed(error) ? checkedRedirect(error.location, site, c.url, opts.sites) : null;
       if (to) {
         redirects.set(to, (redirects.get(to) ?? 0) + 1);
         return null;
       }
-      return `${label}: ${error.message}${error.status >= 300 && error.status < 400 ? " (not the same path on another site this run checks)" : ""}`;
+      const why = followed(error) ? " (not the same path on another site this run checks)" : error.status >= 300 && error.status < 400 ? " (a status browsers do not follow: they show its own body)" : "";
+      return `${label}: ${error.message}${why}`;
     }
     let body = got.body;
     const page = c.isShell || c.want.path.endsWith(".html");
@@ -801,6 +845,7 @@ async function checkSite(opts, site, memo) {
       workers.add("the app's");
     }
     if (same && c.want.path === "index.html" && !c.route) attestedShell = body;
+    if (same && !wrongHub && c.route && c.url === "/") rootShell = body;
     if (wrongHub) markerFailures.push(`${c.url}: ${wrongHub}`);
     // A host that holds no app retires the worker instead: that one, exactly.
     if (!same && c.want.path === "sw.js" && hash === retiring) {
@@ -812,6 +857,13 @@ async function checkSite(opts, site, memo) {
     return same ? null : `${label}: sha256 ${hash}, attested ${c.want.sha256}${c.isShell ? " (after removing the hub marker)" : ""}`;
   });
   const differing = results.filter(Boolean);
+  if (indexRedirected) {
+    if (rootShell) {
+      matched++;
+      attestedShell ??= rootShell;
+      notes.push("/index.html redirects to / on this site, which serves the attested shell");
+    } else differing.push("/index.html: redirects to / on this site, which does not serve the attested shell");
+  }
   failures.push(...differing, ...markerFailures.sort());
   const sent = [...redirects.values()].reduce((a, b) => a + b, 0);
   const elsewhere = sent ? `${sent} redirect to ${[...redirects.keys()].join(", ")}, checked there` : "";
