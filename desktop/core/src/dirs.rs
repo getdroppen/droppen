@@ -2,13 +2,14 @@
 //!
 //! Everything hangs off `$HOME`, read once, so a test (or a manual run with a
 //! throwaway `HOME`) moves all of it at once — and on Linux off the XDG base
-//! directories `$XDG_DATA_HOME` and `$XDG_STATE_HOME` too ([`Xdg`]), read at
-//! the same time, where they are set:
+//! directories `$XDG_DATA_HOME`, `$XDG_STATE_HOME` and `$XDG_CONFIG_HOME`
+//! too ([`Xdg`]), read at the same time, where they are set:
 //!
 //! | what | macOS | Linux |
 //! |---|---|---|
 //! | the app's state, the credential file fallback, the server's pid | `~/Library/Application Support/app.droppen.desktop/` (0700) | `$XDG_DATA_HOME/app.droppen.desktop/` (0700), by default `~/.local/share/…` |
 //! | the app's log and the server's output | `~/Library/Logs/Droppen/` | `$XDG_STATE_HOME/app.droppen.desktop/logs/`, by default `~/.local/state/…` |
+//! | the *Start at Login* autostart entry | — (a login item) | `$XDG_CONFIG_HOME/autostart/droppen.desktop`, by default `~/.config/…` |
 //! | the server's own data | `~/.local/share/remote-hand/instances/droppen-app/`, chosen by the server itself | the same: the server reads no XDG variable |
 //!
 //! (An end-to-end test build's: `app.droppen.desktop.e2e/`, `Droppen E2E/` —
@@ -43,6 +44,9 @@ pub struct ShellDirs {
     /// `~/Library/Logs/Droppen` (`Droppen E2E` in an end-to-end build); on
     /// Linux `$XDG_STATE_HOME/app.droppen.desktop/logs`.
     pub logs: PathBuf,
+    /// `$XDG_CONFIG_HOME`, by default `~/.config`; macOS ignores it and reads
+    /// `~/.config` (the autostart entry is Linux's only).
+    pub config: PathBuf,
 }
 
 /// The XDG base directories a Linux session may set
@@ -55,17 +59,20 @@ pub struct Xdg {
     pub data_home: Option<PathBuf>,
     /// `$XDG_STATE_HOME`, else `~/.local/state`: the logs'.
     pub state_home: Option<PathBuf>,
+    /// `$XDG_CONFIG_HOME`, else `~/.config`: the autostart entry's parent.
+    pub config_home: Option<PathBuf>,
 }
 
 impl Xdg {
     /// From the variables' values. An unset, empty or relative one is none:
     /// the spec has a relative path ignored — and so does Tauri, which puts
     /// the web view's data under the same `$XDG_DATA_HOME`.
-    pub fn from_values(data_home: Option<OsString>, state_home: Option<OsString>) -> Self {
+    pub fn from_values(data_home: Option<OsString>, state_home: Option<OsString>, config_home: Option<OsString>) -> Self {
         let absolute = |value: Option<OsString>| value.map(PathBuf::from).filter(|path| path.is_absolute());
         Self {
             data_home: absolute(data_home),
             state_home: absolute(state_home),
+            config_home: absolute(config_home),
         }
     }
 }
@@ -87,23 +94,31 @@ impl ShellDirs {
                 home.join("Library").join("Logs").join(crate::identity::THIS.name),
             )
         };
+        #[cfg(target_os = "macos")]
+        let config = home.join(".config");
         // Both by the bundle id, as Tauri names the web view's data directory,
         // rather than by the app's name: no folder in a Linux home is called
         // `Droppen E2E`.
         #[cfg(not(target_os = "macos"))]
-        let (support, logs) = {
+        let (support, logs, config) = {
             let data = xdg.data_home.clone().unwrap_or_else(|| home.join(".local").join("share"));
             let state = xdg.state_home.clone().unwrap_or_else(|| home.join(".local").join("state"));
-            (data.join(crate::BUNDLE_ID), state.join(crate::BUNDLE_ID).join("logs"))
+            let config = xdg.config_home.clone().unwrap_or_else(|| home.join(".config"));
+            (data.join(crate::BUNDLE_ID), state.join(crate::BUNDLE_ID).join("logs"), config)
         };
-        Self { home, support, logs }
+        Self { home, support, logs, config }
     }
 
-    /// The directories under `$HOME` (and `$XDG_DATA_HOME`, `$XDG_STATE_HOME`
-    /// on Linux), or `None` when it is unset or relative.
+    /// The directories under `$HOME` (and `$XDG_DATA_HOME`, `$XDG_STATE_HOME`,
+    /// `$XDG_CONFIG_HOME` on Linux), or `None` when `$HOME` is unset or
+    /// relative.
     pub fn from_env() -> Option<Self> {
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        let xdg = Xdg::from_values(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("XDG_STATE_HOME"));
+        let xdg = Xdg::from_values(
+            std::env::var_os("XDG_DATA_HOME"),
+            std::env::var_os("XDG_STATE_HOME"),
+            std::env::var_os("XDG_CONFIG_HOME"),
+        );
         home.is_absolute().then(|| Self::with_xdg(home, &xdg))
     }
 
@@ -118,6 +133,13 @@ impl ShellDirs {
     /// `state.json`: the port and account name the app keeps across launches.
     pub fn state_file(&self) -> PathBuf {
         self.support.join("state.json")
+    }
+
+    /// The XDG autostart entry *Start at Login* writes on Linux:
+    /// `<config>/autostart/<identity's autostart name>`
+    /// (`~/.config/autostart/droppen.desktop` by default).
+    pub fn autostart_file(&self) -> PathBuf {
+        self.config.join("autostart").join(crate::identity::THIS.autostart)
     }
 
     /// `credentials.json`: the password, when the Keychain cannot hold it.
@@ -207,11 +229,16 @@ mod tests {
         assert!(dirs.credential_file().starts_with(&dirs.support));
         assert!(dirs.pid_file().starts_with(&dirs.support));
         assert!(dirs.server_log().starts_with(&dirs.logs));
+        assert_eq!(dirs.config, PathBuf::from("/tmp/home/.config"));
+        assert_eq!(
+            dirs.autostart_file(),
+            PathBuf::from("/tmp/home/.config/autostart").join(crate::identity::THIS.autostart)
+        );
     }
 
     #[test]
     fn linux_follows_the_xdg_base_directories_that_are_absolute() {
-        let xdg = Xdg::from_values(Some("/data".into()), Some("/state".into()));
+        let xdg = Xdg::from_values(Some("/data".into()), Some("/state".into()), Some("/config".into()));
         let dirs = ShellDirs::with_xdg("/tmp/home", &xdg);
         assert_eq!(dirs.home, PathBuf::from("/tmp/home"));
         if cfg!(target_os = "macos") {
@@ -219,15 +246,25 @@ mod tests {
         } else {
             assert_eq!(dirs.support, Path::new("/data").join(crate::BUNDLE_ID));
             assert_eq!(dirs.logs, Path::new("/state").join(crate::BUNDLE_ID).join("logs"));
+            assert_eq!(dirs.config, PathBuf::from("/config"));
+            assert_eq!(dirs.autostart_file(), Path::new("/config/autostart").join(crate::identity::THIS.autostart));
         }
         // Unset, empty or relative: the default.
-        for (data, state) in [(None, None), (Some(""), Some("")), (Some("share"), Some("./state"))] {
-            assert_eq!(Xdg::from_values(data.map(OsString::from), state.map(OsString::from)), Xdg::default());
+        for (data, state, config) in [
+            (None, None, None),
+            (Some(""), Some(""), Some("")),
+            (Some("share"), Some("./state"), Some("config")),
+        ] {
+            assert_eq!(
+                Xdg::from_values(data.map(OsString::from), state.map(OsString::from), config.map(OsString::from)),
+                Xdg::default()
+            );
         }
         // Each on its own.
-        let state_only = Xdg::from_values(Some("share".into()), Some("/state".into()));
+        let state_only = Xdg::from_values(Some("share".into()), Some("/state".into()), Some("config".into()));
         assert_eq!(state_only.data_home, None);
         assert_eq!(state_only.state_home, Some(PathBuf::from("/state")));
+        assert_eq!(state_only.config_home, None);
         assert_eq!(
             ShellDirs::with_xdg("/tmp/home", &state_only).support,
             ShellDirs::under("/tmp/home").support

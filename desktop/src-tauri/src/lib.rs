@@ -10,7 +10,7 @@
 //! * [`window`] — the main window and the rules for what it may load;
 //! * [`tray`] — the menu-bar item and the app menu;
 //! * [`login_item`] — *Start at Login*: `SMAppService` for a signed app, the
-//!   launch agent for one that is not;
+//!   launch agent for one that is not, an XDG autostart entry on Linux;
 //! * [`sign_in`] — signing in to Droppen through the system browser;
 //! * `linux_browser` — *Open in Browser*'s hand-off on Linux: the sign-in in
 //!   a page only this user can read, for the default browser;
@@ -56,9 +56,10 @@ use tauri::{Manager, RunEvent, WindowEvent};
 use shell::{Phase, Shell};
 
 /// The argument the launch agent's launch passes (a build that is not signed,
-/// or one made before `SMAppService`): start in the menu bar, no window. A
-/// login item registered with `SMAppService` passes none; its launch is told
-/// apart by its Apple event ([`login_item::AppleEvent::is_login_launch`]).
+/// or one made before `SMAppService`), and Linux's autostart entry's: start in
+/// the menu bar, no window. A login item registered with `SMAppService` passes
+/// none; its launch is told apart by its Apple event
+/// ([`login_item::AppleEvent::is_login_launch`]).
 pub const AUTOSTART_ARG: &str = "--autostart";
 
 /// The sidecar beside the app's own executable (`Contents/MacOS/` in the

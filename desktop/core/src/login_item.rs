@@ -28,8 +28,21 @@
 //! turns it on again. An install that ran here before ([`first_launch`] lists
 //! the signs), or one with a login item of any kind, is left as it is.
 //!
+//! Linux has no `SMAppService` and no launch agent: there the login item is an
+//! XDG autostart entry, `$XDG_CONFIG_HOME/autostart/droppen.desktop` (by
+//! default `~/.config/autostart/…`; an end-to-end build's would be
+//! `droppen-e2e.desktop`), which [`AutostartFile`] writes. Its
+//! `Exec` names the app itself — the AppImage when it runs from one, never a
+//! path inside the temporary mount — and the app crate adds `--autostart`, so
+//! the launch at login has no window. The file is there only while *Start at
+//! Login* is on, as the launch agent's is, so [`Service`]'s answers map onto
+//! it directly. It is on by default like macOS's; an end-to-end build keeps
+//! none at all ([`Backend::None`]), so a test run cannot leave an entry a real
+//! login would run.
+//!
 //! The decisions are here, over [`Service`] and [`Legacy`], so they are tested
-//! with fakes; the app crate supplies the real `SMAppService` and file.
+//! with fakes; the app crate supplies the real `SMAppService`, the file, and
+//! Linux's autostart entry.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -113,6 +126,225 @@ impl LegacyFile {
     }
 }
 
+/// An XDG autostart entry: the file, and what it starts.
+///
+/// The desktop reads it at login, so it is also a [`Service`]: there while
+/// *Start at Login* is on, gone while it is off. Its `Exec` names the app
+/// with the arguments the app crate asks for ([`AutostartFile::new`]); the
+/// file itself carries no user secret.
+#[derive(Debug, Clone)]
+pub struct AutostartFile {
+    path: PathBuf,
+    /// What `Exec` starts, or why there is no path worth naming
+    /// ([`autostart_exe`]).
+    exe: Result<PathBuf, String>,
+    /// What the desktop's startup settings list it as.
+    name: String,
+    /// The arguments a launch at login passes, `--autostart` from the app.
+    args: Vec<String>,
+}
+
+impl AutostartFile {
+    /// The entry at `path` (the app's [`crate::dirs`]), starting `exe` —
+    /// [`autostart_exe`]'s answer — with `args`.
+    pub fn new(path: impl Into<PathBuf>, name: impl Into<String>, args: Vec<String>, exe: Result<PathBuf, String>) -> Self {
+        Self {
+            path: path.into(),
+            exe,
+            name: name.into(),
+            args,
+        }
+    }
+
+    /// Where it is.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The executable it starts, when there is one worth naming.
+    pub fn exe(&self) -> Option<&Path> {
+        self.exe.as_deref().ok()
+    }
+
+    /// Whether the file is there.
+    pub fn present(&self) -> bool {
+        self.path.exists()
+    }
+
+    /// Whether the desktop would run it: there, and not switched off in the
+    /// desktop's own startup settings (`Hidden=true`, which the XDG spec
+    /// defines, or GNOME's `X-GNOME-Autostart-enabled=false`).
+    pub fn enabled(&self) -> bool {
+        let Ok(contents) = std::fs::read_to_string(&self.path) else {
+            return false;
+        };
+        let mut listed = true;
+        let mut gnome = true;
+        for line in contents.lines() {
+            if let Some(value) = line.strip_prefix("Hidden=") {
+                listed = !value.trim().eq_ignore_ascii_case("true");
+            }
+            if let Some(value) = line.strip_prefix("X-GNOME-Autostart-enabled=") {
+                gnome = !value.trim().eq_ignore_ascii_case("false");
+            }
+        }
+        listed && gnome
+    }
+
+    /// The `Exec=` line this entry writes, or `None` when no stable
+    /// executable could be named.
+    fn exec_line(&self) -> Option<String> {
+        let exe = self.exe.as_ref().ok()?;
+        let mut line = exec_arg(&exe.to_string_lossy());
+        for arg in &self.args {
+            line.push(' ');
+            line.push_str(&exec_arg(arg));
+        }
+        Some(format!("Exec={line}"))
+    }
+
+    /// Whether the entry as it is starts what this build would write: the app
+    /// where it runs from now. An entry naming a path the app has since moved
+    /// from does not, and is rewritten at the next start.
+    pub fn starts(&self) -> bool {
+        let Some(line) = self.exec_line() else { return true };
+        match std::fs::read_to_string(&self.path) {
+            Ok(contents) => contents.lines().any(|written| written == line),
+            Err(_) => false,
+        }
+    }
+
+    /// The whole file; `None` when no stable executable could be named.
+    pub fn contents(&self) -> Option<String> {
+        let exec = self.exec_line()?;
+        Some(format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Version=1.0\n\
+             Name={}\n\
+             Comment={} starts at login\n\
+             {exec}\n\
+             Terminal=false\n\
+             StartupNotify=false\n\
+             X-GNOME-Autostart-enabled=true\n",
+            self.name, self.name
+        ))
+    }
+
+    /// Write the entry (0644), creating the autostart directory if it is not
+    /// there. Nothing is written when the executable cannot be named: the
+    /// entry would point at a path that goes away.
+    pub fn write(&self) -> Result<(), String> {
+        let body = self.contents().ok_or_else(|| match &self.exe {
+            Err(why) => why.clone(),
+            Ok(_) => "no autostart entry to write".to_string(),
+        })?;
+        crate::state::write_atomically(&self.path, body.as_bytes(), 0o644).map_err(|error| format!("cannot write {}: {error}", self.path.display()))
+    }
+
+    /// Remove it; one already gone is no error.
+    pub fn remove(&self) -> io::Result<()> {
+        LegacyFile(self.path.clone()).remove()
+    }
+}
+
+impl Service for AutostartFile {
+    fn status(&self) -> Status {
+        if self.enabled() {
+            Status::Enabled
+        } else {
+            Status::NotRegistered
+        }
+    }
+
+    fn register(&self) -> Result<(), String> {
+        self.write()
+    }
+
+    fn unregister(&self) -> Result<(), String> {
+        self.remove().map_err(|error| format!("cannot remove {}: {error}", self.path.display()))
+    }
+}
+
+/// The path an autostart entry should start: the AppImage when the app runs
+/// from one — `$APPIMAGE` is the image itself — else the app's executable.
+///
+/// A path inside an AppImage's temporary mount (`$APPDIR`, `/tmp/.mount_…`)
+/// is refused when no image names it: the mount is gone after the logout, so
+/// the entry would start nothing at the next login.
+pub fn autostart_exe(appimage: Option<&Path>, appdir: Option<&Path>, current: Option<&Path>) -> Result<PathBuf, String> {
+    let in_mount = |path: &Path| {
+        appdir.is_some_and(|dir| !dir.as_os_str().is_empty() && path.starts_with(dir)) || path.to_string_lossy().starts_with("/tmp/.mount_")
+    };
+    if let Some(image) = appimage.filter(|path| path.is_absolute() && path.exists()) {
+        if !in_mount(image) {
+            return Ok(image.to_path_buf());
+        }
+    }
+    let Some(current) = current else {
+        return Err("cannot tell where the app's executable is".into());
+    };
+    if in_mount(current) {
+        return Err(format!(
+            "the app runs from a temporary AppImage mount ({}), and no $APPIMAGE names the image: a login entry would point at a path that goes away",
+            current.display()
+        ));
+    }
+    Ok(current.to_path_buf())
+}
+
+/// One argument as it goes in an `Exec=` value: plain when the desktop entry
+/// spec lets it be, quoted and escaped otherwise, with `%` doubled so it is
+/// read as a literal and not as a field code.
+///
+/// A desktop entry value is unescaped as a string before `Exec`'s own quoting
+/// rule runs, so every backslash the quoting rule needs is written twice: a
+/// literal `"`, `` ` `` or `$` in a quoted argument is `\\"`, `` \\` `` or
+/// `\\$` in the file, and a literal backslash is `\\\\` (the spec's four).
+fn exec_arg(arg: &str) -> String {
+    let plain = !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '+' | ',' | ':' | '@' | '=' | '~'));
+    if plain {
+        return arg.to_string();
+    }
+    let mut quoted = String::with_capacity(arg.len() + 2);
+    quoted.push('"');
+    for c in arg.chars() {
+        match c {
+            '"' | '`' | '$' | '\\' => {
+                quoted.push('\\');
+                quoted.push(c);
+            }
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted.replace('\\', "\\\\")
+}
+
+/// The platform whose login item this is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    /// macOS: `SMAppService`, or a launch agent.
+    MacOs,
+    /// Linux: an XDG autostart entry.
+    Linux,
+}
+
+impl Platform {
+    /// This build's.
+    pub const fn this() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::MacOs
+        } else {
+            Self::Linux
+        }
+    }
+}
+
 /// How *Start at Login* is kept in this build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -120,16 +352,23 @@ pub enum Backend {
     AppService,
     /// The launch agent naming the app's path (tauri-plugin-autostart).
     LaunchAgent,
+    /// An XDG autostart entry naming the app's path (Linux).
+    XdgAutostart,
+    /// None: an end-to-end build on Linux, which must not write an entry a
+    /// real login would run. Its runs check *Start at Login* from off.
+    None,
 }
 
 impl Backend {
     /// `SMAppService` for an app signed with a Developer ID, outside an
-    /// end-to-end build; the launch agent otherwise.
-    pub fn choose(developer_id: bool, end_to_end: bool) -> Self {
-        if developer_id && !end_to_end {
-            Self::AppService
-        } else {
-            Self::LaunchAgent
+    /// end-to-end build; the launch agent otherwise. Linux has only the
+    /// autostart entry, and no end-to-end build writes one.
+    pub fn choose(platform: Platform, developer_id: bool, end_to_end: bool) -> Self {
+        match platform {
+            Platform::MacOs if developer_id && !end_to_end => Self::AppService,
+            Platform::MacOs => Self::LaunchAgent,
+            Platform::Linux if end_to_end => Self::None,
+            Platform::Linux => Self::XdgAutostart,
         }
     }
 }
@@ -338,13 +577,23 @@ pub fn instance_dir(home: &Path) -> PathBuf {
     crate::instance::dir_under(home, crate::INSTANCE)
 }
 
-/// Whether the app ran here before, whatever `state.json` says: its server's
-/// instance directory ([`instance_dir`]) or its credential file is there, or
-/// `store` (the keychain item, then the file) has its login. The keychain is
-/// asked last, only when nothing on disk answers; one that cannot be read is
-/// logged and reads as nothing there.
+/// Whether the app left files of its own here, whatever `state.json` says: its
+/// server's instance directory ([`instance_dir`]) or its credential file.
+///
+/// On Linux this is the whole answer the login item's default needs: asking
+/// the Secret Service too can wait its 5 s deadline on the main thread before
+/// the window is made, and the instance directory is created by the same
+/// first start that creates the keyring item.
+pub fn ran_here_before_files(home: &Path, credential_file: &Path) -> bool {
+    instance_dir(home).exists() || credential_file.exists()
+}
+
+/// Whether the app ran here before, whatever `state.json` says: the files of
+/// [`ran_here_before_files`], or `store` (the keychain item, then the file)
+/// has its login. The keychain is asked last, only when nothing on disk
+/// answers; one that cannot be read is logged and reads as nothing there.
 pub fn ran_here_before(home: &Path, credential_file: &Path, store: &crate::credentials::LayeredStore) -> bool {
-    instance_dir(home).exists() || credential_file.exists() || store.load().0.is_some()
+    ran_here_before_files(home, credential_file) || store.load().0.is_some()
 }
 
 /// The status to show: `service`'s, except that an old launch agent still
@@ -970,10 +1219,101 @@ mod tests {
 
     #[test]
     fn only_a_developer_id_build_outside_end_to_end_uses_sm_app_service() {
-        assert_eq!(Backend::choose(true, false), Backend::AppService);
-        assert_eq!(Backend::choose(false, false), Backend::LaunchAgent);
-        assert_eq!(Backend::choose(true, true), Backend::LaunchAgent);
-        assert_eq!(Backend::choose(false, true), Backend::LaunchAgent);
+        assert_eq!(Backend::choose(Platform::MacOs, true, false), Backend::AppService);
+        assert_eq!(Backend::choose(Platform::MacOs, false, false), Backend::LaunchAgent);
+        assert_eq!(Backend::choose(Platform::MacOs, true, true), Backend::LaunchAgent);
+        assert_eq!(Backend::choose(Platform::MacOs, false, true), Backend::LaunchAgent);
+        // Linux has one way, and an end-to-end build has none: it must not
+        // write an entry the desktop would run at a real login.
+        assert_eq!(Backend::choose(Platform::Linux, false, false), Backend::XdgAutostart);
+        assert_eq!(Backend::choose(Platform::Linux, true, false), Backend::XdgAutostart);
+        assert_eq!(Backend::choose(Platform::Linux, false, true), Backend::None);
+    }
+
+    #[test]
+    fn an_autostart_entry_names_the_app_and_starts_it_without_a_window() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("config/autostart/app.droppen.desktop");
+        let entry = AutostartFile::new(path.clone(), "Droppen", vec!["--autostart".into()], Ok(PathBuf::from("/opt/Droppen/droppen-desktop")));
+        assert_eq!(entry.status(), Status::NotRegistered);
+        entry.register().expect("register");
+        assert_eq!(entry.status(), Status::Enabled);
+        let written = std::fs::read_to_string(&path).expect("read");
+        assert!(written.starts_with("[Desktop Entry]\nType=Application\n"), "{written}");
+        assert!(written.contains("\nExec=/opt/Droppen/droppen-desktop --autostart\n"), "{written}");
+        assert!(written.contains("\nName=Droppen\n"), "{written}");
+        assert!(written.contains("X-GNOME-Autostart-enabled=true"), "{written}");
+        assert!(entry.starts(), "the entry names where the app is");
+        // Switched off in the desktop's startup settings: the file is there,
+        // but not on; writing it again is turning it on.
+        std::fs::write(&path, format!("{written}Hidden=true\n")).expect("hide");
+        assert!(!entry.enabled());
+        assert_eq!(entry.status(), Status::NotRegistered);
+        entry.register().expect("register");
+        assert_eq!(entry.status(), Status::Enabled);
+        entry.unregister().expect("unregister");
+        assert_eq!(entry.status(), Status::NotRegistered);
+        assert!(!entry.present());
+        entry.unregister().expect("off when it was off");
+
+        // A path with spaces, `$`, `"` and `\` is quoted and escaped for both
+        // the string and the quoting layer, not split: the spec's four
+        // backslashes for a literal one are the `\\\\ted`, and each reserved
+        // character is written with two.
+        let awkward = root.path().join("config/autostart/awkward.desktop");
+        let awkward_exe = PathBuf::from(r#"/home/some one/Dröppen $app/"quo\ted"/droppen"#);
+        let entry = AutostartFile::new(awkward.clone(), "Droppen", vec!["--autostart".into()], Ok(awkward_exe));
+        entry.register().expect("register");
+        let written = std::fs::read_to_string(&awkward).expect("read");
+        assert!(
+            written.contains(r#"Exec="/home/some one/Dröppen \\$app/\\"quo\\\\ted\\"/droppen" --autostart"#),
+            "{written}"
+        );
+        assert!(entry.starts());
+        // A file that names another path is not where the app is now.
+        let moved = AutostartFile::new(
+            awkward,
+            "Droppen",
+            vec!["--autostart".into()],
+            Ok(PathBuf::from(r#"/home/some one/Dröppen $app/"quo\ted"/moved"#)),
+        );
+        assert!(!moved.starts());
+    }
+
+    #[test]
+    fn an_entry_that_cannot_name_a_stable_path_is_not_written() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("autostart/app.droppen.desktop");
+        let mount = Path::new("/tmp/.mount_DroppenAbC123/usr/bin/droppen-desktop");
+        let refused = autostart_exe(None, Some(Path::new("/tmp/.mount_DroppenAbC123")), Some(mount)).expect_err("a mount");
+        assert!(refused.contains("temporary AppImage mount"), "{refused}");
+        let entry = AutostartFile::new(path.clone(), "Droppen", vec!["--autostart".into()], Err(refused));
+        assert_eq!(entry.status(), Status::NotRegistered, "off: nothing there");
+        assert!(entry.write().is_err());
+        assert!(!entry.present(), "nothing was written");
+        assert_eq!(entry.contents(), None);
+
+        // The image itself is stable and is preferred over the mount.
+        let root = tempfile::tempdir().expect("tempdir");
+        let image = root.path().join("Droppen.AppImage");
+        std::fs::write(&image, b"image").expect("image");
+        let exe = autostart_exe(Some(&image), Some(Path::new("/tmp/.mount_x")), Some(mount)).expect("the image");
+        assert_eq!(exe, image);
+        // A regular dev or packaged path needs no image.
+        assert_eq!(
+            autostart_exe(None, None, Some(Path::new("/usr/bin/droppen-desktop"))).expect("packaged"),
+            PathBuf::from("/usr/bin/droppen-desktop")
+        );
+        // A relative or missing `$APPIMAGE` is not a path to rely on.
+        assert_eq!(
+            autostart_exe(Some(Path::new("Droppen.AppImage")), None, Some(Path::new("/usr/bin/droppen-desktop"))).expect("fallback"),
+            PathBuf::from("/usr/bin/droppen-desktop")
+        );
+        assert_eq!(
+            autostart_exe(Some(&root.path().join("gone.AppImage")), None, Some(Path::new("/usr/bin/droppen-desktop"))).expect("fallback"),
+            PathBuf::from("/usr/bin/droppen-desktop")
+        );
+        assert!(autostart_exe(None, None, None).is_err());
     }
 
     #[cfg(target_os = "macos")]

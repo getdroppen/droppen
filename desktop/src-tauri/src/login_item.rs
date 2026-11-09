@@ -1,19 +1,18 @@
 //! *Start at Login* in the app: which way this build keeps it, the move off
 //! the old launch agent at start, the default (on, once, at a new install's
-//! first launch), the toggle, what macOS says about it, and whether this
-//! launch is the one macOS made at login.
+//! first launch), the toggle, what the platform says about it, and whether
+//! this launch is the one the platform made at login.
 //!
 //! The decisions are `droppen_desktop_core::login_item`'s; this is the
-//! `SMAppService` and Apple event bridge around them, and the launch agent
-//! (tauri-plugin-autostart) every build without a Developer ID keeps.
+//! `SMAppService` and Apple event bridge around them, the launch agent
+//! (tauri-plugin-autostart) every macOS build without a Developer ID keeps,
+//! and Linux's XDG autostart entry (the file itself is core's).
 //!
 //! An end-to-end build (feature `e2e`) never calls `SMAppService` at all: its
 //! [`MainApp`] is compiled without it, so a test run cannot touch the real
 //! Login Items whatever it is signed with. Nor does it apply the default: its
-//! runs check *Start at Login* from off.
-//!
-//! Linux has no *Start at Login* yet ([`OFFERED`]): nothing here reads,
-//! writes or turns on a login item there, and the menu has no such item.
+//! runs check *Start at Login* from off. On Linux it has no backend at all,
+//! so it writes no autostart entry either.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -24,20 +23,21 @@ use droppen_desktop_core::login_item::{self as core, Backend, Before, FirstLaunc
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_autostart::ManagerExt;
 
-/// Whether this platform has *Start at Login*. TODO(linux: L5): an XDG
-/// autostart entry. Until then Linux keeps none, rather than one nobody has
-/// checked starts the app — or one turned on by default.
-pub const OFFERED: bool = cfg!(target_os = "macos");
+/// Whether this platform has *Start at Login*: macOS's login item, Linux's
+/// XDG autostart entry.
+pub const OFFERED: bool = true;
 
 /// The app's login item: the backend chosen at start, the old launch agent,
-/// `state.json`, where the default is recorded, and where an earlier install
-/// would have left its login. Managed state.
+/// `state.json`, where the default is recorded, where an earlier install
+/// would have left its login, and Linux's autostart entry. Managed state.
 pub struct LoginItem {
     backend: Backend,
     legacy: OldAgent,
     state_file: PathBuf,
     home: PathBuf,
     credential_file: PathBuf,
+    /// Linux's entry; built on every platform (`exe` is only resolved there).
+    autostart: core::AutostartFile,
     /// Whether the app's login may be in the keychain (`lib::keychain_allowed`).
     keychain: bool,
 }
@@ -45,7 +45,7 @@ pub struct LoginItem {
 /// What a turn on or off came to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Turned {
-    /// What macOS says now.
+    /// What the platform says now.
     pub status: Status,
     /// Whether it went as asked.
     pub ok: bool,
@@ -53,7 +53,8 @@ pub struct Turned {
 
 impl LoginItem {
     /// Choose the backend for this build ([`Backend::choose`]): `SMAppService`
-    /// when the app is signed with a Developer ID, outside an end-to-end build.
+    /// when the app is signed with a Developer ID, outside an end-to-end build;
+    /// an XDG autostart entry on Linux; the launch agent otherwise.
     /// `keychain`: whether the app's login may be in the keychain.
     pub fn for_this_build(dirs: &ShellDirs, keychain: bool) -> Self {
         let end_to_end = cfg!(feature = "e2e");
@@ -68,16 +69,34 @@ impl LoginItem {
             };
         #[cfg(not(target_os = "macos"))]
         let developer_id = false;
-        let backend = Backend::choose(developer_id, end_to_end);
+        let backend = Backend::choose(core::Platform::this(), developer_id, end_to_end);
+        // The AppImage is the stable thing to start, not the mount it runs
+        // from; autostart_exe refuses a mount no image names.
+        let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
+        let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
+        let current_exe = std::env::current_exe().ok();
+        let autostart = core::AutostartFile::new(
+            dirs.autostart_file(),
+            droppen_desktop_core::identity::THIS.name,
+            vec![crate::AUTOSTART_ARG.to_string()],
+            core::autostart_exe(appimage.as_deref(), appdir.as_deref(), current_exe.as_deref()),
+        );
         log::info!(
             "start at login: {}",
             match backend {
-                _ if !OFFERED => "none on this platform yet",
                 Backend::AppService => "SMAppService (the app is signed with a Developer ID)",
                 Backend::LaunchAgent if end_to_end => "a launch agent (an end-to-end build)",
                 Backend::LaunchAgent => "a launch agent (the app is not signed with a Developer ID)",
+                Backend::XdgAutostart => "an XDG autostart entry",
+                Backend::None => "none (an end-to-end build)",
             }
         );
+        if backend == Backend::XdgAutostart {
+            match autostart.exe() {
+                Some(exe) => log::info!("start at login: {} starts {}", autostart.path().display(), exe.display()),
+                None => log::warn!("start at login: no stable executable to name; the entry will not be written"),
+            }
+        }
         Self {
             backend,
             legacy: OldAgent {
@@ -87,24 +106,24 @@ impl LoginItem {
             state_file: dirs.state_file(),
             home: dirs.home.clone(),
             credential_file: dirs.credential_file(),
+            autostart,
             keychain,
         }
     }
 
     /// At start: move an old launch agent over to `SMAppService` — or, in a
-    /// build that keeps the launch agent, point it at where the app is now —
-    /// then apply the default ([`Self::apply_default`]) from the login item
-    /// as it was before the move: the move removes an old launch agent the
-    /// user switched off, which is still their choice. Nothing is moved while
-    /// the app runs from a temporary App Translocation copy: the next launch
-    /// from where it was moved does it. Nothing at all where it is not
-    /// [`OFFERED`].
+    /// build that keeps one, point it at where the app is now (Linux's entry
+    /// too) — then apply the default ([`Self::apply_default`]) from the login
+    /// item as it was before the move: the move removes an old launch agent
+    /// the user switched off, which is still their choice. Nothing is moved
+    /// while the app runs from a temporary App Translocation copy: the next
+    /// launch from where it was moved does it.
     pub fn prepare<R: Runtime>(&self, app: &AppHandle<R>, translocated: bool) {
-        if !OFFERED {
-            return;
-        }
         let before = Before {
-            legacy_present: self.legacy.present(),
+            // A login item of any kind means the user already chose: on macOS
+            // the old launch agent, on Linux the entry — even one they
+            // switched off in their desktop's startup settings.
+            legacy_present: self.legacy.present() || (cfg!(target_os = "linux") && self.autostart.present()),
             status: self.status(app),
         };
         self.move_or_repoint(app, translocated);
@@ -124,24 +143,24 @@ impl LoginItem {
         if cfg!(feature = "e2e") {
             return;
         }
-        let ran_before = || {
-            let store = LayeredStore::for_app(droppen_desktop_core::INSTANCE, self.keychain, self.credential_file.clone());
-            core::ran_here_before(&self.home, &self.credential_file, &store)
-        };
+        let ran_before = || self.ran_here_before();
         let decided = core::default_at_launch(&self.state_file, ran_before, before, translocated, || {
-            // Never System Settings from here, even if macOS wants approval:
-            // the menu says so, and the user goes there if they want.
+            // Never System Settings from here, even if the platform wants
+            // approval: the menu says so, and the user goes there if they want.
             let turned = self.set(app, true);
             if turned.ok {
                 log::info!("start at login: on by default, at this new install's first launch ({:?})", turned.status);
             } else {
-                log::warn!("start at login: macOS did not take the default on ({:?}); it stays off until the user turns it on", turned.status);
+                log::warn!(
+                    "start at login: the platform did not take the default on ({:?}); it stays off until the user turns it on",
+                    turned.status
+                );
             }
         });
         match decided {
             FirstLaunch::Decided | FirstLaunch::TurnOn => {}
             FirstLaunch::LeaveAlone => log::info!(
-                "start at login: left as it is ({:?}, old launch agent {}); its default is only for a new install",
+                "start at login: left as it is ({:?}, a login item {}); its default is only for a new install",
                 before.status,
                 if before.legacy_present { "there" } else { "none" }
             ),
@@ -149,9 +168,30 @@ impl LoginItem {
         }
     }
 
+    /// Whether an install ran here before, for the default. On Linux the
+    /// app's own files answer: the Secret Service load can wait its 5 s
+    /// deadline, and this runs on the main thread before the window exists.
+    /// The instance directory is made by the same start that makes the
+    /// keyring item, so a keyring item without it is an install that was
+    /// already reset.
+    fn ran_here_before(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.keychain;
+            core::ran_here_before_files(&self.home, &self.credential_file)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let store = LayeredStore::for_app(droppen_desktop_core::INSTANCE, self.keychain, self.credential_file.clone());
+            core::ran_here_before(&self.home, &self.credential_file, &store)
+        }
+    }
+
     fn move_or_repoint<R: Runtime>(&self, app: &AppHandle<R>, translocated: bool) {
         match self.backend {
             Backend::LaunchAgent => repoint_launch_agent(app, translocated),
+            Backend::XdgAutostart => repoint_autostart(&self.autostart),
+            Backend::None => {}
             Backend::AppService if translocated => {
                 if self.legacy.present() {
                     log::info!("start at login: the old launch agent is moved once the app runs from where it was moved");
@@ -174,13 +214,15 @@ impl LoginItem {
         }
     }
 
-    /// What macOS says now. A launch agent is on while its file is there.
+    /// What the platform says now. A launch agent, and Linux's entry, are on
+    /// while their file is there.
     pub fn status<R: Runtime>(&self, app: &AppHandle<R>) -> Status {
         match self.backend {
-            _ if !OFFERED => Status::NotRegistered,
             Backend::AppService => core::effective(core::Service::status(&MainApp), &self.legacy),
             Backend::LaunchAgent if app.autolaunch().is_enabled().unwrap_or(false) => Status::Enabled,
             Backend::LaunchAgent => Status::NotRegistered,
+            Backend::XdgAutostart => core::Service::status(&self.autostart),
+            Backend::None => Status::NotRegistered,
         }
     }
 
@@ -188,7 +230,20 @@ impl LoginItem {
     pub fn set<R: Runtime>(&self, app: &AppHandle<R>, on: bool) -> Turned {
         let word = if on { "on" } else { "off" };
         let ok = match self.backend {
-            _ if !OFFERED => false,
+            Backend::None => {
+                log::info!("start at login: an end-to-end build keeps none");
+                false
+            }
+            Backend::XdgAutostart => match core::set(&self.autostart, &self.legacy, on) {
+                Ok(status) => {
+                    log::info!("start at login: {word} ({status:?})");
+                    true
+                }
+                Err(error) => {
+                    log::warn!("cannot turn start at login {word}: {error}");
+                    false
+                }
+            },
             Backend::AppService => match core::set(&MainApp, &self.legacy, on) {
                 Ok(status) => {
                     log::info!("start at login: {word} ({status:?})");
@@ -237,6 +292,22 @@ fn repoint_launch_agent<R: Runtime>(app: &AppHandle<R>, translocated: bool) {
         (true, Ok(())) => log::warn!("start at login pointed elsewhere and the app runs from a temporary copy: turned it off"),
         (false, Ok(())) => log::info!("start at login pointed elsewhere: it now starts the app from {}", exe.display()),
         (_, Err(error)) => log::warn!("cannot fix start at login: {error}"),
+    }
+}
+
+/// An autostart entry made before the app was moved still starts it from
+/// where it was. Point it at where the app is now, as the launch agent is
+/// pointed; one that cannot name a stable executable is left alone.
+fn repoint_autostart(entry: &core::AutostartFile) {
+    if !entry.enabled() || entry.starts() {
+        return;
+    }
+    match entry.write() {
+        Ok(()) => log::info!(
+            "start at login pointed elsewhere: it now starts the app from {}",
+            entry.exe().map(|exe| exe.display().to_string()).unwrap_or_default()
+        ),
+        Err(error) => log::warn!("cannot fix start at login: {error}"),
     }
 }
 
@@ -321,13 +392,19 @@ fn describe(error: &objc2_foundation::NSError) -> String {
     format!("{} ({} {})", error.localizedDescription(), error.domain(), error.code())
 }
 
-/// Open System Settings → General → Login Items.
+/// Open System Settings → General → Login Items. Linux has no page for it:
+/// there the entry is the user's own file in the autostart directory.
 pub fn open_login_items() {
-    log::info!("opening System Settings → Login Items");
-    #[cfg(all(target_os = "macos", not(feature = "e2e")))]
-    unsafe {
-        objc2_service_management::SMAppService::openSystemSettingsLoginItems()
-    };
+    #[cfg(target_os = "macos")]
+    {
+        log::info!("opening System Settings → Login Items");
+        #[cfg(not(feature = "e2e"))]
+        unsafe {
+            objc2_service_management::SMAppService::openSystemSettingsLoginItems()
+        };
+    }
+    #[cfg(not(target_os = "macos"))]
+    log::info!("start at login is an autostart entry on this platform; there is no Login Items settings page");
 }
 
 const CORE_EVENTS: u32 = u32::from_be_bytes(*b"aevt");

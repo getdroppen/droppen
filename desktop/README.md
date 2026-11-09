@@ -101,6 +101,17 @@ app's first-run guide offers, does not run on anything older.
   `--autostart`, as before: `SMAppService.mainApp` is keyed by the app's
   identity, so a local build would take over the release's Login Item, and an
   end-to-end build has no `SMAppService` calls compiled in at all.
+  **On Linux** *Start at Login* is an XDG autostart entry,
+  `$XDG_CONFIG_HOME/autostart/droppen.desktop` (by default
+  `~/.config/autostart/…`). Its `Exec` names the app's own AppImage when it
+  runs from one — never the temporary mount — and its executable otherwise,
+  with `--autostart`, so a launch at login starts without a window as the
+  launch agent's does. It is on by default at a new install's first launch,
+  like macOS's, and the app rewrites the entry at start when the executable
+  has moved. It is not written when it would have to name a path inside a
+  temporary AppImage mount, and an end-to-end build keeps no login item there
+  at all. Linux has no Login Items settings page, so the menu shows no *Allow
+  at Login* line.
 - **Run from a quarantined download** (App Translocation): a notice says to
   move Droppen to Applications, and *Start at Login* stays off until it is. A
   launch agent made before the app was moved is pointed at where it is now

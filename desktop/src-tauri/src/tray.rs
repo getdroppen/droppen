@@ -92,9 +92,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: 
     let open_browser = MenuItem::with_id(app, OPEN_IN_BROWSER, words.open_in_browser, true, None::<&str>)?;
     login.prepare(app, translocated);
     let login_status = login.status(app);
-    if crate::login_item::OFFERED {
-        log::info!("start at login: macOS says {login_status:?}");
-    }
+    log::info!("start at login: the platform says {login_status:?}");
     let shown = login_item::shown(login_status, translocated, false);
     let autostart = CheckMenuItem::with_id(app, AUTOSTART, words.start_at_login, shown.enabled, shown.checked, None::<&str>)?;
     let login_items = MenuItem::with_id(app, LOGIN_ITEMS, words.allow_at_login, true, None::<&str>)?;
@@ -112,11 +110,6 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: 
             &quit_item,
         ],
     )?;
-    // No item rather than one that does nothing (TODO(linux: L5)); the
-    // update's items still go in between the two separators.
-    if !crate::login_item::OFFERED {
-        menu.remove(&autostart)?;
-    }
     let update_items = crate::updater::menu_items(app);
     for (offset, item) in update_items.iter().enumerate() {
         menu.insert(item, UPDATE_ITEMS_POSITION + offset)?;
@@ -243,9 +236,7 @@ fn app_menu<R: Runtime>(app: &AppHandle<R>, words: &Words) -> tauri::Result<Menu
 /// On the main thread only: it updates menu items, and Tauri's menu calls
 /// block when made from another thread.
 pub fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) -> bool {
-    let Some(login) = app.try_state::<LoginItem>().filter(|_| crate::login_item::OFFERED) else {
-        return false;
-    };
+    let Some(login) = app.try_state::<LoginItem>() else { return false };
     let on = !login.status(app).registered();
     let turned = login.set(app, on);
     if let Some(items) = app.try_state::<Items<R>>() {
@@ -282,7 +273,7 @@ fn show_login_item<R: Runtime>(app: &AppHandle<R>, status: login_item::Status) {
         let mut shown = items.login.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if shown.status != Some(status) {
             // `notFound` included: it is shown as off, and only logged.
-            log::info!("start at login: macOS says {status:?} (was {:?})", shown.status);
+            log::info!("start at login: the platform says {status:?} (was {:?})", shown.status);
             shown.status = Some(status);
         }
         if status.registered() {
@@ -300,6 +291,11 @@ fn show_login_item<R: Runtime>(app: &AppHandle<R>, status: login_item::Status) {
 /// made from another thread, and the main thread's tray handlers take the
 /// same `items.login` lock.
 fn show_note<R: Runtime>(app: &AppHandle<R>, note: Option<Note>) {
+    // The line's text and its action are macOS's Login Items page. Linux has
+    // no such page: a turn-on that failed is simply left unchecked.
+    if cfg!(not(target_os = "macos")) {
+        return;
+    }
     let Some(items) = app.try_state::<Items<R>>() else { return };
     let mut login = items.login.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if login.note == note {
