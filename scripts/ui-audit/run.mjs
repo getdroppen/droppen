@@ -1306,6 +1306,8 @@ const COPY_BANNER_WORDS = {
 };
 /** What the composer says while it waits for the machine's state, which it needs before it sends anything (#571's words). */
 const COPY_COMPOSER_WORDS = { en: "loading session…", "zh-CN": "读取会话…" };
+/** What the read-only composer says while the page is on the copy, the machine away: the copy's own reason. */
+const COPY_OFFLINE_WORDS = { en: "the device is offline — this is a read-only copy", "zh-CN": "设备离线 — 这是只读副本" };
 /** The session the fixture draws from its copy: its first and last items' words. */
 const COPY_FIRST_WORDS = "The relay drops idle sockets after a minute.";
 const COPY_LAST_WORDS = "three beats go unanswered";
@@ -1335,7 +1337,13 @@ const COPY_UNBOUND_WORDS = { en: "no account", "zh-CN": "无账号" };
  * the header. Then the same session once the machine has answered
  * (`&state=live`): the banner gone, and those showing the session's own
  * values. How far the composer and the header's metadata moved between the
- * two is in measurements.json (`shift`). Captured in English and Chinese.
+ * two is in measurements.json (`shift`). And the same session with the
+ * machine away and the page on its copy (`&state=offline`): the transcript
+ * the copy serves, the composer read-only with the copy's reason, and again
+ * nothing only the machine's state can say — no model, effort or permission
+ * (which would be the static fallback list's), no quota (the local login's)
+ * and no context in the row, nothing there to press or open, and no account
+ * in the header. Captured in English and Chinese.
  */
 async function auditSessionFromCopy(theme, view) {
   const page = await browser.newPage({
@@ -1347,10 +1355,10 @@ async function auditSessionFromCopy(theme, view) {
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "session-from-copy", id, actual, expected });
   for (const lang of Object.keys(COPY_BANNER_WORDS)) {
     const drawn = {};
-    for (const live of [false, true]) {
-      await page.goto(`${base}ui-audit/index.html?fixture=session-from-copy&lang=${lang}&theme=${theme}${live ? "&state=live" : ""}`);
+    for (const variant of ["copy", "live", "offline"]) {
+      await page.goto(`${base}ui-audit/index.html?fixture=session-from-copy&lang=${lang}&theme=${theme}${variant === "copy" ? "" : `&state=${variant}`}`);
       await page.evaluate(() => document.fonts.ready);
-      if (live) {
+      if (variant === "live") {
         await page.waitForFunction(
           (waiting) => {
             const box = document.querySelector("[data-session-view] textarea");
@@ -1358,12 +1366,14 @@ async function auditSessionFromCopy(theme, view) {
           },
           COPY_COMPOSER_WORDS[lang],
         );
+      } else if (variant === "offline") {
+        await page.waitForFunction((reason) => document.querySelector("[data-session-view] textarea")?.getAttribute("placeholder") === reason, COPY_OFFLINE_WORDS[lang]);
       } else {
         await page.waitForSelector('[data-session-view] [data-signal="reconnecting"]');
       }
       await page.waitForFunction((words) => document.body.innerText.includes(words), COPY_LAST_WORDS);
       await page.waitForTimeout(250);
-      drawn[live ? "live" : "copy"] = await auditSessionFromCopyState(page, theme, view, lang, live, fail);
+      drawn[variant] = await auditSessionFromCopyState(page, theme, view, lang, variant, fail);
     }
     const { copy, live } = drawn;
     // Where the state coming in moved things: the composer's top edge (the
@@ -1388,10 +1398,12 @@ async function auditSessionFromCopy(theme, view) {
 
 /**
  * One state of the session-from-copy fixture, measured, captured and checked:
- * drawn from the copy while the machine is asked (`live` false), or once it
- * has answered. Returns the boxes the shift between the two is read from.
+ * drawn from the copy while the machine is asked (`copy`), once it has
+ * answered (`live`), or on the copy while the machine is away (`offline`).
+ * Returns the boxes the shift between the first two is read from.
  */
-async function auditSessionFromCopyState(page, theme, view, lang, live, fail) {
+async function auditSessionFromCopyState(page, theme, view, lang, variant, fail) {
+  const live = variant === "live";
   const state = await page.evaluate(() => {
     const rect = (e) => {
       if (!e) return null;
@@ -1432,6 +1444,9 @@ async function auditSessionFromCopyState(page, theme, view, lang, live, fail) {
             text: chips.innerText.replace(/\s+/g, " ").trim(),
             // Every control in the row that opens something: a picker, a gauge's overview.
             openers: chips.querySelectorAll('[role="combobox"], [aria-haspopup], [aria-expanded]').length,
+            // What in the row can still be pressed, and any mark it carries (the model list's fallback warning).
+            enabled: [...chips.querySelectorAll("button")].filter((b) => !b.disabled).length,
+            marks: chips.querySelectorAll("[data-signal]").length,
             // What the row holds, and where: a value arriving moves what comes after it.
             items: [...chips.children].map((e) => ({ text: e.innerText.trim(), ...rect(e) })).filter((e) => e.w > 1),
           }
@@ -1444,17 +1459,32 @@ async function auditSessionFromCopyState(page, theme, view, lang, live, fail) {
       overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
     };
   });
-  const tag = `${live ? "-live" : ""}${lang === "en" ? "" : `-${lang}`}`;
+  const tag = `${variant === "copy" ? "" : `-${variant}`}${lang === "en" ? "" : `-${lang}`}`;
   await page.screenshot({ path: `${out}/session-from-copy${tag}-${theme}-${view.name}.png`, animations: "disabled" });
   const { text, ...measured } = state;
-  results.push({ mode: live ? "session-from-copy-live" : "session-from-copy", lang, theme, viewport: view.name, ...measured });
-  const where = { lang, state: live ? "live" : "copy" };
+  results.push({ mode: `session-from-copy${variant === "copy" ? "" : `-${variant}`}`, lang, theme, viewport: view.name, ...measured });
+  const where = { lang, state: variant };
   if (!text.includes(COPY_FIRST_WORDS) || !text.includes(COPY_LAST_WORDS)) fail("session-from-copy.transcript", where, "the copy's transcript drawn, first item to last");
   if (state.opening > 0) fail("session-from-copy.opening", { ...where, opening: state.opening }, "no loading line over a drawn transcript");
   if (state.overflow.doc > state.overflow.win + 1) fail("session-from-copy.overflow", { ...where, ...state.overflow }, "no horizontal overflow");
   const c = state.composer;
   const chipWords = state.chips?.text ?? "";
   const header = state.metadata?.text ?? "";
+  if (variant === "offline") {
+    if (!c || c.placeholder !== COPY_OFFLINE_WORDS[lang] || c.editable || c.send !== false) {
+      fail("session-from-copy.offline-composer", { ...where, composer: c }, `a read-only box saying "${COPY_OFFLINE_WORDS[lang]}", its send button disabled`);
+    }
+    // The row as it is while the machine's state is not in, with attach (and
+    // the camera, on a phone) and send disabled as the read-only box has them.
+    const shownWords = [...COPY_DEFAULT_WORDS, ...COPY_OWN_WORDS].filter((w) => chipWords.includes(w));
+    if (!state.chips || chipWords !== "" || state.chips.openers > 0 || state.chips.enabled > 0 || state.chips.marks > 0) {
+      fail("session-from-copy.offline-chips", { ...where, chips: state.chips, shown: shownWords }, "no model, effort, permission, quota or context in the composer's row, no mark, and nothing there to press or open");
+    }
+    if (header.includes(COPY_ACCOUNT_WORDS) || header.includes(COPY_UNBOUND_WORDS[lang])) {
+      fail("session-from-copy.offline-account", { ...where, header }, "no account in the header while the page is on the copy");
+    }
+    return state;
+  }
   if (live) {
     if (state.banner) fail("session-from-copy.live-banner", { ...where, banner: state.banner.text }, "no banner once the machine has answered");
     if (!c || c.placeholder === COPY_COMPOSER_WORDS[lang] || !c.editable) {

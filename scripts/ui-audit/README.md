@@ -126,7 +126,14 @@ no account. Then the same session once the machine has answered
 permission, account quota and context in the row and its account in the
 header. How far the composer's top edge, its row and the header's metadata
 moved between the two is in `measurements.json` (`session-from-copy-shift`).
-Outputs `session-from-copy[-live][-zh-CN]-<theme>-<viewport>.png`.
+And the same session with the machine away (`&state=offline`): the page on
+the copy through cloud mode's switching transport and the offline transport,
+the transcript the copy serves, the composer read-only with the copy's reason
+in its existing words, and again nothing only the machine's state can say —
+no model, effort or permission (they would be the static fallback list's),
+no quota (the local login's) and no context in the row, no mark there and
+nothing to press or open, and no account in the header.
+Outputs `session-from-copy[-live|-offline][-zh-CN]-<theme>-<viewport>.png`.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

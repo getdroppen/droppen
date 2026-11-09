@@ -16,7 +16,8 @@
  * with no copy on this device yet, read-only) or `?fixture=session-from-copy`
  * (the real session view on droppen.app, drawn from the device's copy of the
  * session while the machine is asked for it; `&state=live`, once it has
- * answered), plus `?theme=dark`.
+ * answered; `&state=offline`, the page on the copy while the machine is
+ * away), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -31,7 +32,10 @@ import { MachineProvider } from "@/lib/machines/context";
 import { LOCAL } from "@/lib/machines/key";
 import { openMachine, setShell } from "@/lib/machines/registry";
 import { constantStore } from "@/lib/machines/store";
+import { offlineTransport, type OfflineOptions, type OfflineSource } from "@/lib/transport/offline";
+import { SwitchingTransport } from "@/lib/transport/switching";
 import type { Transport } from "@/lib/transport/types";
+import i18next from "i18next";
 import { requestImage } from "@/components/image-lightbox";
 import { DiagramRendering, Markdown } from "@/components/markdown";
 import { MermaidBlock } from "@/components/mermaid-block";
@@ -845,12 +849,17 @@ async function mountNoCopy(): Promise<void> {
  * composer waiting for the machine's state before it sends anything, and
  * neither it nor the header showing what only that state can say. The
  * machine never answers here, so both stay; with `&state=live` it does, and
- * the same session is drawn under the machine's own state. The copy is a
- * stand-in for the machine's offline copy (`MachineMirror`) holding one
- * session, already verified; the device answers the view's own reads with
- * synthetic data only.
+ * the same session is drawn under the machine's own state. With
+ * `&state=offline` the machine is away and the page is on its copy, as cloud
+ * mode is then (`lib/transport/switching.ts`): every read and the session's
+ * feed answered by the offline transport over the copy
+ * (`lib/transport/offline.ts`), read-only, and again nothing shown that only
+ * the machine's state can say. The copy is a stand-in for the machine's
+ * offline copy (`MachineMirror`) holding one session, already verified; the
+ * device answers the view's own reads with synthetic data only.
  */
 const COPY_MACHINE = "studio-mac";
+const copyMode = query.get("state") === "offline" ? "offline" : "live";
 const COPY_SESSION = "7c1e2a90-5b3d-4f6e-9a21-0d8c4b7e3f15";
 const copyItem = (n: number, role: "user" | "assistant", kind: "text" | "tool_use" | "tool_result", text: string, more: Record<string, unknown> = {}) => ({
   role,
@@ -914,8 +923,11 @@ const SESSION_COPY = {
   whenLoaded: async () => undefined,
   sessionHeld: async (source: string, id: string) => SESSION_COPY.sessionNow(source, id),
 };
-const COPY_INFO: MachineInfo = { key: COPY_MACHINE, name: COPY_MACHINE, state: "online", since: 0, canManage: true, live: "live" };
-/** droppen.app's shell as the feed reads it: the machine, its copy, and that the page is on the machine itself. */
+const COPY_INFO: MachineInfo =
+  copyMode === "offline"
+    ? { key: COPY_MACHINE, name: COPY_MACHINE, state: "offline", since: 0, copyAsOf: COPY_AS_OF, canManage: true, live: "copy" }
+    : { key: COPY_MACHINE, name: COPY_MACHINE, state: "online", since: 0, canManage: true, live: "live" };
+/** droppen.app's shell as the feed reads it: the machine, its copy, and whether the page is on the machine itself or on the copy. */
 const COPY_SHELL = {
   kind: "hub" as const,
   home: COPY_MACHINE,
@@ -924,8 +936,54 @@ const COPY_SHELL = {
   runtime: () => {
     throw new Error("the session-from-copy fixture has one device, opened by hand");
   },
-  machine: (key: string | null | undefined) => (key === COPY_MACHINE ? { mirror: SESSION_COPY, transport: { current: "live" } } : null),
+  machine: (key: string | null | undefined) => (key === COPY_MACHINE ? { mirror: SESSION_COPY, transport: { current: copyMode } } : null),
   setMain: noop,
+};
+/**
+ * What the machine last wrote to its status, as the copy keeps it: the
+ * account the session runs on, the local login, and both their quotas. The
+ * offline transport serves the accounts and the quota from it.
+ */
+const COPY_STATUS = {
+  asOf: COPY_AS_OF,
+  settings: null,
+  accounts: {
+    accounts: [{ ...COPY_ACCOUNT, kind: "oauth_token", provider: "claude", rotation: false }],
+    defaultAccountId: null,
+    local: { claude: { state: "signed_in", isDefault: true }, codex: { state: "unknown", isDefault: null } },
+  },
+  quota: {
+    accounts: [{ ...COPY_ACCOUNT, kind: "oauth_token", usageEnabled: true, updatedAt: new Date(COPY_AS_OF).toISOString(), windows: copyQuota(37, 21) }],
+    claude: { plan: "Max 5x", tier: null, updatedAt: new Date(COPY_AS_OF).toISOString(), windows: copyQuota(88, 64) },
+    codex: null,
+  },
+  cli: { claude: "2.1.0", codex: null },
+  mkEpoch: 0,
+};
+/** The machine's copy as the offline transport reads it (`MachineMirror` is one): the session's row, its copy and the status. */
+const COPY_SOURCE: OfflineSource = {
+  whenLoaded: async () => undefined,
+  rows: () => [COPY_ROW as never],
+  row: (source, id) => SESSION_COPY.row(source, id) as never,
+  status: { state: COPY_STATUS },
+  session: async (source, id) => SESSION_COPY.sessionNow(source, id),
+  sessionNow: (source, id) => SESSION_COPY.sessionNow(source, id),
+  sessionProgress: () => null,
+  onSessionProgress: () => noop,
+  touch: noop,
+  onChange: () => noop,
+};
+/** What the copy says in the app, as `offlineMessages` (`features/cloud/hub-shell.ts`) has it while the hub says the device is offline. */
+const OFFLINE_WORDS: OfflineOptions["messages"] = {
+  get readOnly() {
+    return i18next.t("the device is offline — this is a read-only copy");
+  },
+  get noCopy() {
+    return i18next.t("the device is offline, and there is no copy of this session here yet");
+  },
+  get unavailable() {
+    return i18next.t("the device is offline — this needs it to be online");
+  },
 };
 
 /**
@@ -1010,7 +1068,14 @@ function copyDevice(live: boolean): Transport {
 }
 
 async function mountSessionFromCopy(): Promise<void> {
-  openMachine(COPY_MACHINE, copyDevice(query.get("state") === "live"), {
+  const device = copyDevice(query.get("state") === "live");
+  // On the copy: cloud mode's transport, switched to its offline side, as it
+  // stays while the machine is away.
+  const transport =
+    copyMode === "offline"
+      ? new SwitchingTransport({ live: device, offline: offlineTransport(COPY_SOURCE, { user: "cloud:fixture-device", messages: OFFLINE_WORDS, machineOnline: () => false }) }, "offline")
+      : device;
+  openMachine(COPY_MACHINE, transport, {
     info: constantStore(COPY_INFO),
     ensureLive: noop,
     hold: () => noop,

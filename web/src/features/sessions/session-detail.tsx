@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { SessionHeader } from "@/features/sessions/session-header";
 import { cloudParts } from "@/app/cloud-parts";
 import { SessionActionsMenu } from "@/features/sessions/session-actions-menu";
+import { useMachineStateIn } from "@/features/machines/copy-mode";
 import { ModelDriftBadge } from "@/features/sessions/composer-controls";
 import { scrollTopAfterPrepend } from "@/features/sessions/session-feed-state";
 import type { FeedState } from "@/features/sessions/session-feed-pool";
@@ -249,6 +250,12 @@ export function SessionDetailInner({
 
   const { data, drafts, isError, connection, opening, loadEarlier, isLoadingEarlier, historyError, refreshState } =
     useSessionFeed(source, id, stickToBottom);
+  // Whether the machine's own state is in, the test the composer's row reads
+  // too (`useMachineStateIn`): until it is, the account the session runs on,
+  // its last rotation and the model it last ran are not known. The badges
+  // that say them stay out, rather than read "no account" over a session
+  // bound to one.
+  const stateIn = useMachineStateIn(data);
   // Messages this tab sent that the transcript has not shown yet.
   const pendingSends = usePendingDeliveries(sessionKey(session));
   const isPending = !data && !isError;
@@ -676,12 +683,6 @@ export function SessionDetailInner({
 
   const { summary, items } = data;
   const displayTitle = feedTitle ?? summary.title;
-  // A window drawn from the machine's offline copy before the machine's own
-  // state has come (`feed-from-copy.ts`), the mark the composer waits on too:
-  // the account the session runs on, its last rotation and the model it last
-  // ran are not known yet. The badges that say them stay out until they are,
-  // rather than read "no account" over a session bound to one.
-  const awaitingState = data.fromCopy === true;
   return (
     <div
       ref={rootRef}
@@ -736,7 +737,7 @@ export function SessionDetailInner({
           )}
           {summary.parentId && <ParentSessionLink source={summary.source} id={summary.parentId} />}
           {/* An ACP agent runs on its own configuration: there is no account to show or bind. */}
-          {!readOnly && summary.source !== "acp" && !awaitingState && (
+          {!readOnly && summary.source !== "acp" && stateIn && (
             <SessionAccountBadge
               source={summary.source}
               id={id}
@@ -754,7 +755,7 @@ export function SessionDetailInner({
               <span className="truncate">{summary.gitBranch}</span>
             </span>
           )}
-          {!awaitingState && <ModelDriftBadge source={summary.source} id={id} cliChoice={data.cliChoice} />}
+          {stateIn && <ModelDriftBadge source={summary.source} id={id} cliChoice={data.cliChoice} />}
           <SessionMetaChip
             facts={sessionMetaFacts({
               // Chat sessions never showed their working directory and still

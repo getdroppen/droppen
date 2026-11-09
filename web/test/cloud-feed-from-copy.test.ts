@@ -300,6 +300,31 @@ test("the machine's first state ends the copy's mark, even one that says nothing
   await until(() => c.getView().data!.fromCopy === undefined, 1000);
 });
 
+test("the state the copy itself serves (the page on it, the machine away) keeps the window the copy's, by identity when it says nothing new; the machine's first state ends it", async (t) => {
+  // What `lib/transport/offline.ts` sends for a session: read-only, and marked.
+  const served = { summary: row("c"), injection: null, canSend: false, sendBlockReason: "offline: read-only copy", cliChoice: null, contextTokens: null, contextWindow: 200_000, claudeRoot: null, account: null, rotation: null, receipts: [], questions: [], fromCopy: true };
+  const { sockets, deps } = harness({ fetchState: async () => served });
+  const pool = poolFor(t, deps);
+  const feed = pool.feed("claude", "c");
+  pool.acquire(feed, pin());
+  await until(() => sockets.length === 1, HYDRATE_WAIT_MS);
+  sockets[0]!.open();
+  sockets[0]!.frame({ type: "snapshot", sig: "offline:2", ...served, items: items(0, 3), startIndex: 0, endIndex: 3, totalItems: 3, prefixFp: "fp0", startFp: "" });
+  assert.equal(feed.getView().data!.fromCopy, true, "the copy's snapshot");
+  sockets[0]!.frame({ type: "state", ...served, summary: { ...row("c"), title: "renamed" } });
+  const renamed = feed.getView().data!;
+  assert.deepEqual([renamed.fromCopy, renamed.summary.title], [true, "renamed"], "the copy's state frame");
+  sockets[0]!.frame({ type: "state", ...served, summary: { ...row("c"), title: "renamed" } });
+  assert.equal(feed.getView().data, renamed, "said again, the same object");
+  feed.refreshState();
+  await flush();
+  assert.equal(feed.getView().data!.fromCopy, true, "a re-read of the copy's detail");
+
+  const { fromCopy: _copy, ...machine } = served;
+  sockets[0]!.frame({ type: "state", ...machine, canSend: true, sendBlockReason: null });
+  assert.equal(feed.getView().data!.fromCopy, undefined, "the machine's state is its own");
+});
+
 test("a session no longer what the copy holds (its fingerprint differs) is answered with a snapshot that replaces the copy", async (t) => {
   const { mirror } = await deviceWith(t, ["a"], { a: copyOf(0, 10) });
   shellWith(t, mirror);

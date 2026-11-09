@@ -54,24 +54,29 @@ type Detail = components["schemas"]["SessionDetail"];
 export type FeedState = Omit<Detail, "itemsChanged" | "reset"> &
   Pick<TranscriptWindow, "prefixFp" | "startFp"> & {
     /**
-     * The state half is the machine's offline copy's (`feed-from-copy.ts`),
-     * drawn before the machine has said anything: the session's own model,
-     * effort and permission (`cliChoice`), its account and its context are
-     * not known yet, so nothing is sent, and nothing that would say them is
-     * drawn, until they are. Gone with the machine's first state, whichever way
-     * it comes ({@link liveState}, or a snapshot).
+     * The state half is the machine's offline copy's, not the machine's own:
+     * drawn from the copy before the machine has said anything
+     * (`feed-from-copy.ts`), or served by the copy itself while the page is
+     * on it (`lib/transport/offline.ts`). The session's own model, effort and
+     * permission (`cliChoice`), its account and its context are not known, so
+     * nothing is sent, and nothing that would say them is drawn
+     * (`useMachineStateIn`), until they are. Gone with the machine's first
+     * state, whichever way it comes ({@link foldState}, or a snapshot).
      */
     fromCopy?: true;
   };
 
 /**
- * `prev` with a state the machine sent folded in (a `state` frame, or a REST
- * re-read): from here on the state is the machine's own, even when it says
- * nothing the copy did not.
+ * `prev` with a state folded in (a `state` frame, or a REST re-read), marked
+ * as the copy's exactly when that state is: one the machine sent makes the
+ * state the machine's own from here on, even when it says nothing the copy
+ * did not.
  */
-export function liveState(prev: FeedState, fields: Partial<SessionStateFields>): FeedState {
+export function foldState(prev: FeedState, fields: Partial<SessionStateFields> & Pick<Partial<FeedState>, "fromCopy">): FeedState {
   const next = applyStateFrame(prev, fields);
-  if (!next.fromCopy) return next;
+  const copy = fields.fromCopy === true;
+  if (copy === (next.fromCopy === true)) return next;
+  if (copy) return { ...next, fromCopy: true };
   const { fromCopy: _fromCopy, ...live } = next;
   return live;
 }
@@ -317,6 +322,8 @@ export function snapshotOf(m: Record<string, unknown> & Partial<FeedState>): Fee
     hasMoreBefore: m.hasMoreBefore ?? startIndex > 0,
     omittedItems: startIndex,
     ...resumeMarksOf(m),
+    // One the offline copy served (`lib/transport/offline.ts`) says so.
+    ...(m.fromCopy === true ? { fromCopy: true as const } : {}),
   };
 }
 
@@ -740,10 +747,10 @@ export class SessionFeed {
       });
     } else if (m.type === "state") {
       // Every merge rule, and the reason a frame that says nothing new has
-      // to come back out by identity, is in [`applyStateFrame`] — except over
-      // a window drawn from the offline copy, whose state it makes the
-      // machine's ([`liveState`]).
-      this.setData((prev) => (prev ? liveState(prev, m) : prev));
+      // to come back out by identity, is in [`applyStateFrame`] — except
+      // whose state it is, the machine's or its offline copy's
+      // ([`foldState`]).
+      this.setData((prev) => (prev ? foldState(prev, m) : prev));
     } else if (m.type === "draft") {
       // Its own store, never the window's state, and only the count of a
       // think in flight out of it (`stream-draft.ts`): nothing in a draft
@@ -878,7 +885,7 @@ export class SessionFeed {
         // one with a signature chain behind it. [`applyStateFrame`] reads the
         // state fields off `fresh` and is blind to the rest of it, which is
         // what makes it the right merge for both writers.
-        this.setData((prev) => (prev ? liveState(prev, fresh) : prev));
+        this.setData((prev) => (prev ? foldState(prev, fresh) : prev));
       },
       () => undefined,
     );

@@ -138,6 +138,7 @@ test("a session's detail is the copy's last page, read-only, and its history pag
   assert.equal(detail.status, 200);
   assert.equal(detail.body.canSend, false);
   assert.equal(detail.body.sendBlockReason, "offline: read-only copy");
+  assert.equal(detail.body.fromCopy, true, "the copy's state, which says nothing of the session's model, account or context");
   assert.equal(detail.body.sig, "offline:7");
   assert.deepEqual([detail.body.startIndex, detail.body.endIndex, detail.body.totalItems, detail.body.items.length], [50, 250, 250, 200]);
   assert.equal(detail.body.hasMoreBefore, true);
@@ -235,12 +236,13 @@ test("the feed socket: hello first, then settings and the list; a sub is a read-
   assert.equal(state?.canSend, false, "the app reads it as read-only");
   assert.equal(state?.sendBlockReason, "offline: read-only copy");
   assert.equal(state?.summary.activity, "idle");
+  assert.equal(state?.fromCopy, true, "and as the copy's state, not the machine's");
 
   // A window that is this copy's is resumed: the overlap, then a read-only state.
   m.socket.send(JSON.stringify({ type: "sub", feeds: [{ sub: 2, source: "claude", id: "a", since: 250, fp: "pre247" }] }));
   await until(() => m.of(2).length === 2);
   assert.deepEqual([m.of(2)[0]!.type, m.of(2)[0]!.fromIndex, m.of(2)[0]!.items.length], ["delta", 247, 3]);
-  assert.deepEqual([m.of(2)[1]!.type, m.of(2)[1]!.canSend], ["state", false]);
+  assert.deepEqual([m.of(2)[1]!.type, m.of(2)[1]!.canSend, m.of(2)[1]!.fromCopy], ["state", false, true]);
   // A window from elsewhere gets a snapshot.
   m.socket.send(JSON.stringify({ type: "sub", feeds: [{ sub: 3, source: "claude", id: "a", since: 250, fp: "live-marker" }] }));
   await until(() => m.of(3).length === 1);
@@ -267,6 +269,7 @@ test("the feed socket: hello first, then settings and the list; a sub is a read-
   assert.deepEqual(delta.removed, ["claude/x"]);
   assert.equal(m.of(1).at(-1)!.type, "state");
   assert.equal(m.of(1).at(-1)!.summary.title, "renamed");
+  assert.equal(m.of(1).at(-1)!.fromCopy, true);
   const grown = copyOf(252, 8);
   grown.state.items[249] = { kind: "user", text: "rewritten" } as never;
   source.copies.set("claude/a", grown);

@@ -7,7 +7,7 @@ import { useAcpAgentLook } from "@/features/sessions/acp-agent-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText, EXTERNAL_SESSION } from "@/api/errors";
-import { useShowingCopy } from "@/features/machines/copy-mode";
+import { useMachineStateIn, useShowingCopy } from "@/features/machines/copy-mode";
 import { ChecklistChip, ComposerChoiceChips, ComposerQuota, ContextRing, useComposerChoice } from "@/features/sessions/composer-controls";
 import { attachmentPaths, ComposerBox, useComposerAttachments, useSendHint } from "@/features/sessions/composer-box";
 import { claimSessionDraft, readSessionDraftSnapshot, sessionDraftKey, subscribeSessionDraft, writeSessionDraft } from "@/features/sessions/session-draft";
@@ -187,14 +187,15 @@ export function Composer({
   // run — the same value `ComposerQuota` below is given, for the same reason.
   const choice = useComposerChoice(source, id, detail.cliChoice, detail.account?.id ?? null, undefined, detail.summary.acpAgent);
   const { activeModel, activeEffort, activePermission } = choice;
-  // A window drawn from the machine's offline copy before the machine's own
-  // state has come (`feed-from-copy.ts`): what the session last ran with is not
-  // known yet, and the choice above stands on the defaults. A message sent now
-  // would run under them rather than under the session's own permission. The
-  // text stays editable; nothing leaves, typed or queued, until the state is
-  // here, a round trip later.
-  const awaitingState = detail.fromCopy === true;
-  const canSend = detail.canSend && !awaitingState;
+  // Without the machine's own state (`useMachineStateIn`) what the session
+  // last ran with is not known, and the choice above stands on the defaults.
+  // A message sent then would run under them rather than under the session's
+  // own permission. On the copy the composer is shut anyway; over a window
+  // drawn from it while the machine is asked, or the copy's state still held
+  // once the page is back on the machine, the text stays editable and nothing
+  // leaves, typed or queued, until the state is here, a round trip later.
+  const stateIn = useMachineStateIn(detail);
+  const canSend = detail.canSend && stateIn;
 
   // The checklist sidecar is only ever rewritten by a tool call, so the number
   // of calls in the window is the cheapest "it may have changed" signal there
@@ -417,7 +418,7 @@ export function Composer({
   const sendsAnswer = answering && canSend && queue.length === 0;
   const willQueue =
     !sendsAnswer &&
-    !awaitingState &&
+    stateIn &&
     willQueueSend({
       canSend,
       localQueue: queue.length,
@@ -499,7 +500,7 @@ export function Composer({
       (!message && attachments.length === 0) ||
       send.isPending ||
       shut ||
-      awaitingState ||
+      !stateIn ||
       anyFailed
     ) {
       return;
@@ -669,23 +670,25 @@ export function Composer({
           placeholder={
             shut
               ? (detail.sendBlockReason ?? t("the device is offline — this is a read-only copy"))
-              : awaitingState
+              : !stateIn
                 ? t("loading session…")
                 : canSend
                   ? `${sendsAnswer ? t("type your answer…") : t("send a message to this session…")} (${sendHint})`
                   : `${detail.sendBlockReason ?? t("session is busy")} — ${t("messages are queued")}`
           }
           chips={<>
-            {/* These three read the machine's state, which a window drawn from
-                the copy does not have yet (`awaitingState`): the model, effort
-                and permission would be the defaults, the quota would be the
-                local login's rather than that of the account the session runs
-                on, and its context is not known. They are left out until the
-                state is in, a round trip later, rather than shown wrong and
-                then changed under the reader. So are the pickers: a pick made
-                from a wrong starting value would be stored as the session's
-                own choice. The checklist is read from the machine itself. */}
-            {!awaitingState && <>
+            {/* These three read the machine's state, which neither a window
+                drawn from the copy nor the page on the copy has
+                (`useMachineStateIn`): the model, effort and permission would
+                be the defaults, the quota would be the local login's rather
+                than that of the account the session runs on, and its context
+                is not known. They are left out until the state is in rather
+                than shown wrong and then changed under the reader. So are the
+                pickers: a pick made from a wrong starting value would be
+                stored as the session's own choice, and one made on the copy
+                would reach nothing. The checklist is read from the machine
+                itself. */}
+            {stateIn && <>
               <ComposerChoiceChips source={source} choice={choice} permission={!chat} />
               <ComposerQuota source={source} accountId={detail.account?.id ?? null} />
               <ContextRing used={detail.contextTokens} contextWindow={detail.contextWindow} />
@@ -693,7 +696,7 @@ export function Composer({
             <ChecklistChip source={source} id={id} toolTick={toolTick} />
           </>}
           send={{
-            disabled: send.isPending || shut || awaitingState || anyFailed || (!text.trim() && attachments.length === 0),
+            disabled: send.isPending || shut || !stateIn || anyFailed || (!text.trim() && attachments.length === 0),
             label: sendsAnswer ? t("send as your answer") : willQueue ? t("add to queue") : t("send"),
             busy: send.isPending || sendQueued,
             queues: willQueue,
