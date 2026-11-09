@@ -676,6 +676,12 @@ export function SessionDetailInner({
 
   const { summary, items } = data;
   const displayTitle = feedTitle ?? summary.title;
+  // A window drawn from the machine's offline copy before the machine's own
+  // state has come (`feed-from-copy.ts`), the mark the composer waits on too:
+  // the account the session runs on, its last rotation and the model it last
+  // ran are not known yet. The badges that say them stay out until they are,
+  // rather than read "no account" over a session bound to one.
+  const awaitingState = data.fromCopy === true;
   return (
     <div
       ref={rootRef}
@@ -730,7 +736,7 @@ export function SessionDetailInner({
           )}
           {summary.parentId && <ParentSessionLink source={summary.source} id={summary.parentId} />}
           {/* An ACP agent runs on its own configuration: there is no account to show or bind. */}
-          {!readOnly && summary.source !== "acp" && (
+          {!readOnly && summary.source !== "acp" && !awaitingState && (
             <SessionAccountBadge
               source={summary.source}
               id={id}
@@ -748,7 +754,7 @@ export function SessionDetailInner({
               <span className="truncate">{summary.gitBranch}</span>
             </span>
           )}
-          <ModelDriftBadge source={summary.source} id={id} cliChoice={data.cliChoice} />
+          {!awaitingState && <ModelDriftBadge source={summary.source} id={id} cliChoice={data.cliChoice} />}
           <SessionMetaChip
             facts={sessionMetaFacts({
               // Chat sessions never showed their working directory and still

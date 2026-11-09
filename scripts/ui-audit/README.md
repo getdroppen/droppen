@@ -117,8 +117,16 @@ first item to its last; over it the banner that says it is the copy saved on
 this device, in its existing words, mono at 11px and whole (no ellipsis, no
 clip) at either width; no loading line anywhere; and under it the composer
 waiting for the machine's state, its box editable and saying it is loading
-the session (#571's words), its send button disabled. Outputs
-`session-from-copy[-zh-CN]-<theme>-<viewport>.png`.
+the session (#571's words), its send button disabled. Nothing only that state
+can say is shown meanwhile: the composer's row holds attach and send alone (no
+model, effort or permission, which would be the defaults, nothing to pick, no
+quota, which would be the local login's, and no context), and the header names
+no account. Then the same session once the machine has answered
+(`&state=live`): no banner, the box free, and the session's own model, effort,
+permission, account quota and context in the row and its account in the
+header. How far the composer's top edge, its row and the header's metadata
+moved between the two is in `measurements.json` (`session-from-copy-shift`).
+Outputs `session-from-copy[-live][-zh-CN]-<theme>-<viewport>.png`.
 
 The fixture deliberately exercises the target state, so on a revision that
 still has the old controls these checks fail. That is the point: run it before

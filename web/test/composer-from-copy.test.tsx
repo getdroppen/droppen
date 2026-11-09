@@ -5,8 +5,11 @@
 // then, typed or taken off the outbox, would run under the default permission
 // rather than the session's own. Nothing leaves until the machine's state is
 // in; then everything goes as it always did, under the session's own choice.
-// A window the local app kept, which carries its state, sends at once as
-// before.
+// Nor does the composer show any of what only that state can say: no model,
+// effort or permission to see or to pick, no quota (the local login's, over a
+// session that runs on an account) and no context, until the state names the
+// session's own. A window the local app kept, which carries its state, sends
+// and shows them at once as before.
 //
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
@@ -49,9 +52,21 @@ type SessionSummary = import("../src/api/schema.js").components["schemas"]["Sess
 const SESSION = "s-1";
 /** What the session last ran with, as the machine reads it off the transcript: not the defaults. */
 const CHOICE = { model: "sonnet", effort: "low", permission: "plan", at: "2026-11-08T09:00:00Z" };
+/** The account the session runs on, which only the machine's state names. */
+const ACCOUNT = { id: "acct-work", label: "work" };
+/** A login's two quota windows, by what is left of each. */
+const quota = (fiveHours: number, week: number) => [
+  { label: "5h", windowMinutes: 300, usedPercent: 100 - fiveHours, remainingPercent: fiveHours, resetsAt: null },
+  { label: "weekly", windowMinutes: 10_080, usedPercent: 100 - week, remainingPercent: week, resetsAt: null },
+];
+/** What the composer would show without the session's state: the list's first model, its default effort, the CLI's default permission, the local login's quota. */
+const DEFAULTS = ["fable", "high", "acceptEdits", "88%", "64%"];
+/** And what the session's own state says: its model, effort and permission, its account's quota, its context. */
+const OWN = ["sonnet", "low", "plan", "37%", "21%", "42%"];
 
 /** The device: the composer's reads, and every message posted to the session, kept. */
 function device(posted: Record<string, unknown>[]): Transport {
+  const now = new Date().toISOString();
   const answers: Record<string, unknown> = {
     "/api/models": {
       models: [
@@ -63,7 +78,11 @@ function device(posted: Record<string, unknown>[]): Transport {
     "/api/composer-prefs": { defaults: {}, sessions: {} },
     "/api/prefs": { composerSend: "enter", sessionGrouping: "flat", transcriptStyle: "flat", fontSize: "default", language: "en" },
     "/api/accounts": { accounts: [], defaultAccountId: null, defaultCodexAccountId: null },
-    "/api/stats/quota": { accounts: [], claude: null, codex: null },
+    "/api/stats/quota": {
+      accounts: [{ ...ACCOUNT, kind: "oauth_token", usageEnabled: true, updatedAt: now, windows: quota(37, 21) }],
+      claude: { plan: null, tier: null, updatedAt: now, windows: quota(88, 64) },
+      codex: null,
+    },
   };
   return {
     fetch: async (request: Request) => {
@@ -92,7 +111,7 @@ const item = (n: number) => ({ role: "user", kind: "text", text: `item ${n}`, de
 const fromCopy = (): FeedState =>
   copyFeedState({ state: { started: true, startIndex: 0, endIndex: 3, items: [item(0), item(1), item(2)] as never, fp: "fp3", prefixFp: "fp0" }, seq: 4 }, row)!;
 /** The machine's own state frame, as it follows the resume delta. */
-const stateFrame = { summary: row, canSend: true, sendBlockReason: null, cliChoice: CHOICE, injection: null, contextTokens: null, contextWindow: 200_000, claudeRoot: null, account: null, rotation: null, receipts: [], questions: [] };
+const stateFrame = { summary: row, canSend: true, sendBlockReason: null, cliChoice: CHOICE, injection: null, contextTokens: 84_000, contextWindow: 200_000, claudeRoot: "managed" as const, account: ACCOUNT, rotation: null, receipts: [], questions: [] };
 
 let setDetail: (next: FeedState) => void = () => undefined;
 
@@ -154,6 +173,18 @@ const enter = async () => {
   });
 };
 const outbox = () => JSON.parse(localStorage.getItem(machineStorageKey(LOCAL, `queue.claude.${SESSION}`)) ?? "[]") as { text: string }[];
+/** The composer's one toolbar row: attach, the chips, send. */
+const toolbar = () => first((n) => n.hasAttribute("data-composer"))?.lastElementChild ?? null;
+/** What the row says: attach and send are icons, so only the chips have words. */
+const chipWords = () => (toolbar()?.textContent ?? "").trim();
+/** Every control in the row that opens something: a picker, the quota's overview. */
+const openers = () => [...(toolbar()?.querySelectorAll('[role="combobox"], [aria-haspopup], [aria-expanded]') ?? [])];
+/** The row's pickers, by the value each shows: model, effort, permission. */
+const pickers = () => [...(toolbar()?.querySelectorAll('[role="combobox"]') ?? [])].map((p) => p.textContent);
+const showsOwn = (what: string) => {
+  for (const word of OWN) assert.ok(chipWords().includes(word), `${what}: ${word} (${chipWords()})`);
+  for (const word of DEFAULTS) assert.ok(!chipWords().includes(word), `${what}, and not ${word} (${chipWords()})`);
+};
 
 test("drawn from the copy, nothing leaves — typed or queued — until the machine's state is in, then all of it under the session's own choice", async (t) => {
   const posted: Record<string, unknown>[] = [];
@@ -191,6 +222,28 @@ test("drawn from the copy, nothing leaves — typed or queued — until the mach
   assert.deepEqual(errors, []);
 });
 
+test("drawn from the copy, the composer shows no model, effort, permission, quota or context, and offers none to pick, until the machine's state names the session's own", async (t) => {
+  const posted: Record<string, unknown>[] = [];
+  reset(posted);
+  const { page, errors } = await mount(fromCopy());
+  t.after(() => page.unmount());
+  await until("the composer", () => !!textarea());
+  // Long enough for the model list, the stored choices and the quota to be in:
+  // whatever the row would show without the session's state, it shows by now.
+  await settle(150);
+  assert.equal(chipWords(), "", "nothing but attach and send: neither the defaults nor the local login's quota");
+  assert.deepEqual(openers(), [], "and nothing to pick a model, effort or permission from, or to open");
+
+  // The machine's state: the session's own, at once.
+  await React.act(async () => setDetail(liveState(fromCopy(), stateFrame)));
+  // The models are listed per account, and the state names one: its list is read now.
+  await until("the session's own choice", () => pickers()[0] === "sonnet");
+  assert.deepEqual(pickers(), ["sonnet", "low", "plan"], "its model, effort and permission, to see and to pick");
+  showsOwn("its choice, its account's quota and its context");
+  assert.deepEqual(posted, [], "and showing them sends nothing");
+  assert.deepEqual(errors, []);
+});
+
 test("a window the local app kept carries its state, and sends at once as it always did", async (t) => {
   const posted: Record<string, unknown>[] = [];
   reset(posted);
@@ -201,6 +254,10 @@ test("a window the local app kept carries its state, and sends at once as it alw
   const { page, errors } = await mount(kept);
   t.after(() => page.unmount());
   await until("the composer", () => !!textarea());
+  // Its choice, quota and context shown as soon as the reads they need are in, as before.
+  await until("the session's own choice, quota and context", () => pickers()[0] === "sonnet" && OWN.every((word) => chipWords().includes(word)));
+  assert.deepEqual(pickers(), ["sonnet", "low", "plan"]);
+  showsOwn("a kept window's own choice, quota and context");
   await type("straight away");
   await until("a sendable composer", () => !sendButton()!.hasAttribute("disabled"));
   propsOf(sendButton()).onClick!();

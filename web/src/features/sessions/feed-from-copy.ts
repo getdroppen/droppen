@@ -30,7 +30,9 @@ type SessionSummary = components["schemas"]["SessionSummary"];
  * do not carry. So until the live state replaces this one, which follows the
  * delta, the composer sends nothing, typed or queued (`composer.tsx`): a
  * message sent now would go out under the defaults rather than the session's
- * own choice.
+ * own choice. Nor does anything show what only that state can say — the
+ * composer's model, effort and permission, its quota and context, and the
+ * header's account (`session-detail.tsx`) — rather than the defaults.
  */
 
 /** What of a session's copy its window is cut from: `SessionCopy`, `lib/hub/mirror.ts`. */
