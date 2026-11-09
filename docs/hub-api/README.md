@@ -1,7 +1,8 @@
 # Droppen hub API, v1
 
 This is the contract between the **open** clients — the local server and its
-agent (`crates/droppen-server`), the web app (`web/`, which droppen.app also serves, at `my.droppen.app`),
+agent (`crates/droppen-server`), the web app (`web/`, which droppen.app also serves;
+`my.droppen.app` runs a build of `main`),
 `droppen-relay` (`crates/droppen-relay-core`), `droppen-proto`, `droppen-client` (the
 device side, in Rust) and `droppen-devkit` —
 and the **closed** Droppen Hub (a separate, private repository). Open code may rely
