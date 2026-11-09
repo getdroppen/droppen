@@ -45,8 +45,14 @@ use droppen_desktop_core::instance::{self, LockState, Ownership};
 use droppen_desktop_core::server::{self, ApiError, Login};
 use droppen_desktop_core::sidecar::{self, Backoff, Event, PidRecord, Spec, Supervisor};
 use droppen_desktop_core::state::ShellState;
-use droppen_desktop_core::{browser, port, web, INSTANCE};
+// *Open in Browser*'s hand-off: AppleScript on macOS, a page only this user
+// can read on Linux.
+#[cfg(not(target_os = "linux"))]
+use droppen_desktop_core::browser;
+use droppen_desktop_core::{port, web, INSTANCE};
 
+#[cfg(target_os = "linux")]
+use crate::linux_browser as browser;
 use crate::window::MAIN;
 
 /// How long a stop waits for the server after `SIGTERM` before `SIGKILL`.
@@ -749,9 +755,10 @@ impl Shell {
     /// login (`POST /api/auth/local-open/grant`, [`server::local_open_grant`]):
     /// the server's control socket, which any process of this user could ask,
     /// opens nothing on the app's instance. It goes to the browser on
-    /// `osascript`'s standard input ([`browser::open_secret`]) — on no command
-    /// line, in no log. Blocking: call it off the main thread. On failure,
-    /// why, and the port for opening the plain page instead.
+    /// `osascript`'s standard input, or on Linux in a page only this user can
+    /// read ([`browser::open_secret`]) — on no command line, in no log.
+    /// Blocking: call it off the main thread. On failure, why, and the port
+    /// for opening the plain page instead.
     pub fn open_in_browser(&self) -> Result<Opening, (String, Option<u16>)> {
         let Some(port) = self.port() else {
             return Err(("the server has no port yet".into(), None));
@@ -762,11 +769,10 @@ impl Shell {
         let Some(login) = self.login_token() else {
             return Err(("the window is not signed in yet".into(), Some(port)));
         };
-        // TODO(linux: L4): the freedesktop OpenURI portal, which takes the
-        // address over D-Bus, on no command line. Until then no one-time
-        // sign-in is even asked for: there is no way to hand it to the browser.
-        if cfg!(not(target_os = "macos")) {
-            return Err(("Linux cannot hand the browser a sign-in yet".into(), Some(port)));
+        // Where there is no way to hand the browser a sign-in, none is even
+        // asked for.
+        if cfg!(not(any(target_os = "macos", target_os = "linux"))) {
+            return Err(("this platform cannot hand the browser a sign-in".into(), Some(port)));
         }
         // The end-to-end build opens no browser: it says what it would have done.
         let e2e = cfg!(feature = "e2e");
@@ -782,7 +788,9 @@ impl Shell {
                     log::info!("would open the page in the browser with a one-time sign-in (e2e build: not opened)");
                     return Ok(Opening::Done);
                 }
-                browser::open_secret(&server::signed_in_page(port, &token)).map_err(|why| (why, Some(port)))?;
+                // What goes wrong is logged: never with the token in it.
+                browser::open_secret(&server::signed_in_page(port, &token))
+                    .map_err(|why| (droppen_desktop_core::browser::without_secret(why, &token), Some(port)))?;
                 log::info!("opened the page in the browser, signed in as this device's owner");
                 Ok(Opening::Done)
             }

@@ -29,8 +29,25 @@ app's first-run guide offers, does not run on anything older.
   opens the default browser at the page with it, signed in as this device's
   owner, while the instance has no user account — at the login page once it
   has one. The token goes to the browser on `osascript`'s standard input
-  (`core/src/browser.rs`): never on a command line, never in a log. If that
-  fails, the app opens the plain `http://127.0.0.1:<port>/` and logs why.
+  (`core/src/browser.rs`): never on a command line, never in a log. On
+  Linux, where whatever opens an address (`xdg-open`, the OpenURI portal)
+  starts the browser with it in arguments every local user can read, it goes
+  into a redirect page instead: `0600`, in `$XDG_RUNTIME_DIR/<bundle id>/`
+  (`0700`; an end-to-end build's own id), removed when the token dies, and at
+  the app's start whatever an earlier run left. The default browser — the
+  `https` one — is started with the page's path
+  (`src-tauri/src/linux_browser.rs`); a snap or flatpak browser, which cannot
+  read that directory, gets the page through the document portal, granted to
+  it alone, read-only. If that fails, the app opens the plain
+  `http://127.0.0.1:<port>/` and logs why.
+  The browser does keep the address with the token, on Linux as on macOS
+  (the same address reaches it either way): its history records the visit
+  to `…/#local-open=<token>` (Firefox and Chromium, checked). The page takes
+  the fragment off the address before anything else on it runs
+  (`history.replaceState`, `web/src/lib/local-open.ts`) — the address bar,
+  the tab's back list and a restored session no longer have it — and spends
+  the token at once: what the history keeps, in this user's own profile,
+  opens nothing.
   The server never lets a request in just for coming from this Mac, and on
   the app's instance — which never leaves its setup state, its own account
   being app-internal — it keeps no setup code and its control socket opens
