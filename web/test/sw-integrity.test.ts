@@ -9,7 +9,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fillServiceWorker, inlineScriptSources } from "../build/service-worker.js";
+import { CANONICAL_HUB as VERIFIER_CANONICAL_HUB } from "../../scripts/verify-web.mjs";
+import { cloudConfig } from "../build/cloud-mode.js";
+import { CANONICAL_HUB, fillServiceWorker, inlineScriptSources } from "../build/service-worker.js";
 import { pickLanguage } from "../src/i18n/match.js";
 
 const ORIGIN = "https://droppen.test";
@@ -439,19 +441,56 @@ test("a shell pointed at any hub but this origin's own is never kept, served or 
   }
 });
 
-test("a cloud build keeps the shell its own marker names — the canonical API origin — and not another", async () => {
+test("every build keeps a shell marked with this origin's own hub or droppen.app's canonical one, and no other", async () => {
   const api = "wss://api.droppen.app";
-  const sw = worker({ hub: api, network: { "/sessions": [marked(api), HTML] } });
-  assert.equal(await (await sw.navigate("/sessions"))!.text(), marked(api));
-  assert.equal(await (await sw.cache()).text("/"), marked(api), "the API origin its build names: kept");
-  // The same build's shell marked with the page's own host is not the shell it wrote.
-  const own = worker({ hub: api, network: { "/sessions": [marked(), HTML] } });
-  await own.navigate("/sessions");
-  assert.equal(await (await own.cache()).match("/"), undefined);
-  // Another hub is still another hub.
-  const foreign = worker({ hub: api, network: { "/sessions": [marked("wss://evil.example"), HTML] } });
+  assert.match(SOURCE, /^const CANONICAL_HUB = "wss:\/\/api\.droppen\.app";$/m, "named by the worker's own source");
+  // The worker as every droppen.app build ships it: no hub filled in.
+  for (const [what, shell] of [
+    ["the canonical hub (a cloud build's shell, my. and www.)", marked(api)],
+    ["the canonical hub, by the old marker's name", legacyMarked(api)],
+    ["this origin's own hub", marked()],
+  ]) {
+    const sw = worker({ network: { "/sessions": [shell, HTML] } });
+    assert.equal(await (await sw.navigate("/sessions"))!.text(), shell, what);
+    assert.equal(await (await sw.cache()).text("/"), shell, `${what}: kept`);
+    delete sw.network["/sessions"];
+    assert.equal(await (await sw.navigate("/sessions"))!.text(), shell, `${what}: served offline`);
+    // And kept through activate, where every cached shell is checked again.
+    const later = worker();
+    await (await later.cache()).put("/", new Response(shell, { headers: HTML }));
+    await later.activate();
+    assert.equal(await (await later.cache()).text("/"), shell, `${what}: kept on activate`);
+  }
+  for (const [what, shell] of [
+    ["another hub", marked("wss://evil.example")],
+    ["the canonical hub over ws://", marked("ws://api.droppen.app")],
+    ["a look-alike of the canonical hub", marked("wss://api.droppen.app.evil.example")],
+    ["the canonical hub and this origin's", SHELL.replace("<head>", `<head><meta name="droppen-hub" content="${api}" /><meta name="droppen-hub" content="wss://droppen.test" />`)],
+  ]) {
+    const sw = worker({ network: { "/sessions": [shell, HTML] } });
+    await sw.navigate("/sessions");
+    assert.equal(await (await sw.cache()).match("/"), undefined, `${what}: not kept`);
+    const offline = worker();
+    await (await offline.cache()).put("/", new Response(shell, { headers: HTML }));
+    await assert.rejects(offline.navigate("/sessions"), `${what}: not served`);
+    assert.equal(await (await offline.cache()).match("/"), undefined, `${what}: dropped`);
+  }
+});
+
+test("a cloud build for another hub (`DROPPEN_WEB_HUB_ORIGIN`) keeps that hub's shell too, and still no other", async () => {
+  const other = "wss://hub.example";
+  for (const origin of [other, "wss://api.droppen.app", "wss://droppen.test"]) {
+    const sw = worker({ hub: other, network: { "/sessions": [marked(origin), HTML] } });
+    await sw.navigate("/sessions");
+    assert.equal(await (await sw.cache()).text("/"), marked(origin), `${origin}: kept`);
+  }
+  const foreign = worker({ hub: other, network: { "/sessions": [marked("wss://evil.example"), HTML] } });
   await foreign.navigate("/sessions");
   assert.equal(await (await foreign.cache()).match("/"), undefined);
+  // Without it, that hub is another hub like any.
+  const plain = worker({ network: { "/sessions": [marked(other), HTML] } });
+  await plain.navigate("/sessions");
+  assert.equal(await (await plain.cache()).match("/"), undefined);
 });
 
 test("the offline shell is served with the worker's own headers, never the cached ones", async () => {
@@ -551,15 +590,37 @@ test("the build writes each language's translations into the worker, for it to p
   }
 });
 
-test("a cloud build writes the marker origin into the worker, so its shell is the one kept offline", () => {
+/** `fillServiceWorker` run on a fresh build with `opts`: the `sw.js` it writes. */
+function filled(opts: Parameters<typeof fillServiceWorker>[2], source = SOURCE): string {
   const dir = mkdtempSync(join(tmpdir(), "sw-integrity-"));
   try {
     mkdirSync(join(dir, "assets"), { recursive: true });
     writeFileSync(join(dir, "index.html"), BUILT);
-    writeFileSync(join(dir, "sw.js"), SOURCE);
-    fillServiceWorker(dir, [], { hubOrigin: "wss://api.droppen.app" });
-    assert.match(readFileSync(join(dir, "sw.js"), "utf8"), /^const HUB_ORIGIN = "wss:\/\/api\.droppen\.app";$/m);
+    writeFileSync(join(dir, "assets", "app-1.js"), APP);
+    writeFileSync(join(dir, "sw.js"), source);
+    fillServiceWorker(dir, ["/assets/app-1.js"], opts);
+    return readFileSync(join(dir, "sw.js"), "utf8");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("a cloud build for droppen.app's canonical hub writes the plain build's worker, byte for byte", () => {
+  assert.equal(CANONICAL_HUB, "wss://api.droppen.app");
+  assert.equal(CANONICAL_HUB, VERIFIER_CANONICAL_HUB, "the hub scripts/verify-web.mjs accepts for droppen.app's hosts");
+  assert.equal(cloudConfig({ DROPPEN_WEB_MODE: "cloud" })?.hubOrigin, CANONICAL_HUB, "the cloud build's default marker");
+  const plain = filled({});
+  assert.equal(filled({ hubOrigin: CANONICAL_HUB }), plain);
+  assert.match(plain, /^const HUB_ORIGIN = "";$/m);
+});
+
+test("a cloud build for another hub writes it into the worker, which accepts it too", () => {
+  assert.match(filled({ hubOrigin: "wss://hub.example" }), /^const HUB_ORIGIN = "wss:\/\/hub\.example";$/m);
+  assert.notEqual(filled({ hubOrigin: "wss://hub.example" }), filled({}), "that build's worker is not the attested one");
+});
+
+test("the build refuses a worker that does not name droppen.app's canonical hub as the build does", () => {
+  for (const source of [SOURCE.replace(/^const CANONICAL_HUB = .*$/m, ""), SOURCE.replace('const CANONICAL_HUB = "wss://api.droppen.app";', 'const CANONICAL_HUB = "wss://hub.example";')]) {
+    assert.throws(() => filled({}, source), /has no `const CANONICAL_HUB = "wss:\/\/api\.droppen\.app";`/);
   }
 });

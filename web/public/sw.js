@@ -21,10 +21,10 @@
  *   this build does not list (a newer release's, while this worker is the
  *   older one) passes through from the network and is never cached. The
  *   offline shell is kept and served only when it is this build's with no
- *   `droppen-hub` marker (or its `rh-hub` predecessor), or with this origin's
- *   own hub's alone — or, in a cloud
- *   build, the canonical machine origin its marker names (as
- *   scripts/verify-web.mjs accepts it) — a shell pointed at another hub would
+ *   `droppen-hub` marker (or its `rh-hub` predecessor), or with one alone that
+ *   names this origin's own hub or droppen.app's canonical one (CANONICAL_HUB;
+ *   and HUB_ORIGIN, when a cloud build names another), as
+ *   scripts/verify-web.mjs accepts them — a shell pointed at another hub would
  *   sign in there and send it everything — and it is served with headers this
  *   worker sets, never the cached ones (a page can write those too);
  * - versioning: the browser installs a new worker only when sw.js's bytes
@@ -60,9 +60,19 @@ const INTEGRITY = {};
 const SHELL_SHA256 = "";
 /* The CSP sources of the shell's inline scripts ('sha256-…'), as a hub allows them. */
 const SHELL_SCRIPTS = [];
-/* Filled in by a cloud build (`DROPPEN_WEB_MODE=cloud`): the canonical
- * machine origin its shell's marker names. Empty in a normal build, whose
- * shell marker is this origin's own. */
+/* droppen.app's canonical machine (API) origin: the hub its cloud builds'
+ * shells name (my. and www.), as scripts/verify-web.mjs `CANONICAL_HUB` has
+ * it. Written here, in every build, rather than filled in by a cloud build:
+ * that build's worker is then the plain build's, byte for byte, and which
+ * markers this worker accepts is still said by its own bytes alone — never
+ * by anything it reads at run time. Accepting it in every build trusts no
+ * one new: the shell must still be this build's, byte for byte, and all the
+ * marker can do is point the page at droppen.app's own hub. */
+const CANONICAL_HUB = "wss://api.droppen.app";
+/* Filled in by a cloud build whose marker names another hub
+ * (`DROPPEN_WEB_HUB_ORIGIN`, a deployment of someone else's): that origin,
+ * accepted too. Empty in every other build, droppen.app's cloud builds
+ * among them. */
 const HUB_ORIGIN = "";
 /* Filled in by the build: each language's translations but English's (its
  * words are the keys), `{prefix, files}` — the files, and how the chunk's
@@ -101,17 +111,16 @@ async function assetMatches(path, res) {
   }
 }
 
-/* The hub this page may be pointed at: this origin's own, as the page dials
- * it — `wss://` on https, `ws://` on http (scripts/verify-web.mjs
- * `siteHubOrigin`). */
+/* This origin's own hub, as the page dials it — `wss://` on https, `ws://`
+ * on http (scripts/verify-web.mjs `siteHubOrigin`). */
 function hubHere() {
   return `${self.location.protocol === "https:" ? "wss" : "ws"}://${self.location.host}`;
 }
 
-/* The marker's origin: the cloud build's canonical machine origin when it
- * named one, else this origin's own. */
-function shellHub() {
-  return HUB_ORIGIN || hubHere();
+/* The hubs a shell's marker may name: this origin's own, droppen.app's
+ * canonical one, and the one a cloud build named if it is another. */
+function shellHubs() {
+  return HUB_ORIGIN ? [hubHere(), CANONICAL_HUB, HUB_ORIGIN] : [hubHere(), CANONICAL_HUB];
 }
 
 /* `bytes` as one character per byte, so the string's indices are the bytes'. */
@@ -122,14 +131,15 @@ function latin1(bytes) {
 }
 
 /* Whether `bytes` are this build's shell: `{marked}` when they are — as built,
- * or with this origin's hub's marker, the exact tag a hub writes right after
- * the first `<head>` — else null. A marker naming any other hub (or ws:// on
- * https, or a second one, or one anywhere else) is part of the bytes, which
- * then are not the shell's. The tag was named `rh-hub` before the rename: a
- * host not updated yet, or an older release's shell, still writes it. */
+ * or with the marker of a hub {@link shellHubs} names, the exact tag a hub
+ * writes right after the first `<head>` — else null. A marker naming any
+ * other hub (or ws:// on https, or a second one, or one anywhere else) is
+ * part of the bytes, which then are not the shell's. The tag was named
+ * `rh-hub` before the rename: a host not updated yet, or an older release's
+ * shell, still writes it. */
 async function shellCheck(bytes) {
   if (!SHELL_SHA256) return null;
-  const markers = [`<meta name="droppen-hub" content="${shellHub()}" />`, `<meta name="rh-hub" content="${shellHub()}" />`];
+  const markers = shellHubs().flatMap((hub) => [`<meta name="droppen-hub" content="${hub}" />`, `<meta name="rh-hub" content="${hub}" />`]);
   const head = latin1(bytes).indexOf("<head>");
   const at = head + "<head>".length;
   let built = bytes;

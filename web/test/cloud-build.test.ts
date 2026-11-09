@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { RETIRING_WORKER, cloudConfig, contentSecurityPolicy, headersFile, hubDocument, markShell, writeCloudBuild } from "../build/cloud-mode.js";
+import { fillServiceWorker } from "../build/service-worker.js";
 
 const SHELL = '<!doctype html><html><head><meta charset="UTF-8" /><script>boot()</script></head><body><div id="root"></div></body></html>';
 const HASH = `'sha256-${createHash("sha256").update("boot()").digest("base64")}'`;
@@ -134,6 +135,39 @@ test("a cloud build writes the marker, the hosts document and `_headers` — and
     assert.equal(readdirSync(join(dir, ".well-known")).sort().join(","), "droppen-hub");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A build of `index.html` and one asset with the real worker, as vite.config.ts
+ * leaves it: `fillServiceWorker` (told the cloud build's hub, if any), then the
+ * cloud files (`writeCloudBuild`) for `cloud`. Its directory.
+ */
+function realBuild(cloud: ReturnType<typeof cloudConfig>): string {
+  const dir = mkdtempSync(join(tmpdir(), "cloud-real-"));
+  writeFileSync(join(dir, "index.html"), SHELL);
+  mkdirSync(join(dir, "assets"), { recursive: true });
+  writeFileSync(join(dir, "assets", "app-1.js"), "boot()");
+  writeFileSync(join(dir, "sw.js"), readFileSync(new URL("../public/sw.js", import.meta.url)));
+  fillServiceWorker(dir, ["/assets/app-1.js"], { hubOrigin: cloud?.hubOrigin });
+  if (cloud) writeCloudBuild(dir, cloud);
+  return dir;
+}
+
+test("with droppen.app's defaults, the app's worker is the plain build's, byte for byte; another hub's is not", () => {
+  const plain = realBuild(null);
+  const app = realBuild(config);
+  const other = realBuild(cloudConfig({ DROPPEN_WEB_MODE: "cloud", DROPPEN_WEB_HUB_ORIGIN: "wss://hub.example" }));
+  try {
+    assert.deepEqual(readFileSync(join(app, "sw.js")), readFileSync(join(plain, "sw.js")), "my.'s /sw.js is the attested one");
+    assert.match(readFileSync(join(plain, "sw.js"), "utf8"), /^const HUB_ORIGIN = "";$/m);
+    assert.ok(readFileSync(join(app, "index.html"), "utf8").includes('<meta name="droppen-hub" content="wss://api.droppen.app" />'));
+    // A deployment of someone else's still works: its worker names its hub, and is not the attested one.
+    assert.match(readFileSync(join(other, "sw.js"), "utf8"), /^const HUB_ORIGIN = "wss:\/\/hub\.example";$/m);
+    assert.ok(readFileSync(join(other, "index.html"), "utf8").includes('<meta name="droppen-hub" content="wss://hub.example" />'));
+    assert.notDeepEqual(readFileSync(join(other, "sw.js")), readFileSync(join(plain, "sw.js")));
+  } finally {
+    for (const dir of [plain, app, other]) rmSync(dir, { recursive: true, force: true });
   }
 });
 
