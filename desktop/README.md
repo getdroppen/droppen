@@ -100,6 +100,9 @@ Droppen (Tauri, the app)                     ~/Library/Logs/Droppen/desktop.log
       ├─ claude / codex sessions, pty and session shims (the server's own)
 ```
 
+(On Linux both logs are in `$XDG_STATE_HOME/app.droppen.desktop/logs/`, by
+default `~/.local/state/app.droppen.desktop/logs/`.)
+
 - **Its own instance, provably.** Data under
   `~/.local/share/remote-hand/instances/droppen-app/` (the binary's normal
   directories). The app creates that directory itself, with a marker file
@@ -278,8 +281,10 @@ password it made up.
    login keychain, service `app.droppen.desktop`, account
    `local-login:droppen-app`. If the keychain will not take or give it, a
    `credentials.json` (0600) in
-   `~/Library/Application Support/app.droppen.desktop/` (0700) instead. The app
-   reads and writes only that item.
+   `~/Library/Application Support/app.droppen.desktop/` (0700) instead — on
+   Linux, `$XDG_DATA_HOME/app.droppen.desktop/`, by default
+   `~/.local/share/app.droppen.desktop/`. The app reads and writes only that
+   item.
 4. **Only to its own server.** Before the password is sent, the app checks that
    the server answering on the port is its child: the instance's lock (asked of
    the kernel) is held by the child's pid, and the instance's `server.port` —
@@ -347,7 +352,9 @@ WebKit keeps the web view's data (local storage, IndexedDB, the service
 worker's cache) under the account's real home —
 `~/Library/WebKit/app.droppen.desktop` and `~/Library/Caches/app.droppen.desktop`
 — whatever `$HOME` says. An end-to-end test build's is its own bundle id's
-(`app.droppen.desktop.e2e`, below), which the test scripts remove.
+(`app.droppen.desktop.e2e`, below), which the test scripts remove. On Linux
+WebKitGTK keeps it, caches included, in the app's own support folder,
+`$XDG_DATA_HOME/app.droppen.desktop/` (`core/src/dirs.rs`).
 
 ## Build
 
@@ -418,7 +425,7 @@ whose real Droppen is running without touching it (`core/src/identity.rs`,
 | Keychain item | `app.droppen.desktop` / `local-login:droppen-app` | `app.droppen.desktop.e2e` / `local-login:droppen-app-e2e` (and the runs turn the keychain off) |
 | server instance | `droppen-app` | `droppen-app-e2e` |
 | new ports from | 18700–18759 | 18800–18859, never one of the release's |
-| `$HOME` | the account's | refused: only a throwaway one |
+| `$HOME` | the account's | refused: only a throwaway one (on Linux, with any `$XDG_DATA_HOME` / `$XDG_STATE_HOME` inside it) |
 | *Start at Login* | `SMAppService` when signed with a Developer ID | never `SMAppService`; a launch agent file in the throwaway home only |
 
 The app refuses to start when the bundle id it was built for and the bundle's

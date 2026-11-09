@@ -1,25 +1,33 @@
 //! Where the app keeps things.
 //!
 //! Everything hangs off `$HOME`, read once, so a test (or a manual run with a
-//! throwaway `HOME`) moves all of it at once:
+//! throwaway `HOME`) moves all of it at once — and on Linux off the XDG base
+//! directories `$XDG_DATA_HOME` and `$XDG_STATE_HOME` too ([`Xdg`]), read at
+//! the same time, where they are set:
 //!
-//! | what | where |
-//! |---|---|
-//! | the app's state, the credential file fallback, the server's pid | `~/Library/Application Support/app.droppen.desktop/` (0700) |
-//! | the app's log and the server's output | `~/Library/Logs/Droppen/` |
-//! | the server's own data | `~/.local/share/remote-hand/instances/droppen-app/`, chosen by the server itself |
+//! | what | macOS | Linux |
+//! |---|---|---|
+//! | the app's state, the credential file fallback, the server's pid | `~/Library/Application Support/app.droppen.desktop/` (0700) | `$XDG_DATA_HOME/app.droppen.desktop/` (0700), by default `~/.local/share/…` |
+//! | the app's log and the server's output | `~/Library/Logs/Droppen/` | `$XDG_STATE_HOME/app.droppen.desktop/logs/`, by default `~/.local/state/…` |
+//! | the server's own data | `~/.local/share/remote-hand/instances/droppen-app/`, chosen by the server itself | the same: the server reads no XDG variable |
 //!
-//! (An end-to-end test build's: `app.droppen.desktop.e2e/`, `Droppen E2E/` and
-//! `droppen-app-e2e/` — [`crate::identity`] — under a throwaway `HOME`.)
+//! (An end-to-end test build's: `app.droppen.desktop.e2e/`, `Droppen E2E/` —
+//! on Linux `app.droppen.desktop.e2e/logs/` — and `droppen-app-e2e/`,
+//! [`crate::identity`], under a throwaway `HOME`.)
 //!
-//! On Linux, for now, the support directory is `~/.local/share/<bundle id>/`
-//! and the logs its `logs/` ([`ShellDirs::under`]).
+//! On Linux the support directory is the web view's too: Tauri gives WebKitGTK
+//! the same `$XDG_DATA_HOME/<bundle id>/` for its local storage, IndexedDB,
+//! caches and cookies. The app's files stay at its top, beside WebKit's
+//! folders, rather than in one of their own: WebKit makes its folders 0755,
+//! so the app's 0700 on this one is what keeps the web view's data — the
+//! window's login token is in its local storage — the user's alone.
 //!
 //! The server's directories are deliberately *not* overridden: the app runs
 //! the binary exactly as a command-line install would, under an instance name
 //! of its own ([`crate::INSTANCE`]), so the machine-wide files every instance
 //! shares (uploads, notification settings, AI accounts) are the same ones.
 
+use std::ffi::OsString;
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -29,38 +37,79 @@ use std::path::{Path, PathBuf};
 pub struct ShellDirs {
     /// `$HOME`.
     pub home: PathBuf,
-    /// `~/Library/Application Support/app.droppen.desktop`.
+    /// `~/Library/Application Support/app.droppen.desktop`; on Linux
+    /// `$XDG_DATA_HOME/app.droppen.desktop`.
     pub support: PathBuf,
-    /// `~/Library/Logs/Droppen` (`Droppen E2E` in an end-to-end build).
+    /// `~/Library/Logs/Droppen` (`Droppen E2E` in an end-to-end build); on
+    /// Linux `$XDG_STATE_HOME/app.droppen.desktop/logs`.
     pub logs: PathBuf,
 }
 
+/// The XDG base directories a Linux session may set
+/// (<https://specifications.freedesktop.org/basedir-spec/latest/>), read
+/// together with `$HOME` ([`ShellDirs::from_env`]); `None` is the spec's
+/// default. macOS ignores them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Xdg {
+    /// `$XDG_DATA_HOME`, else `~/.local/share`: the support directory's parent.
+    pub data_home: Option<PathBuf>,
+    /// `$XDG_STATE_HOME`, else `~/.local/state`: the logs'.
+    pub state_home: Option<PathBuf>,
+}
+
+impl Xdg {
+    /// From the variables' values. An unset, empty or relative one is none:
+    /// the spec has a relative path ignored — and so does Tauri, which puts
+    /// the web view's data under the same `$XDG_DATA_HOME`.
+    pub fn from_values(data_home: Option<OsString>, state_home: Option<OsString>) -> Self {
+        let absolute = |value: Option<OsString>| value.map(PathBuf::from).filter(|path| path.is_absolute());
+        Self {
+            data_home: absolute(data_home),
+            state_home: absolute(state_home),
+        }
+    }
+}
+
 impl ShellDirs {
-    /// The directories under `home`.
+    /// The directories under `home`, where no XDG variable is set.
     pub fn under(home: impl Into<PathBuf>) -> Self {
+        Self::with_xdg(home, &Xdg::default())
+    }
+
+    /// The directories under `home`, or where `xdg` says on Linux.
+    pub fn with_xdg(home: impl Into<PathBuf>, xdg: &Xdg) -> Self {
         let home = home.into();
         #[cfg(target_os = "macos")]
-        let support = home.join("Library").join("Application Support").join(crate::BUNDLE_ID);
-        #[cfg(target_os = "macos")]
-        let logs = home.join("Library").join("Logs").join(crate::identity::THIS.name);
-        // No `~/Library` in a Linux home: where Tauri keeps an app's data and
-        // logs there by default. TODO(linux: L2): `$XDG_DATA_HOME` and
-        // `$XDG_STATE_HOME`.
+        let (support, logs) = {
+            let _ = xdg;
+            (
+                home.join("Library").join("Application Support").join(crate::BUNDLE_ID),
+                home.join("Library").join("Logs").join(crate::identity::THIS.name),
+            )
+        };
+        // Both by the bundle id, as Tauri names the web view's data directory,
+        // rather than by the app's name: no folder in a Linux home is called
+        // `Droppen E2E`.
         #[cfg(not(target_os = "macos"))]
-        let support = home.join(".local").join("share").join(crate::BUNDLE_ID);
-        #[cfg(not(target_os = "macos"))]
-        let logs = support.join("logs");
+        let (support, logs) = {
+            let data = xdg.data_home.clone().unwrap_or_else(|| home.join(".local").join("share"));
+            let state = xdg.state_home.clone().unwrap_or_else(|| home.join(".local").join("state"));
+            (data.join(crate::BUNDLE_ID), state.join(crate::BUNDLE_ID).join("logs"))
+        };
         Self { home, support, logs }
     }
 
-    /// The directories under `$HOME`, or `None` when it is unset or relative.
+    /// The directories under `$HOME` (and `$XDG_DATA_HOME`, `$XDG_STATE_HOME`
+    /// on Linux), or `None` when it is unset or relative.
     pub fn from_env() -> Option<Self> {
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        home.is_absolute().then(|| Self::under(home))
+        let xdg = Xdg::from_values(std::env::var_os("XDG_DATA_HOME"), std::env::var_os("XDG_STATE_HOME"));
+        home.is_absolute().then(|| Self::with_xdg(home, &xdg))
     }
 
     /// Create both directories, private (0700): the support one may hold the
-    /// credential file, and the logs say where the server's setup code is.
+    /// credential file (and on Linux holds the web view's data), and the logs
+    /// say where the server's setup code is.
     pub fn create(&self) -> io::Result<()> {
         create_private_dir(&self.support)?;
         create_private_dir(&self.logs)
@@ -153,11 +202,36 @@ mod tests {
             assert_eq!(dirs.logs, PathBuf::from("/tmp/home/Library/Logs").join(logs));
         } else {
             assert_eq!(dirs.support, PathBuf::from("/tmp/home/.local/share").join(support));
-            assert_eq!(dirs.logs, dirs.support.join("logs"));
+            assert_eq!(dirs.logs, PathBuf::from("/tmp/home/.local/state").join(support).join("logs"));
         }
         assert!(dirs.credential_file().starts_with(&dirs.support));
         assert!(dirs.pid_file().starts_with(&dirs.support));
         assert!(dirs.server_log().starts_with(&dirs.logs));
+    }
+
+    #[test]
+    fn linux_follows_the_xdg_base_directories_that_are_absolute() {
+        let xdg = Xdg::from_values(Some("/data".into()), Some("/state".into()));
+        let dirs = ShellDirs::with_xdg("/tmp/home", &xdg);
+        assert_eq!(dirs.home, PathBuf::from("/tmp/home"));
+        if cfg!(target_os = "macos") {
+            assert_eq!(dirs, ShellDirs::under("/tmp/home"), "macOS reads no XDG variable");
+        } else {
+            assert_eq!(dirs.support, Path::new("/data").join(crate::BUNDLE_ID));
+            assert_eq!(dirs.logs, Path::new("/state").join(crate::BUNDLE_ID).join("logs"));
+        }
+        // Unset, empty or relative: the default.
+        for (data, state) in [(None, None), (Some(""), Some("")), (Some("share"), Some("./state"))] {
+            assert_eq!(Xdg::from_values(data.map(OsString::from), state.map(OsString::from)), Xdg::default());
+        }
+        // Each on its own.
+        let state_only = Xdg::from_values(Some("share".into()), Some("/state".into()));
+        assert_eq!(state_only.data_home, None);
+        assert_eq!(state_only.state_home, Some(PathBuf::from("/state")));
+        assert_eq!(
+            ShellDirs::with_xdg("/tmp/home", &state_only).support,
+            ShellDirs::under("/tmp/home").support
+        );
     }
 
     #[test]

@@ -12,14 +12,17 @@
 //! a Mac where the real Droppen may be running, so it is somebody else
 //! throughout ([`E2E`]): its own bundle identifier (and so all of the above),
 //! its own name, server instance and port range — and it refuses to run under
-//! the account's real home at all ([`check_scratch_home`]), which keeps
-//! everything that does hang off `$HOME` (the support directory, the logs, the
-//! server's data, the launch agent, `~/Downloads`) in the run's own folder.
+//! the account's real home at all, or on Linux with an XDG data or state home
+//! outside the one it has ([`check_scratch_home`]), which keeps everything
+//! that does hang off `$HOME` (the support directory, the logs, the server's
+//! data, the launch agent, `~/Downloads`) in the run's own folder.
 //! `desktop/e2e-identity.sh` holds the same names for the test scripts, and a
 //! test here keeps the two in step.
 
 use std::ops::RangeInclusive;
-use std::path::Path;
+use std::path::{Component, Path};
+
+use crate::dirs::ShellDirs;
 
 /// Everything that tells one Droppen app apart from another on the same Mac.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,12 +79,16 @@ const _: () = assert!(!same(E2E.name, RELEASE.name));
 const _: () = assert!(!same(E2E.instance, RELEASE.instance));
 const _: () = assert!(*E2E.ports.start() > *RELEASE.ports.end() || *E2E.ports.end() < *RELEASE.ports.start());
 
-/// An end-to-end build refuses to run unless `$HOME` (`home`) is a folder of
-/// its own: not the account's home (`account`, the user database's,
+/// An end-to-end build refuses to run unless `$HOME` (`dirs.home`) is a folder
+/// of its own: not the account's home (`account`, the user database's,
 /// [`crate::dirs::account_home`]), nor a folder above it. Under the real home
 /// it would share the release's `~/Library/LaunchAgents`, `~/Downloads` and
-/// the machine-wide files of the server's data directory.
-pub fn check_scratch_home(home: &Path, account: Option<&Path>) -> Result<(), String> {
+/// the machine-wide files of the server's data directory. Nor unless its
+/// support folder and logs are inside that folder: on Linux an
+/// `$XDG_DATA_HOME` or `$XDG_STATE_HOME` elsewhere — a shell may export the
+/// account's — would put them there, and Tauri the web view's data too.
+pub fn check_scratch_home(dirs: &ShellDirs, account: Option<&Path>) -> Result<(), String> {
+    let home = &dirs.home;
     if !home.is_absolute() {
         return Err(format!("HOME must be an absolute path, not {}", home.display()));
     }
@@ -89,12 +96,24 @@ pub fn check_scratch_home(home: &Path, account: Option<&Path>) -> Result<(), Str
         return Err("cannot read this account's home from the user database".into());
     };
     let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let (home, account) = (canonical(home), canonical(account));
-    if account.starts_with(&home) {
+    let (scratch, account) = (canonical(home), canonical(account));
+    if account.starts_with(&scratch) {
         return Err(format!(
             "HOME is {}, the account's own home or a folder above it: an end-to-end test build runs only under a throwaway HOME",
-            home.display()
+            scratch.display()
         ));
+    }
+    for (variable, dir) in [("XDG_DATA_HOME", &dirs.support), ("XDG_STATE_HOME", &dirs.logs)] {
+        let inside = dir
+            .strip_prefix(home)
+            .is_ok_and(|rest| rest.components().all(|part| matches!(part, Component::Normal(_))));
+        if !inside {
+            return Err(format!(
+                "{variable} puts {} outside HOME ({}): an end-to-end test build keeps everything in its throwaway HOME",
+                dir.display(),
+                home.display()
+            ));
+        }
     }
     Ok(())
 }
@@ -102,6 +121,7 @@ pub fn check_scratch_home(home: &Path, account: Option<&Path>) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dirs::Xdg;
 
     #[test]
     fn this_build_is_the_release_unless_it_is_an_end_to_end_one() {
@@ -303,23 +323,47 @@ mod tests {
         let scratch = root.path().join("tmp/run/home");
         std::fs::create_dir_all(&account).expect("account");
         std::fs::create_dir_all(&scratch).expect("scratch");
-        assert_eq!(check_scratch_home(&scratch, Some(&account)), Ok(()));
+        let check = |home: &Path, account: Option<&Path>| check_scratch_home(&ShellDirs::under(home), account);
+        assert_eq!(check(&scratch, Some(&account)), Ok(()));
         // Inside the account's home is a folder of its own too.
         let inside = account.join("tmp/run");
         std::fs::create_dir_all(&inside).expect("inside");
-        assert_eq!(check_scratch_home(&inside, Some(&account)), Ok(()));
+        assert_eq!(check(&inside, Some(&account)), Ok(()));
 
         for refused in [account.clone(), root.path().join("Users"), root.path().to_path_buf()] {
-            let error = check_scratch_home(&refused, Some(&account)).expect_err("refused");
+            let error = check(&refused, Some(&account)).expect_err("refused");
             assert!(error.contains("throwaway HOME"), "{error}");
         }
         // Reached through a symbolic link, it is still the account's home.
         let link = root.path().join("link");
         std::os::unix::fs::symlink(&account, &link).expect("link");
-        assert!(check_scratch_home(&link, Some(&account)).is_err());
-        assert!(check_scratch_home(&account.join("."), Some(&account)).is_err());
+        assert!(check(&link, Some(&account)).is_err());
+        assert!(check(&account.join("."), Some(&account)).is_err());
 
-        assert!(check_scratch_home(Path::new("relative/home"), Some(&account)).is_err());
-        assert!(check_scratch_home(&scratch, None).is_err(), "an account without a known home: refused");
+        assert!(check(Path::new("relative/home"), Some(&account)).is_err());
+        assert!(check(&scratch, None).is_err(), "an account without a known home: refused");
+    }
+
+    #[test]
+    fn an_end_to_end_build_keeps_its_xdg_directories_in_its_home() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let account = root.path().join("home/someone");
+        let scratch = root.path().join("tmp/run/home");
+        let xdg = |data: &Path, state: &Path| Xdg::from_values(Some(data.into()), Some(state.into()));
+        let check = |xdg: &Xdg| check_scratch_home(&ShellDirs::with_xdg(&scratch, xdg), Some(&account));
+        assert_eq!(check(&xdg(&scratch.join("share"), &scratch.join("state"))), Ok(()));
+        // The account's own, or one that climbs out.
+        for outside in [
+            xdg(&account.join(".local/share"), &scratch.join("state")),
+            xdg(&scratch.join("share"), &account.join(".local/state")),
+            xdg(&scratch.join("../share"), &scratch.join("state")),
+        ] {
+            if cfg!(target_os = "macos") {
+                assert_eq!(check(&outside), Ok(()), "macOS reads no XDG variable");
+            } else {
+                let error = check(&outside).expect_err("refused");
+                assert!(error.contains("XDG_") && error.contains("throwaway HOME"), "{error}");
+            }
+        }
     }
 }

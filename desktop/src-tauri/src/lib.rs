@@ -167,7 +167,7 @@ pub fn run() {
     // An end-to-end build never runs under the account's real home, where
     // the release keeps its launch agent and the server its shared files.
     #[cfg(feature = "e2e")]
-    if let Err(why) = droppen_desktop_core::identity::check_scratch_home(&dirs.home, droppen_desktop_core::dirs::account_home().as_deref()) {
+    if let Err(why) = droppen_desktop_core::identity::check_scratch_home(&dirs, droppen_desktop_core::dirs::account_home().as_deref()) {
         eprintln!("droppen (end-to-end test build): {why}");
         std::process::exit(2);
     }
