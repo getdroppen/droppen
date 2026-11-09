@@ -120,7 +120,7 @@ mime_guess = { version = "2", optional = true }
 # (`regex`); a device's push key and an enrollment code (`p256`, `rand`); the
 # device's copy of a machine's index in the gateway's tests (`droppen-client`).
 libc = "0.2"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 regex = "1"
 p256 = { version = "0.13", features = ["ecdh"] }
 rand = "0.8"
