@@ -20,6 +20,7 @@ import { parseEnvBlock } from "@/features/accounts/env-block";
 import { accountsKey, quotaKey } from "@/features/accounts/use-accounts";
 import { SetupTokenDialog } from "@/features/settings/account-wizards";
 import { cn } from "@/lib/cn";
+import type { DesktopSystem } from "@/lib/desktop-app";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { setupToolsKey } from "./api";
 import { CopyCommandButton, StatusChip } from "./tools-parts";
@@ -27,9 +28,15 @@ import type { ToolsReport } from "./types";
 
 type AccountConflict = components["schemas"]["AccountConflict"];
 
-/** The developer tools row: ✓ when `xcode-select -p` says so, else why and Apple's installer. */
+/**
+ * The developer tools row: ✓ when `xcode-select -p` says so (git on the
+ * `PATH`, off a Mac), else why and Apple's installer — which only a Mac has
+ * (the server refuses it elsewhere, `not_macos`): on Linux, the system's
+ * package manager, and a look again once it is done.
+ */
 export function GitRow({
   git,
+  system,
   canInstall,
   online,
   command,
@@ -39,6 +46,7 @@ export function GitRow({
   onCheck,
 }: {
   git: ToolsReport["helpers"]["git"];
+  system: DesktopSystem;
   canInstall: boolean;
   online: boolean;
   /** The whitelisted `xcode-select --install`, for copying. */
@@ -51,6 +59,7 @@ export function GitRow({
 }) {
   const { t } = useTranslation();
   if (git === "unknown") return null;
+  const linux = system === "linux";
   return (
     <div data-testid="tools-git" className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-2 border border-border px-3.5 py-3 max-[960px]:grid-cols-1">
       <div className="min-w-0">
@@ -59,18 +68,22 @@ export function GitRow({
         </div>
         {git === "missing" && (
           <p className="mt-0.5 max-w-[46em] text-xs leading-[18px] text-muted">
-            {started ? t("macOS opened Apple's installer. Finish it there, then check again.") : t("Claude Code and Codex use git in code projects. Without it, macOS interrupts the first session to install Apple's Command Line Tools; you can get that done now.")}
+            {linux
+              ? t("Claude Code and Codex use git in code projects. Install it with your system's package manager.")
+              : started
+                ? t("macOS opened Apple's installer. Finish it there, then check again.")
+                : t("Claude Code and Codex use git in code projects. Without it, macOS interrupts the first session to install Apple's Command Line Tools; you can get that done now.")}
           </p>
         )}
       </div>
       <div className="flex items-center gap-2">
         {git === "ready" ? (
           <StatusChip tone="ready">{t("installed")}</StatusChip>
-        ) : started ? (
+        ) : started || (linux && canInstall) ? (
           <Button data-testid="git-check" disabled={checking} onClick={onCheck}>
             {t("Check again")}
           </Button>
-        ) : canInstall ? (
+        ) : linux ? null : canInstall ? (
           <Button data-testid="git-install" disabled={!online} onClick={onInstall}>
             {t("Install (Apple)")}
           </Button>

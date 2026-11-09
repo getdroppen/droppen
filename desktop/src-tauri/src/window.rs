@@ -57,9 +57,11 @@ const START_PAGE: &str = "tauri://localhost/index.html";
 /// Runs at the start of every document (see `init.js`); `__DROPPEN_NONCE__` is
 /// replaced with this launch's nonce, `__DROPPEN_BRIDGE__` with the update
 /// bridge's own token (`updater::bridge_token`), `__DROPPEN_LANGUAGES__` with
-/// the system's preferred languages (`i18n::Lang::script_list`), and
+/// the system's preferred languages (`i18n::Lang::script_list`),
 /// `__DROPPEN_RELOAD_KEYS__` with whether Ctrl+R/F5 reload the page — on
-/// Linux, where there is no app menu to reload from.
+/// Linux, where there is no app menu to reload from — and
+/// `__DROPPEN_START_AT_LOGIN__` with whether this build has Start at Login
+/// (`login_item::OFFERED`), for the web app's guide to point at it or not.
 const INIT_JS: &str = include_str!("init.js");
 
 static WINDOWS: AtomicU32 = AtomicU32::new(1);
@@ -71,6 +73,7 @@ fn init_script<R: Runtime>(app: &AppHandle<R>) -> String {
         .replace("__DROPPEN_BRIDGE__", &crate::updater::bridge_token(app))
         .replace("__DROPPEN_LANGUAGES__", &Lang::script_list(Lang::system_tags()))
         .replace("__DROPPEN_RELOAD_KEYS__", if cfg!(target_os = "linux") { "true" } else { "false" })
+        .replace("__DROPPEN_START_AT_LOGIN__", if crate::login_item::OFFERED { "1" } else { "0" })
 }
 
 /// Create the main window on the start-up page.

@@ -5,6 +5,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { ApiError } from "@/api/errors";
 import { cn } from "@/lib/cn";
 import { currentUser, isDesktopApp, isLocalOwner, localOpenFailure, LOGIN_PATH, pageDroppenCommand, setupAccount } from "@/lib/auth";
+import { desktopSystem } from "@/lib/desktop-app";
 
 /** What the first-account form asks for. */
 export interface SetupForm {
@@ -363,9 +364,14 @@ export function SetupPage({ owner, localOpenError = null }: { owner: boolean; lo
             {isDesktopApp() ? (
               // The desktop app's server keeps no setup code and its control
               // socket opens nothing (any process of the user could reach
-              // either): the app's own Open in Browser is the way in.
+              // either): the app's own Open in Browser is the way in, in the
+              // menu bar on a Mac and the system tray on Linux.
               <div className="flex flex-col gap-1.5 text-2xs text-faint" data-testid="setup-desktop-app">
-                <p>{t("This is the Droppen app's own server. In the app's menu-bar menu, choose Open in Browser: it opens this page signed in, and the first account is made there.")}</p>
+                <p>
+                  {desktopSystem() === "linux"
+                    ? t("This is the Droppen app's own server. From the Droppen icon in the system tray, choose Open in Browser: it opens this page signed in, and the first account is made there.")
+                    : t("This is the Droppen app's own server. In the app's menu-bar menu, choose Open in Browser: it opens this page signed in, and the first account is made there.")}
+                </p>
                 <p>{t("Or create the account on this device, without a code:")}</p>
                 <pre className={command}>{`${pageDroppenCommand()} user add <name>`}</pre>
               </div>

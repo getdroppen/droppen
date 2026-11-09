@@ -160,11 +160,11 @@ test("step 02: two radios, signing in to Droppen recommended and chosen", () => 
   assert.match(html, /aria-checked="false" tabindex="-1" data-choice="local"/);
   assert.match(html, /Recommended/);
   assert.doesNotMatch(html, /Let browsers on my local network in too/, "the local network waits for its own change");
-  assert.match(html, /The Droppen app on this Mac never asks for a password\./);
+  assert.match(html, /The Droppen app on this device never asks for a password\./);
   assert.match(html, /Change it later in Settings → Access\./);
   // A stored "droppen" is shown as it stands.
   assert.match(draw(<WhereStep progress={{ ...started, where: { choice: "droppen", lan: false } }} tools={undefined} online onChange={noop} />), /aria-checked="true" tabindex="0" data-choice="droppen"/);
-  // Offline, signing in cannot be had: this Mac only, with why.
+  // Offline, signing in cannot be had: this device only, with why.
   const offline = draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />);
   assert.match(offline, /data-choice="droppen"[\s\S]*droppen.app needs the internet/);
   assert.match(offline, /aria-checked="true" tabindex="0" data-choice="local"/);
@@ -218,7 +218,7 @@ test("step 02's sign-in: how the device's standing and the page's sign-in read",
   assert.equal(whereSignIn(status("not_hosting"), { kind: "idle" }).kind, "linked");
 });
 
-test("step 02 with “Sign in to Droppen” chosen: its primary signs in, keeps going while it is under way, and offers this Mac only when it stopped", () => {
+test("step 02 with “Sign in to Droppen” chosen: its primary signs in, keeps going while it is under way, and offers this device only when it stopped", () => {
   void i18n.changeLanguage("en");
   const go = { next: () => void calls.push("next"), finish: noop, local: () => void calls.push("local") };
   const calls: string[] = [];
@@ -234,10 +234,10 @@ test("step 02 with “Sign in to Droppen” chosen: its primary signs in, keeps 
   assert.deepEqual(calls.splice(0), ["next"]);
   assert.equal(action({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }).label, "Continue");
   const failed = action({ kind: "failed", failure: "refused", message: "x" });
-  assert.equal(failed.label, "Only on this Mac for now");
+  assert.equal(failed.label, "Only on this device for now");
   failed.onClick();
   assert.deepEqual(calls.splice(0), ["local"]);
-  // This Mac only, or no sign-in to follow: Continue, as before.
+  // This device only, or no sign-in to follow: Continue, as before.
   assert.equal(action({ kind: "none" }, { ...started, where: { choice: "local", lan: false } }).label, "Continue");
   assert.equal(stepAction("where", started, undefined, t, go)!.label, "Continue");
   void i18n.changeLanguage("zh-CN");
@@ -261,13 +261,13 @@ test("step 02 shows how the sign-in stands under the choices, with one primary o
   assert.match(waiting, /data-variant="primary"[^>]*data-testid="step-action"[^>]*>Keep going; I&#x27;ll finish in the browser</);
   assert.match(drawWhere({ kind: "pending", flow: { kind: "starting" } }), /data-testid="where-progress"[^>]*>[\s\S]*opening droppen.app…/);
   const linked = drawWhere({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: "1a2b 3c4d" });
-  assert.match(linked, /data-testid="where-linked"[^>]*>[\s\S]*This Mac is in your Droppen account/);
+  assert.match(linked, /data-testid="where-linked"[^>]*>[\s\S]*This device is in your Droppen account/);
   assert.match(linked, /sign in as ada@example\.com\. “studio” is there\./);
   assert.equal(primaries(linked), 1);
   // The hub not reached: "Can't reach droppen.app", what to do, and the reason in small print.
   const unreachable = drawWhere({ kind: "failed", failure: "unreachable", message: "hub_unreachable · 502" });
   assert.match(unreachable, /data-testid="where-failed"[\s\S]*Can&#x27;t reach droppen.app[\s\S]*When you&#x27;re online[\s\S]*hub_unreachable · 502[\s\S]*data-testid="where-retry"/);
-  assert.match(unreachable, /data-variant="primary"[^>]*data-testid="step-action"[^>]*>Only on this Mac for now</);
+  assert.match(unreachable, /data-variant="primary"[^>]*data-testid="step-action"[^>]*>Only on this device for now</);
   // The link ran out: that sentence is the heading, and nothing about being online.
   const expired = drawWhere({ kind: "failed", failure: "expired", message: null });
   assert.match(expired, /data-failure="expired"[\s\S]*<p class="[^"]*font-semibold">The sign-in ran out of time\./);
@@ -279,17 +279,17 @@ test("step 02 shows how the sign-in stands under the choices, with one primary o
   // The panel is read out as it changes, there before anything is in it.
   assert.match(drawWhere({ kind: "none" }), /<div role="status" aria-live="polite" data-testid="where-sign-in-live"><\/div>/);
   assert.match(waiting, /role="status" aria-live="polite" data-testid="where-sign-in-live"><div data-testid="where-sign-in"/);
-  // This Mac only: no sign-in shown, whatever stands.
+  // This device only: no sign-in shown, whatever stands.
   assert.doesNotMatch(
     draw(<WhereStep progress={{ ...started, where: { choice: "local", lan: false } }} tools={undefined} online onChange={noop} signIn={signInAt({ kind: "pending", flow: { kind: "starting" } })} />),
     /where-sign-in"/,
   );
   assert.match(drawWhere({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }), /data-choice="droppen"/);
   const zh = draw(<WhereStep progress={started} tools={undefined} online onChange={noop} signIn={signInAt({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null })} />, "zh-CN");
-  assert.match(zh, /这台 Mac 已加入你的 Droppen 账户/);
+  assert.match(zh, /这台设备已加入你的 Droppen 账户/);
 });
 
-test("step 02 says why it cannot sign in from here, and that a Mac in an account stays there on “Only on this Mac”", () => {
+test("step 02 says why it cannot sign in from here, and that a device in an account stays there on “Only on this device”", () => {
   const where = (state: WhereSignIn, choice: "droppen" | "local" = "droppen", lang = "en") =>
     draw(<WhereStep progress={{ ...started, where: { choice, lan: false } }} tools={undefined} online onChange={noop} signIn={signInAt(state)} />, lang);
   assert.doesNotMatch(where({ kind: "unavailable", reason: "loading", owner: null }), /where-unavailable/, "nothing while it loads");
@@ -297,15 +297,15 @@ test("step 02 says why it cannot sign in from here, and that a Mac in an account
   assert.match(where({ kind: "unavailable", reason: "not_manager", owner: "ada" }), /data-reason="not_manager"[^>]*>Only ada can sign this device in\.</);
   assert.match(where({ kind: "unavailable", reason: "not_manager", owner: null }), /data-reason="not_manager"[^>]*>This window cannot sign this device in\. See Settings → Access → Droppen\.</);
   assert.match(where({ kind: "unavailable", reason: "no_local_auth", owner: null }), /data-reason="no_local_auth"[^>]*>Create a local account for this device first/);
-  // "Only on this Mac" for a Mac in an account: it stays in it, and where to take it out.
+  // "Only on this device" for a device in an account: it stays in it, and where to take it out.
   const stays = where({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }, "local");
-  assert.match(stays, /data-testid="where-stays-linked"[^>]*>This Mac stays in your Droppen account\. To take it out, use Settings → Access → Droppen\.</);
+  assert.match(stays, /data-testid="where-stays-linked"[^>]*>This device stays in your Droppen account\. To take it out, use Settings → Access → Droppen\.</);
   assert.doesNotMatch(stays, /where-linked/);
   assert.doesNotMatch(where({ kind: "none" }, "local"), /where-stays-linked/);
-  assert.match(where({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }, "local", "zh-CN"), /这台 Mac 仍在你的 Droppen 账户里/);
+  assert.match(where({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }, "local", "zh-CN"), /这台设备仍在你的 Droppen 账户里/);
 });
 
-test("choosing “Only on this Mac” ends a sign-in under way or one that stopped, and nothing else", () => {
+test("choosing “Only on this device” ends a sign-in under way or one that stopped, and nothing else", () => {
   for (const state of [
     { kind: "pending", flow: { kind: "browser", attempt: ATTEMPT } },
     { kind: "failed", failure: "refused", message: "no" },
@@ -327,7 +327,7 @@ test("choosing “Only on this Mac” ends a sign-in under way or one that stopp
   assert.equal(chooseWhere(started, "local").where.choice, "local", "no sign-in to follow");
 });
 
-test("the guide's toast once this Mac is in the account: only after it was seen under way, and not on step 02", () => {
+test("the guide's toast once this device is in the account: only after it was seen under way, and not on step 02", () => {
   assert.deepEqual(linkedToast(false, "pending", "where"), { toast: false, pending: true });
   assert.deepEqual(linkedToast(true, "linked", "first"), { toast: true, pending: false }, "kept going, then it landed");
   assert.deepEqual(linkedToast(true, "linked", "wrap"), { toast: true, pending: false });
@@ -336,8 +336,8 @@ test("the guide's toast once this Mac is in the account: only after it was seen 
   assert.deepEqual(linkedToast(true, "failed", "first"), { toast: false, pending: false }, "it stopped: forgotten");
   assert.deepEqual(linkedToast(true, "none", "first"), { toast: false, pending: false }, "cancelled: forgotten");
   // The words are the guide's, in every language.
-  assert.equal(LINKED_TOAST, "This Mac is in your Droppen account");
-  assert.equal(welcomeZhCN[LINKED_TOAST], "这台 Mac 已加入你的 Droppen 账户");
+  assert.equal(LINKED_TOAST, "This device is in your Droppen account");
+  assert.equal(welcomeZhCN[LINKED_TOAST], "这台设备已加入你的 Droppen 账户");
 });
 
 test("a double click and a held Enter press one primary, not the next step's too", () => {
@@ -370,7 +370,7 @@ test("step 04 says what the sign-in came to", () => {
   assert.match(pending, /Droppen · Waiting for droppen.app…/);
   assert.match(pending, /Want it on your phone too\?/);
   assert.match(draw(<WrapStep progress={p} tools={undefined} online onChange={noop} signIn={signInAt({ kind: "failed", failure: "expired", message: null })} />), /Droppen · not signed in/);
-  // In the account even when "only on this Mac" was the choice: that is what stands.
+  // In the account even when "only on this device" was the choice: that is what stands.
   const local = complete(complete({ ...started, where: { choice: "local", lan: false } }, "tools"), "where");
   assert.match(draw(<WrapStep progress={local} tools={undefined} online onChange={noop} signIn={signInAt({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null })} />), /Droppen · ada@example\.com/);
 });
@@ -383,7 +383,7 @@ test("step 04: start at login points at the menu bar to turn it on or off, no no
   assert.doesNotMatch(html, /role="switch"/, "the menu bar switches it, not the guide");
   assert.doesNotMatch(html, /Notifications/);
   assert.match(html, /data-testid="wrap-phone"[\s\S]*Want it on your phone too\?/);
-  assert.match(html, /data-testid="wrap-summary"[\s\S]*Claude Code[\s\S]*Max 20x[\s\S]*Codex[\s\S]*not installed[\s\S]*Only on this Mac/);
+  assert.match(html, /data-testid="wrap-summary"[\s\S]*Claude Code[\s\S]*Max 20x[\s\S]*Codex[\s\S]*not installed[\s\S]*Only on this device/);
 
   assert.match(screen("wrap", p, tools(true, false)), /data-variant="primary"[^>]*>Finish</);
   const withFolder = { ...complete(p, "first"), first: { cwd: "/Users/demo/app", agent: "claude" as const, prompt: null } };

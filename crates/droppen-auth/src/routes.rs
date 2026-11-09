@@ -109,6 +109,14 @@ pub struct AuthStatus {
     /// (the server's `desktop_app` module): the web app then shows no password change, no
     /// sign-out and no sign-in to Droppen through a browser popup.
     pub desktop_app: bool,
+    /// The system this server runs on, spelled as `GET /api/settings` spells
+    /// it (`darwin`, `linux`): the desktop app's words for the device — the
+    /// menu bar or the system tray — depend on it, and the setup page needs
+    /// them before anyone is signed in. Nothing new to a caller:
+    /// `droppenPath` already reads as one system's or the other's. Servers
+    /// older than this field send none; the web app then takes the Mac's, the
+    /// one system the app was built for until then.
+    pub platform: String,
     /// How a person on this device runs this server's binary, for the commands
     /// the web app asks them to type (`<droppenPath> user add <name>`): the
     /// `droppen` link beside the running binary if there is one, else the
@@ -396,6 +404,7 @@ pub async fn status(State(state): State<AuthState>, #[api(skip)] MaybeIdentity(i
         auth_off: auth.is_off(),
         user: Nullable(identity.map(|identity| identity.username)),
         desktop_app: state.desktop_app,
+        platform: droppen_http::node_platform().to_string(),
         droppen_path: droppen_base::program::droppen_path(),
         droppen_env: state.paths.droppen_env()
             .into_iter()

@@ -115,7 +115,7 @@ test("confirm: only the usable methods, the server's command verbatim, three fac
   assert.match(c, /Droppen will run this command/);
   assert.match(c, /<code data-command=""[^>]*>\/bin\/sh -c &#x27;t=&quot;\$\(mktemp\)&quot; &amp;&amp; curl --proto =https --tlsv1\.2 -fsSLo &quot;\$t&quot; https:\/\/claude\.ai\/install\.sh &amp;&amp; bash &quot;\$t&quot;; s=\$\?; rm -f &quot;\$t&quot;; exit \$s&#x27;<\/code>/);
   assert.match(c, /From Anthropic \(claude\.ai\)[\s\S]*No administrator password, no Node\.js\.[\s\S]*Takes about a minute\./);
-  assert.match(c, /data-testid="confirm-unavailable"[\s\S]*Homebrew: Homebrew isn&#x27;t on this Mac\./);
+  assert.match(c, /data-testid="confirm-unavailable"[\s\S]*Homebrew: Homebrew isn&#x27;t on this device\./);
   assert.match(c, /data-variant="primary"[^>]*data-guide-primary=""[^>]*data-testid="run-here"[^>]*>Run it here/);
   assert.match(c, />Copy command</);
   assert.match(c, />Cancel</);
@@ -131,7 +131,7 @@ test("confirm: only the usable methods, the server's command verbatim, three fac
   const none = commands({ oldMac: true, brew: false }).map((c) => (c.method === "npm" ? { ...c, available: false, reason: "no_node" } : c));
   const stuck = cardOf(step(missing, { ui: opened("claude", { open: "confirm" }), cmds: none }), "claude");
   assert.match(stuck, /data-testid="confirm-none"/);
-  assert.match(stuck, /The official installer needs macOS 13 or later\.[\s\S]*Homebrew isn&#x27;t on this Mac\.[\s\S]*npm needs Node\.js/);
+  assert.match(stuck, /The official installer needs macOS 13 or later\.[\s\S]*Homebrew isn&#x27;t on this device\.[\s\S]*npm needs Node\.js/);
   assert.doesNotMatch(stuck, /run-here/);
 });
 
@@ -332,7 +332,7 @@ test("a page that is not the app's (canInstall false): nothing runs here — cop
   const claude = cardOf(html, "claude");
   assert.match(claude, /<code data-command=""[^>]*>claude auth login<\/code>/);
   assert.match(claude, /data-variant="primary"[^>]*data-guide-primary=""[^>]*>Copy command/);
-  assert.match(claude, /These run from the Droppen app on this Mac\. Copy the command and run it in your own Terminal\./);
+  assert.match(claude, /These run from the Droppen app on this device\. Copy the command and run it in your own Terminal\./);
   assert.match(html, /data-testid="tools-git"[\s\S]*Copy command/);
   const confirm = cardOf(step(r, { ui: opened("codex", { open: "confirm" }) }), "codex");
   assert.doesNotMatch(confirm, /run-here/);

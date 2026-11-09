@@ -311,8 +311,9 @@ ticket 只活 60 秒。
   `401 {"error":"invalid credentials"}`**,并且都会跑一次 argon2 校验,时间上也分不出来——
   否则登录接口就成了「这台机器上有哪些账号」的查询接口。
 - `GET /api/auth/status` 不需要 token,回 `{authRequired, setupRequired, authOff, user,
-  desktopApp, droppenPath, droppenEnv}`,前端靠它决定画登录页、设置页,还是直接进应用;`user`
-  可能是账号名、`local:owner` 或 `cloud:<设备>`;`droppenPath` / `droppenEnv` 是页面上命令的写法
+  desktopApp, platform, droppenPath, droppenEnv}`,前端靠它决定画登录页、设置页,还是直接进应用;`user`
+  可能是账号名、`local:owner` 或 `cloud:<设备>`;`platform` 是服务端所在的系统(`darwin`、`linux`,
+  同 `/api/settings`),桌面 App 的文案按它说菜单栏还是系统托盘;`droppenPath` / `droppenEnv` 是页面上命令的写法
   (二进制的路径,以及第二个实例 / 第二套安装要带的环境变量)。它是只读的:设置码由服务端启动时和之后每 3 秒的自检来生成
   或作废,不靠任何 `GET`。
   其余接口一律要:**`/openapi.json`、`/redoc`、`/scalar`、`/api/settings`、

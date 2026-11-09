@@ -1,0 +1,48 @@
+/*
+ * The Droppen desktop app as the web app's words about it need it: the system
+ * it runs on, where the names differ (the Mac's menu bar, a Linux desktop's
+ * system tray; the edition), and whether it has Start at Login.
+ *
+ * The system is the server's (`GET /api/auth/status`, `platform`): the app runs
+ * its server on its own device, and the words are about that device — on a
+ * page opened from another device too, whose browser says nothing about it,
+ * and on the setup page, before anyone is signed in. (The guide's steps 01
+ * and 03 read the same from the tools report they draw, `os.platform`.)
+ * Start at Login is the app's own to say (`desktop/src-tauri/src/login_item.rs`,
+ * `OFFERED`), through its window's bridge (`desktop/src-tauri/src/init.js`).
+ */
+import { serverPlatform } from "./auth";
+
+/** The systems the app is built for. */
+export type DesktopSystem = "mac" | "linux";
+
+/**
+ * A Node-style platform (`darwin`, `linux`) as one of the app's systems:
+ * Linux as itself; anything else as the Mac — `darwin`, and a server from
+ * before `platform`, when the Mac app was the only one.
+ */
+export function desktopSystemOf(platform: string | null | undefined): DesktopSystem {
+  return platform === "linux" ? "linux" : "mac";
+}
+
+/** The system of the device this page's server runs on. Synchronous for the reason `isDesktopApp` is. */
+export function desktopSystem(): DesktopSystem {
+  return desktopSystemOf(serverPlatform());
+}
+
+/** What the app's window says of Start at Login, if this page is in its window and it says. */
+function bridgeStartAtLogin(): boolean | undefined {
+  if (typeof window === "undefined") return undefined;
+  const said = (window as unknown as { __droppenDesktop?: { startAtLogin?: unknown } }).__droppenDesktop?.startAtLogin;
+  return typeof said === "boolean" ? said : undefined;
+}
+
+/**
+ * Whether the app has Start at Login, for the words that point at it: what
+ * its window's bridge says; where nothing says — a browser on the device —
+ * the Mac app's, which has always had it, and not the Linux app's, which has
+ * none yet.
+ */
+export function startAtLoginOffered(said: boolean | undefined = bridgeStartAtLogin(), system: DesktopSystem = desktopSystem()): boolean {
+  return said ?? system === "mac";
+}

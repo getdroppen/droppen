@@ -20,12 +20,14 @@ export const welcomeJa: Record<string, string> = {
   "Language": "言語", // shell.language
   // Welcome (A.2)
   "Droppen for Mac": "Droppen for Mac", // welcome.kicker
-  "Droppen is running on this Mac.": "Droppen はこの Mac で動いています。", // welcome.title
+  "Droppen for Linux": "Droppen for Linux",
+  "Droppen is running on this device.": "Droppen はこのデバイスで動いています。", // welcome.title
   "About three minutes to put it to work: get Claude Code or Codex ready, decide where you'll use it, then start your first session. Skip anything you like; all of it can be changed later in Settings.": "3 分ほどで使い始められます。Claude Code か Codex を準備し、どこで使うかを決めて、最初のセッションを始めましょう。どのステップもスキップでき、あとから「設定」で変更できます。", // welcome.body
   "Find Claude Code and Codex; install and sign in where needed.": "Claude Code と Codex を探し、必要ならインストールしてログインします。", // welcome.sum.tools
-  "Only on this Mac, or on your phone and other devices too.": "この Mac だけで使うか、スマートフォンやほかのデバイスでも使うか。", // welcome.sum.where
+  "Only on this device, or on your phone and other devices too.": "このデバイスだけで使うか、スマートフォンやほかのデバイスでも使うか。", // welcome.sum.where
   "Pick a folder and send a first message.": "フォルダを選んで、最初のメッセージを送ります。", // welcome.sum.first
   "Start at login, notifications, your phone.": "ログイン時の起動、通知、スマートフォン。", // welcome.sum.wrap
+  "Your phone, and what's set.": "スマートフォン、設定内容。",
   "Already looking for Claude Code and Codex on this device…": "このデバイスで Claude Code と Codex を探しています…", // welcome.checking
   "Found: {{list}}": "見つかりました：{{list}}", // welcome.found
   "Get started": "始める", // welcome.start
@@ -64,6 +66,7 @@ export const welcomeJa: Record<string, string> = {
   "From OpenAI (chatgpt.com): the command in Codex's own README.": "OpenAI（chatgpt.com）の公式 README にあるコマンドです。", // tools.fact.codex.1
   "Installs into ~/.local/bin/codex and checks every download's SHA-256. No administrator password, no Node.js.": "~/.local/bin/codex にインストールし、ダウンロードごとに SHA-256 を検証します。管理者パスワードも Node.js も不要です。", // tools.fact.codex.2
   "Adds ~/.local/bin to PATH in ~/.zprofile so your own Terminal finds codex too. That is what the official installer does anyway.": "自分のターミナルでも codex が見つかるよう、~/.zprofile で ~/.local/bin を PATH に追加します。公式インストーラーの通常の動作です。", // tools.fact.codex.3
+  "Adds ~/.local/bin to PATH in your shell's startup file so your own terminal finds codex too. That is what the official installer does anyway.": "自分のターミナルでも codex が見つかるよう、シェルの起動ファイルで ~/.local/bin を PATH に追加します。公式インストーラーの通常の動作です。",
   "Uses your Homebrew. Homebrew copies don't update themselves; Droppen offers the update when one is out.": "お使いの Homebrew でインストールします。Homebrew 版は自動更新されないため、新しい版が出たら Droppen がお知らせします。", // tools.fact.brew
   "Uses your Node.js ({{node}}). Only if you already manage tools with npm.": "お使いの Node.js（{{node}}）を使います。npm でツールを管理している方向けです。", // tools.fact.npm
   "Run it here": "ここで実行", // tools.runHere
@@ -107,6 +110,7 @@ export const welcomeJa: Record<string, string> = {
   "Ready through the Droppen account “{{label}}”": "Droppen のアカウント「{{label}}」で準備完了", // tools.viaAccount
   "Developer tools (git)": "デベロッパツール（git）", // tools.git
   "Claude Code and Codex use git in code projects. Without it, macOS interrupts the first session to install Apple's Command Line Tools; you can get that done now.": "Claude Code と Codex はコードのプロジェクトで git を使います。入っていないと、最初のセッション中に macOS が Apple のコマンドラインツールのインストールを求めてきます。今のうちに入れておけます。", // tools.git.body
+  "Claude Code and Codex use git in code projects. Install it with your system's package manager.": "Claude Code と Codex はコードのプロジェクトで git を使います。システムのパッケージマネージャーでインストールしてください。",
   "Install (Apple)": "インストール（Apple 公式）", // tools.git.install
   "optional": "任意", // tools.optional
   "Add accounts to Droppen (advanced)": "Droppen にアカウントを追加（上級）", // tools.adv
@@ -125,23 +129,24 @@ export const welcomeJa: Record<string, string> = {
   // Step 02 · Where to use it (A.4)
   "02 · Where to use it": "02 · 使う場所", // where.kicker
   "Where will you use Droppen?": "どこで Droppen を使いますか？", // where.title
-  "Droppen runs on this Mac either way. This only decides what else can reach it, and you can change it any time in Settings.": "どれを選んでも Droppen はこの Mac で動きます。ここで決めるのは、ほかに何から接続できるかだけで、いつでも「設定」で変更できます。", // where.body
+  "Droppen runs on this device either way. This only decides what else can reach it, and you can change it any time in Settings.": "どれを選んでも Droppen はこのデバイスで動きます。ここで決めるのは、ほかに何から接続できるかだけで、いつでも「設定」で変更できます。", // where.body
   "On my phone and other devices too": "スマートフォンやほかのデバイスでも使う", // where.droppen.title
   "Sign in to Droppen": "Droppen にサインイン", // where.droppen.action
-  "Open droppen.app on your phone or any other device and carry on with this Mac's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.": "スマートフォンやほかのデバイスで droppen.app を開き、この Mac のセッションの続きができます。内容はエンドツーエンドで暗号化され、droppen.app からは読めません。ブラウザが開くので、ログインまたは登録してください。", // where.droppen.body
+  "Open droppen.app on your phone or any other device and carry on with this device's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.": "スマートフォンやほかのデバイスで droppen.app を開き、このデバイスのセッションの続きができます。内容はエンドツーエンドで暗号化され、droppen.app からは読めません。ブラウザが開くので、ログインまたは登録してください。", // where.droppen.body
   "Recommended": "おすすめ", // where.recommended
-  "Only on this Mac": "この Mac だけで使う", // where.local.title
+  "Only on this device": "このデバイスだけで使う", // where.local.title
   "Skip": "スキップ", // where.local.action
-  "Everything works without an account. Nothing leaves this Mac except what Claude Code and Codex send to their own services.": "アカウントなしですべて使えます。Claude Code と Codex がそれぞれのサービスに送る内容以外、この Mac から何も出ていきません。", // where.local.body
+  "Everything works without an account. Nothing leaves this device except what Claude Code and Codex send to their own services.": "アカウントなしですべて使えます。Claude Code と Codex がそれぞれのサービスに送る内容以外、このデバイスから何も出ていきません。", // where.local.body
   "Also": "追加で", // where.also
   "Let browsers on my local network in too": "同じネットワークのブラウザからも使う", // where.lan.title
   "Set a password for this device (advanced)": "このデバイスのパスワードを設定（上級）", // where.lan.action
   "An iPad or another device on the same Wi‑Fi opens this Mac's address in a browser and signs in with the password. Doesn't go through droppen.app, and works alongside either choice above.": "同じ Wi‑Fi の iPad やほかのデバイスのブラウザでこの Mac のアドレスを開き、パスワードで入ります。droppen.app は経由せず、上のどちらとも併用できます。", // where.lan.body
-  "The Droppen app on this Mac never asks for a password. For a browser on this Mac, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "この Mac の Droppen アプリはパスワードを求めません。この Mac のブラウザでは、アプリのメニューバーのメニューで「ブラウザで開く」を選ぶと、ログインした状態で開きます。このデバイスにパスワードを設定したあとは、ブラウザでそのパスワードが必要になります。", // where.browserNote
+  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "このデバイスの Droppen アプリはパスワードを求めません。このデバイスのブラウザでは、アプリのメニューバーのメニューで「ブラウザで開く」を選ぶと、ログインした状態で開きます。このデバイスにパスワードを設定したあとは、ブラウザでそのパスワードが必要になります。", // where.browserNote
+  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.": "このデバイスの Droppen アプリはパスワードを求めません。このデバイスのブラウザでは、システムトレイの Droppen アイコンのメニューで「ブラウザで開く」を選ぶと、ログインした状態で開きます。このデバイスにパスワードを設定したあとは、ブラウザでそのパスワードが必要になります。",
   "Sign in in the browser": "ブラウザでログイン", // where.go.droppen
   "Set the password": "パスワードを設定", // where.go.lan
   "Change it later in Settings → Access.": "あとから 設定 → アクセス で変更できます。", // where.changeLater
-  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.": "droppen.app にはインターネットが必要です。いまは「この Mac だけで使う」を選び、あとで 設定 → アクセス → Droppen からログインしてください。", // where.offline
+  "droppen.app needs the internet. Choose “Only on this device” for now; sign in later from Settings → Access → Droppen.": "droppen.app にはインターネットが必要です。いまは「このデバイスだけで使う」を選び、あとで 設定 → アクセス → Droppen からログインしてください。", // where.offline
   "Continue in your browser": "ブラウザで続けてください", // where.wait.title
   "Sign in to droppen.app, or create an account.": "droppen.app にサインインするか、アカウントを作成します。", // where.wait.1: the app's own wording
   "Check that the fingerprint there matches this one, then choose Allow.": "表示されたフィンガープリントがこれと一致することを確認して「許可」を選びます。", // where.wait.2
@@ -152,14 +157,14 @@ export const welcomeJa: Record<string, string> = {
   "The link works for 10 minutes ({{left}} left).": "リンクの有効期限は 10 分です（残り {{left}}）。", // where.expires
   "Waiting for droppen.app…": "droppen.app を待っています…", // where.waiting
   "Keep going; I'll finish in the browser": "先に進む（ブラウザで続ける）", // where.keepGoing
-  "This Mac is in your Droppen account": "この Mac は Droppen アカウントに追加されました", // where.linked.title
+  "This device is in your Droppen account": "このデバイスは Droppen アカウントに追加されました", // where.linked.title
   "Open droppen.app on your phone and sign in as {{email}}. “{{device}}” is there.": "スマートフォンで droppen.app を開き、{{email}} でログインすると「{{device}}」があります。", // where.linked.body
   "Device name": "デバイス名", // where.deviceName
   "Scan with your phone": "スマートフォンで読み取る", // where.scan
   "Can't reach droppen.app": "droppen.app に接続できません", // where.err.title
-  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.": "いまはこの Mac だけで使ってください。オンラインになったら 設定 → アクセス → Droppen からログインできます。ここでの設定は失われません。", // where.err.body
+  "Use Droppen on this device for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.": "いまはこのデバイスだけで使ってください。オンラインになったら 設定 → アクセス → Droppen からログインできます。ここでの設定は失われません。", // where.err.body
   "Your plan's devices that run AI are all in use. Remove one at droppen.app or change plan; until then this Mac works on its own.": "プランで AI を動かせるデバイスが上限に達しています。droppen.app で 1 台外すかプランを変更してください。それまではこの Mac 単体で使えます。", // where.err.limit
-  "Only on this Mac for now": "今はこの Mac だけで使う", // where.localNow
+  "Only on this device for now": "今はこのデバイスだけで使う", // where.localNow
   "A password for browsers on your network": "ネットワーク上のブラウザ用のパスワード", // where.lan.formTitle
   "Browsers on other devices sign in with this name and password. The Droppen app on this Mac doesn't need it.": "ほかのデバイスのブラウザはこの名前とパスワードでログインします。この Mac の Droppen アプリには不要です。", // where.lan.formBody
   "Password": "パスワード", // where.lan.pw
@@ -195,7 +200,8 @@ export const welcomeJa: Record<string, string> = {
   "04 · Finishing up": "04 · 仕上げ", // wrap.kicker
   "A few last things": "最後にいくつか", // wrap.title
   "Start Droppen at login": "ログイン時に Droppen を起動", // wrap.login
-  "So sessions, your phone and scheduled tasks can reach this Mac after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.": "再起動後も、セッション・スマートフォン・定期タスクがこの Mac に接続できます。Droppen はメニューバーに常駐し、ウインドウを閉じても止まりません。", // wrap.login.body
+  "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.": "再起動後も、セッション・スマートフォン・定期タスクがこのデバイスに接続できます。Droppen はメニューバーに常駐し、ウインドウを閉じても止まりません。", // wrap.login.body
+  "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the system tray; closing the window doesn't stop it.": "再起動後も、セッション・スマートフォン・定期タスクがこのデバイスに接続できます。Droppen はシステムトレイに常駐し、ウインドウを閉じても止まりません。",
   "Move Droppen to Applications first.": "先に Droppen を「アプリケーション」に移動してください。", // wrap.login.move
   "Notifications": "通知", // wrap.notif
   "A macOS notification when a session finishes or asks you something.": "セッションが終わったときや質問があるときに macOS の通知でお知らせします。", // wrap.notif.body
@@ -223,16 +229,17 @@ export const welcomeJa: Record<string, string> = {
   "Run setup again": "もう一度実行", // after.settings.rerun
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code にログインしました。Droppen に戻れます。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
-  "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "この Mac は Droppen アカウントに残ります。外すには 設定 → アクセス → Droppen から。", // where.local.stays (as built)
+  "This device stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "このデバイスは Droppen アカウントに残ります。外すには 設定 → アクセス → Droppen から。", // where.local.stays (as built)
   "This window cannot sign this device in. See Settings → Access → Droppen.": "このウィンドウからはこのデバイスをサインインできません。設定 → アクセス → Droppen を見てください。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "メニューバーの Droppen アイコンの「ログイン時に起動」で、いつでもオン・オフを切り替えられます。", // wrap.login.menuBar
+  "Turn it on or off any time from the Droppen icon in the system tray: Start at Login.": "システムトレイの Droppen アイコンの「ログイン時に起動」で、いつでもオン・オフを切り替えられます。",
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "閉じる",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS で Apple のインストーラーが開きました。そちらで完了してから、もう一度確認してください。",
   "Check again": "もう一度確認",
   "Added to Droppen as “{{label}}”.": "「{{label}}」として Droppen に追加しました。",
-  "These run from the Droppen app on this Mac. Copy the command and run it in your own Terminal.": "これらはこの Mac の Droppen アプリからのみ実行できます。コマンドをコピーして、ご自分のターミナルで実行してください。",
+  "These run from the Droppen app on this device. Copy the command and run it in your own Terminal.": "これらはこのデバイスの Droppen アプリからのみ実行できます。コマンドをコピーして、ご自分のターミナルで実行してください。",
   "OpenAI API key": "OpenAI API キー",
   "Droppen hands the key to codex login --with-api-key once, through its input. Codex keeps it; Droppen doesn't.": "Droppen はキーを標準入力から codex login --with-api-key に一度だけ渡します。保存するのは Codex で、Droppen は保存しません。",
   "Where is it?": "どこにありますか？",
@@ -263,13 +270,13 @@ export const welcomeJa: Record<string, string> = {
   "The installer finished, but the tool still isn't on this device.": "インストーラーは終了しましたが、このデバイスにはまだツールが見つかりません。",
   "The update finished, but the version is still too old.": "アップデートは終了しましたが、バージョンはまだ古いままです。",
   "Couldn't reach the download server. Check the connection and try again, or run the command in your own Terminal.": "ダウンロードサーバーに接続できません。接続を確認して再試行するか、ご自分のターミナルでコマンドを実行してください。",
-  "Permission denied. Homebrew on this Mac may belong to another user; the official installer installs into your home folder instead.": "権限がありません。この Mac の Homebrew は別のユーザーのものかもしれません。公式インストーラーならホームフォルダにインストールします。",
+  "Permission denied. Homebrew on this device may belong to another user; the official installer installs into your home folder instead.": "権限がありません。このデバイスの Homebrew は別のユーザーのものかもしれません。公式インストーラーならホームフォルダにインストールします。",
   "Permission denied: it couldn't write where it installs. Try the official installer, which installs into your home folder, or run the command in your own Terminal.": "権限がありません：インストール先に書き込めませんでした。ホームフォルダにインストールする公式インストーラーを試すか、ご自分のターミナルでコマンドを実行してください。",
   "The disk is full. Free some space, then try again.": "ディスクがいっぱいです。空きを作ってから再試行してください。",
   "The last lines are below. Try again, or run the command in your own Terminal.": "最後の数行を下に表示しています。再試行するか、ご自分のターミナルでコマンドを実行してください。",
   "The official installer needs macOS 13 or later.": "公式インストーラーには macOS 13 以降が必要です。",
-  "Homebrew isn't on this Mac.": "この Mac には Homebrew がありません。",
-  "npm needs Node.js, which isn't on this Mac.": "npm には Node.js が必要ですが、この Mac にはありません。",
+  "Homebrew isn't on this device.": "このデバイスには Homebrew がありません。",
+  "npm needs Node.js, which isn't on this device.": "npm には Node.js が必要ですが、このデバイスにはありません。",
   "Not available on this device.": "このデバイスでは使えません。",
   "Something is already running for this tool. Wait for it, or stop it.": "このツールではすでに処理が実行中です。終わるのを待つか、停止してください。",
   "That isn't a copy Droppen can use. Pick the program itself, named claude or codex.": "Droppen が使えるプログラムではありません。claude または codex という名前のプログラム本体を指定してください。",

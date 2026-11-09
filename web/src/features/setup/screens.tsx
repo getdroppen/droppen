@@ -11,6 +11,7 @@ import { LiveDot } from "@/components/live-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { desktopSystem, startAtLoginOffered } from "@/lib/desktop-app";
 import { FootNote, onceClicked } from "./frame";
 import { foundTools, STEP_LABEL, STEPS, TOOL_STATUS_LABEL, toolStatus } from "./model";
 import type { SetupProgress, ToolsReport } from "./types";
@@ -24,16 +25,22 @@ export interface StepProps {
   online: boolean;
   /** Store a change to the progress (the step's own choices). */
   onChange: (next: SetupProgress) => void;
-  /** This Mac's sign-in to Droppen (steps 02 and 04); absent, the steps show none. */
+  /** This device's sign-in to Droppen (steps 02 and 04); absent, the steps show none. */
   signIn?: GuideSignIn;
 }
 
+/** Each step in a line on the welcome page; step 04's without Start at Login is {@link stepSummary}'s. */
 export const STEP_SUMMARY: Record<(typeof STEPS)[number], string> = {
   tools: "Find Claude Code and Codex; install and sign in where needed.",
-  where: "Only on this Mac, or on your phone and other devices too.",
+  where: "Only on this device, or on your phone and other devices too.",
   first: "Pick a folder and send a first message.",
   wrap: "Start at login, notifications, your phone.",
 };
+
+/** A step's line on the welcome page: step 04 names Start at Login only where the app has it. */
+function stepSummary(step: (typeof STEPS)[number], startAtLogin: boolean, t: (key: string) => string): string {
+  return step === "wrap" && !startAtLogin ? t("Your phone, and what's set.") : t(STEP_SUMMARY[step]);
+}
 
 /** A list in the reader's language: 「、」 in Chinese and Japanese, ", " otherwise. */
 function listOf(items: string[], language: string): string {
@@ -71,15 +78,16 @@ function ProbeLine({ tools }: { tools: ToolsReport | null | undefined }) {
  */
 export function WelcomeScreen({ tools, onStart, onSkipAll }: { tools: ToolsReport | null | undefined; onStart: () => void; onSkipAll: () => void }) {
   const { t } = useTranslation();
+  const startAtLogin = startAtLoginOffered();
   return (
     <div data-testid="welcome" className="min-h-0 overflow-y-auto">
       <div className="grid min-h-full grid-cols-[minmax(0,1fr)_360px] max-[960px]:grid-cols-[minmax(0,1fr)]">
         <div className="pt-[72px] pr-10 pb-10 pl-12 max-[960px]:px-5 max-[960px]:pt-10 max-[960px]:pb-8">
           <span data-label="" className="label-caps text-2xs text-muted">
-            {t("Droppen for Mac")}
+            {desktopSystem() === "linux" ? t("Droppen for Linux") : t("Droppen for Mac")}
           </span>
           <h1 className="mt-3.5 mb-4 max-w-[18em] text-[40px] leading-[1.02] font-semibold tracking-[-0.045em] max-[960px]:text-[30px] [:lang(ja)_&]:tracking-[-0.03em] [:lang(zh)_&]:tracking-[-0.03em]">
-            {t("Droppen is running on this Mac.")}
+            {t("Droppen is running on this device.")}
           </h1>
           <p className="mb-7 max-w-[34em] text-[13px] leading-[21px] text-muted">
             {t("About three minutes to put it to work: get Claude Code or Codex ready, decide where you'll use it, then start your first session. Skip anything you like; all of it can be changed later in Settings.")}
@@ -102,7 +110,7 @@ export function WelcomeScreen({ tools, onStart, onSkipAll }: { tools: ToolsRepor
               <li key={step} className="grid grid-cols-[26px_minmax(0,1fr)] gap-x-2 gap-y-0.5 border-b border-border px-5 py-3.5">
                 <span className="font-mono text-2xs leading-[18px] text-faint tabular-nums">{`0${i + 1}`}</span>
                 <span className="text-[13px] leading-[18px] font-semibold">{t(STEP_LABEL[step])}</span>
-                <span className="col-start-2 text-xs leading-[18px] text-muted">{t(STEP_SUMMARY[step])}</span>
+                <span className="col-start-2 text-xs leading-[18px] text-muted">{stepSummary(step, startAtLogin, t)}</span>
               </li>
             ))}
           </ol>
@@ -116,14 +124,14 @@ export function WelcomeScreen({ tools, onStart, onSkipAll }: { tools: ToolsRepor
 /** Where to use it: the two outcomes. */
 export type WhereChoice = "droppen" | "local";
 
-/** The choice step 02 shows: the stored one, else the recommended one when it can be had, else this Mac only. */
+/** The choice step 02 shows: the stored one, else the recommended one when it can be had, else this device only. */
 export function whereChoice(progress: SetupProgress, online: boolean): WhereChoice {
   if (progress.where.choice === "local") return "local";
   return online ? "droppen" : "local";
 }
 
 /**
- * Step 02's choice made: the progress with it. "Only on this Mac" also ends a
+ * Step 02's choice made: the progress with it. "Only on this device" also ends a
  * sign-in under way or one that stopped — the page's one, which Settings →
  * Droppen would otherwise go on showing as such.
  */
@@ -198,11 +206,12 @@ function WhereCard({
 
 /**
  * Step 02 · Where to use it, minimal: on the phone and other devices
- * too (signing in to Droppen; recommended), or only on this Mac. The first
+ * too (signing in to Droppen; recommended), or only on this device. The first
  * is off while offline; chosen, the step signs in from its primary and shows
  * how that stands under the choices (`where-sign-in.tsx`). The local-network
  * option ("Also") waits for the local-access change and the app ↔ server
- * channel.
+ * channel. The note under them points at the app's Open in Browser where the
+ * app keeps it: the menu bar on a Mac, the system tray on Linux.
  */
 export function WhereStep({ progress, online, onChange, signIn }: StepProps) {
   const { t } = useTranslation();
@@ -228,10 +237,10 @@ export function WhereStep({ progress, online, onChange, signIn }: StepProps) {
           disabled={droppenOff}
           title={t("On my phone and other devices too")}
           action={t("Sign in to Droppen")}
-          body={t("Open droppen.app on your phone or any other device and carry on with this Mac's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.")}
+          body={t("Open droppen.app on your phone or any other device and carry on with this device's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.")}
           note={
             !online
-              ? t("droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.")
+              ? t("droppen.app needs the internet. Choose “Only on this device” for now; sign in later from Settings → Access → Droppen.")
               : null
           }
           recommended
@@ -241,9 +250,9 @@ export function WhereStep({ progress, online, onChange, signIn }: StepProps) {
           choice="local"
           checked={chosen === "local"}
           disabled={false}
-          title={t("Only on this Mac")}
+          title={t("Only on this device")}
           action={t("Skip")}
-          body={t("Everything works without an account. Nothing leaves this Mac except what Claude Code and Codex send to their own services.")}
+          body={t("Everything works without an account. Nothing leaves this device except what Claude Code and Codex send to their own services.")}
           note={null}
           recommended={false}
           onPick={() => pick("local")}
@@ -251,7 +260,9 @@ export function WhereStep({ progress, online, onChange, signIn }: StepProps) {
       </div>
       {signIn && <WhereSignInPanel signIn={signIn} chosen={chosen} />}
       <FootNote>
-        {t("The Droppen app on this Mac never asks for a password. For a browser on this Mac, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.")}{" "}
+        {desktopSystem() === "linux"
+          ? t("The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.")
+          : t("The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.")}{" "}
         {t("Change it later in Settings → Access.")}
       </FootNote>
     </>
@@ -289,16 +300,18 @@ function toolSummary(tools: ToolsReport | null | undefined, id: "claude" | "code
 
 /**
  * Step 04 · Finishing up, as the fallback while the web app cannot reach the
- * app: start at login points at the menu bar's own
- * switch to turn it on or off — whether it is on is the app's to say (a new
- * install's first launch turns it on), so the guide claims neither; no
+ * app: start at login points at the app's own switch to turn it on or off,
+ * in the menu bar or the system tray — whether it is on is the app's to say
+ * (a new install's first launch turns it on), so the guide claims neither,
+ * and an app without the switch (the Linux app's, for now) gets no row; no
  * notifications row until the app can ask for them, the phone row,
  * and what is set.
  */
 export function WrapStep({ progress, tools, signIn }: StepProps) {
   const { t } = useTranslation();
+  const linux = desktopSystem() === "linux";
   const skipped = <span className="font-mono text-2xs text-faint">{t("skipped")}</span>;
-  // What this Mac's sign-in came to, when the guide follows it: in the account, under way, or not (yet).
+  // What this device's sign-in came to, when the guide follows it: in the account, under way, or not (yet).
   const linked = signIn?.state.kind === "linked" ? signIn.state : null;
   const droppen = linked
     ? linked.email
@@ -316,22 +329,31 @@ export function WrapStep({ progress, tools, signIn }: StepProps) {
       : progress.where.choice === "droppen"
         ? droppen
         : progress.where.choice === "local"
-          ? t("Only on this Mac")
+          ? t("Only on this device")
           : "—";
   const cwd = progress.steps.first === "done" ? progress.first.cwd : null;
   return (
     <>
       <div className="max-w-[760px] border border-border">
-        <WrapRow
-          testId="wrap-login"
-          title={t("Start Droppen at login")}
-          body={
-            <>
-              {t("So sessions, your phone and scheduled tasks can reach this Mac after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.")}
-              <span className="mt-1 block text-fg">{t("Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.")}</span>
-            </>
-          }
-        />
+        {startAtLoginOffered() && (
+          <WrapRow
+            testId="wrap-login"
+            title={t("Start Droppen at login")}
+            body={
+              linux ? (
+                <>
+                  {t("So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the system tray; closing the window doesn't stop it.")}
+                  <span className="mt-1 block text-fg">{t("Turn it on or off any time from the Droppen icon in the system tray: Start at Login.")}</span>
+                </>
+              ) : (
+                <>
+                  {t("So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.")}
+                  <span className="mt-1 block text-fg">{t("Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.")}</span>
+                </>
+              )
+            }
+          />
+        )}
         <WrapRow
           testId="wrap-phone"
           title={t("On your phone")}

@@ -181,8 +181,8 @@ export function defaultLoginMode(tool: ToolId): "claudeai" | "chatgpt" {
 /** Why a method is not offered (i18n keys). */
 export const UNAVAILABLE_WORDS = {
   macos_too_old: "The official installer needs macOS 13 or later.",
-  no_brew: "Homebrew isn't on this Mac.",
-  no_node: "npm needs Node.js, which isn't on this Mac.",
+  no_brew: "Homebrew isn't on this device.",
+  no_node: "npm needs Node.js, which isn't on this device.",
   other: "Not available on this device.",
 } as const;
 
@@ -199,7 +199,7 @@ export const FAILURE_WORDS = {
   installedNothing: "The installer finished, but the tool still isn't on this device.",
   updatedNothing: "The update finished, but the version is still too old.",
   network: "Couldn't reach the download server. Check the connection and try again, or run the command in your own Terminal.",
-  brewPermission: "Permission denied. Homebrew on this Mac may belong to another user; the official installer installs into your home folder instead.",
+  brewPermission: "Permission denied. Homebrew on this device may belong to another user; the official installer installs into your home folder instead.",
   permission: "Permission denied: it couldn't write where it installs. Try the official installer, which installs into your home folder, or run the command in your own Terminal.",
   disk: "The disk is full. Free some space, then try again.",
   other: "The last lines are below. Try again, or run the command in your own Terminal.",
@@ -209,7 +209,7 @@ export const FAILURE_WORDS = {
  * What went wrong with a finished install or update, as i18n keys: the
  * headline with its exit code (or, for one that exited 0, that it did not do
  * its job), and the reason in plain words — the network, a permission (a
- * Homebrew owned by another user on a shared Mac), a full disk, or
+ * Homebrew owned by another user on a shared device), a full disk, or
  * anything else, read from the last lines.
  */
 export function failureWords(task: SetupTask): { title: string; code: number | null; why: string } {

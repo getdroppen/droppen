@@ -156,7 +156,7 @@ async fn with_no_accounts_nobody_gets_in_without_a_session() {
     keys.sort();
     assert_eq!(
         keys,
-        ["authOff", "authRequired", "desktopApp", "droppenEnv", "droppenPath", "setupRequired", "user"],
+        ["authOff", "authRequired", "desktopApp", "droppenEnv", "droppenPath", "platform", "setupRequired", "user"],
         "and says nothing else"
     );
 

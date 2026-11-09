@@ -17,6 +17,7 @@ import { useFeedSettings } from "@/app/global-feed";
 import { Button } from "@/components/ui/button";
 import { DirBrowser } from "@/features/sessions/dir-browser";
 import { cn } from "@/lib/cn";
+import { desktopSystemOf } from "@/lib/desktop-app";
 import { basename, shortenHome } from "@/lib/format";
 import { usePracticeFolder, useRecentFolders } from "./api";
 import { FootNote } from "./frame";
@@ -202,7 +203,8 @@ export function FirstStepView({
           {t("That didn't work. Try again.")}
         </p>
       )}
-      {protectedFolder(ui.cwd, homeDir) && (
+      {/* Only macOS guards those folders (TCC); a Linux desktop opens them without asking. */}
+      {desktopSystemOf(report?.os.platform) === "mac" && protectedFolder(ui.cwd, homeDir) && (
         <FootNote className="-mt-1.5 mb-4">
           <span data-testid="first-tcc">{t("Folders in Documents, Desktop or Downloads: macOS asks once whether Droppen may open them. Choose Allow.")}</span>
         </FootNote>

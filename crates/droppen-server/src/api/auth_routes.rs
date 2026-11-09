@@ -140,7 +140,7 @@ async fn without_a_session_nobody_gets_in_whatever_the_socket_and_host_say() {
         body.as_object_mut().expect("object").remove("droppenEnv");
         assert_eq!(
             body,
-            json!({"authRequired": true, "setupRequired": true, "authOff": false, "user": null, "desktopApp": false}),
+            json!({"authRequired": true, "setupRequired": true, "authOff": false, "user": null, "desktopApp": false, "platform": droppen_http::node_platform()}),
             "{from:?}: the same answer for everyone, and nothing else"
         );
     }
@@ -647,6 +647,19 @@ async fn the_status_says_whether_the_desktop_app_owns_the_login() {
     assert!(under_the_app.desktop_app);
     let wire = serde_json::to_value(&under_the_app).expect("json");
     assert_eq!(wire["desktopApp"], true, "the web app reads it as desktopApp: {wire}");
+}
+
+#[tokio::test]
+async fn the_status_says_which_system_the_server_runs_on_as_the_settings_do() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let state = crate::api::test_support::state(home.path()).await;
+    let Json(answer) = status(State(AuthState::from_ref(&state)), MaybeIdentity(None)).await;
+    let wire = serde_json::to_value(&answer).expect("json");
+    // The desktop app's words for the device (menu bar, system tray) follow
+    // it, on the setup page too, where nobody is signed in to ask the settings.
+    let expected = if cfg!(target_os = "macos") { "darwin" } else { std::env::consts::OS };
+    assert_eq!(wire["platform"], expected, "{wire}");
+    assert_eq!(answer.platform, droppen_http::node_platform(), "the spelling `GET /api/settings` uses");
 }
 
 #[tokio::test]

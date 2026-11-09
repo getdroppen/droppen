@@ -227,6 +227,31 @@ test("on the desktop app's server: Open in Browser, and no code or `open` to off
   }
 });
 
+test("Open in Browser is where the app keeps it: the menu bar on a Mac and before servers said, the system tray on Linux", async () => {
+  const said = async (platform: string | undefined) => {
+    statusAnswer = { authRequired: true, setupRequired: true, authOff: false, user: null, desktopApp: true, droppenPath: "/opt/droppen/droppen", ...(platform ? { platform } : {}) };
+    forgetAuthStatus();
+    await authStatus();
+    const en = renderToStaticMarkup(<SetupPage owner={false} />);
+    const zh = await inLanguage("zh-CN", () => renderToStaticMarkup(<SetupPage owner={false} />));
+    return { en, zh };
+  };
+  try {
+    for (const platform of ["darwin", undefined]) {
+      const { en, zh } = await said(platform);
+      assert.match(en, /In the app&#x27;s menu-bar menu, choose Open in Browser/, `${platform}`);
+      assert.match(zh, /在 App 的菜单栏菜单里选「在浏览器中打开」：/, `${platform}`);
+    }
+    const { en, zh } = await said("linux");
+    assert.match(en, /From the Droppen icon in the system tray, choose Open in Browser: it opens this page signed in/);
+    assert.doesNotMatch(en, /menu-bar|menu bar|\bMac\b/);
+    assert.match(zh, /在系统托盘的 Droppen 图标菜单里选「在浏览器中打开」/);
+    assert.doesNotMatch(zh, /菜单栏/);
+  } finally {
+    forgetAuthStatus();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // The rules, before anything is sent
 // ---------------------------------------------------------------------------

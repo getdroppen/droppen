@@ -8,7 +8,7 @@
  *
  * The cards' states are `tools-model.ts`'s; what the user opened on a card
  * (`ToolsUi`) lives in the guide, which also asks it who holds the page's one
- * primary. Installing and signing in run only from the app on this Mac
+ * primary. Installing and signing in run only from the app on this device
  * (`canInstall`); elsewhere the cards show the command to copy.
  */
 
@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useFeedSettings } from "@/app/global-feed";
 import { quotaKey, type Quota } from "@/features/accounts/use-accounts";
+import { desktopSystemOf } from "@/lib/desktop-app";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { SetupActionError, useSetupActions, useSetupCommands, useSetupTools } from "./api";
 import { FootNote } from "./frame";
@@ -85,6 +86,7 @@ export function ToolsStepView({
       {report && (
         <GitRow
           git={report.helpers.git}
+          system={desktopSystemOf(report.os.platform)}
           canInstall={report.canInstall}
           online={online}
           command={gitCommand}

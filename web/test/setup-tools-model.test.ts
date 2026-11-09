@@ -105,7 +105,7 @@ test("the confirm box offers only usable methods, the official installer first; 
   const { available, unavailable } = methodChoices(all, "claude", "install");
   assert.deepEqual(available.map((c) => c.method), ["native", "npm"]);
   assert.deepEqual(unavailable.map((c) => c.method), ["brew"]);
-  assert.equal(unavailableReason(unavailable[0]!), "Homebrew isn't on this Mac.");
+  assert.equal(unavailableReason(unavailable[0]!), "Homebrew isn't on this device.");
   assert.equal(unavailableReason({ method: "native", reason: "macos_too_old" }), "The official installer needs macOS 13 or later.");
   const missing = tool("claude", "missing");
   assert.equal(chosenCommand(all, missing, { ...IDLE_CARD, open: "confirm" })?.command, `/bin/sh -c 't="$(mktemp)" && curl --proto =https --tlsv1.2 -fsSLo "$t" https://claude.ai/install.sh && bash "$t"; s=$?; rm -f "$t"; exit $s'`, "the recommended one");
@@ -126,7 +126,7 @@ test("a failed install in plain words: the network, a permission, a full disk, a
   const words = (over: Parameters<typeof task>[2]) => failureWords(task("claude", "install", { running: false, exitCode: 1, ...over }));
   assert.equal(words({ failure: "network" }).title, "The install didn't finish (exit code {{code}}).");
   assert.match(words({ failure: "network" }).why, /Couldn't reach the download server/);
-  assert.match(words({ failure: "permission", method: "brew" }).why, /Homebrew on this Mac may belong to another user/, "a Homebrew owned by another user");
+  assert.match(words({ failure: "permission", method: "brew" }).why, /Homebrew on this device may belong to another user/, "a Homebrew owned by another user");
   assert.match(words({ failure: "permission" }).why, /Permission denied: it couldn't write/);
   assert.match(words({ failure: "disk" }).why, /disk is full/);
   assert.match(words({ failure: null }).why, /last lines are below/);
