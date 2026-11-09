@@ -12,6 +12,9 @@
 //! (An end-to-end test build's: `app.droppen.desktop.e2e/`, `Droppen E2E/` and
 //! `droppen-app-e2e/` — [`crate::identity`] — under a throwaway `HOME`.)
 //!
+//! On Linux, for now, the support directory is `~/.local/share/<bundle id>/`
+//! and the logs its `logs/` ([`ShellDirs::under`]).
+//!
 //! The server's directories are deliberately *not* overridden: the app runs
 //! the binary exactly as a command-line install would, under an instance name
 //! of its own ([`crate::INSTANCE`]), so the machine-wide files every instance
@@ -36,8 +39,17 @@ impl ShellDirs {
     /// The directories under `home`.
     pub fn under(home: impl Into<PathBuf>) -> Self {
         let home = home.into();
+        #[cfg(target_os = "macos")]
         let support = home.join("Library").join("Application Support").join(crate::BUNDLE_ID);
+        #[cfg(target_os = "macos")]
         let logs = home.join("Library").join("Logs").join(crate::identity::THIS.name);
+        // No `~/Library` in a Linux home: where Tauri keeps an app's data and
+        // logs there by default. TODO(linux: L2): `$XDG_DATA_HOME` and
+        // `$XDG_STATE_HOME`.
+        #[cfg(not(target_os = "macos"))]
+        let support = home.join(".local").join("share").join(crate::BUNDLE_ID);
+        #[cfg(not(target_os = "macos"))]
+        let logs = support.join("logs");
         Self { home, support, logs }
     }
 
@@ -136,8 +148,13 @@ mod tests {
         } else {
             ("app.droppen.desktop", "Droppen")
         };
-        assert_eq!(dirs.support, PathBuf::from("/tmp/home/Library/Application Support").join(support));
-        assert_eq!(dirs.logs, PathBuf::from("/tmp/home/Library/Logs").join(logs));
+        if cfg!(target_os = "macos") {
+            assert_eq!(dirs.support, PathBuf::from("/tmp/home/Library/Application Support").join(support));
+            assert_eq!(dirs.logs, PathBuf::from("/tmp/home/Library/Logs").join(logs));
+        } else {
+            assert_eq!(dirs.support, PathBuf::from("/tmp/home/.local/share").join(support));
+            assert_eq!(dirs.logs, dirs.support.join("logs"));
+        }
         assert!(dirs.credential_file().starts_with(&dirs.support));
         assert!(dirs.pid_file().starts_with(&dirs.support));
         assert!(dirs.server_log().starts_with(&dirs.logs));

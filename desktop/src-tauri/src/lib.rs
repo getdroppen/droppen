@@ -68,8 +68,13 @@ fn sidecar_path() -> PathBuf {
 
 /// Whether the password may live in the keychain. Always, in a release build;
 /// only an end-to-end build reads `DROPPEN_DESKTOP_KEYCHAIN=0`, which its test
-/// runs set so they never touch a real login keychain.
+/// runs set so they never touch a real login keychain. Never on Linux yet
+/// (TODO(linux: L3): the Secret Service): there the password is kept in the
+/// file (`credentials.json`, 0600), as when a keychain will not take it.
 fn keychain_allowed() -> bool {
+    if cfg!(not(target_os = "macos")) {
+        return false;
+    }
     #[cfg(feature = "e2e")]
     {
         droppen_desktop_core::credentials::keychain_enabled(std::env::var(droppen_desktop_core::credentials::KEYCHAIN_ENV).ok().as_deref())

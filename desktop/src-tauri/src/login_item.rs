@@ -11,6 +11,9 @@
 //! [`MainApp`] is compiled without it, so a test run cannot touch the real
 //! Login Items whatever it is signed with. Nor does it apply the default: its
 //! runs check *Start at Login* from off.
+//!
+//! Linux has no *Start at Login* yet ([`OFFERED`]): nothing here reads,
+//! writes or turns on a login item there, and the menu has no such item.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -20,6 +23,11 @@ use droppen_desktop_core::dirs::ShellDirs;
 use droppen_desktop_core::login_item::{self as core, Backend, Before, FirstLaunch, Legacy, LegacyFile, Migration, Status};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_autostart::ManagerExt;
+
+/// Whether this platform has *Start at Login*. TODO(linux: L5): an XDG
+/// autostart entry. Until then Linux keeps none, rather than one nobody has
+/// checked starts the app — or one turned on by default.
+pub const OFFERED: bool = cfg!(target_os = "macos");
 
 /// The app's login item: the backend chosen at start, the old launch agent,
 /// `state.json`, where the default is recorded, and where an earlier install
@@ -49,6 +57,7 @@ impl LoginItem {
     /// `keychain`: whether the app's login may be in the keychain.
     pub fn for_this_build(dirs: &ShellDirs, keychain: bool) -> Self {
         let end_to_end = cfg!(feature = "e2e");
+        #[cfg(target_os = "macos")]
         let developer_id = !end_to_end
             && match core::signed_with_developer_id() {
                 Ok(signed) => signed,
@@ -57,10 +66,13 @@ impl LoginItem {
                     false
                 }
             };
+        #[cfg(not(target_os = "macos"))]
+        let developer_id = false;
         let backend = Backend::choose(developer_id, end_to_end);
         log::info!(
             "start at login: {}",
             match backend {
+                _ if !OFFERED => "none on this platform yet",
                 Backend::AppService => "SMAppService (the app is signed with a Developer ID)",
                 Backend::LaunchAgent if end_to_end => "a launch agent (an end-to-end build)",
                 Backend::LaunchAgent => "a launch agent (the app is not signed with a Developer ID)",
@@ -85,8 +97,12 @@ impl LoginItem {
     /// as it was before the move: the move removes an old launch agent the
     /// user switched off, which is still their choice. Nothing is moved while
     /// the app runs from a temporary App Translocation copy: the next launch
-    /// from where it was moved does it.
+    /// from where it was moved does it. Nothing at all where it is not
+    /// [`OFFERED`].
     pub fn prepare<R: Runtime>(&self, app: &AppHandle<R>, translocated: bool) {
+        if !OFFERED {
+            return;
+        }
         let before = Before {
             legacy_present: self.legacy.present(),
             status: self.status(app),
@@ -161,6 +177,7 @@ impl LoginItem {
     /// What macOS says now. A launch agent is on while its file is there.
     pub fn status<R: Runtime>(&self, app: &AppHandle<R>) -> Status {
         match self.backend {
+            _ if !OFFERED => Status::NotRegistered,
             Backend::AppService => core::effective(core::Service::status(&MainApp), &self.legacy),
             Backend::LaunchAgent if app.autolaunch().is_enabled().unwrap_or(false) => Status::Enabled,
             Backend::LaunchAgent => Status::NotRegistered,
@@ -171,6 +188,7 @@ impl LoginItem {
     pub fn set<R: Runtime>(&self, app: &AppHandle<R>, on: bool) -> Turned {
         let word = if on { "on" } else { "off" };
         let ok = match self.backend {
+            _ if !OFFERED => false,
             Backend::AppService => match core::set(&MainApp, &self.legacy, on) {
                 Ok(status) => {
                     log::info!("start at login: {word} ({status:?})");
@@ -252,10 +270,11 @@ impl Legacy for OldAgent {
     }
 }
 
-/// `SMAppService.mainApp`. Not in an end-to-end build.
+/// `SMAppService.mainApp`. Not in an end-to-end build, nor off macOS (where the
+/// backend is never [`Backend::AppService`]).
 struct MainApp;
 
-#[cfg(not(feature = "e2e"))]
+#[cfg(all(target_os = "macos", not(feature = "e2e")))]
 impl core::Service for MainApp {
     fn status(&self) -> Status {
         Status::from_raw(unsafe { objc2_service_management::SMAppService::mainAppService().status() }.0)
@@ -270,7 +289,7 @@ impl core::Service for MainApp {
     }
 }
 
-#[cfg(feature = "e2e")]
+#[cfg(any(feature = "e2e", not(target_os = "macos")))]
 impl core::Service for MainApp {
     fn status(&self) -> Status {
         Status::NotRegistered
@@ -285,19 +304,19 @@ impl core::Service for MainApp {
     }
 }
 
-#[cfg(not(feature = "e2e"))]
+#[cfg(all(target_os = "macos", not(feature = "e2e")))]
 fn legacy_status(plist: &Path) -> Status {
     use objc2_foundation::{NSString, NSURL};
     let url = NSURL::fileURLWithPath(&NSString::from_str(&plist.to_string_lossy()));
     Status::from_raw(unsafe { objc2_service_management::SMAppService::statusForLegacyURL(&url) }.0)
 }
 
-#[cfg(feature = "e2e")]
+#[cfg(any(feature = "e2e", not(target_os = "macos")))]
 fn legacy_status(_plist: &Path) -> Status {
     Status::NotRegistered
 }
 
-#[cfg(not(feature = "e2e"))]
+#[cfg(all(target_os = "macos", not(feature = "e2e")))]
 fn describe(error: &objc2_foundation::NSError) -> String {
     format!("{} ({} {})", error.localizedDescription(), error.domain(), error.code())
 }
@@ -305,7 +324,7 @@ fn describe(error: &objc2_foundation::NSError) -> String {
 /// Open System Settings → General → Login Items.
 pub fn open_login_items() {
     log::info!("opening System Settings → Login Items");
-    #[cfg(not(feature = "e2e"))]
+    #[cfg(all(target_os = "macos", not(feature = "e2e")))]
     unsafe {
         objc2_service_management::SMAppService::openSystemSettingsLoginItems()
     };
@@ -314,6 +333,7 @@ pub fn open_login_items() {
 const CORE_EVENTS: u32 = u32::from_be_bytes(*b"aevt");
 const OPEN_APPLICATION: u32 = u32::from_be_bytes(*b"oapp");
 const REOPEN_APPLICATION: u32 = u32::from_be_bytes(*b"rapp");
+#[cfg(target_os = "macos")]
 const PROPERTY_DATA: u32 = u32::from_be_bytes(*b"prdt");
 const LAUNCHED_AS_LOGIN_ITEM: u32 = u32::from_be_bytes(*b"lgit");
 
@@ -330,12 +350,21 @@ impl AppleEvent {
     /// The event being handled now, if any: while the app finishes launching
     /// (Tauri's `setup` runs then), the launch's; in a reopen, the reopen's.
     /// Main thread only.
+    #[cfg(target_os = "macos")]
     pub fn current() -> Option<Self> {
         objc2_foundation::NSAppleEventManager::sharedAppleEventManager()
             .currentAppleEvent()
             .map(|event| Self::of(&event))
     }
 
+    /// None off macOS, which has no Apple events: there, only
+    /// [`crate::AUTOSTART_ARG`] says a launch is at login.
+    #[cfg(not(target_os = "macos"))]
+    pub fn current() -> Option<Self> {
+        None
+    }
+
+    #[cfg(target_os = "macos")]
     fn of(event: &objc2_foundation::NSAppleEventDescriptor) -> Self {
         use objc2::msg_send;
         use objc2::rc::Retained;
@@ -381,7 +410,7 @@ impl std::fmt::Display for AppleEvent {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use objc2::msg_send;

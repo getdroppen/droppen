@@ -762,6 +762,12 @@ impl Shell {
         let Some(login) = self.login_token() else {
             return Err(("the window is not signed in yet".into(), Some(port)));
         };
+        // TODO(linux: L4): the freedesktop OpenURI portal, which takes the
+        // address over D-Bus, on no command line. Until then no one-time
+        // sign-in is even asked for: there is no way to hand it to the browser.
+        if cfg!(not(target_os = "macos")) {
+            return Err(("Linux cannot hand the browser a sign-in yet".into(), Some(port)));
+        }
         // The end-to-end build opens no browser: it says what it would have done.
         let e2e = cfg!(feature = "e2e");
         // A window login the server no longer takes (expired, revoked) is made
