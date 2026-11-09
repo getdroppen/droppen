@@ -84,6 +84,9 @@ describe("a redirect", () => {
       ["https://evil.example/", "https://droppen.app", "/"],
       ["https://www.droppen.app/elsewhere", "https://droppen.app", "/"],
       ["https://www.droppen.app/?x=1", "https://droppen.app", "/"],
+      ["https://www.droppen.app/?", "https://droppen.app", "/"],
+      ["https://my.droppen.app/link#x", "https://droppen.app", "/link"],
+      ["https://u:p@www.droppen.app/", "https://droppen.app", "/"],
       ["/link/", "https://droppen.app", "/link"],
       ["https://droppen.app/", "https://droppen.app", "/"],
       ["http://my.droppen.app/link", "https://droppen.app", "/link"],
@@ -102,6 +105,9 @@ describe("a redirect", () => {
   test("anything else from /index.html, or from another path, is not", () => {
     for (const [location, path] of [
       ["/?x=1", "/index.html"],
+      ["/?", "/index.html"],
+      ["https://user:pw@my.droppen.app/", "/index.html"],
+      ["https://user@my.droppen.app/", "/index.html"],
       ["/#top", "/index.html"],
       ["/download", "/index.html"],
       ["/index.html/", "/index.html"],
@@ -284,11 +290,13 @@ const { dist, files, manifest, manifestFile } = build;
  * `markerName`: the marker's name (default `droppen-hub`; `rh-hub` reads as one from a hub not yet updated);
  * `csp(path)`: the policy header (`null`: none; a list: one header line each;
  * `{reportOnly}`: only a Content-Security-Policy-Report-Only header);
- * `redirect(path)`: a `308` there instead (`null`: none); `worker(req)`:
+ * `redirect(path)`: a redirect there instead (`null`: none), with `redirectStatus`
+ * (default `308`); `page(path)`: another body for the shell there (`null`: the
+ * build's, marked); `worker(req)`:
  * another `/sw.js` (`null`: the build's); `buildInfo`: the body of
  * `/.well-known/droppen-build` (`null`: a 404; default: the build it serves).
  */
-function fakeHub({ marker = "self", markerName = "droppen-hub", csp = () => HUB_CSP, serves = build, redirect = () => null, worker = () => null, buildInfo } = {}) {
+function fakeHub({ marker = "self", markerName = "droppen-hub", csp = () => HUB_CSP, serves = build, redirect = () => null, redirectStatus = 308, page = () => null, worker = () => null, buildInfo } = {}) {
   const server = createServer((req, res) => {
     const path = new URL(req.url, "http://x").pathname.slice(1);
     const sw = path === "sw.js" ? worker(req) : null;
@@ -298,7 +306,7 @@ function fakeHub({ marker = "self", markerName = "droppen-hub", csp = () => HUB_
     }
     const location = redirect(`/${path}`);
     if (location) {
-      res.writeHead(308, { location });
+      res.writeHead(redirectStatus, { location });
       return res.end();
     }
     if (path === ".well-known/droppen-build") {
@@ -318,6 +326,8 @@ function fakeHub({ marker = "self", markerName = "droppen-hub", csp = () => HUB_
       res.statusCode = 404;
       return res.end("not found");
     }
+    const other = page(`/${path}`);
+    if (other !== null) return res.end(other);
     const origin = marker === "self" ? `ws://${req.headers.host}` : marker;
     res.end(SHELL.replace("<head>", `<head><meta name="${markerName}" content="${origin}" />`));
   });
@@ -607,12 +617,21 @@ describe("verify-web.mjs against a hub", () => {
       const cases = [
         [(p) => (p === "/index.html" ? "/" : p === "/" ? "https://evil.example/" : null), {}],
         [(p) => (p === "/index.html" ? "/" : null), { marker: "ws://127.0.0.1:1" }],
+        [(p) => (p === "/index.html" ? "/" : null), { page: (p) => (p === "/" ? "<!doctype html><html><head></head><body>not the shell</body></html>" : null) }],
       ];
       for (const [redirect, overrides] of cases) {
         const site = await hub({ redirect, ...overrides });
         const r = await verify(["--site", site, "--manifest", manifestFile]);
         assert.equal(r.code, 1, r.out);
         assert.match(r.out, /\/index\.html: redirects to \/ on this site, which does not serve the attested shell/);
+      }
+    });
+    test("a 3xx browsers do not follow is no redirect: they show its body", async () => {
+      for (const status of [300, 304]) {
+        const site = await hub({ redirect: (p) => (p === "/index.html" ? "/" : null), redirectStatus: status });
+        const r = await verify(["--site", site, "--manifest", manifestFile]);
+        assert.equal(r.code, 1, r.out);
+        assert.match(r.out, new RegExp(`/index\\.html: .*HTTP ${status} → / \\(a status browsers do not follow`));
       }
     });
     test("another redirect of /index.html still fails", async () => {
@@ -689,6 +708,14 @@ describe("verify-web.mjs against a hub", () => {
       assert.equal(r.code, 1, r.out);
       assert.match(r.out, /\/: .*HTTP 308 → .*\/download \(not the same path/);
       assert.ok(urls.length === 3);
+    });
+
+    test("a 3xx browsers do not follow fails even to the same path on another site of the run", async () => {
+      const urls = await hostsUp({ www: { redirectStatus: 300 } });
+      const r = await verify([...sites(urls), "--manifest", manifestFile]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /\/link: .*HTTP 300 → .*\/link \(a status browsers do not follow/);
+      assert.match(r.out, new RegExp(`FAIL: ${escapeRegExp(hosts.www)} does not serve`));
     });
 
     test("all three against the latest release: asked for once, each passes", async () => {
