@@ -41,7 +41,7 @@ for (const bundles of [landingBundles, securityBundles]) {
 }
 
 /** When the page last changed, as the page says it. */
-export const SECURITY_UPDATED = "2026-10-28";
+export const SECURITY_UPDATED = "2026-11-09";
 
 /** Where to report a vulnerability (`page-kit.tsx`, so the terms can name it without this page's chunk). */
 export { SECURITY_EMAIL };
@@ -781,7 +781,7 @@ function OverviewSection() {
         <Head
           label={`01 · ${t("Overview")}`}
           title={withConcepts(t("Your devices hold the keys. Our servers carry ciphertext."))}
-          lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies, and serves the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
+          lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies; whoever runs it also deploys the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
         />
         <Overview />
         <Topic n="1.1" wide title={t("What Droppen Hub sees, and what it never sees")}>
@@ -1168,8 +1168,8 @@ function ThreatsSection() {
         />
         <Table label={t("Threat model")} heads={heads} rows={rows} />
         <Topic n="7.1" title={t("The web-delivery gap")}>
-          <P>{t("The app at **my.droppen.app** comes from Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page the Hub has changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.")}</P>
-          <P>{t("**www.droppen.app** shows this page and the other public ones: the same attested build, which never reads or stores a key there. droppen.app is the Hub's own address, where devices that run AI and relays connect. A browser set up at droppen.app before the app moved to my.droppen.app either moves its keys to my.droppen.app once, from one page to the other inside the browser, or is added again as a new device; in both cases the keys never pass through the Hub.")}</P>
+          <P>{t("The app at **my.droppen.app** is deployed by whoever runs Droppen Hub, so end-to-end encryption protects your data from the Hub, but **not from a page they have changed**: such a page can do anything this browser can. WebCrypto's non-extractable keys **do not stop code on the same origin**: such code can unseal the stored device key and user keys just as the real page does, and send them anywhere.")}</P>
+          <P>{t("**www.droppen.app** shows this page and the other public ones: the same build as my.droppen.app, which never reads or stores a key there. Both are rebuilt from main on every change, so they can be newer than the latest release: to check them, build the same commit. droppen.app is the Hub's own address, where devices that run AI and relays connect; it serves an attested release. A browser set up at droppen.app before the app moved to my.droppen.app either moves its keys to my.droppen.app once, from one page to the other inside the browser, or is added again as a new device; in both cases the keys never pass through the Hub.")}</P>
           <List
             items={[
               t("Each release carries **web-manifest.json**, the SHA-256 of every file of its web app, and since v0.2.127 a **signed attestation** of it, both made by the release workflow ([[.github/workflows/release.yml]]); the page's Content-Security-Policy allows only its own scripts. A script, [[scripts/verify-web.mjs]], compares what my.droppen.app, www.droppen.app and droppen.app serve with the latest release's manifest by default, and fails a page served without a sufficient Content-Security-Policy ([[docs/web-integrity.md]] says how)."),
@@ -1249,7 +1249,7 @@ function VerifySection() {
           <P>{t("Each implementation writes test vectors ([[vectors/rust.json|crates/droppen-proto/vectors/rust.json]], [[vectors/ts.json|crates/droppen-proto/vectors/ts.json]]) and **must read the other's**:\n- Noise transcripts through rekeys\n- chains that must be refused, each with the same error in both\n- key wraps\n- records and pages\nThe direct-path handshake is checked one way only: TypeScript reads Rust's vectors. Attacks found in our reviews stay as regression tests on both sides.")}</P>
         </Topic>
         <Topic n="8.5" title={t("The page you are reading")}>
-          <P>{t("node [[scripts/verify-web.mjs]] checks what my.droppen.app, www.droppen.app and droppen.app serve against the latest release's manifest by default (an older one only when you ask), and fails a page without a sufficient Content-Security-Policy; /.well-known/droppen-build says which build each is. Releases since v0.2.127 carry a **signed attestation** of their manifest; Droppen Hub may also run a build that is not a release, which only a build of that commit can match ([[docs/web-integrity.md]]). [[scripts/install.sh]] checks a release's checksums (SHA256SUMS-server) against a signature by the release key it pins before it installs anything; it goes without one only if you set DROPPEN_ALLOW_UNSIGNED=1 (meant for a release from before the checksums were signed, or a system without openssl), and a signature that does not check out is never accepted.")}</P>
+          <P>{t("node [[scripts/verify-web.mjs]] checks what my.droppen.app, www.droppen.app and droppen.app serve against the latest release's manifest by default (an older one only when you ask), and fails a page without a sufficient Content-Security-Policy. Releases since v0.2.127 carry a **signed attestation** of their manifest. droppen.app says which build it serves at /.well-known/droppen-build; Droppen Hub may also run a build that is not a release, which only a build of that commit can match. my.droppen.app and www.droppen.app are rebuilt from main on every change and do not say from which commit: between releases, check them against your own build of main ([[docs/web-integrity.md]]). [[scripts/install.sh]] checks a release's checksums (SHA256SUMS-server) against a signature by the release key it pins before it installs anything; it goes without one only if you set DROPPEN_ALLOW_UNSIGNED=1 (meant for a release from before the checksums were signed, or a system without openssl), and a signature that does not check out is never accepted.")}</P>
         </Topic>
         <Topic n="8.6" title={t("Report a vulnerability")}>
           <P>

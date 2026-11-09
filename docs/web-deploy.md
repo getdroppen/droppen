@@ -5,6 +5,11 @@
 Builds** 完成：合并到 `main` 即自动构建并部署，不需要 GitHub Actions 里的
 Cloudflare API token。
 
+所以这两个主机跑的是 `main`，不是发版：两次发版之间，它们通常跑着还没发版的
+代码，只有刚发版、`main` 还等于那次发版时才对得上发版的网页清单。别的时候怎样
+验证它们（自己构建同一个 `main` 提交，用 `verify-web.mjs --manifest` 对照），见
+[`docs/web-integrity.md`](web-integrity.md) §2。
+
 ## 两个 Worker 的配置
 
 | | `droppen-my` | `droppen-www` |
