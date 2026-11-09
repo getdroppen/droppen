@@ -31,7 +31,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 droppen-proto = { path = "../droppen-proto", features = ["runtime", "rtc"] }
 # The streams' local index. `bundled` compiles SQLite itself rather than
 # linking the platform's.
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = "0.10"

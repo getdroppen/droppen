@@ -27,7 +27,7 @@ droppen-client = { path = "../droppen-client" }
 droppen-proto = { path = "../droppen-proto" }
 # The verified copies' store. `bundled` compiles SQLite itself rather than
 # linking the platform's.
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
