@@ -57,7 +57,9 @@ const START_PAGE: &str = "tauri://localhost/index.html";
 /// Runs at the start of every document (see `init.js`); `__DROPPEN_NONCE__` is
 /// replaced with this launch's nonce, `__DROPPEN_BRIDGE__` with the update
 /// bridge's own token (`updater::bridge_token`), `__DROPPEN_LANGUAGES__` with
-/// the system's preferred languages (`i18n::Lang::script_list`).
+/// the system's preferred languages (`i18n::Lang::script_list`), and
+/// `__DROPPEN_RELOAD_KEYS__` with whether Ctrl+R/F5 reload the page — on
+/// Linux, where there is no app menu to reload from.
 const INIT_JS: &str = include_str!("init.js");
 
 static WINDOWS: AtomicU32 = AtomicU32::new(1);
@@ -68,6 +70,7 @@ fn init_script<R: Runtime>(app: &AppHandle<R>) -> String {
         .replace("__DROPPEN_NONCE__", &nonce)
         .replace("__DROPPEN_BRIDGE__", &crate::updater::bridge_token(app))
         .replace("__DROPPEN_LANGUAGES__", &Lang::script_list(Lang::system_tags()))
+        .replace("__DROPPEN_RELOAD_KEYS__", if cfg!(target_os = "linux") { "true" } else { "false" })
 }
 
 /// Create the main window on the start-up page.
@@ -211,7 +214,8 @@ static DOWNLOADS: Mutex<BTreeMap<String, Vec<PathBuf>>> = Mutex::new(BTreeMap::n
 
 /// A download: taken only from the app's own server (or a `blob:` its pages
 /// made), into `~/Downloads`, and marked as downloaded (quarantined) like a
-/// browser marks it; anything else goes to the browser.
+/// browser marks it where the platform has that mark — macOS; anything else
+/// goes to the browser.
 fn download<R: Runtime>(app: &AppHandle<R>, event: DownloadEvent<'_>) -> bool {
     let port = app.state::<Arc<Shell>>().port();
     match event {
@@ -251,7 +255,8 @@ fn download<R: Runtime>(app: &AppHandle<R>, event: DownloadEvent<'_>) -> bool {
             };
             match (success, path) {
                 (true, Some(path)) => match quarantine(&path) {
-                    Ok(()) => log::info!("download finished: {} (marked as downloaded)", path.display()),
+                    Ok(true) => log::info!("download finished: {} (marked as downloaded)", path.display()),
+                    Ok(false) => log::info!("download finished: {}", path.display()),
                     Err(error) => log::warn!("download finished: {} (could not mark it: {error})", path.display()),
                 },
                 (true, None) => log::info!("download finished"),
@@ -264,8 +269,10 @@ fn download<R: Runtime>(app: &AppHandle<R>, event: DownloadEvent<'_>) -> bool {
 }
 
 /// Mark `path` with `com.apple.quarantine`, as a browser marks what it
-/// downloads, so the system checks it before it is opened.
-fn quarantine(path: &std::path::Path) -> std::io::Result<()> {
+/// downloads, so the system checks it before it is opened; whether the
+/// platform has that mark at all. Linux has none: nothing is marked, and the
+/// log says just that the download finished.
+fn quarantine(path: &std::path::Path) -> std::io::Result<bool> {
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -280,12 +287,12 @@ fn quarantine(path: &std::path::Path) -> std::io::Result<()> {
         if done != 0 {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(())
+        Ok(true)
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = path;
-        Ok(())
+        Ok(false)
     }
 }
 

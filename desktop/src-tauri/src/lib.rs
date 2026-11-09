@@ -247,12 +247,23 @@ pub fn run() {
                 "launch Apple event: {}",
                 launch.map(|event| event.to_string()).unwrap_or_else(|| "none".into())
             );
-            let hidden = autostart_arg || launch.is_some_and(|event| event.is_login_launch());
-            if hidden {
-                log::info!("opened at login: in the menu bar, no window");
-            }
+            let opened_at_login = autostart_arg || launch.is_some_and(|event| event.is_login_launch());
             updater::install(&handle, &dirs.support)?;
             tray::install(&handle, &login, translocated)?;
+            // With no tray host nothing would bring the window back: a
+            // windowless launch at login would be invisible (a second launch
+            // can focus it, but nothing says it is there). Show the window.
+            let tray_host = tray::host_present();
+            let hidden = opened_at_login && tray_host;
+            if opened_at_login {
+                if hidden {
+                    log::info!("opened at login: in the menu bar, no window");
+                } else {
+                    log::info!("opened at login with no tray host: showing the window");
+                }
+            }
+            #[cfg(target_os = "linux")]
+            log::info!("tray host: {}", if tray_host { "present" } else { "none" });
             app.manage(login);
             window::create_main(&handle, !hidden)?;
             if let Some(listener) = single_listener {
@@ -278,10 +289,17 @@ pub fn run() {
             event: WindowEvent::CloseRequested { api, .. },
             ..
         } if label == window::MAIN => {
-            // Closing the window is not quitting: Droppen keeps running in the
-            // menu bar, and the window comes back from there or the Dock.
+            // Closing the window is not quitting while a tray host would bring
+            // it back (macOS's menu bar, a Linux desktop's tray): Droppen keeps
+            // running there. With no tray host on Linux nothing would, so it
+            // quits as *Quit Droppen* does. Asked now, not at start, so a host
+            // started in the meantime counts.
             api.prevent_close();
-            window::hide(app);
+            if tray::host_present() {
+                window::hide(app);
+            } else {
+                tray::quit_without_tray(app);
+            }
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => match login_item::AppleEvent::current() {

@@ -71,8 +71,11 @@ objc2-app-kit = { version = "0.3.2", optional = true, default-features = false, 
 # The version gtk and webkit2gtk already link, so nothing new is compiled:
 # *Open in Browser*'s hand-off on Linux (`linux_browser.rs`) — the default
 # browser, the document portal and the launch, through GIO.
+# The session bus's `org.kde.StatusNotifierWatcher`, for whether a tray host
+# is there (`tray.rs`): the zbus core's Secret Service already links.
 [target.'cfg(target_os = "linux")'.dependencies]
 gio = "0.18"
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [lints]
 workspace = true

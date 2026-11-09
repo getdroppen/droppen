@@ -17,6 +17,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+// Only the default's ran-here-before check off Linux asks the store.
+#[cfg(not(target_os = "linux"))]
 use droppen_desktop_core::credentials::LayeredStore;
 use droppen_desktop_core::dirs::ShellDirs;
 use droppen_desktop_core::login_item::{self as core, Backend, Before, FirstLaunch, Legacy, LegacyFile, Migration, Status};
