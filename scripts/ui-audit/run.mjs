@@ -1309,6 +1309,17 @@ const COPY_COMPOSER_WORDS = { en: "loading session…", "zh-CN": "读取会话�
 /** The session the fixture draws from its copy: its first and last items' words. */
 const COPY_FIRST_WORDS = "The relay drops idle sockets after a minute.";
 const COPY_LAST_WORDS = "three beats go unanswered";
+/**
+ * What the composer's pickers and gauges would say over the copy without the
+ * machine's state: the list's first model, its default effort, the CLI's
+ * default permission, the local login's quota. None of it is the session's.
+ */
+const COPY_DEFAULT_WORDS = ["fable", "medium", "acceptEdits", "88%", "64%"];
+/** What they say under the machine's own state: the session's model, effort and permission, its account's quota, its context. */
+const COPY_OWN_WORDS = ["sonnet", "low", "plan", "37%", "21%", "42%"];
+/** The account the session runs on, which only the machine's state names, and what the header's badge says of a session bound to none. */
+const COPY_ACCOUNT_WORDS = "work";
+const COPY_UNBOUND_WORDS = { en: "no account", "zh-CN": "无账号" };
 
 /**
  * droppen.app on the machine itself, opening a session from the device's copy
@@ -1318,7 +1329,13 @@ const COPY_LAST_WORDS = "three beats go unanswered";
  * (no ellipsis, no clip) at a phone's width as on a desktop — and no loading
  * line anywhere. Under it the composer waits for the machine's state: the
  * text editable, the send button disabled, and the box saying it is loading
- * the session, not that the session is busy. Captured in English and Chinese.
+ * the session, not that the session is busy. Nothing the machine's state
+ * alone can say is shown in the meantime: no model, effort or permission
+ * picker, no quota and no context in the composer's row, and no account in
+ * the header. Then the same session once the machine has answered
+ * (`&state=live`): the banner gone, and those showing the session's own
+ * values. How far the composer and the header's metadata moved between the
+ * two is in measurements.json (`shift`). Captured in English and Chinese.
  */
 async function auditSessionFromCopy(theme, view) {
   const page = await browser.newPage({
@@ -1329,65 +1346,147 @@ async function auditSessionFromCopy(theme, view) {
   });
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "session-from-copy", id, actual, expected });
   for (const lang of Object.keys(COPY_BANNER_WORDS)) {
-    await page.goto(`${base}ui-audit/index.html?fixture=session-from-copy&lang=${lang}&theme=${theme}`);
-    await page.evaluate(() => document.fonts.ready);
-    await page.waitForSelector('[data-session-view] [data-signal="reconnecting"]');
-    await page.waitForFunction((words) => document.body.innerText.includes(words), COPY_LAST_WORDS);
-    await page.waitForTimeout(250);
-    const state = await page.evaluate(() => {
-      const rect = (e) => {
-        if (!e) return null;
-        const r = e.getBoundingClientRect();
-        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
-      };
-      const banner = document.querySelector('[data-session-view] [data-signal="reconnecting"]');
-      let words = null;
-      if (banner) {
-        const s = getComputedStyle(banner);
-        const range = document.createRange();
-        range.selectNodeContents(banner);
-        const natural = range.getBoundingClientRect();
-        const box = banner.getBoundingClientRect();
-        words = {
-          text: (banner.textContent ?? "").trim(),
-          rect: rect(banner),
-          size: s.fontSize,
-          font: s.fontFamily,
-          cut: banner.scrollWidth > banner.clientWidth || natural.right > box.right - parseFloat(s.paddingRight) + 0.5,
-          lines: Math.round(natural.height / parseFloat(s.lineHeight)),
-        };
+    const drawn = {};
+    for (const live of [false, true]) {
+      await page.goto(`${base}ui-audit/index.html?fixture=session-from-copy&lang=${lang}&theme=${theme}${live ? "&state=live" : ""}`);
+      await page.evaluate(() => document.fonts.ready);
+      if (live) {
+        await page.waitForFunction(
+          (waiting) => {
+            const box = document.querySelector("[data-session-view] textarea");
+            return !!box && box.getAttribute("placeholder") !== waiting && !document.querySelector('[data-session-view] [data-signal="reconnecting"]');
+          },
+          COPY_COMPOSER_WORDS[lang],
+        );
+      } else {
+        await page.waitForSelector('[data-session-view] [data-signal="reconnecting"]');
       }
-      const box = document.querySelector("[data-session-view] textarea");
-      const send = document.querySelector('[data-session-view] button[data-variant="primary"]');
-      return {
-        banner: words,
-        composer: box ? { placeholder: box.getAttribute("placeholder"), editable: !box.disabled, send: send ? !send.disabled : null } : null,
-        opening: document.querySelectorAll("[data-session-opening]").length,
-        text: document.body.innerText,
-        overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
-      };
+      await page.waitForFunction((words) => document.body.innerText.includes(words), COPY_LAST_WORDS);
+      await page.waitForTimeout(250);
+      drawn[live ? "live" : "copy"] = await auditSessionFromCopyState(page, theme, view, lang, live, fail);
+    }
+    const { copy, live } = drawn;
+    // Where the state coming in moved things: the composer's top edge (the
+    // transcript's bottom), its row of chips, and the header's metadata row
+    // and the first thing after the account in it (the git branch).
+    const shift = (a, b, key) => (a && b ? +(b[key] - a[key]).toFixed(1) : null);
+    results.push({
+      mode: "session-from-copy-shift",
+      lang,
+      theme,
+      viewport: view.name,
+      shift: {
+        composerTop: shift(copy.composerBox, live.composerBox, "y"),
+        chipsRowHeight: shift(copy.chips?.rect, live.chips?.rect, "h"),
+        metadataRowHeight: shift(copy.metadata?.rect, live.metadata?.rect, "h"),
+        branchX: shift(copy.metadata?.branch, live.metadata?.branch, "x"),
+      },
     });
-    const tag = lang === "en" ? "" : `-${lang}`;
-    await page.screenshot({ path: `${out}/session-from-copy${tag}-${theme}-${view.name}.png`, animations: "disabled" });
-    const { text, ...measured } = state;
-    results.push({ mode: "session-from-copy", lang, theme, viewport: view.name, ...measured });
-    const where = { lang };
-    if (!state.banner) {
-      fail("session-from-copy.banner", where, "the banner over a transcript drawn from the copy");
-    } else {
-      if (state.banner.text !== COPY_BANNER_WORDS[lang]) fail("session-from-copy.words", { ...where, text: state.banner.text }, COPY_BANNER_WORDS[lang]);
-      if (state.banner.size !== "11px" || !/mono/i.test(state.banner.font)) fail("session-from-copy.type", { ...where, size: state.banner.size, font: state.banner.font }, "mono 11px (text-2xs)");
-      if (state.banner.cut) fail("session-from-copy.truncated", { ...where, banner: state.banner }, "the banner's words whole");
-    }
-    if (!text.includes(COPY_FIRST_WORDS) || !text.includes(COPY_LAST_WORDS)) fail("session-from-copy.transcript", where, "the copy's transcript drawn, first item to last");
-    const c = state.composer;
-    if (!c || c.placeholder !== COPY_COMPOSER_WORDS[lang] || !c.editable || c.send !== false) {
-      fail("session-from-copy.composer", { ...where, composer: c }, `an editable box saying "${COPY_COMPOSER_WORDS[lang]}", its send button disabled`);
-    }
-    if (state.opening > 0) fail("session-from-copy.opening", { ...where, opening: state.opening }, "no loading line over a drawn transcript");
-    if (state.overflow.doc > state.overflow.win + 1) fail("session-from-copy.overflow", { ...where, ...state.overflow }, "no horizontal overflow");
   }
   await page.close();
+}
+
+/**
+ * One state of the session-from-copy fixture, measured, captured and checked:
+ * drawn from the copy while the machine is asked (`live` false), or once it
+ * has answered. Returns the boxes the shift between the two is read from.
+ */
+async function auditSessionFromCopyState(page, theme, view, lang, live, fail) {
+  const state = await page.evaluate(() => {
+    const rect = (e) => {
+      if (!e) return null;
+      const r = e.getBoundingClientRect();
+      return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+    };
+    const banner = document.querySelector('[data-session-view] [data-signal="reconnecting"]');
+    let words = null;
+    if (banner) {
+      const s = getComputedStyle(banner);
+      const range = document.createRange();
+      range.selectNodeContents(banner);
+      const natural = range.getBoundingClientRect();
+      const box = banner.getBoundingClientRect();
+      words = {
+        text: (banner.textContent ?? "").trim(),
+        rect: rect(banner),
+        size: s.fontSize,
+        font: s.fontFamily,
+        cut: banner.scrollWidth > banner.clientWidth || natural.right > box.right - parseFloat(s.paddingRight) + 0.5,
+        lines: Math.round(natural.height / parseFloat(s.lineHeight)),
+      };
+    }
+    const box = document.querySelector("[data-session-view] textarea");
+    const send = document.querySelector('[data-session-view] button[data-variant="primary"]');
+    const composerBox = document.querySelector("[data-session-view] [data-composer]");
+    // The composer's one toolbar row: attach, the chips, send.
+    const chips = composerBox?.lastElementChild ?? null;
+    // The header's second row: the session's source, account, branch, model drift and size.
+    const metadata = document.querySelector("[data-session-view] header")?.children[1] ?? null;
+    return {
+      banner: words,
+      composer: box ? { placeholder: box.getAttribute("placeholder"), editable: !box.disabled, send: send ? !send.disabled : null } : null,
+      composerBox: rect(composerBox),
+      chips: chips
+        ? {
+            rect: rect(chips),
+            text: chips.innerText.replace(/\s+/g, " ").trim(),
+            // Every control in the row that opens something: a picker, a gauge's overview.
+            openers: chips.querySelectorAll('[role="combobox"], [aria-haspopup], [aria-expanded]').length,
+            // What the row holds, and where: a value arriving moves what comes after it.
+            items: [...chips.children].map((e) => ({ text: e.innerText.trim(), ...rect(e) })).filter((e) => e.w > 1),
+          }
+        : null,
+      metadata: metadata
+        ? { rect: rect(metadata), text: metadata.innerText.replace(/\s+/g, " ").trim(), branch: rect(metadata.querySelector('[title="main"]')) }
+        : null,
+      opening: document.querySelectorAll("[data-session-opening]").length,
+      text: document.body.innerText,
+      overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+    };
+  });
+  const tag = `${live ? "-live" : ""}${lang === "en" ? "" : `-${lang}`}`;
+  await page.screenshot({ path: `${out}/session-from-copy${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+  const { text, ...measured } = state;
+  results.push({ mode: live ? "session-from-copy-live" : "session-from-copy", lang, theme, viewport: view.name, ...measured });
+  const where = { lang, state: live ? "live" : "copy" };
+  if (!text.includes(COPY_FIRST_WORDS) || !text.includes(COPY_LAST_WORDS)) fail("session-from-copy.transcript", where, "the copy's transcript drawn, first item to last");
+  if (state.opening > 0) fail("session-from-copy.opening", { ...where, opening: state.opening }, "no loading line over a drawn transcript");
+  if (state.overflow.doc > state.overflow.win + 1) fail("session-from-copy.overflow", { ...where, ...state.overflow }, "no horizontal overflow");
+  const c = state.composer;
+  const chipWords = state.chips?.text ?? "";
+  const header = state.metadata?.text ?? "";
+  if (live) {
+    if (state.banner) fail("session-from-copy.live-banner", { ...where, banner: state.banner.text }, "no banner once the machine has answered");
+    if (!c || c.placeholder === COPY_COMPOSER_WORDS[lang] || !c.editable) {
+      fail("session-from-copy.live-composer", { ...where, composer: c }, "an editable box that no longer waits for the session");
+    }
+    const missing = COPY_OWN_WORDS.filter((w) => !chipWords.includes(w));
+    const defaults = COPY_DEFAULT_WORDS.filter((w) => chipWords.includes(w));
+    if (missing.length || defaults.length || (state.chips?.openers ?? 0) < 3) {
+      fail("session-from-copy.live-chips", { ...where, chips: state.chips, missing, defaults }, `the session's own ${COPY_OWN_WORDS.join(", ")}, and its model, effort and permission pickers`);
+    }
+    if (!header.includes(COPY_ACCOUNT_WORDS)) fail("session-from-copy.live-account", { ...where, header }, `the account the session runs on, "${COPY_ACCOUNT_WORDS}"`);
+    return state;
+  }
+  if (!state.banner) {
+    fail("session-from-copy.banner", where, "the banner over a transcript drawn from the copy");
+  } else {
+    if (state.banner.text !== COPY_BANNER_WORDS[lang]) fail("session-from-copy.words", { ...where, text: state.banner.text }, COPY_BANNER_WORDS[lang]);
+    if (state.banner.size !== "11px" || !/mono/i.test(state.banner.font)) fail("session-from-copy.type", { ...where, size: state.banner.size, font: state.banner.font }, "mono 11px (text-2xs)");
+    if (state.banner.cut) fail("session-from-copy.truncated", { ...where, banner: state.banner }, "the banner's words whole");
+  }
+  if (!c || c.placeholder !== COPY_COMPOSER_WORDS[lang] || !c.editable || c.send !== false) {
+    fail("session-from-copy.composer", { ...where, composer: c }, `an editable box saying "${COPY_COMPOSER_WORDS[lang]}", its send button disabled`);
+  }
+  // Neither the defaults nor anything else: the row holds attach and send alone.
+  const shown = [...COPY_DEFAULT_WORDS, ...COPY_OWN_WORDS].filter((w) => chipWords.includes(w));
+  if (!state.chips || chipWords !== "" || state.chips.openers > 0) {
+    fail("session-from-copy.chips", { ...where, chips: state.chips, shown }, "no model, effort, permission, quota or context in the composer's row, and nothing there to pick");
+  }
+  if (header.includes(COPY_ACCOUNT_WORDS) || header.includes(COPY_UNBOUND_WORDS[lang])) {
+    fail("session-from-copy.account", { ...where, header }, "no account in the header before the machine has named it");
+  }
+  return state;
 }
 
 try {

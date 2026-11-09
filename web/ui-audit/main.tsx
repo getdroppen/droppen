@@ -15,7 +15,8 @@
  * yet, in each stage of its wait), `?fixture=no-copy` (the foot of a session
  * with no copy on this device yet, read-only) or `?fixture=session-from-copy`
  * (the real session view on droppen.app, drawn from the device's copy of the
- * session while the machine is asked for it), plus `?theme=dark`.
+ * session while the machine is asked for it; `&state=live`, once it has
+ * answered), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -841,10 +842,13 @@ async function mountNoCopy(): Promise<void> {
  * does not hold, with a copy of it on this device: the real session view,
  * routed as the app routes it, drawn from the copy at once
  * (`features/sessions/feed-from-copy.ts`) under the banner that says so, its
- * composer waiting for the machine's state before it sends anything. The
- * machine never answers here, so both stay. The copy is a stand-in for
- * the machine's offline copy (`MachineMirror`) holding one session, already
- * verified; the device answers the view's own reads with synthetic data only.
+ * composer waiting for the machine's state before it sends anything, and
+ * neither it nor the header showing what only that state can say. The
+ * machine never answers here, so both stay; with `&state=live` it does, and
+ * the same session is drawn under the machine's own state. The copy is a
+ * stand-in for the machine's offline copy (`MachineMirror`) holding one
+ * session, already verified; the device answers the view's own reads with
+ * synthetic data only.
  */
 const COPY_MACHINE = "studio-mac";
 const COPY_SESSION = "7c1e2a90-5b3d-4f6e-9a21-0d8c4b7e3f15";
@@ -873,7 +877,33 @@ const COPY_ITEMS = [
 const COPY_ROW = {
   source: "claude", id: COPY_SESSION, title: "Make the relay's idle timeout follow the heartbeat", cwd: "/home/studio/droppen", filePath: "/home/studio/.claude/projects/droppen/7c1e2a90.jsonl",
   gitBranch: "main", repoKey: null, createdAt: "2026-11-08T09:12:00Z", updatedAt: "2026-11-08T09:19:00Z", sizeBytes: 48_213, scope: "owned",
-  status: "idle", activity: "idle", attentionAt: null, unread: false, unreadCount: 0, resident: null,
+  status: "idle", activity: "idle", attentionAt: null, unread: false, unreadCount: 0, resident: null, claudeRoot: "managed",
+};
+/** The account the session runs on, which only the machine's state names. */
+const COPY_ACCOUNT = { id: "5d0c6f3e-8a41-4b7e-9f12-3c6e0a9b2d74", label: "work" };
+/** A login's two quota windows, by what is left of each. */
+const copyQuota = (fiveHours: number, week: number) => [
+  { label: "5h", windowMinutes: 300, usedPercent: 100 - fiveHours, remainingPercent: fiveHours, resetsAt: null },
+  { label: "weekly", windowMinutes: 10_080, usedPercent: 100 - week, remainingPercent: week, resetsAt: null },
+];
+/**
+ * The machine's own state for the session (`&state=live`), not the defaults:
+ * it last ran sonnet at low effort in plan mode, on the account, with its
+ * context 42% full.
+ */
+const COPY_LIVE_STATE = {
+  summary: COPY_ROW,
+  canSend: true,
+  sendBlockReason: null,
+  cliChoice: { model: "sonnet", effort: "low", permission: "plan", at: "2026-11-08T09:18:00Z" },
+  injection: null,
+  contextTokens: 84_000,
+  contextWindow: 200_000,
+  claudeRoot: "managed",
+  account: COPY_ACCOUNT,
+  rotation: null,
+  receipts: [],
+  questions: [],
 };
 const COPY_STATE: FeedCopy = { started: true, startIndex: 0, endIndex: COPY_ITEMS.length, items: COPY_ITEMS as FeedCopy["items"], fp: "fixture-fp", prefixFp: "fixture-prefix" };
 const isCopied = (source: string, id: string) => source === "claude" && id === COPY_SESSION;
@@ -898,14 +928,73 @@ const COPY_SHELL = {
   setMain: noop,
 };
 
-/** The device behind the view: its reads answered with synthetic data, its sockets never open (the machine is still being asked). */
-function copyDevice(): Transport {
+/**
+ * The machine answering at last (`&state=live`): its one socket, as a server
+ * that carries session feeds on it answers (`app/feed-hub.ts`). The session is
+ * resumed from the copy's own marker with nothing new, and its state follows,
+ * as it does on the wire.
+ */
+function machineSocket() {
+  let greeted = false;
+  const socket = {
+    readyState: 0,
+    binaryType: "blob",
+    onopen: null as ((event: unknown) => void) | null,
+    onmessage: null as ((event: { data: unknown }) => void) | null,
+    onclose: null as ((event: unknown) => void) | null,
+    send(data: string) {
+      const m = JSON.parse(data) as { type?: string; feeds?: { sub: number; source: string; id: string }[] };
+      if (m.type === "ping") answer({ type: "pong" });
+      if (m.type !== "sub") return;
+      if (!greeted) {
+        greeted = true;
+        answer({ type: "hello" });
+      }
+      for (const feed of m.feeds ?? []) {
+        if (!isCopied(feed.source, feed.id)) continue;
+        const end = COPY_ITEMS.length;
+        answer({ sub: feed.sub, type: "delta", sig: "live:1", fromIndex: end, items: [], endIndex: end, totalItems: end, prefixFp: COPY_STATE.prefixFp });
+        answer({ sub: feed.sub, type: "state", ...COPY_LIVE_STATE });
+      }
+    },
+    close() {},
+  };
+  const answer = (frame: unknown) => setTimeout(() => socket.onmessage?.({ data: JSON.stringify(frame) }), 0);
+  setTimeout(() => {
+    socket.readyState = 1;
+    socket.onopen?.({});
+  }, 0);
+  return socket;
+}
+
+/**
+ * The device behind the view: its reads answered with synthetic data, its
+ * sockets never open (the machine is still being asked) unless `live`. The
+ * model and effort the list leads with, the local login's quota and the
+ * permission a CLI defaults to are all other than the session's own.
+ */
+function copyDevice(live: boolean): Transport {
+  const now = new Date().toISOString();
   const answers: Record<string, unknown> = {
     "/api/prefs": { composerSend: "enter", sessionGrouping: "flat", transcriptStyle: "flat", fontSize: "default", language: "en" },
     "/api/composer-prefs": { defaults: {}, sessions: {} },
-    "/api/models": { models: [{ id: "sonnet", label: null, efforts: ["low", "medium", "high"], defaultEffort: "medium" }], source: "cache" },
-    "/api/accounts": { accounts: [], defaultAccountId: null, defaultCodexAccountId: null },
-    "/api/stats/quota": { accounts: [], claude: null, codex: null },
+    "/api/models": {
+      models: [
+        { id: "fable", label: null, efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+        { id: "sonnet", label: null, efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+      ],
+      source: "cache",
+    },
+    "/api/accounts": {
+      accounts: [{ ...COPY_ACCOUNT, kind: "oauth_token", provider: "claude", usageEnabled: true, rotation: false, rest: [], createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z" }],
+      defaultAccountId: null,
+      defaultCodexAccountId: null,
+    },
+    "/api/stats/quota": {
+      accounts: [{ ...COPY_ACCOUNT, kind: "oauth_token", usageEnabled: true, updatedAt: now, windows: copyQuota(37, 21) }],
+      claude: { plan: "Max 5x", tier: null, updatedAt: now, windows: copyQuota(88, 64) },
+      codex: null,
+    },
   };
   return {
     fetch: async (request: Request) => {
@@ -913,12 +1002,15 @@ function copyDevice(): Transport {
       return answer === undefined ? Response.json({ error: "not here" }, { status: 404 }) : Response.json(answer);
     },
     socketUrl: async (path: string) => path,
-    openSocket: () => ({ readyState: 0, binaryType: "blob", send() {}, close() {}, onopen: null, onmessage: null, onclose: null }),
+    openSocket: (url: string) =>
+      live && url.startsWith("/api/events")
+        ? machineSocket()
+        : { readyState: 0, binaryType: "blob", send() {}, close() {}, onopen: null, onmessage: null, onclose: null },
   };
 }
 
 async function mountSessionFromCopy(): Promise<void> {
-  openMachine(COPY_MACHINE, copyDevice(), {
+  openMachine(COPY_MACHINE, copyDevice(query.get("state") === "live"), {
     info: constantStore(COPY_INFO),
     ensureLive: noop,
     hold: () => noop,

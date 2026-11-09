@@ -56,8 +56,9 @@ export type FeedState = Omit<Detail, "itemsChanged" | "reset"> &
     /**
      * The state half is the machine's offline copy's (`feed-from-copy.ts`),
      * drawn before the machine has said anything: the session's own model,
-     * effort and permission (`cliChoice`) are not known yet, so nothing is
-     * sent until they are. Gone with the machine's first state, whichever way
+     * effort and permission (`cliChoice`), its account and its context are
+     * not known yet, so nothing is sent, and nothing that would say them is
+     * drawn, until they are. Gone with the machine's first state, whichever way
      * it comes ({@link liveState}, or a snapshot).
      */
     fromCopy?: true;

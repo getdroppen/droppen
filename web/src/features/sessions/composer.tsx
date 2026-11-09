@@ -676,9 +676,20 @@ export function Composer({
                   : `${detail.sendBlockReason ?? t("session is busy")} — ${t("messages are queued")}`
           }
           chips={<>
-            <ComposerChoiceChips source={source} choice={choice} permission={!chat} />
-            <ComposerQuota source={source} accountId={detail.account?.id ?? null} />
-            <ContextRing used={detail.contextTokens} contextWindow={detail.contextWindow} />
+            {/* These three read the machine's state, which a window drawn from
+                the copy does not have yet (`awaitingState`): the model, effort
+                and permission would be the defaults, the quota would be the
+                local login's rather than that of the account the session runs
+                on, and its context is not known. They are left out until the
+                state is in, a round trip later, rather than shown wrong and
+                then changed under the reader. So are the pickers: a pick made
+                from a wrong starting value would be stored as the session's
+                own choice. The checklist is read from the machine itself. */}
+            {!awaitingState && <>
+              <ComposerChoiceChips source={source} choice={choice} permission={!chat} />
+              <ComposerQuota source={source} accountId={detail.account?.id ?? null} />
+              <ContextRing used={detail.contextTokens} contextWindow={detail.contextWindow} />
+            </>}
             <ChecklistChip source={source} id={id} toolTick={toolTick} />
           </>}
           send={{
