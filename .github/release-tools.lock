@@ -1,14 +1,35 @@
-# The prebuilt tools .github/workflows/release.yml downloads instead of
-# building them: each one upstream's own release file, pinned here by its
-# sha256. The workflow checks every download against this file and fails on
-# any difference (.github/scripts/fetch-release-tool.sh, which also fixes
-# where each tool comes from: the url column must be exactly the one it makes
-# from the tool, the version and the platform); it never builds these tools,
-# and never fetches a hash. For a version bump (ABOUT_VERSION in
-# scripts/release-public.sh, TAURI_CLI_VERSION in desktop/build.sh),
-# scripts/update-release-tool-pins.sh prints the new lines; a person checks
-# them and commits them here.
+# The prebuilt tools the release builds download instead of building them:
+# each one upstream's own release file, pinned here by its sha256. Every
+# download is checked against this file and fails on any difference
+# (.github/scripts/fetch-release-tool.sh, which also fixes where each tool
+# comes from: the url column must be exactly the one it makes from the tool,
+# the version and the platform); these tools are never built, and no hash is
+# ever fetched.
 #
-# tool        version  platform              sha256                                                            url
-cargo-about   0.9.2    aarch64-apple-darwin  ae72f0df0c399a1e96336f696fa55b1b28679fd725632eba8cf8e4568467cc3e  https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.2/cargo-about-0.9.2-aarch64-apple-darwin.tar.gz
-tauri-cli     2.12.3   aarch64-apple-darwin  35e3b339bfb5f2061023bf5646dc969e5fa53b6fc4347daf467e7f6743692494  https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.3/cargo-tauri-aarch64-apple-darwin.zip
+# cargo-about and tauri-cli are in the versions the source pins
+# (ABOUT_VERSION in scripts/release-public.sh, TAURI_CLI_VERSION in
+# desktop/build.sh). The AppImage tools tauri-cli's bundler runs for the
+# Linux app are pinned here alone, one tagged release for both platforms:
+#   linuxdeploy       the build tauri-cli's bundler names
+#                     (LINUXDEPLOY_COMMIT_HASH in tauri-bundler's
+#                     src/bundle/linux/appimage/linuxdeploy.rs; tauri-cli
+#                     2.12.3 has tauri-bundler 2.10.3), so a tauri-cli bump
+#                     may need another one;
+#   apprun            the AppRun the bundler downloads (apprun-old);
+#   appimage-runtime  the AppImage runtime, chosen here: a tagged release of
+#                     AppImage/type2-runtime, instead of the `continuous` one
+#                     appimagetool would download.
+# For a version bump, scripts/update-release-tool-pins.sh prints the new
+# lines; a person checks them and commits them here.
+#
+# tool            version  platform                  sha256                                                            url
+cargo-about       0.9.2    aarch64-apple-darwin      ae72f0df0c399a1e96336f696fa55b1b28679fd725632eba8cf8e4568467cc3e  https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.2/cargo-about-0.9.2-aarch64-apple-darwin.tar.gz
+tauri-cli         2.12.3   aarch64-apple-darwin      35e3b339bfb5f2061023bf5646dc969e5fa53b6fc4347daf467e7f6743692494  https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.3/cargo-tauri-aarch64-apple-darwin.zip
+tauri-cli         2.12.3   x86_64-unknown-linux-gnu  2f635874cbb0103878cd04794aab9f1fec9adf3950ca7c4b1be7f1d845244501  https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.3/cargo-tauri-x86_64-unknown-linux-gnu.tgz
+tauri-cli         2.12.3   aarch64-unknown-linux-gnu 13baa60bb1bfa8567c1e021b1192bbb0d5baa60949f03650492eecfb22c8f8e0  https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.3/cargo-tauri-aarch64-unknown-linux-gnu.tgz
+linuxdeploy       07333c6  x86_64-unknown-linux-gnu  36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62  https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-x86_64.AppImage
+linuxdeploy       07333c6  aarch64-unknown-linux-gnu 556ab80baa98e600aa80f0dcedfb70bca0e1ce7e9f147fb345be3fcc3e91b2b1  https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-aarch64.AppImage
+apprun            old      x86_64-unknown-linux-gnu  f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f  https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-x86_64
+apprun            old      aarch64-unknown-linux-gnu 072f17c0895a85c490282fe5395c5007e5fc75da727e553b3b8fb680feb11578  https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-aarch64
+appimage-runtime  20251108 x86_64-unknown-linux-gnu  2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+appimage-runtime  20251108 aarch64-unknown-linux-gnu 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444  https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-aarch64

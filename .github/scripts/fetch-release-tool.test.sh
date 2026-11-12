@@ -64,7 +64,7 @@ expect() { # want (ok|refused), description, tool, lock line, [platform]
   if [ "$got" = "$want" ]; then pass; else fail "$what: want $want, got $got ($(tail -n 1 "$TMP/log-$N"))"; fi
 }
 downloaded() { [ -f "$CURL_LOG" ] && cat "$CURL_LOG"; }
-lock() { printf '%-13s %-8s %-21s %s  %s' "$@"; }
+lock() { printf '%-17s %-8s %-25s %s  %s' "$@"; }
 
 expect ok "cargo-about from its upstream release" cargo-about "$(lock cargo-about 0.9.2 aarch64-apple-darwin "$ABOUT_SHA" "$ABOUT_URL")"
 [ "$(cat "$TMP/out-$N/bin/cargo-about" 2>/dev/null)" = about ] && pass || fail "cargo-about not put in bin/"
@@ -104,6 +104,62 @@ if [ "$ZIP" = 1 ]; then
 else
   echo "note: neither zip nor python3 here: the tauri-cli download itself is not tested" >&2
 fi
+
+# The Linux app's tools: tauri-cli's .tgz, and the AppImage tools, which are
+# the files themselves and pinned by the lock alone.
+L64=x86_64-unknown-linux-gnu
+A64=aarch64-unknown-linux-gnu
+TGZ_URL=https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.3/cargo-tauri-$L64.tgz
+mkdir -p "$TMP/tgz" && echo tauri-linux > "$TMP/tgz/cargo-tauri" && echo readme > "$TMP/tgz/README.md"
+tar -czf "$FILES/cargo-tauri-$L64.tgz" -C "$TMP/tgz" cargo-tauri README.md
+TGZ_SHA=$(sha "$FILES/cargo-tauri-$L64.tgz")
+LD=https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6
+RT=https://github.com/AppImage/type2-runtime/releases/download
+AR=https://github.com/tauri-apps/binary-releases/releases/download/apprun-old
+for file in linuxdeploy-aarch64.AppImage linuxdeploy-x86_64.AppImage AppRun-x86_64 runtime-aarch64 runtime-x86_64; do
+  echo "$file" > "$FILES/$file"
+done
+LD_A=$(sha "$FILES/linuxdeploy-aarch64.AppImage")
+LD_X=$(sha "$FILES/linuxdeploy-x86_64.AppImage")
+AR_X=$(sha "$FILES/AppRun-x86_64")
+RT_A=$(sha "$FILES/runtime-aarch64")
+RT_X=$(sha "$FILES/runtime-x86_64")
+both() { # tool, version, aarch64's sha and url, x86_64's
+  printf '%s\n%s' "$(lock "$1" "$2" $A64 "$3" "$4")" "$(lock "$1" "$2" $L64 "$5" "$6")"
+}
+installed() { # file, contents: in bin/, executable
+  [ "$(cat "$TMP/out-$N/bin/$1" 2>/dev/null)" = "$2" ] && [ -x "$TMP/out-$N/bin/$1" ] && pass || fail "bin/$1 is not $2, executable"
+}
+
+expect ok "tauri-cli for Linux from its upstream .tgz" tauri-cli "$(lock tauri-cli 2.12.3 $L64 "$TGZ_SHA" "$TGZ_URL")" $L64
+installed cargo-tauri tauri-linux
+[ ! -e "$TMP/out-$N/bin/README.md" ] && pass || fail "more than the program was put in bin/"
+expect refused "tauri-cli for Linux as a .zip" tauri-cli "$(lock tauri-cli 2.12.3 $L64 "$TGZ_SHA" "${TGZ_URL%.tgz}.zip")" $L64
+expect ok "linuxdeploy, under the name the bundler looks for" linuxdeploy \
+  "$(both linuxdeploy 07333c6 "$LD_A" "$LD/linuxdeploy-aarch64.AppImage" "$LD_X" "$LD/linuxdeploy-x86_64.AppImage")" $A64
+installed linuxdeploy-07333c6-aarch64.AppImage linuxdeploy-aarch64.AppImage
+expect ok "apprun" apprun "$(lock apprun old $L64 "$AR_X" "$AR/AppRun-x86_64")" $L64
+installed AppRun-x86_64 AppRun-x86_64
+expect ok "the AppImage runtime" appimage-runtime \
+  "$(both appimage-runtime 20251108 "$RT_A" "$RT/20251108/runtime-aarch64" "$RT_X" "$RT/20251108/runtime-x86_64")" $L64
+installed runtime-x86_64 runtime-x86_64
+[ "$(downloaded)" = "$RT/20251108/runtime-x86_64" ] && pass || fail "downloaded $(downloaded), not $RT/20251108/runtime-x86_64"
+
+# Refused before anything is downloaded.
+refused() { # description, tool, lock, platform
+  expect refused "$@"
+  [ -z "$(downloaded)" ] && pass || fail "$1: downloaded $(downloaded)"
+}
+refused "a rolling tag" appimage-runtime "$(lock appimage-runtime continuous $A64 "$RT_A" "$RT/continuous/runtime-aarch64")" $A64
+refused "another version for the other platform" appimage-runtime \
+  "$(printf '%s\n%s' "$(lock appimage-runtime 20251108 $A64 "$RT_A" "$RT/20251108/runtime-aarch64")" "$(lock appimage-runtime 20251200 $L64 "$RT_X" "$RT/20251200/runtime-x86_64")")" $A64
+refused "a tag with a dot segment" appimage-runtime "$(lock appimage-runtime ..a $A64 "$RT_A" "$RT/..a/runtime-aarch64")" $A64
+refused "the other architecture's file" appimage-runtime "$(lock appimage-runtime 20251108 $A64 "$RT_X" "$RT/20251108/runtime-x86_64")" $A64
+refused "linuxdeploy from linuxdeploy's own releases" linuxdeploy \
+  "$(lock linuxdeploy 07333c6 $A64 "$LD_A" "https://github.com/linuxdeploy/linuxdeploy/releases/download/07333c6/linuxdeploy-aarch64.AppImage")" $A64
+refused "an AppImage tool for macOS" linuxdeploy "$(lock linuxdeploy 07333c6 aarch64-apple-darwin "$LD_A" "$LD/linuxdeploy-aarch64.AppImage")"
+refused "apprun from another release" apprun "$(lock apprun old $L64 "$AR_X" "https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/AppRun-x86_64")" $L64
+expect refused "a runtime that is not the pinned file" appimage-runtime "$(lock appimage-runtime 20251108 $A64 "$RT_X" "$RT/20251108/runtime-aarch64")" $A64
 
 echo "fetch-release-tool: $PASSED passed, $FAILED failed"
 [ "$FAILED" = 0 ]
