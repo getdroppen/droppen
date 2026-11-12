@@ -36,6 +36,7 @@ pub mod i18n;
 #[cfg(target_os = "linux")]
 pub mod linux_browser;
 pub mod login_item;
+pub mod opening;
 pub mod shell;
 pub mod sign_in;
 #[cfg(feature = "e2e")]
@@ -112,8 +113,7 @@ fn retry_start(shell: tauri::State<'_, Arc<Shell>>) {
 
 #[tauri::command]
 fn open_logs(app: tauri::AppHandle, shell: tauri::State<'_, Arc<Shell>>) {
-    use tauri_plugin_opener::OpenerExt;
-    if let Err(error) = app.opener().open_path(shell.logs_dir().to_string_lossy(), None::<&str>) {
+    if let Err(error) = opening::folder(&app, &shell.logs_dir()) {
         log::warn!("cannot open the logs: {error}");
     }
 }

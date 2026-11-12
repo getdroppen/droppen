@@ -197,11 +197,8 @@ pub enum Opening {
 fn inherited_env() -> (Vec<(String, String)>, bool) {
     #[cfg(not(target_os = "macos"))]
     {
-        use droppen_desktop_core::appimage;
-        let appdir = std::env::var_os("APPDIR").map(std::path::PathBuf::from);
-        let exe = std::env::current_exe().ok();
-        if let Some(appdir) = appimage::own_appdir(appdir.as_deref(), exe.as_deref()) {
-            let env: Vec<(String, String)> = appimage::outside_appimage(std::env::vars_os(), &appdir)
+        if let Some(env) = droppen_desktop_core::appimage::outside_this_appimage() {
+            let env: Vec<(String, String)> = env
                 .into_iter()
                 .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
                 .collect();
