@@ -38,6 +38,7 @@
 //! happens to know a password it generated itself.
 
 pub mod accounts;
+pub mod appimage;
 pub mod browser;
 pub mod credentials;
 pub mod dirs;

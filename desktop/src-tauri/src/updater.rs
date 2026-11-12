@@ -47,10 +47,11 @@
 //!   Update* from the start, and is never installed over, quit or restart. A
 //!   .deb says *Install a Newer Package to Update* and never checks; anything
 //!   else (a development build, an AppImage's files run without its mount)
-//!   never updates. *Restart to Update* starts the new AppImage at home,
-//!   without this one's mount in its environment ([`update::outside_appimage`]),
-//!   which goes with this launch. Downloads
-//!   wait while NetworkManager says the connection is metered ([`network`]).
+//!   never updates. *Restart to Update* starts the new AppImage at home, in
+//!   the environment from before this launch's AppImage runtime and AppRun
+//!   ([`droppen_desktop_core::appimage::outside_appimage`]): this one's mount
+//!   goes with it. Downloads wait while NetworkManager says the connection is
+//!   metered ([`network`]).
 //!
 //! The web app learns the update's status through `init.js`'s small bridge:
 //! after every change and every page load the app calls
@@ -833,7 +834,7 @@ fn relaunch(executable: Option<&Path>, hidden: bool) {
     if let Some(appdir) = std::env::var_os("APPDIR") {
         command
             .env_clear()
-            .envs(update::outside_appimage(std::env::vars_os(), Path::new(&appdir)));
+            .envs(droppen_desktop_core::appimage::outside_appimage(std::env::vars_os(), Path::new(&appdir)));
         let home = std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute() && home.is_dir());
         command.current_dir(home.unwrap_or_else(|| PathBuf::from("/")));
     }
