@@ -30,11 +30,10 @@ pub fn opened<R: Runtime>(app: &AppHandle<R>, url: &Url) {
     );
     #[cfg(not(feature = "e2e"))]
     {
-        use tauri_plugin_opener::OpenerExt;
         log::info!("opening the Droppen sign-in at {}://{host} in the browser", url.scheme());
         // Not the error: the opener's quotes the address it could not open
         // (on macOS, `open`'s command line), state and all.
-        if app.opener().open_url(url.as_str(), None::<&str>).is_err() {
+        if crate::opening::url(app, url.as_str()).is_err() {
             log::warn!("cannot open the browser for the Droppen sign-in at {}://{host}", url.scheme());
         }
     }

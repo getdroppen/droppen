@@ -831,12 +831,11 @@ fn relaunch(executable: Option<&Path>, hidden: bool) {
     // app in it (`$APPDIR/usr`), and the new runtime would take the folder it
     // is started in for the person's (`$OWD`); a launcher starts it at home.
     #[cfg(not(target_os = "macos"))]
-    if let Some(appdir) = std::env::var_os("APPDIR") {
+    if let Some(env) = droppen_desktop_core::appimage::outside_this_appimage() {
         command
+            .current_dir(droppen_desktop_core::appimage::start_folder(&env))
             .env_clear()
-            .envs(droppen_desktop_core::appimage::outside_appimage(std::env::vars_os(), Path::new(&appdir)));
-        let home = std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute() && home.is_dir());
-        command.current_dir(home.unwrap_or_else(|| PathBuf::from("/")));
+            .envs(env);
     }
     match command
         .stdin(Stdio::null())
@@ -928,9 +927,8 @@ fn open_notes<R: Runtime>(app: &AppHandle<R>, notes: &str) {
     }
     #[cfg(not(feature = "e2e"))]
     {
-        use tauri_plugin_opener::OpenerExt;
         log::info!("updates: opening the release notes {notes}");
-        if let Err(error) = app.opener().open_url(notes, None::<&str>) {
+        if let Err(error) = crate::opening::url(app, notes) {
             log::warn!("updates: cannot open the browser: {error}");
         }
     }

@@ -72,6 +72,18 @@ pub fn own_appdir(appdir: Option<&Path>, exe: Option<&Path>) -> Option<PathBuf> 
     (exe.starts_with(&dir) && exe != dir).then_some(dir)
 }
 
+/// What the app starts gets, when this launch is the AppImage's
+/// ([`own_appdir`] of `$APPDIR` and the running executable): this process's
+/// environment, [`outside_appimage`]. `None` anywhere else (macOS, the .deb,
+/// a development build, an app another AppImage started): what it starts then
+/// gets the app's environment, as it always has.
+pub fn outside_this_appimage() -> Option<Vec<(OsString, OsString)>> {
+    let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
+    let exe = std::env::current_exe().ok();
+    let appdir = own_appdir(appdir.as_deref(), exe.as_deref())?;
+    Some(outside_appimage(std::env::vars_os(), &appdir))
+}
+
 /// The environment for what the app starts, from this launch's `vars`: without
 /// the runtime's variables and those AppRun set ([`SET`]); those it added to
 /// ([`PREPENDED`]) as they were before the launch, unset if they were; and
@@ -111,6 +123,19 @@ pub fn outside_appimage(vars: impl IntoIterator<Item = (OsString, OsString)>, ap
                 .then(|| (name, OsString::from_vec(kept.join(&b':'))))
         })
         .collect()
+}
+
+/// The folder what the app starts starts in, given `env` from
+/// [`outside_appimage`]: its home, as a launcher starts it, rather than the
+/// app's own folder, where AppRun runs it — the mount's `usr`, which goes with
+/// the launch and which anything started there would hold, as its folder and
+/// its `$PWD`. `/` without a home.
+pub fn start_folder(env: &[(OsString, OsString)]) -> PathBuf {
+    env.iter()
+        .find(|(name, _)| name == "HOME")
+        .map(|(_, home)| PathBuf::from(home))
+        .filter(|home| home.is_absolute() && home.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 #[cfg(test)]
@@ -243,6 +268,32 @@ mod tests {
                 var("GDK_BACKEND", "x11"),
             ])
         );
+    }
+
+    /// A test binary runs from no AppImage: what it would start gets its
+    /// environment as it is.
+    #[test]
+    fn outside_an_appimage_there_is_nothing_to_restore() {
+        if std::env::var_os("APPDIR").is_none() {
+            assert_eq!(outside_this_appimage(), None);
+        }
+    }
+
+    /// What the app starts starts at home; at the root without a home that is
+    /// a folder.
+    #[test]
+    fn what_the_app_starts_starts_at_home() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let env = [var("PATH", "/usr/bin:/bin"), (OsString::from("HOME"), home.path().as_os_str().to_owned())];
+        assert_eq!(start_folder(&env), home.path());
+        let gone = home.path().join("gone");
+        for env in [
+            vec![],
+            vec![var("HOME", "home/me")],
+            vec![(OsString::from("HOME"), gone.into_os_string())],
+        ] {
+            assert_eq!(start_folder(&env), Path::new("/"), "{env:?}");
+        }
     }
 
     #[test]

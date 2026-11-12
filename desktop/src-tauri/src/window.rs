@@ -336,9 +336,8 @@ fn open_in_browser<R: Runtime>(app: &AppHandle<R>, url: &Url) {
     }
     #[cfg(not(feature = "e2e"))]
     {
-        use tauri_plugin_opener::OpenerExt;
         log::info!("opening {}://{host} in the browser", url.scheme());
-        if let Err(error) = app.opener().open_url(url.as_str(), None::<&str>) {
+        if let Err(error) = crate::opening::url(app, url.as_str()) {
             log::warn!("cannot open the browser: {error}");
         }
     }
