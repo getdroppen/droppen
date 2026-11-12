@@ -204,9 +204,8 @@ The trust boundaries:
   nothing from an artifact is run: the app, the DMG, the AppImages, the
   `.deb`s and the tarballs are only read, signed and handed on; the staged
   tarballs and the `.deb`s are read member by member, never unpacked by their
-  own paths (a `.deb`'s members as gzips of plain tars only, which the
-  system's `gzip` and `tar` read with the system's `PATH`:
-  `.github/scripts/tar-guard.sh`). The job has no write token and no OIDC
+  own paths, each a gzip of a plain tar that the system's `gzip` and `tar`
+  read with the system's `PATH` (`.github/scripts/tar-guard.sh`). The job has no write token and no OIDC
   token (`contents: read`), so a dry run never holds one. Each step gets only
   the secrets it uses in its own `env:`: the Developer ID and the notary's
   password the keychain and notarisation steps (the keychain is deleted right

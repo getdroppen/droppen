@@ -12,7 +12,10 @@
 # THIRD_PARTY_NOTICES (as notices), web-manifest.json, install.sh and
 # INSTALL-*.txt, and every member of
 # every tarball but the programs (read out by name: the job that runs this
-# holds secrets, and nothing from an archive's paths is written). The names come from DROPPEN_RELEASE_FORBIDDEN
+# holds secrets, and nothing from an archive's paths is written). Each
+# tarball must be a gzip of a plain tar, which the system's gzip decompresses
+# and the system's tar reads, with the system's PATH: a build job made them,
+# and no decompressor anyone else's runs on their bytes (tar-guard.sh). The names come from DROPPEN_RELEASE_FORBIDDEN
 # or ~/.config/droppen/release-forbidden.env (read as data), and must be the
 # pinned list; DROPPEN_RELEASE_NAMES_DEFERRED=1 without them is release.yml's
 # dry run without the secret, which checks "Kilerd" only and says so. Set
@@ -23,6 +26,8 @@ set -euo pipefail
 DIR=${1:?usage: release-text-check-staged.sh <staged release dir>}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 die() { printf 'release-text-check-staged: %s\n' "$*" >&2; exit 1; }
+# shellcheck source=tar-guard.sh
+. "$ROOT/.github/scripts/tar-guard.sh"
 
 . "$ROOT/scripts/release-text-check.sh"
 release_text_load_names "$HOME/.config/droppen/release-forbidden.env"
@@ -74,18 +79,20 @@ for tarball in "$DIR"/*.tar.gz; do
     remote-hand-*) want=$'remote-hand-server\nINSTALL.txt\nLICENSE\nTHIRD_PARTY_NOTICES' ;;
     *) die "an unexpected tarball: $name.tar.gz" ;;
   esac
-  tar -tzf "$tarball" >"$WORK/$name.listing"
+  tar_guard_gunzip "$tarball" "$WORK/$name.tar" || die "$name.tar.gz is not a gzip of a plain tar"
+  tar_guard_tar -tf "$WORK/$name.tar" >"$WORK/$name.listing"
   [ "$(cat "$WORK/$name.listing")" = "$want" ] || die "$name.tar.gz does not hold exactly the members release-public.sh packs"
   # The listing too: a member's name is text as well.
   check "$WORK/$name.listing" "$name.tar.gz (its listing)"
   for member in INSTALL.txt LICENSE THIRD_PARTY_NOTICES; do
-    tar -xOzf "$tarball" "$member" >"$WORK/$name.$member"
+    tar_guard_tar -xOf "$WORK/$name.tar" "$member" >"$WORK/$name.$member"
     if [ "$member" = THIRD_PARTY_NOTICES ]; then
       check "$WORK/$name.$member" "$name.tar.gz: $member" notices
     else
       check "$WORK/$name.$member" "$name.tar.gz: $member"
     fi
   done
+  rm -f "$WORK/$name.tar"
 done
 [ "$TARBALLS" -gt 0 ] || die "$DIR has no tarballs"
 
