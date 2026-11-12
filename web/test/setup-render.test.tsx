@@ -375,11 +375,11 @@ test("step 04 says what the sign-in came to", () => {
   assert.match(draw(<WrapStep progress={local} tools={undefined} online onChange={noop} signIn={signInAt({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null })} />), /Droppen · ada@example\.com/);
 });
 
-test("step 04: start at login points at the menu bar to turn it on or off, no notifications row, Finish — or the first session once step 03 saved one", () => {
+test("step 04: start at login points at the menu bar and Settings → Desktop app to turn it on or off, no notifications row, Finish — or the first session once step 03 saved one", () => {
   const p = complete(complete({ ...started, where: { choice: "local", lan: false } }, "tools"), "where");
   const html = draw(<WrapStep progress={p} tools={tools(true, false)} online onChange={noop} />);
   assert.match(html, /Start Droppen at login/);
-  assert.match(html, /Turn it on or off any time from the Droppen icon in the menu bar: Start at Login\./);
+  assert.match(html, /Turn it on or off any time from the Droppen icon in the menu bar or in Settings → Desktop app\./);
   assert.doesNotMatch(html, /role="switch"/, "the menu bar switches it, not the guide");
   assert.doesNotMatch(html, /Notifications/);
   assert.match(html, /data-testid="wrap-phone"[\s\S]*Want it on your phone too\?/);

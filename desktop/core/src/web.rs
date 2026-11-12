@@ -2,9 +2,9 @@
 //!
 //! The window shows the server's own embedded web app at
 //! `http://127.0.0.1:<port>/` — the same build a browser gets — and the app
-//! talks to it through exactly two things, both in the URL and the document,
-//! with no IPC bridge (so the web app needs no change and the server origin is
-//! given no access to the app):
+//! talks to it through the URL and the document, with no IPC bridge (so the
+//! web app needs no change and the server origin is given no access to the
+//! app):
 //!
 //! * **In**: the app's login rides in the URL *fragment* of the navigation
 //!   that opens the web app in a window ([`entry_url`]), with a nonce made for
@@ -16,6 +16,11 @@
 //! * **Out**: the web app already puts its unread count in the document title,
 //!   `(3) Droppen` ([`unread_from_title`]); the app copies it to the menu-bar
 //!   item and the Dock badge.
+//! * **Settings → Desktop app**: the app's own pages ask through
+//!   `droppen-desktop://settings/…` navigations ([`Route`]), carrying a token
+//!   the init script keeps in a closure, and the app pushes the Start at Login
+//!   state back with a small script that runs only in the server's origin
+//!   (`desktop_settings.rs`).
 //!
 //! Plus two rules: the web app's login and setup pages are never shown — a
 //! navigation to `/login` or `/setup`, in any of the app's windows, is
@@ -359,6 +364,19 @@ pub enum Route {
     /// Do not load it: a page asks the app to check for updates now (`init.js`,
     /// `checkForUpdates`), with the same token.
     CheckForUpdates(String),
+    /// Do not load it: the app's Settings → Desktop app asks it to open the
+    /// page in this device's browser (`init.js`, `openInBrowser`), with the
+    /// settings channel's token — never the login nonce, or it is ignored.
+    OpenInBrowser(String),
+    /// Do not load it: Settings → Desktop app turns Start at Login on (`true`)
+    /// or off, with the same token.
+    SetStartAtLogin(bool, String),
+    /// Do not load it: Settings → Desktop app asks for macOS's Login Items
+    /// page, with the same token.
+    OpenLoginItems(String),
+    /// Do not load it: Settings → Desktop app asks the Start at Login state to
+    /// be read again, with the same token.
+    RefreshStartAtLogin(String),
 }
 
 /// The scheme of what the app's own pages ask the app (`init.js`): never loaded.
@@ -374,10 +392,37 @@ pub fn route(url: &Url, port: Option<u16>) -> Route {
             None => Route::Here,
         },
         "mailto" => Route::System,
+        APP_SCHEME if url.host_str() == Some("settings") => settings_route(url),
         APP_SCHEME if url.host_str() == Some("update") && url.path() == "/restart" => Route::RestartToUpdate(token(url)),
         APP_SCHEME if url.host_str() == Some("update") && url.path() == "/check" => Route::CheckForUpdates(token(url)),
         _ => Route::Refuse,
     }
+}
+
+/// The `droppen-desktop://settings/…` requests (`init.js`, part 9): what the
+/// app's Settings → Desktop app asks of it. An unknown path, or a
+/// `start-at-login` without an `on` of exactly `1` or `0`, is refused; the
+/// token is the handler's to check.
+fn settings_route(url: &Url) -> Route {
+    match url.path() {
+        "/open-in-browser" => Route::OpenInBrowser(token(url)),
+        "/start-at-login" => match on(url) {
+            Some(on) => Route::SetStartAtLogin(on, token(url)),
+            None => Route::Refuse,
+        },
+        "/login-items" => Route::OpenLoginItems(token(url)),
+        "/refresh" => Route::RefreshStartAtLogin(token(url)),
+        _ => Route::Refuse,
+    }
+}
+
+/// The `on=1|0` of a Settings request, or nothing.
+fn on(url: &Url) -> Option<bool> {
+    url.query_pairs().find(|(name, _)| name == "on").and_then(|(_, value)| match value.as_ref() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    })
 }
 
 /// The `token` of a `droppen-desktop://` request (`init.js`), or nothing.
@@ -781,6 +826,54 @@ mod tests {
         );
         assert_eq!(route(&url("droppen-desktop://update/install?token=abc123"), port), Route::Refuse);
         assert_eq!(route(&url("droppen-desktop://quit"), port), Route::Refuse);
+    }
+
+    #[test]
+    fn the_settings_scheme_carries_only_its_four_requests() {
+        let port = Some(51_234);
+        assert_eq!(
+            route(&url("droppen-desktop://settings/open-in-browser?token=abc123"), port),
+            Route::OpenInBrowser("abc123".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://settings/start-at-login?on=1&token=abc123"), port),
+            Route::SetStartAtLogin(true, "abc123".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://settings/start-at-login?on=0&token=abc123"), port),
+            Route::SetStartAtLogin(false, "abc123".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://settings/login-items?token=abc123"), port),
+            Route::OpenLoginItems("abc123".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://settings/refresh?token=abc123"), port),
+            Route::RefreshStartAtLogin("abc123".into())
+        );
+        // A toggle has to say which way, and only 1 or 0 says it.
+        for missing in [
+            "droppen-desktop://settings/start-at-login?token=abc123",
+            "droppen-desktop://settings/start-at-login?on=yes&token=abc123",
+            "droppen-desktop://settings/start-at-login?on=&token=abc123",
+        ] {
+            assert_eq!(route(&url(missing), port), Route::Refuse, "{missing}");
+        }
+        // The host and the path are exact; another scheme's path does not pass.
+        for unknown in [
+            "droppen-desktop://settings",
+            "droppen-desktop://settings/",
+            "droppen-desktop://settings/open?token=abc123",
+            "droppen-desktop://settings/open-in-browser/x?token=abc123",
+            "droppen-desktop://setting/open-in-browser?token=abc123",
+        ] {
+            assert_eq!(route(&url(unknown), port), Route::Refuse, "{unknown}");
+        }
+        // No token is carried as nothing, which the handler then refuses.
+        assert_eq!(
+            route(&url("droppen-desktop://settings/open-in-browser"), port),
+            Route::OpenInBrowser(String::new())
+        );
     }
 
     #[test]

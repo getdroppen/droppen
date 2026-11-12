@@ -31,6 +31,7 @@
 //! * TODO(TauriShell): a real IPC bridge and the `KeyStore` of §7.3 in place
 //!   of the URL-fragment and title contract of `droppen_desktop_core::web`.
 
+pub mod desktop_settings;
 pub mod i18n;
 #[cfg(target_os = "linux")]
 pub mod linux_browser;
@@ -268,6 +269,9 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             log::info!("tray host: {}", if tray_host { "present" } else { "none" });
             app.manage(login);
+            // The page's Settings → Desktop app channel: its token is made
+            // before the first window, whose init script embeds it.
+            desktop_settings::install(&handle);
             window::create_main(&handle, !hidden)?;
             if let Some(listener) = single_listener {
                 let shower = handle.clone();

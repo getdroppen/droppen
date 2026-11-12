@@ -30,7 +30,9 @@ import {
 import { IS_MAC } from "@/features/sessions/new-session-open";
 import { SetupSection } from "@/features/setup/settings-section";
 import { AgentsSection } from "@/features/settings/agents/agents-section";
+import { DesktopAppSection } from "@/features/settings/desktop-app-section";
 import { cn } from "@/lib/cn";
+import { isDesktopWindow } from "@/lib/desktop-app";
 import { isCloud } from "@/lib/hub/config";
 import { formatTime } from "@/lib/format";
 import {
@@ -692,6 +694,7 @@ const SECTION_VIEW: Record<SectionId, () => ReactNode> = {
   access: AccessSection,
   plugins: PluginsSection,
   "scheduled tasks": ScheduleSection,
+  "desktop app": DesktopAppSection,
 };
 
 export function SettingsView() {
@@ -700,10 +703,12 @@ export function SettingsView() {
   const search = useSearch({ strict: false }) as { section?: string };
   const navigate = useMachineNavigate();
   // A page a hub serves offers no Plugins tab, and an old link to one opens
-  // the general tab instead (docs/plugins/runtime.md §5).
+  // the general tab instead (docs/plugins/runtime.md §5). Desktop app belongs
+  // to the app's own window, where its bridge is.
   const cloud = isCloud();
-  const sections = sectionsFor(cloud);
-  const asked = askedSection(search.section, cloud);
+  const desktop = isDesktopWindow();
+  const sections = sectionsFor(cloud, desktop);
+  const asked = askedSection(search.section, cloud, desktop);
   // Whose settings these are: the address's device (`/m/<device>/settings`,
   // else the home). With more than one device, the header can go to another's.
   const machine = useMachine();

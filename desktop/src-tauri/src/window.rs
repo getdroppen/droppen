@@ -61,9 +61,11 @@ const START_PAGE: &str = "tauri://localhost/index.html";
 /// `__DROPPEN_RELOAD_KEYS__` with whether Ctrl+R/F5 reload the page — on
 /// Linux, where there is no app menu to reload from — and
 /// `__DROPPEN_START_AT_LOGIN__` with whether this build has Start at Login
-/// (`login_item::OFFERED`) and `__DROPPEN_TRAY_HOST__` with whether a tray
-/// host shows the app's icon (`tray::host_present_at_start`), for the web
-/// app's guide to point at them only where they are.
+/// (`login_item::OFFERED`), `__DROPPEN_TRAY_HOST__` with whether a tray host
+/// shows the app's icon (`tray::host_present_at_start`), and
+/// `__DROPPEN_SETTINGS__` with the settings channel's token
+/// (`desktop_settings::token`), for the web app's guide and its Settings →
+/// Desktop app.
 const INIT_JS: &str = include_str!("init.js");
 
 static WINDOWS: AtomicU32 = AtomicU32::new(1);
@@ -77,6 +79,7 @@ fn init_script<R: Runtime>(app: &AppHandle<R>) -> String {
         .replace("__DROPPEN_RELOAD_KEYS__", if cfg!(target_os = "linux") { "true" } else { "false" })
         .replace("__DROPPEN_START_AT_LOGIN__", if crate::login_item::OFFERED { "1" } else { "0" })
         .replace("__DROPPEN_TRAY_HOST__", if crate::tray::host_present_at_start() { "1" } else { "0" })
+        .replace("__DROPPEN_SETTINGS__", &crate::desktop_settings::token(app))
 }
 
 /// Create the main window on the start-up page.
@@ -161,6 +164,22 @@ fn allow_navigation<R: Runtime>(app: &AppHandle<R>, label: &str, url: &Url) -> b
             crate::updater::check_asked_by_page(app, &token);
             false
         }
+        Route::OpenInBrowser(token) => {
+            crate::desktop_settings::open_in_browser(app, label, &token);
+            false
+        }
+        Route::SetStartAtLogin(on, token) => {
+            crate::desktop_settings::set_start_at_login(app, label, &token, on);
+            false
+        }
+        Route::OpenLoginItems(token) => {
+            crate::desktop_settings::open_login_items(app, label, &token);
+            false
+        }
+        Route::RefreshStartAtLogin(token) => {
+            crate::desktop_settings::refresh(app, label, &token);
+            false
+        }
     }
 }
 
@@ -182,6 +201,9 @@ fn page_loaded<R: Runtime>(window: &WebviewWindow<R>, payload: &PageLoadPayload<
     if let (Some(port), PageLoadEvent::Finished) = (port, payload.event()) {
         if web::is_server(url, port) {
             shell.loaded_on(port);
+            // The page's Settings → Desktop app section reads the state this
+            // hands it, and the page may have loaded before it is opened.
+            crate::desktop_settings::page_loaded(window, port);
         }
     }
     match (web::leaves_the_app(url, port), payload.event()) {

@@ -122,12 +122,12 @@ function inWindow<T>(startAtLogin: boolean | undefined, fn: () => T, trayHost?: 
   }
 }
 
-test("on Linux with no tray host, step 02 points at no tray icon and step 04 says closing quits", async () => {
+test("on Linux with no tray host, the guide points at Settings → Desktop app and step 04 says closing quits", async () => {
   try {
     await onServer("linux");
     // The Linux app's window: Start at Login, and no tray host.
     const noTray = <T,>(fn: () => T): T => inWindow(true, fn, false);
-    const noTrayWords = /system tray|Open in Browser|系统托盘|在浏览器中打开|系統匣|在瀏覽器中打開|システムトレイ|ブラウザで開く|closing the window doesn.t stop it|关掉窗口不会停止它|關掉視窗不會停止它|ウインドウを閉じても止まりません/;
+    const noTrayWords = /system tray|closing the window doesn.t stop it|startup applications|系统托盘|关掉窗口不会停止它|启动应用程序|系統匣|關掉視窗不會停止它|啟動應用程式|システムトレイ|ウインドウを閉じても止まりません|スタートアップアプリケーション/;
     for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
       const where = noTray(() => draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />, lang));
       assert.doesNotMatch(where, noTrayWords, `step 02 in ${lang}`);
@@ -138,16 +138,19 @@ test("on Linux with no tray host, step 02 points at no tray icon and step 04 say
       assert.doesNotMatch(setup, noTrayWords, `the setup page in ${lang}`);
     }
     const where = noTray(() => draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />));
-    assert.match(where, /The Droppen app on this device never asks for a password\. Once this device has a password, a browser asks for it\./);
+    assert.match(where, /choose Open in Browser in Settings → Desktop app: it opens signed in\./);
     const wrap = noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />));
     assert.match(wrap, /Closing the window quits Droppen; start it again from the app launcher\./);
-    assert.match(wrap, /Turn it on or off any time in your desktop&#x27;s startup applications\./);
+    assert.match(wrap, /Turn it on or off any time in Settings → Desktop app\./);
     assert.match(noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN")), /关掉窗口会退出 Droppen/);
     assert.match(noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-TW")), /關掉視窗會結束 Droppen/);
     assert.match(noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "ja")), /ウインドウを閉じると Droppen が終了します/);
-    assert.match(noTray(() => draw(<SetupPage owner={false} />)), /Create the first account on this device, without a code:/);
-    // A page without the window's word keeps the tray's copy, as before.
-    assert.match(draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />), /choose Open in Browser from the Droppen icon in the system tray/);
+    assert.match(noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN")), /随时可以在 设置 → 桌面 App 里打开或关闭。/);
+    const setup = noTray(() => draw(<SetupPage owner={false} />));
+    assert.match(setup, /In Settings → Desktop app, choose Open in Browser/);
+    assert.match(setup, /Or create the account on this device, without a code:/);
+    // The note follows the platform, not the tray: a browser on Linux reads it too.
+    assert.match(draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />), /choose Open in Browser in Settings → Desktop app/);
   } finally {
     forgetAuthStatus();
   }
@@ -172,17 +175,17 @@ test("on Linux the guide never names the Mac: the edition, this device, the syst
     assert.match(welcome, /Start at login, notifications, your phone\./);
     assert.match(draw(<GuideScreen screen="welcome" progress={emptyProgress()} tools={undefined} online onLater={noop} />, "zh-CN"), /Droppen · Linux 版/);
     const where = draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />);
-    assert.match(where, /choose Open in Browser from the Droppen icon in the system tray: it opens signed in\./);
+    assert.match(where, /choose Open in Browser in Settings → Desktop app: it opens signed in\./);
     assert.match(where, /Choose “Only on this device” for now/);
-    assert.match(draw(<WhereStep progress={started} tools={undefined} online onChange={noop} />, "zh-CN"), /在系统托盘的 Droppen 图标菜单里选「在浏览器中打开」/);
-    // The Linux app's window, and a browser on the device: the row points at the system tray.
+    assert.match(draw(<WhereStep progress={started} tools={undefined} online onChange={noop} />, "zh-CN"), /在 设置 → 桌面 App 里选「在浏览器中打开」/);
+    // The Linux app's window, and a browser on the device: the row points at the system tray and the section.
     for (const said of [true, undefined]) {
       const wrap = inWindow(said, () => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />));
       assert.match(wrap, /Droppen lives in the system tray; closing the window doesn&#x27;t stop it\./, `window says ${said}`);
-      assert.match(wrap, /Turn it on or off any time from the Droppen icon in the system tray: Start at Login\./);
+      assert.match(wrap, /Turn it on or off any time from the Droppen icon in the system tray or in Settings → Desktop app\./);
       assert.match(wrap, /data-testid="wrap-phone"/);
       assert.match(wrap, /Only on this device/);
-      assert.match(inWindow(said, () => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN")), /随时可以在系统托盘的 Droppen 图标里打开或关闭「登录时启动」/);
+      assert.match(inWindow(said, () => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN")), /随时可以在系统托盘的 Droppen 图标或 设置 → 桌面 App 里打开或关闭。/);
     }
   } finally {
     forgetAuthStatus();
@@ -197,12 +200,12 @@ test("on a Mac, and from a server too old to say, the guide reads as before, wit
       assert.match(welcome, /Droppen for Mac/, `${platform}`);
       assert.match(welcome, /Droppen is running on this device\./);
       assert.match(welcome, /Start at login, notifications, your phone\./);
-      assert.match(draw(<WhereStep progress={started} tools={undefined} online onChange={noop} />), /choose Open in Browser in the app&#x27;s menu-bar menu/);
+      assert.match(draw(<WhereStep progress={started} tools={undefined} online onChange={noop} />), /choose Open in Browser in the app&#x27;s menu-bar menu or in Settings → Desktop app/);
       const wrap = draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />);
       assert.match(wrap, /data-testid="wrap-login"/);
       assert.match(wrap, /reach this device after a restart\. Droppen lives in the menu bar/);
-      assert.match(wrap, /Turn it on or off any time from the Droppen icon in the menu bar: Start at Login\./);
-      assert.match(draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN"), /随时可以在菜单栏的 Droppen 图标里打开或关闭「登录时启动」/);
+      assert.match(wrap, /Turn it on or off any time from the Droppen icon in the menu bar or in Settings → Desktop app\./);
+      assert.match(draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN"), /随时可以在菜单栏的 Droppen 图标或 设置 → 桌面 App 里打开或关闭。/);
     }
   } finally {
     forgetAuthStatus();
