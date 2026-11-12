@@ -70,7 +70,7 @@ function foldChar(ch: string): string {
  * sigma (`ς`), which is folded to `σ` either way.
  */
 export function fold(text: string): string {
-  return Array.from(text, foldChar).join("");
+  return text.toLowerCase().replace(/ς/g, "σ");
 }
 
 /** The distinct folded terms of a query, in the order they were typed. */

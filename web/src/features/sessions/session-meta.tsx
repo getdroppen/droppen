@@ -74,6 +74,8 @@ function MetaRow({ label, value }: { label: string; value: string }) {
  */
 export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
   const { t } = useTranslation();
+  // No clipboard permission (or no secure context): the path in the popover
+  // is selectable text, which is the fallback that always works.
   const { copied, copy } = useCopy();
   const cwd = facts.cwd;
 

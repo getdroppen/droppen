@@ -356,6 +356,8 @@ export function ComposerBox({
         }}
         onKeyDown={(e) => {
           if (!isSendKeydown(e, enterSends ? false : enterSendsModifier)) return;
+          // Nothing to send: the instant-chat form leaves the key to the field
+          // (a newline); a session's composer swallows it, as it always has.
           if (enterSends && send.disabled) return;
           e.preventDefault();
           onSubmit();
