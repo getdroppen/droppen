@@ -1674,6 +1674,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/gone-cwds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Directories that are gone
+         * @description Working directories the new-session picker no longer offers.
+         */
+        get: operations["gone_cwds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/new": {
         parameters: {
             query?: never;
@@ -3995,6 +4015,11 @@ export interface components {
          * @enum {string}
          */
         GitState: "ready" | "missing" | "unknown";
+        /** @description The working directories of sessions that are no longer there. */
+        GoneCwds: {
+            /** @description Absolute paths, sorted. */
+            cwds: string[];
+        };
         /**
          * @description State of a message remote-hand injected into a session.
          *
@@ -9869,6 +9894,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    gone_cwds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Working directories of this machine's sessions that are no longer directories, sorted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoneCwds"];
                 };
             };
         };

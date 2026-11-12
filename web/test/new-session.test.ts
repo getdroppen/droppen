@@ -43,6 +43,18 @@ test("the directories offered are where sessions were last started, with how man
   assert.equal(recentDirectories(many).length, 8, "as many as the server's own recent list");
 });
 
+test("a directory no longer on the device is not offered, and the newest one still there leads", () => {
+  const sessions = [
+    row("/tmp/pilot-sim/worktrees/t1", "2026-10-12T00:00:00Z", "2026-10-12T00:00:00Z"),
+    row("/w/repo", "2026-10-10T00:00:00Z", "2026-10-11T00:00:00Z"),
+    row("/tmp/pilot-sim/worktrees/t1", "2026-10-11T00:00:00Z", "2026-10-11T00:00:00Z"),
+  ];
+  const dirs = recentDirectories(sessions, Infinity, new Set(["/tmp/pilot-sim/worktrees/t1"]));
+  assert.deepEqual(dirs.map((d) => d.cwd), ["/w/repo"]);
+  assert.equal(startingDirectory(null, dirs), "/w/repo", "a new session does not start where it cannot");
+  assert.equal(recentDirectories(sessions, Infinity)[0]?.cwd, "/tmp/pilot-sim/worktrees/t1", "nothing said gone: every directory is offered");
+});
+
 test("a new session starts in the directory picked, else the one last started in", () => {
   const recent = recentDirectories([row("/w/last", "2026-10-10T00:00:00Z", "2026-10-10T00:00:00Z"), row("/w/old", "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z")]);
   assert.equal(startingDirectory(null, recent), "/w/last");

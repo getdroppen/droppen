@@ -1759,6 +1759,26 @@ pub async fn recent_cwds(State(state): State<DriveState>, ApiQuery(query): ApiQu
     Json(RecentCwds { cwds })
 }
 
+/// The working directories of sessions that are no longer there.
+#[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
+pub struct GoneCwds {
+    /// Absolute paths, sorted.
+    pub cwds: Vec<String>,
+}
+
+/// Working directories the new-session picker no longer offers.
+#[api(
+    id = "gone_cwds",
+    group = "sessions",
+    summary = "Directories that are gone",
+    responses(200 = "Working directories of this machine's sessions that are no longer directories, sorted")
+)]
+pub async fn gone_cwds(State(state): State<DriveState>) -> Json<GoneCwds> {
+    let bindings = state.drive.accounts.session_account_map().await;
+    let cwds = state.drive.transcripts.gone_cwds(&state.drive.paths, &bindings).await;
+    Json(GoneCwds { cwds })
+}
+
 /// Composer model/effort/permission choices, shared across devices.
 #[api(
     id = "composer_prefs",
@@ -2095,6 +2115,7 @@ impl DriveState {
             .get("/api/sessions/{source}/{id}/agents/{agentId}", agent_transcript)
             .get("/api/sessions/{source}/{id}/checklist", session_checklist)
             .get("/api/sessions/recent-cwds", recent_cwds)
+            .get("/api/sessions/gone-cwds", gone_cwds)
             .get("/api/composer-prefs", composer_prefs)
             .put("/api/composer-prefs/{source}", put_composer_default)
             .put("/api/composer-prefs/{source}/{id}", put_composer_session)

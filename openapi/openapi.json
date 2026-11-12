@@ -2640,6 +2640,22 @@
         ],
         "type": "string"
       },
+      "GoneCwds": {
+        "description": "The working directories of sessions that are no longer there.",
+        "properties": {
+          "cwds": {
+            "description": "Absolute paths, sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "cwds"
+        ],
+        "type": "object"
+      },
       "Injection": {
         "description": "State of a message remote-hand injected into a session.\n\nFilled in by `provider::InjectionRegistry`; `null` for a session\nremote-hand has never driven.",
         "nullable": true,
@@ -11672,6 +11688,30 @@
           }
         },
         "summary": "List sessions",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/sessions/gone-cwds": {
+      "get": {
+        "deprecated": false,
+        "description": "Working directories the new-session picker no longer offers.",
+        "operationId": "gone_cwds",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoneCwds"
+                }
+              }
+            },
+            "description": "Working directories of this machine's sessions that are no longer directories, sorted"
+          }
+        },
+        "summary": "Directories that are gone",
         "tags": [
           "sessions"
         ]
