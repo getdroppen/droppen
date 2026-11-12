@@ -23,7 +23,7 @@ pnpm ui-audit --fixture devices   # only the devices page
 Options:
 
 - `--out <dir>` (default `/tmp/droppen-ui-audit-<date>`)
-- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|no-copy|session-from-copy|both` (default `both`)
+- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|no-copy|session-from-copy|welcome|desktop-app|updates|both` (default `both`)
 - `--theme light|dark|both`, `--viewport desktop|mobile|both`
 - `--channel chrome` — use a system Chrome instead of the bundled Chromium
 - `--url <url>` — measure a running page instead of the fixture (no target

@@ -55,6 +55,10 @@ test("a status is read down to the shapes the page draws", () => {
   assert.equal(odd?.percent, null);
   assert.equal(odd?.place, "notABundle");
   assert.equal(odd?.problem, null);
+  // Every place the app reports, Linux's included, is read as it is.
+  for (const place of ["updatable", "notABundle", "translocated", "readOnly", "symlinked", "package", "notWritable"]) {
+    assert.equal(parseUpdateStatus({ current: "0.2.130", place })?.place, place);
+  }
 });
 
 test("the page is about the release under way, else this version", () => {

@@ -13,7 +13,7 @@ import { I18nextProvider } from "react-i18next";
 import { UpdatesPage } from "../src/features/updates/updates-view.js";
 import type { UpdateStatus } from "../src/app/desktop-update.js";
 import { ja } from "../src/i18n/ja.js";
-import { updatesZhCN } from "../src/i18n/updates.js";
+import { updatesJa, updatesZhCN, updatesZhTW } from "../src/i18n/updates.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
 import { zhTW } from "../src/i18n/zh-TW.js";
 import { makeI18n } from "./render.js";
@@ -41,8 +41,8 @@ async function html(status: UpdateStatus | null, language = "en", dismissed: str
   const resources: Record<string, Record<string, string>> = {
     en: {},
     "zh-CN": { ...zhCN, ...updatesZhCN },
-    "zh-TW": zhTW,
-    ja,
+    "zh-TW": { ...zhTW, ...updatesZhTW },
+    ja: { ...ja, ...updatesJa },
   };
   const i18n = makeI18n({ lng: language, resources: { [language]: { translation: resources[language] ?? {} } } });
   return renderToStaticMarkup(
@@ -119,6 +119,34 @@ test("where it cannot update itself it says where to move it, and offers no chec
   assert.doesNotMatch(moved, /data-testid="updates-check"/);
   const copy = await html({ ...base, place: "notABundle" });
   assert.match(copy, /This copy of Droppen cannot update itself\./);
+});
+
+test("on Linux it says what the app's menu says: a folder it cannot write, or the package it came in", async () => {
+  // The menu's words (desktop/src-tauri/src/updater/words.rs), as a sentence.
+  const lines = {
+    notWritable: {
+      en: "Move Droppen to a folder you can write to, so it can update.",
+      "zh-CN": "把 Droppen 移到你可写入的文件夹才能更新。",
+      "zh-TW": "把 Droppen 移到你可寫入的檔案夾才能更新。",
+      ja: "Droppen を書き込めるフォルダに移動すると更新できます。",
+    },
+    package: {
+      en: "This copy of Droppen was installed from a package: install a newer package to update.",
+      "zh-CN": "Droppen 的这个副本是用软件包安装的：安装新版软件包即可更新。",
+      "zh-TW": "Droppen 的這個副本是用套件安裝的：安裝新版套件即可更新。",
+      ja: "この Droppen はパッケージからインストールされています。新しいパッケージをインストールすると更新できます。",
+    },
+  } as const;
+  for (const place of ["notWritable", "package"] as const) {
+    for (const language of ["en", "zh-CN", "zh-TW", "ja"] as const) {
+      const out = await html({ ...base, place }, language);
+      const said = out.match(/data-testid="updates-place"[^>]*>([^<]*)</)?.[1];
+      assert.equal(said, lines[place][language].replaceAll("'", "&#x27;"), `${place} ${language}`);
+      // Never the Mac's way out, and no check offered.
+      assert.doesNotMatch(said ?? "", /Applications|应用程序|應用程式|アプリケーション/, `${place} ${language}`);
+      assert.doesNotMatch(out, /data-testid="updates-check"/, `${place} ${language}`);
+    }
+  }
 });
 
 test("no bridge, no update machinery: the page says who handles it", async () => {

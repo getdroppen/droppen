@@ -38,6 +38,8 @@ export const updatesJa: Record<string, string> = {
   "The update check failed.": "アップデートの確認に失敗しました。",
   "Move Droppen to Applications to update.": "Droppen を「アプリケーション」に移動すると更新できます。",
   "This copy of Droppen cannot update itself.": "この Droppen のコピーは自分を更新できません。",
+  "Move Droppen to a folder you can write to, so it can update.": "Droppen を書き込めるフォルダに移動すると更新できます。",
+  "This copy of Droppen was installed from a package: install a newer package to update.": "この Droppen はパッケージからインストールされています。新しいパッケージをインストールすると更新できます。",
   "Updates are handled by the Droppen app.": "アップデートは Droppen App が行います。",
   "Installing…": "インストール中…",
   "Restarting…": "再起動中…",

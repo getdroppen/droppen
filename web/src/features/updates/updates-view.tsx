@@ -47,10 +47,16 @@ export function problemLine(problem: UpdateStatus["problem"]): string {
   }
 }
 
-/** Where it runs from, when that is why it cannot update. */
+/**
+ * Where it runs from, when that is why it cannot update: the app's menu item
+ * says the same (`desktop/src-tauri/src/updater/words.rs`), as a sentence.
+ */
 function placeLine(place: UpdateStatus["place"]): string | null {
   if (place === "translocated" || place === "readOnly") return "Move Droppen to Applications to update.";
   if (place === "symlinked" || place === "notABundle") return "This copy of Droppen cannot update itself.";
+  // Linux: an AppImage in a folder this user cannot write, and the .deb.
+  if (place === "notWritable") return "Move Droppen to a folder you can write to, so it can update.";
+  if (place === "package") return "This copy of Droppen was installed from a package: install a newer package to update.";
   return null;
 }
 

@@ -38,7 +38,8 @@ const DISMISSED_KEY = "droppen.desktop.update-dismissed";
 
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const STATES = ["idle", "checking", "downloading", "ready", "installing", "restarting"] as const;
-const PLACES = ["updatable", "notABundle", "translocated", "readOnly", "symlinked"] as const;
+/** Where the app runs from (`desktop/core/src/update.rs`, `Place`); `package` and `notWritable` are Linux's. */
+const PLACES = ["updatable", "notABundle", "translocated", "readOnly", "symlinked", "package", "notWritable"] as const;
 const PROBLEMS = ["offline", "service", "signature", "location", "install", "other"] as const;
 /** A failure the rail says unasked; a network or service hiccup is retried silently. */
 const SAID_UNASKED = ["signature", "location", "install"];
