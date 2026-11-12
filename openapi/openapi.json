@@ -5842,6 +5842,13 @@
           "serverVersion": {
             "description": "Exactly which build this is: the crate version, plus the commit it was\nbuilt from. A client that watches this can tell that the server it is\ntalking to has been replaced under it — see `droppen_supervisor::selfupdate`.",
             "type": "string"
+          },
+          "tempDirs": {
+            "description": "The system's temporary directories (`droppen_http::temp_dirs`): a\nsession directory under one is scratch space, not offered to start a\nnew session in.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -5852,6 +5859,7 @@
           "nodeVersion",
           "serverVersion",
           "homeDir",
+          "tempDirs",
           "claudeDir",
           "claudeManagedDir",
           "codexDir",

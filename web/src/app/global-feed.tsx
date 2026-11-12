@@ -59,6 +59,8 @@ export interface ServerInfo {
   /** Server build, e.g. "0.1.0+g26305ca"; absent on servers older than self-update. */
   serverVersion?: string;
   homeDir: string;
+  /** The system's temporary directories, as named and as they resolve; absent on older servers. */
+  tempDirs?: string[];
   claudeDir: string;
   codexDir: string;
   serverStartedAt: string;

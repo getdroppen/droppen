@@ -19,7 +19,7 @@ use droppen_drive::feed;
 use droppen_plugins::CloudIdentityExt;
 use droppen_http::error::ApiError;
 use droppen_http::extract::{ApiPath, ApiQuery};
-use droppen_http::{close_within, hostname, node_platform, send_within, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
+use droppen_http::{close_within, hostname, node_platform, send_within, temp_dirs, Heartbeat, CLOSE_LIMIT, RUNTIME_VERSION, SERVER_VERSION};
 use droppen_http::openapi_ext;
 use droppen_instance::paths::Paths;
 use droppen_provider_claude_code::sessions::claude;
@@ -294,6 +294,7 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_a
         node_version: RUNTIME_VERSION.to_string(),
         server_version: SERVER_VERSION.to_string(),
         home_dir: paths.home.to_string_lossy().into_owned(),
+        temp_dirs: temp_dirs(&paths.home),
         claude_dir: droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).local_projects().to_string_lossy().into_owned(),
         claude_managed_dir: droppen_provider_claude_code::claude_roots::ClaudeRoots::of(&paths).managed_projects().to_string_lossy().into_owned(),
         codex_dir: paths.codex_sessions().to_string_lossy().into_owned(),
