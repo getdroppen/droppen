@@ -33,11 +33,19 @@
 //! the same key for its own file name, under `linux-<arch>-appimage`
 //! ([`appimage_target`]). Never under a bare `linux-<arch>`: the updater falls
 //! back to it from `linux-<arch>-deb`, so a .deb install would fetch an
-//! AppImage and hand it to dpkg. A .deb is updated by its package manager, so
-//! it gets no key at all. The Linux and macOS apps always ship together, so
+//! AppImage and hand it to dpkg. A .deb is updated by installing a newer one,
+//! so it gets no key at all. The Linux and macOS apps always ship together, so
 //! one `version` serves both.
+//!
+//! On Linux only an AppImage the AppImage runtime mounted updates itself
+//! ([`Place::of_linux`], [`AppImageRun`]): its update is the raw AppImage of
+//! its architecture ([`update_file`]), written over `$APPIMAGE` at the next
+//! quit, so the path its desktop and autostart entries name stays the app's.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use base64::Engine;
@@ -104,6 +112,17 @@ pub fn appimage(version: &str, arch: &str) -> String {
 /// The manifest key the updater looks up first in an AppImage for `arch`.
 pub fn appimage_target(arch: &str) -> String {
     format!("linux-{arch}-appimage")
+}
+
+/// The file of `version` this app updates itself from, whose name its
+/// signature must name: the Mac's [`ARCHIVE`], or on Linux the [`appimage`] of
+/// the architecture it runs on.
+pub fn update_file(version: &str) -> String {
+    if cfg!(target_os = "macos") {
+        ARCHIVE.to_string()
+    } else {
+        appimage(version, std::env::consts::ARCH)
+    }
 }
 
 /// The release notes to link to for `version`: the manifest's `notes` when it
@@ -220,9 +239,13 @@ pub fn is_version(version: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Place {
-    /// An app bundle the updater can replace.
+    /// An app bundle the updater can replace, or on Linux an AppImage.
     Updatable,
-    /// Not in an app bundle: a development build, which never updates.
+    /// Not in an app bundle: a development build, which never updates. On
+    /// Linux, anything but an AppImage the AppImage runtime mounted: a
+    /// development build, or an AppImage's files run without its mount
+    /// (extracted, or `--appimage-extract-and-run`, whose next start the app
+    /// could not make the same way).
     NotABundle,
     /// A temporary, read-only App Translocation copy: a quarantined app opened
     /// where it was downloaded, or straight from its disk image.
@@ -232,9 +255,31 @@ pub enum Place {
     /// Its path goes through a symbolic link, which the updater refuses to
     /// follow (it could be made to replace something else).
     Symlinked,
+    /// Linux: installed from a package (the .deb), which a newer package
+    /// replaces; the app never updates it itself, nor checks.
+    Package,
+    /// Linux: an AppImage this user cannot replace where it is (in `/opt`,
+    /// say, or on a read-only volume): known at launch, so the menu says so
+    /// instead of an install failing at the quit.
+    NotWritable,
 }
 
 impl Place {
+    /// Where the Linux app runs from: a package's binary is [`Self::Package`];
+    /// an AppImage is [`Self::Updatable`] only when the AppImage runtime
+    /// mounted it and names the image ([`AppImageRun`]), and this user can
+    /// replace that ([`Self::NotWritable`] otherwise); anything else,
+    /// [`Self::NotABundle`].
+    pub fn of_linux(bundle: LinuxBundle, run: &AppImageRun) -> Self {
+        match bundle {
+            LinuxBundle::Package => Self::Package,
+            LinuxBundle::None => Self::NotABundle,
+            LinuxBundle::AppImage if run.image.is_none() || !run.mounted => Self::NotABundle,
+            LinuxBundle::AppImage if !run.replaceable => Self::NotWritable,
+            LinuxBundle::AppImage => Self::Updatable,
+        }
+    }
+
     /// Classify `exe`, the app's executable as launched: `canonical` is it with
     /// every link resolved (None if that failed), `read_only` whether its
     /// volume is mounted read-only.
@@ -258,6 +303,144 @@ impl Place {
             Self::Updatable
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The AppImage
+// ---------------------------------------------------------------------------
+
+/// What the running Linux binary was built into, as Tauri's bundler marks it
+/// (`tauri::utils::platform::bundle_type`): each bundle's binary carries its
+/// own mark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxBundle {
+    /// The AppImage, which updates itself.
+    AppImage,
+    /// A package: the .deb (or an .rpm).
+    Package,
+    /// Neither: a development build.
+    None,
+}
+
+/// What the AppImage runtime told this launch, as far as it holds, for
+/// [`Place::of_linux`]. The runtime mounts the image at `$APPDIR` and names
+/// it, by its real path, in `$APPIMAGE`; both are only environment
+/// variables, which another AppImage's launch leaves behind for whatever it
+/// starts, so each is held to what it says.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppImageRun {
+    /// `$APPIMAGE`, when it names an AppImage itself: an absolute path with no
+    /// link in it, of a regular file that is a type 2 AppImage
+    /// ([`is_appimage`]).
+    pub image: Option<PathBuf>,
+    /// Whether the executable runs from `$APPDIR`, and `$APPDIR` is a mount:
+    /// the runtime's, of the image, and not a folder it was extracted to.
+    pub mounted: bool,
+    /// Whether this user can replace the image where it is ([`replaceable`]).
+    pub replaceable: bool,
+}
+
+impl AppImageRun {
+    /// Read it: `appimage` and `appdir` are `$APPIMAGE` and `$APPDIR`, `exe`
+    /// the executable that runs.
+    pub fn read(appimage: Option<&Path>, appdir: Option<&Path>, exe: Option<&Path>) -> Self {
+        let image = appimage
+            .filter(|path| path.is_absolute() && path.canonicalize().is_ok_and(|real| real == *path))
+            .filter(|path| std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()))
+            .filter(|path| {
+                let mut head = [0u8; 11];
+                std::fs::File::open(path).and_then(|mut file| file.read_exact(&mut head)).is_ok() && is_appimage(&head)
+            })
+            .map(Path::to_path_buf);
+        let mounted = match (appdir.filter(|dir| dir.is_absolute()), exe) {
+            (Some(dir), Some(exe)) => mount_holding(dir, exe),
+            _ => false,
+        };
+        let replaceable = image.as_deref().is_some_and(replaceable);
+        Self { image, mounted, replaceable }
+    }
+}
+
+/// Whether `dir` is a mount point with `exe` in it: a file system of its own
+/// (another device than its parent's), as the runtime's FUSE mount is.
+fn mount_holding(dir: &Path, exe: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (Ok(dir), Ok(exe)) = (dir.canonicalize(), exe.canonicalize()) else {
+        return false;
+    };
+    let Some(parent) = dir.parent() else { return false };
+    match (std::fs::metadata(&dir), std::fs::metadata(parent)) {
+        (Ok(inside), Ok(outside)) => exe.starts_with(&dir) && inside.dev() != outside.dev(),
+        _ => false,
+    }
+}
+
+/// Whether `bytes` begin as a type 2 AppImage: an ELF file (its runtime) with
+/// `AI` and the type, 2, in the identification's padding, where AppImages
+/// carry their magic.
+pub fn is_appimage(bytes: &[u8]) -> bool {
+    bytes.len() >= 11 && bytes[..4] == *b"\x7fELF" && bytes[8..11] == *b"AI\x02"
+}
+
+/// Whether this user can replace the AppImage `image` where it is, as the
+/// updater does (it moves the image aside, then writes the new one under its
+/// name): its folder writable and searchable by this user, on a volume that
+/// is not read-only (`access`), and in a folder with the sticky bit (`/tmp`)
+/// the image or the folder this user's. `/opt`, `/usr/local/bin` and the
+/// like are not, without a password the updater cannot ask for.
+pub fn replaceable(image: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+    let Some(folder) = image.parent() else { return false };
+    let Ok(path) = std::ffi::CString::new(folder.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: a NUL-terminated path.
+    if unsafe { libc::access(path.as_ptr(), libc::W_OK | libc::X_OK) } != 0 {
+        return false;
+    }
+    let (Ok(image), Ok(folder)) = (std::fs::symlink_metadata(image), std::fs::metadata(folder)) else {
+        return false;
+    };
+    // The sticky bit, `S_ISVTX`, whose type is not the same on every system.
+    const STICKY: u32 = 0o1000;
+    // SAFETY: getuid cannot fail.
+    let uid = unsafe { libc::getuid() };
+    folder.mode() & STICKY == 0 || image.uid() == uid || folder.uid() == uid
+}
+
+/// The environment to start an AppImage with from inside this one: this
+/// launch's `vars` without what the AppImage runtime and AppRun set for it —
+/// `$APPIMAGE`, `$APPDIR`, `$ARGV0`, `$OWD`, and every path under `appdir`
+/// (`$APPDIR`) in any variable, a variable left with none dropped. The mount
+/// goes when this launch does, and its folder in `/tmp` is a name any user
+/// may then make again: a library path into it would load whatever they put
+/// there. The next launch's runtime and AppRun set their own.
+pub fn outside_appimage(vars: impl IntoIterator<Item = (OsString, OsString)>, appdir: &Path) -> Vec<(OsString, OsString)> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let appdir = appdir.as_os_str().as_bytes();
+    let inside = |part: &[u8]| {
+        !appdir.is_empty()
+            && part
+                .windows(appdir.len())
+                .enumerate()
+                .any(|(at, window)| window == appdir && matches!(part.get(at + appdir.len()), None | Some(b'/')))
+    };
+    vars.into_iter()
+        .filter(|(name, _)| !matches!(name.as_bytes(), b"APPIMAGE" | b"APPDIR" | b"ARGV0" | b"OWD"))
+        .filter_map(|(name, value)| {
+            let bytes = value.as_bytes();
+            if !inside(bytes) {
+                return Some((name, value));
+            }
+            let kept: Vec<&[u8]> = bytes.split(|byte| *byte == b':').filter(|part| !inside(part)).collect();
+            // Only empty entries left (the current folder, to a search path):
+            // nothing of what was there before the AppImage set it.
+            kept.iter()
+                .any(|part| !part.is_empty())
+                .then(|| (name, OsString::from_vec(kept.join(&b':'))))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +507,8 @@ pub enum Problem {
     /// another version than announced: it was thrown away.
     Signature,
     /// Where the app is cannot be updated (see [`Place`]), or the swap was
-    /// refused (no permission, an admin prompt cancelled).
+    /// refused (no permission, an admin prompt cancelled; on Linux, the
+    /// AppImage's folder no longer writable).
     Location,
     /// The archive verified but would not install; the app is as it was.
     Install,
@@ -393,6 +577,10 @@ pub enum Menu {
     Failed(Problem),
     /// *Move Droppen to Applications to Update* (disabled).
     MoveToApplications,
+    /// Linux: *Move Droppen to a Folder You Can Write to Update* (disabled).
+    MoveToWritableFolder,
+    /// Linux, a package: *Install a Newer Package to Update* (disabled).
+    InstallNewerPackage,
     /// A development build: *Check for Updates…*, disabled.
     Unavailable,
 }
@@ -538,6 +726,8 @@ impl Updates {
             Place::Updatable => {}
             Place::NotABundle => return Menu::Unavailable,
             Place::Translocated | Place::ReadOnly | Place::Symlinked => return Menu::MoveToApplications,
+            Place::NotWritable => return Menu::MoveToWritableFolder,
+            Place::Package => return Menu::InstallNewerPackage,
         }
         match (&self.state, self.outcome) {
             (State::Checking, _) => Menu::Checking,
@@ -1848,6 +2038,170 @@ mod tests {
             }),
             Vec::<String>::new(),
             "the end-to-end test's local server"
+        );
+    }
+
+    #[test]
+    fn on_linux_only_a_mounted_appimage_this_user_can_replace_updates() {
+        let image = || Some(PathBuf::from("/home/me/Apps/Droppen.AppImage"));
+        let run = |image: Option<PathBuf>, mounted, replaceable| AppImageRun { image, mounted, replaceable };
+        assert_eq!(Place::of_linux(LinuxBundle::AppImage, &run(image(), true, true)), Place::Updatable);
+        assert_eq!(
+            Place::of_linux(LinuxBundle::AppImage, &run(image(), true, false)),
+            Place::NotWritable,
+            "/opt, say"
+        );
+        assert_eq!(
+            Place::of_linux(LinuxBundle::AppImage, &run(image(), false, true)),
+            Place::NotABundle,
+            "extracted"
+        );
+        assert_eq!(
+            Place::of_linux(LinuxBundle::AppImage, &run(None, true, true)),
+            Place::NotABundle,
+            "no image named"
+        );
+        // A package's binary or a development build, whatever the environment says.
+        assert_eq!(Place::of_linux(LinuxBundle::Package, &run(image(), true, true)), Place::Package);
+        assert_eq!(Place::of_linux(LinuxBundle::None, &run(image(), true, true)), Place::NotABundle);
+    }
+
+    #[test]
+    fn a_package_or_an_appimage_it_cannot_replace_says_so_and_never_checks() {
+        for (place, menu, json) in [
+            (Place::Package, Menu::InstallNewerPackage, "package"),
+            (Place::NotWritable, Menu::MoveToWritableFolder, "notWritable"),
+        ] {
+            let mut updates = Updates::new("0.2.140", place);
+            assert_eq!(updates.menu(), menu);
+            assert!(!updates.menu().enabled());
+            assert!(!updates.begin_check(true), "{place:?}: no check, so no error either");
+            assert_eq!(updates.menu(), menu);
+            assert_eq!(serde_json::to_value(updates.status()).expect("json")["place"], json);
+        }
+    }
+
+    #[test]
+    fn the_update_file_is_the_archive_on_a_mac_and_this_architectures_appimage_on_linux() {
+        if cfg!(target_os = "macos") {
+            assert_eq!(update_file("0.2.140"), ARCHIVE);
+        } else {
+            assert_eq!(update_file("0.2.140"), format!("Droppen-0.2.140-{}.AppImage", std::env::consts::ARCH));
+            assert!(LINUX_ARCHES.contains(&std::env::consts::ARCH));
+        }
+    }
+
+    #[test]
+    fn an_appimage_is_told_by_its_magic() {
+        let mut head = *b"\x7fELF\x02\x01\x01\x00AI\x02\x00\x00";
+        assert!(is_appimage(&head));
+        head[10] = 1;
+        assert!(!is_appimage(&head), "a type 1 AppImage");
+        assert!(!is_appimage(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00"), "a plain ELF program");
+        assert!(!is_appimage(b"#!/bin/sh\nAI\x02"));
+        assert!(!is_appimage(b"\x7fELF"));
+    }
+
+    /// Each variable the runtime sets is held to what it says, on real files.
+    #[test]
+    fn an_appimage_run_believes_only_what_holds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path().canonicalize().expect("canonical");
+        let image = dir.join("Droppen-0.2.140-x86_64.AppImage");
+        std::fs::write(&image, b"\x7fELF\x02\x01\x01\x00AI\x02 the runtime, then the image").expect("image");
+        let program = dir.join("droppen-server");
+        std::fs::write(&program, b"\x7fELF\x02\x01\x01\x00\x00\x00\x00 a program").expect("program");
+        let link = dir.join("Droppen.AppImage");
+        std::os::unix::fs::symlink(&image, &link).expect("link");
+        // A real mount with a file in it: /dev, on Linux and macOS alike.
+        let (mount, inside) = (Path::new("/dev"), Path::new("/dev/null"));
+
+        let run = AppImageRun::read(Some(&image), Some(mount), Some(inside));
+        assert_eq!(run.image.as_deref(), Some(image.as_path()));
+        assert!(run.mounted);
+        assert_eq!(run.replaceable, replaceable(&image));
+        for (named, why) in [
+            (link.as_path(), "a link (the runtime names the image by its real path)"),
+            (program.as_path(), "not an AppImage"),
+            (Path::new("Droppen-0.2.140-x86_64.AppImage"), "relative"),
+            (dir.as_path(), "a folder"),
+            (Path::new("/nonexistent/Droppen.AppImage"), "gone"),
+        ] {
+            assert_eq!(AppImageRun::read(Some(named), Some(mount), Some(inside)).image, None, "{why}");
+        }
+        assert_eq!(AppImageRun::read(None, Some(mount), Some(inside)).image, None);
+
+        // Extracted: the executable in a folder, not a mount of its own.
+        let extracted = dir.join("squashfs-root");
+        std::fs::create_dir_all(extracted.join("usr/bin")).expect("extracted");
+        std::fs::write(extracted.join("usr/bin/Droppen"), b"").expect("exe");
+        assert!(!AppImageRun::read(Some(&image), Some(&extracted), Some(&extracted.join("usr/bin/Droppen"))).mounted);
+        // Another image's mount, left in the environment: the executable is not in it.
+        assert!(!AppImageRun::read(Some(&image), Some(mount), Some(&program)).mounted);
+        assert!(!AppImageRun::read(Some(&image), None, Some(inside)).mounted);
+        assert!(!AppImageRun::read(Some(&image), Some(Path::new("dev")), Some(inside)).mounted, "relative");
+    }
+
+    #[test]
+    fn an_appimage_is_replaceable_only_where_this_user_may_write() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let folder = dir.path().join("Apps");
+        std::fs::create_dir(&folder).expect("folder");
+        let image = folder.join("Droppen.AppImage");
+        std::fs::write(&image, b"").expect("image");
+        assert!(replaceable(&image));
+        // A sticky folder of this user's own.
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o1777)).expect("sticky");
+        assert!(replaceable(&image));
+        // SAFETY: getuid cannot fail.
+        if unsafe { libc::getuid() } != 0 {
+            // Root may write anywhere; anyone else not into a folder like /opt.
+            std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).expect("read-only");
+            assert!(!replaceable(&image));
+            std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).expect("back");
+        }
+        assert!(!replaceable(Path::new("/")), "no folder");
+    }
+
+    #[test]
+    fn the_next_appimage_starts_without_this_ones_mount_in_its_environment() {
+        let var = |name: &str, value: &str| (OsString::from(name), OsString::from(value));
+        let mount = Path::new("/tmp/.mount_DroppeAb12Cd");
+        let mut kept = outside_appimage(
+            [
+                var("APPIMAGE", "/home/me/Apps/Droppen.AppImage"),
+                var("APPDIR", "/tmp/.mount_DroppeAb12Cd"),
+                var("ARGV0", "/home/me/Apps/Droppen.AppImage"),
+                var("OWD", "/home/me"),
+                var("HOME", "/home/me"),
+                var("PATH", "/tmp/.mount_DroppeAb12Cd/usr/bin:/usr/local/bin:/usr/bin"),
+                var(
+                    "LD_LIBRARY_PATH",
+                    "/tmp/.mount_DroppeAb12Cd/usr/lib:/tmp/.mount_DroppeAb12Cd/usr/lib/x86_64-linux-gnu",
+                ),
+                var("XDG_DATA_DIRS", "/tmp/.mount_DroppeAb12Cd/usr/share:/usr/share:/usr/local/share"),
+                var(
+                    "GDK_PIXBUF_MODULE_FILE",
+                    "/tmp/.mount_DroppeAb12Cd/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache",
+                ),
+                var("GDK_BACKEND", "x11"),
+                // Another mount whose name starts the same, and an empty entry left alone.
+                var("GTK_PATH", "/tmp/.mount_DroppeAb12CdX/usr/lib::/usr/lib/gtk-3.0"),
+                var("PYTHONPATH", "/tmp/.mount_DroppeAb12Cd/usr/share/pyshared:"),
+            ],
+            mount,
+        );
+        kept.sort();
+        assert_eq!(
+            kept,
+            vec![
+                var("GDK_BACKEND", "x11"),
+                var("GTK_PATH", "/tmp/.mount_DroppeAb12CdX/usr/lib::/usr/lib/gtk-3.0"),
+                var("HOME", "/home/me"),
+                var("PATH", "/usr/local/bin:/usr/bin"),
+                var("XDG_DATA_DIRS", "/usr/share:/usr/local/share"),
+            ]
         );
     }
 }
