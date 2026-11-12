@@ -471,7 +471,17 @@ the licence texts they name, and `README.AppImage` (`linux/README.AppImage.in`:
 the AppImage runtime's and AppRun's notices, and where its source is). `linux/build-in-container.sh` checks both bundles as `build.sh` checks
 the Mac app (no test hooks, the updater key, the sidecar, the legal files), and
 that every file of the AppImage is the app's, a tool's or one installed
-package's. No release publishes them yet.
+package's.
+
+`.github/scripts/smoke-desktop-linux.sh <out dir> [--host]` then starts both
+as a user would: the `.deb` installed by apt and the AppImage run by its own
+runtime, each on Ubuntu 22.04, Debian 12 and Ubuntu 24.04 in Docker, and with
+`--host` the AppImage on the machine itself, mounted through FUSE. Each start
+must log in to its server, the server must answer as the desktop app's, and on
+SIGTERM the app must stop it gracefully and exit 0.
+`.github/workflows/desktop-linux.yml` runs the build and the smoke tests on a
+runner of each architecture; CI calls it for the pull requests that touch the
+packaging (the `desktop_package` area). No release publishes them yet.
 
 Run the unit tests with `cargo test --workspace` here (`core/` holds everything
 testable without a window: port, PATH, the sidecar's lifecycle, instance

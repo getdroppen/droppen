@@ -246,7 +246,9 @@ diff -r /usr/share/common-licenses "$ROOT/usr/share/common-licenses" >/dev/null 
 # The glibc it needs is the image's at most: the image's is the floor.
 GLIBC=$(find "$ROOT" -type f -exec sh -c 'head -c 4 "$1" | grep -q ELF && objdump -T "$1" 2>/dev/null' _ {} \; \
   | grep -oE 'GLIBC_2\.[0-9]+' | sort -t. -k2,2n | tail -n 1)
-HOST_GLIBC=GLIBC_$(ldd --version | head -n 1 | awk '{ print $NF }')
+# (getconf, not `ldd --version | head`: ldd writes on after head has quit, and
+# the SIGPIPE fails the build under pipefail.)
+HOST_GLIBC=GLIBC_$(getconf GNU_LIBC_VERSION | awk '{ print $2 }')
 [ "$(printf '%s\n%s\n' "$GLIBC" "$HOST_GLIBC" | sort -t. -k2,2n | tail -n 1)" = "$HOST_GLIBC" ] \
   || bad "the AppImage needs $GLIBC, more than the image's $HOST_GLIBC"
 echo "ok: the AppImage needs $GLIBC at most"
