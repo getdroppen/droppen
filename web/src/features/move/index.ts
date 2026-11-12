@@ -14,6 +14,7 @@ import i18next from "i18next";
 import { type MoveOrigins, type MoveOutcome as Ended, startMove as startPush, startPull as startPullMove } from "@/lib/move";
 import { MOVE_OUT_KEY, readMoveOut } from "@/lib/move/sender";
 import type { MoveUnfinished } from "@/lib/move/types";
+import { hostOf } from "@/lib/move/env";
 import { outcomeText } from "./move-page";
 
 export { MovePage } from "./move-page";
@@ -81,14 +82,6 @@ export function moveSupported(): boolean {
     return false;
   }
 }
-
-const hostOf = (origin: string) => {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return origin;
-  }
-};
 
 /** A move's full outcome as the notice takes it. */
 export function noticeOutcome(ended: Ended, origins: MoveOrigins): MoveOutcome {

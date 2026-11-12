@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { Pin, PinOff } from "lucide-react";
+import { PushPinIcon, PushPinSlashIcon } from "@phosphor-icons/react";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
@@ -51,7 +51,7 @@ export function SessionPinButton({ session, onError }: { session: Session; onErr
       onClick={() => pin.mutate({ source: session.source, id: session.id, pinned })}
       className={`flex size-6 shrink-0 items-center justify-center rounded hover:bg-hover disabled:opacity-40 ${pinned ? "text-accent" : "text-muted hover:text-fg"}`}
     >
-      {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+      {pinned ? <PushPinSlashIcon className="size-3.5" /> : <PushPinIcon className="size-3.5" />}
     </button>
   );
 }

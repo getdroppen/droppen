@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronRight, Copy, RefreshCw } from "lucide-react";
+import { CheckIcon, CaretRightIcon, CopyIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { SettingsColumn, SettingsNote } from "@/features/settings/layout";
 import {
   formatRestUntil,
   limitEventsKey,
@@ -27,15 +29,15 @@ function CopyRaw({ text }: { text: string }) {
   const { t } = useTranslation();
   const { copied, copy } = useCopy();
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
       title={copied ? t("copied") : t("copy")}
       aria-label={t("copy")}
       onClick={() => copy(text)}
-      className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
+      className="ml-auto size-5 shrink-0 p-0"
     >
-      {copied ? <Check data-signal="ok" className="size-3 text-ok" /> : <Copy className="size-3" />}
-    </button>
+      {copied ? <CheckIcon data-signal="ok" className="size-3 text-ok" /> : <CopyIcon className="size-3" />}
+    </Button>
   );
 }
 
@@ -125,31 +127,31 @@ export function LimitEventsPanel({ accounts }: { accounts: Account[] }) {
   const list = events.data?.events ?? [];
 
   return (
-    <div className="mt-4 w-full max-w-3xl">
+    <SettingsColumn className="mt-4">
       <div className="flex items-center gap-1.5 py-1">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
-          className="flex h-7 items-center gap-1.5 rounded px-2 text-xs font-medium text-muted hover:bg-hover hover:text-fg"
+          className="h-7 px-2 text-xs"
         >
-          <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
+          <CaretRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
           {t("limit log")}
           <span className="tabular-nums text-faint">
             {events.isPending ? "…" : events.isError ? "?" : list.length}
           </span>
-        </button>
+        </Button>
         {open && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             title={t("refresh")}
             aria-label={t("refresh")}
             disabled={events.isFetching}
             onClick={() => void events.refetch()}
-            className="flex size-6 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg disabled:opacity-40"
+            className="size-6 p-0"
           >
-            <RefreshCw className={cn("size-3", events.isFetching && "animate-spin")} />
-          </button>
+            <ArrowsClockwiseIcon className={cn("size-3", events.isFetching && "animate-spin")} />
+          </Button>
         )}
       </div>
       {open && (
@@ -161,9 +163,9 @@ export function LimitEventsPanel({ accounts }: { accounts: Account[] }) {
           </p>
           {events.isPending && <Spinner />}
           {events.isError && (
-            <p data-signal="failed" className="mt-1 font-mono text-2xs text-danger">
+            <SettingsNote as="p" tone="danger" className="mt-1">
               {t("limit log unavailable: {{msg}}", { msg: events.error.message })}
-            </p>
+            </SettingsNote>
           )}
           {events.isSuccess && list.length === 0 && (
             <p className="py-2 font-mono text-2xs text-faint">{t("no limit messages recorded yet")}</p>
@@ -177,6 +179,6 @@ export function LimitEventsPanel({ accounts }: { accounts: Account[] }) {
           )}
         </div>
       )}
-    </div>
+    </SettingsColumn>
   );
 }

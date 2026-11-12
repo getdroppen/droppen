@@ -89,7 +89,12 @@ test("one page whatever the account has: the list of every device, devices that 
 test("the bar has one way to 「我的设备」 — 「设备」, a grid — and nothing else leaves the app for a machine list", () => {
   const html = draw(<DevicesButton />);
   assert.match(html, /data-testid="my-devices"/);
-  assert.match(html, /lucide-layout-grid/);
+  // The grid is Phosphor's `SquaresFourIcon`, and Phosphor puts no name on its
+  // `<svg>` for a test to read — only `viewBox`, which the `<span>` beside it
+  // cannot supply. What names the grid here is the first corner's arc: the
+  // portrait inks the square's corners with rounded 16px arcs, the grid does
+  // not.
+  assert.match(html, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="1em" height="1em" fill="currentColor" viewBox="0 0 256 256" class="size-3"><path d="M104,40H56A16,16,0,0,0,40,56v48/);
   assert.ok(html.includes(">devices<"));
   assert.ok(draw(<DevicesButton />, "zh-CN").includes(">设备<"));
   const bar = readFileSync(new URL("../src/features/cloud/cloud-bar.tsx", import.meta.url), "utf8");

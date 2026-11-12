@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronRight } from "lucide-react";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 import { formatExactTime, formatMoment, formatRelative, formatResetAt } from "@/lib/format";
 import type { CloudAccount } from "@/lib/hub/account";
@@ -8,6 +8,7 @@ import type { PlanView, SignInChange } from "@/lib/hub/api";
 import type { HubLink } from "@/lib/hub/link";
 import { type MeStore, meStore } from "@/lib/hub/me";
 import { deviceMirrorStore } from "@/lib/hub/mirror";
+import { shortDeviceId } from "./device-row";
 import {
   type CopyWarning,
   DEVICES_KEY,
@@ -259,12 +260,6 @@ export function UsageSummary({ account, link }: { account: CloudAccount; link: H
   return <UsagePanel plan={store.plan} machines={machines} names={names} />;
 }
 
-/** A device whose name is not known yet: "aaaa…" for `m-aaaabbbbccccdddd`, never the raw id. */
-export function shortMachineId(id: string): string {
-  const bare = id.replace(/^[dm]-/, "");
-  return bare.length > 5 ? `${bare.slice(0, 4)}…` : bare;
-}
-
 /** "Mac mini（离线副本）": a long name gives way, the words around it stay. */
 function CopyLabel({ name }: { name: string }) {
   const { t } = useTranslation();
@@ -425,7 +420,7 @@ export function UsagePanel({
                 onClick={() => setByDevice(!byDevice)}
                 className="flex w-fit items-center gap-1 font-mono text-xs text-muted hover:text-fg pointer-coarse:py-1.5"
               >
-                <ChevronRight aria-hidden="true" className={cn("size-3 transition-transform", byDevice && "rotate-90")} />
+                <CaretRightIcon aria-hidden="true" className={cn("size-3 transition-transform", byDevice && "rotate-90")} />
                 {t("by device")}
               </button>
             )}
@@ -437,7 +432,7 @@ export function UsagePanel({
           <ul id="storage-machines" data-testid="storage-machines" className="flex max-w-xl flex-col gap-1 py-1">
             {storage.machines.map((m) => (
               <li key={m.id} data-machine={m.id} title={m.id} className="flex items-baseline gap-3 py-0.5 font-mono text-xs">
-                <CopyLabel name={names?.get(m.id) || t("device {{id}}", { id: shortMachineId(m.id) })} />
+                <CopyLabel name={names?.get(m.id) || t("device {{id}}", { id: shortDeviceId(m.id) })} />
                 <span className="shrink-0 text-right text-muted tabular-nums">{formatPlanBytes(m.bytes)}</span>
               </li>
             ))}

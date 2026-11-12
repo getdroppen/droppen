@@ -37,11 +37,5 @@
     "deploy:web:www": "corepack enable 2>/dev/null || true; pnpm install --frozen-lockfile && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm build:web:site && npx --yes wrangler@4.152.0 deploy -c web/wrangler.www.jsonc",
     "preview:web:www": "corepack enable 2>/dev/null || true; pnpm install --frozen-lockfile && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm build:web:site && npx --yes wrangler@4.152.0 preview -c web/wrangler.www.jsonc",
     "check:hub-spec": "node scripts/check-hub-spec.mjs"
-  },
-  "pnpm": {
-    "overrides": {
-      "seroval": ">=1.7.1",
-      "micromark-extension-math>katex": ">=0.18.2"
-    }
   }
 }

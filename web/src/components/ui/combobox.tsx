@@ -1,12 +1,6 @@
-import { Autocomplete } from "@base-ui-components/react/autocomplete";
+import { Autocomplete } from "@base-ui/react/autocomplete";
 import { useTranslation } from "react-i18next";
 
-/**
- * Free-text input with filtered suggestions. Built on Autocomplete rather than
- * Combobox: in Combobox's single-selection mode, closing the popup without
- * picking an item resets the input, wiping paths typed by hand. Here the typed
- * value is the source of truth and always survives blur/escape.
- */
 export function Combobox({
   value,
   onValueChange,

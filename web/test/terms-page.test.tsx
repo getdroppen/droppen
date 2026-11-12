@@ -1,18 +1,4 @@
-// droppen.app/terms (`features/landing/terms/terms.tsx`): the terms of service
-// of the hosted service.
-//
-// What these pin: `/terms` is a public page of its own, signed in or not,
-// linked from every public page's footer and from the sign-up form (with the
-// privacy notice, each in a new tab; never on sign-in); it reads in en,
-// zh-CN, zh-TW and ja with every string translated and nothing left in
-// English; it says what the product is — end-to-end encrypted, the terms
-// covering the hosted service only and the code under its own licences, the
-// Free plan's numbers as the plans have them, "as is" with no SLA and the
-// identity renewal in testing, the addresses for an account and for
-// security, and the owner's facts (Droppen operates droppen.app; the laws
-// and courts of Singapore, the consumer's own law kept; 16 and over; no
-// postal address) — in product words (a device, our servers; never a machine
-// or a relay), with no owner placeholder left.
+// Terms-page routing, legal content, translations, and owner-placeholder contracts.
 import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -28,10 +14,10 @@ import PricingPage from "../src/features/landing/pricing.js";
 import { gb, PLAN_NUMBERS } from "../src/features/landing/pricing-plans.js";
 import PrivacyPage from "../src/features/landing/privacy.js";
 import { bootRoute, frontPage, isAuthPath, isFrontPath, publicPage, TERMS_PATH } from "../src/features/landing/route.js";
-import SecurityPage, { SECURITY_EMAIL as SECURITY_PAGE_EMAIL } from "../src/features/landing/security/security.js";
+import SecurityPage from "../src/features/landing/security/security.js";
 import TermsPage, { MINIMUM_AGE, TERMS_UPDATED } from "../src/features/landing/terms/terms.js";
 import { termsBundles } from "../src/features/landing/terms/terms-copy.js";
-import { PRIVACY_EMAIL } from "../src/features/landing/waitlist.js";
+import { PRIVACY_EMAIL } from "../src/features/landing/page-kit.js";
 import { setHostMode } from "../src/lib/hub/hosts.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
@@ -215,7 +201,6 @@ test("the terms say what the product is: encrypted, the hosted service only, the
   assert.equal(TERMS_UPDATED, "2026-10-28");
   assert.equal(MINIMUM_AGE, 16);
   assert.doesNotMatch(words, /Postal address/, "no postal address is published");
-  assert.equal(SECURITY_EMAIL, SECURITY_PAGE_EMAIL, "the security page's address");
   assert.match(html, new RegExp(`<a href="mailto:${PRIVACY_EMAIL.replace(/[[\]]/g, "\\$&")}"[^>]*data-testid="terms-email"`));
   assert.match(html, new RegExp(`<a href="mailto:${SECURITY_EMAIL}"[^>]*data-testid="terms-security-email"`));
   assert.match(html, /<a href="\/pricing"[^>]*data-testid="terms-pricing"/);

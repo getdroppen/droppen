@@ -18,13 +18,9 @@
  * store, and the account's seen record (`rh-hub-seen`, which keeps the
  * chain's pin and outlives a removal).
  */
-import { type HubSession, loadSession } from "./api";
-
-export const KEY_DB = "rh-e2e";
-const KEY_STORE = "keys";
-const DEVICE_RECORDS = ["device-keys/v2", "device-keys/v1"];
-const DEVICE_NOTE = "rh.hub.device.";
-const SESSION_NOTE = "rh.hub.session";
+import { DEVICE_KEY_RECORDS, KEY_STORE_DB, KEY_STORE_STORE } from "@/lib/e2e/keystore";
+import { DEVICE_NOTE_PREFIX } from "./account-storage";
+import { type HubSession, loadSession, SESSION_KEY } from "./api";
 
 /** How long the key store may take to say whether it holds device keys. */
 const IDB_WAIT_MS = 3_000;
@@ -64,7 +60,7 @@ function browserEnv(): DeviceHereEnv {
 /** The device id this browser noted for `account`, if any. */
 export function notedDevice(account: string, storage: Pick<Storage, "getItem"> | null = browserEnv().storage): string | null {
   try {
-    return storage?.getItem(`${DEVICE_NOTE}${account}`) ?? null;
+    return storage?.getItem(`${DEVICE_NOTE_PREFIX}${account}`) ?? null;
   } catch {
     return null;
   }
@@ -79,8 +75,8 @@ function notes(storage: NoteStorage | null): { accounts: string[]; session: HubS
     for (let i = 0; i < storage.length; i++) {
       const key = storage.key(i);
       if (key === null) continue;
-      if (key === SESSION_NOTE) sessionKept = true;
-      else if (key.startsWith(DEVICE_NOTE) && key.length > DEVICE_NOTE.length) accounts.push(key.slice(DEVICE_NOTE.length));
+      if (key === SESSION_KEY) sessionKept = true;
+      else if (key.startsWith(DEVICE_NOTE_PREFIX) && key.length > DEVICE_NOTE_PREFIX.length) accounts.push(key.slice(DEVICE_NOTE_PREFIX.length));
     }
     session = loadSession(storage as Storage);
   } catch {
@@ -103,7 +99,7 @@ async function keysStored(idb: DeviceHereEnv["idb"]): Promise<boolean> {
   } catch {
     return false;
   }
-  if (!listed.some((db) => db.name === KEY_DB)) return false;
+  if (!listed.some((db) => db.name === KEY_STORE_DB)) return false;
   return await new Promise<boolean>((resolve) => {
     let done = false;
     const settle = (value: boolean, db?: IDBDatabase) => {
@@ -116,7 +112,7 @@ async function keysStored(idb: DeviceHereEnv["idb"]): Promise<boolean> {
     const timer = setTimeout(() => settle(false), IDB_WAIT_MS);
     let req: IDBOpenDBRequest;
     try {
-      req = idb.open(KEY_DB);
+      req = idb.open(KEY_STORE_DB);
     } catch {
       return settle(false);
     }
@@ -133,13 +129,13 @@ async function keysStored(idb: DeviceHereEnv["idb"]): Promise<boolean> {
     req.onsuccess = () => {
       const db = req.result;
       if (done) return db.close();
-      if (!db.objectStoreNames.contains(KEY_STORE)) return settle(false, db);
+      if (!db.objectStoreNames.contains(KEY_STORE_STORE)) return settle(false, db);
       try {
-        const tx = db.transaction(KEY_STORE, "readonly");
-        const store = tx.objectStore(KEY_STORE);
+        const tx = db.transaction(KEY_STORE_STORE, "readonly");
+        const store = tx.objectStore(KEY_STORE_STORE);
         let found = false;
-        let pending = DEVICE_RECORDS.length;
-        for (const name of DEVICE_RECORDS) {
+        let pending = DEVICE_KEY_RECORDS.length;
+        for (const name of DEVICE_KEY_RECORDS) {
           const count = store.count(name);
           count.onsuccess = () => {
             if (count.result > 0) found = true;

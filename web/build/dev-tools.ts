@@ -5,11 +5,13 @@ import type { Plugin } from "vite";
 /**
  * Developer tools that `vite dev` serves and no build ever contains: the
  * direct-path measurement page (`web/dev/p2p-probe.html` and its script), the
- * browser end of `droppen-p2p-probe` (crates/droppen-devkit). It used to sit
- * in `public/` and so shipped in every build, droppen.app's included: a page
- * of the app's origin that is not the app. Here it is reached at
+ * browser end of `droppen-p2p-probe` (crates/droppen-devkit); and the share
+ * card's review page (`web/dev/og-preview.html`). The probe used to sit in
+ * `public/` and so shipped in every build, droppen.app's included: a page of
+ * the app's origin that is not the app. Here it is reached at
  * `<dev server>/p2p-probe.html#<room>`, its signaling room proxied to the hub
- * named by `DROPPEN_DEV_HUB` (vite.config.ts).
+ * named by `DROPPEN_DEV_HUB` (vite.config.ts). The review page keeps its
+ * source filename under `/dev/`, with `/og-preview` as the short address.
  */
 const FILES: Record<string, string> = {
   "/p2p-probe.html": "text/html; charset=utf-8",
@@ -33,7 +35,15 @@ export function devTools(dir: string): Plugin {
     },
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        const path = (req.url ?? "").split(/[?#]/, 1)[0]!;
+        const url = req.url ?? "";
+        const path = url.split(/[?#]/, 1)[0]!;
+        if (path === "/og-preview") {
+          const query = url.indexOf("?") === -1 ? "" : url.slice(url.indexOf("?"));
+          res.statusCode = 302;
+          res.setHeader("location", `/dev/og-preview.html${query}`);
+          res.end();
+          return;
+        }
         if (landingMode && path === "/.well-known/droppen-hub") {
           res.setHeader("content-type", "application/json");
           res.setHeader("cache-control", "no-store");

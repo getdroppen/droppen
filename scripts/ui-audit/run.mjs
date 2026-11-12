@@ -200,13 +200,13 @@ async function auditSettings(theme, view) {
     const s = getComputedStyle(e);
     return { focusVisible: e.matches(":focus-visible"), width: s.outlineWidth, style: s.outlineStyle, color: s.outlineColor, offset: s.outlineOffset, bg: s.backgroundColor };
   });
-  await page.locator('[data-audit-row="checkbox"] input').focus();
+  await page.locator('[data-audit-row="checkbox"] [data-audit-checkbox]').focus();
+  await page.waitForTimeout(200);
   const checkboxFocus = await page.evaluate(() => {
-    const input = document.querySelector('[data-audit-row="checkbox"] input');
-    const box = input?.nextElementSibling;
+    const box = document.querySelector('[data-audit-row="checkbox"] [data-audit-checkbox]');
     const s = box ? getComputedStyle(box) : null;
     return {
-      focusVisible: input?.matches(":focus-visible") ?? null,
+      focusVisible: box?.matches(":focus-visible") ?? null,
       width: s?.outlineWidth ?? null,
       style: s?.outlineStyle ?? null,
       color: s?.outlineColor ?? null,
@@ -243,7 +243,7 @@ async function auditSettings(theme, view) {
     const normal = options.find((o) => !o.hasAttribute("data-selected") && !o.hasAttribute("data-highlighted"));
     const chevron = document.querySelector('[data-audit-row="model"] button svg');
     // The rotation lives on the icon's wrapper (`[&>svg]:size-…`), not on the
-    // lucide `<svg>` itself.
+    // Phosphor `<svg>` itself.
     const chevronIcon = chevron?.parentElement;
     const trigger = document.querySelector('[data-audit-row="model"] button');
     return {

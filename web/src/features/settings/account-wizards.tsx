@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { CheckIcon, CopyIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { SETTINGS_ACTION, SETTINGS_ACTION_PRIMARY, SETTINGS_FIELD } from "@/features/settings/layout";
+import { Input } from "@/components/ui/input";
+import { SettingField, SettingsNote } from "@/features/settings/layout";
 import { EnvBlockField } from "@/features/accounts/env-block-field";
 import { parseEnvBlock } from "@/features/accounts/env-block";
 import {
@@ -16,7 +18,6 @@ import {
 } from "@/features/accounts/use-accounts";
 import { XtermPane } from "@/features/terminals/lazy-xterm-pane";
 import { useCopy } from "@/lib/clipboard";
-import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
 
@@ -25,11 +26,6 @@ type SetupTokenStarted = components["schemas"]["SetupTokenStarted"];
 
 const WIDE = "w-[min(48rem,calc(100vw-2rem))]";
 const TERMINAL_BOX = "h-[min(50vh,22rem)] overflow-hidden rounded border border-border";
-
-// Tokens, URLs and codes are values: mono in every field of the wizards.
-const field = `${SETTINGS_FIELD} font-mono`;
-const primary = SETTINGS_ACTION_PRIMARY;
-const secondary = SETTINGS_ACTION;
 
 /** The URL to authorize, as text to copy. Nothing here opens a browser. */
 function AuthUrlBlock({ url }: { url: string }) {
@@ -40,11 +36,11 @@ function AuthUrlBlock({ url }: { url: string }) {
     <div className="flex flex-col gap-1">
       <span className="text-2xs text-faint">{t("open this url yourself to authorize")}</span>
       <div className="flex items-center gap-1.5">
-        <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} className={cn(field, "flex-1")} />
-        <button type="button" onClick={() => copy(url)} className={cn(secondary, "shrink-0 px-2")}>
-          {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+        <Input readOnly value={url} onFocus={(e) => e.currentTarget.select()} className="flex-1 font-mono" />
+        <Button onClick={() => copy(url)} className="shrink-0 px-2">
+          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
           {copied ? t("copied") : t("copy")}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -76,7 +72,7 @@ function CodeBox({ captureId }: { captureId: string }) {
     <div className="flex flex-col gap-1">
       <span className="text-2xs text-faint">{t("paste the code the page gave you")}</span>
       <div className="flex items-center gap-1.5">
-        <input
+        <Input
           value={code}
           autoComplete="off"
           spellCheck={false}
@@ -88,20 +84,20 @@ function CodeBox({ captureId }: { captureId: string }) {
             if (e.key === "Enter" && code.trim() !== "") submit.mutate();
           }}
           placeholder={t("authorization code")}
-          className={cn(field, "flex-1")}
+          className="flex-1 font-mono"
         />
-        <button
-          type="button"
+        <Button
+          variant="primary"
           disabled={code.trim() === "" || submit.isPending}
           onClick={() => submit.mutate()}
-          className={cn(primary, "shrink-0")}
+          className="shrink-0"
         >
-          {submit.isPending && <Loader2 className="size-3 animate-spin" />}
+          {submit.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
           {t("submit code")}
-        </button>
+        </Button>
       </div>
-      {submit.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{submit.error.message}</span>}
-      {sent && !submit.isError && <span className="font-mono text-2xs text-faint">{t("code sent — waiting for the token…")}</span>}
+      {submit.isError && <SettingsNote tone="danger">{submit.error.message}</SettingsNote>}
+      {sent && !submit.isError && <SettingsNote tone="faint">{t("code sent — waiting for the token…")}</SettingsNote>}
     </div>
   );
 }
@@ -168,45 +164,43 @@ function CapturePanel({
       {status?.authUrl && <AuthUrlBlock url={status.authUrl} />}
       {pending && status?.authUrl && <CodeBox captureId={capture.captureId} />}
       {pending && !status?.authUrl && (
-        <div className="flex items-center gap-1.5 font-mono text-2xs text-faint">
-          <Loader2 className="size-3 animate-spin" />
+        <SettingsNote tone="faint" className="flex items-center gap-1.5">
+          <CircleNotchIcon className="size-3 animate-spin" />
           {t("waiting for the authorization url…")}
-        </div>
+        </SettingsNote>
       )}
       {status?.status === "captured" && (
-        <div className={cn("flex items-center gap-1.5 font-mono text-2xs", status.reused ? "text-muted" : "text-ok")}>
-          <Check className="size-3.5" />
+        <SettingsNote tone={status.reused ? "muted" : "ok"} className="flex items-center gap-1.5">
+          <CheckIcon className="size-3.5" />
           {!status.reused
             ? capturedText
             : already
               ? t("Token already registered as {{label}}", { label: already })
               : t("Token already registered")}
-        </div>
+        </SettingsNote>
       )}
       {status?.unverified && (
-        <span data-signal="warn" className="font-mono text-2xs text-warn-fg">
+        <SettingsNote tone="warn">
           {t("saved, but it could not be checked: {{why}}", { why: status.unverified })}
-        </span>
+        </SettingsNote>
       )}
       {(status?.status === "exited" || status?.status === "error") && (
         <div className="flex flex-wrap items-center gap-2">
-          <span data-signal="warn" className="font-mono text-2xs text-warn-fg">
+          <SettingsNote tone="warn">
             {status.error ?? t("the wizard exited before a token appeared — try again")}
             {/* -1 is the wizard being killed rather than exiting itself. */}
             {status.exitCode !== undefined && ` (exit ${status.exitCode})`}
-          </span>
-          <button type="button" onClick={onRestart} className={secondary}>
-            {t("try again")}
-          </button>
+          </SettingsNote>
+          <Button onClick={onRestart}>{t("try again")}</Button>
         </div>
       )}
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         onClick={() => setShowTerminal((on) => !on)}
-        className="self-start font-mono text-2xs text-faint hover:text-muted"
+        className="h-auto self-start px-0 font-mono text-2xs text-faint hover:bg-transparent hover:text-muted"
       >
         {showTerminal ? t("hide the wizard's terminal") : t("show the wizard's terminal")}
-      </button>
+      </Button>
       {showTerminal && (
         <div className={TERMINAL_BOX}>
           <XtermPane id={capture.terminalId} visible />
@@ -280,26 +274,24 @@ export function SetupTokenDialog({
                 "Runs `claude setup-token` in a terminal here. Nothing opens a browser: copy the URL it prints, authorize it yourself, and paste the code back — the token is then stored as a new account.",
               )}
             </p>
-            <label className="flex flex-col gap-1">
-              <span className="text-2xs text-faint">{t("label")}</span>
-              <input
+            <SettingField label={t("label")} tone="faint">
+              <Input
                 autoFocus
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder={t("work account")}
-                className={field}
+                className="font-mono"
               />
-            </label>
-            {start.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{start.error.message}</span>}
-            <button
-              type="button"
+            </SettingField>
+            {start.isError && <SettingsNote tone="danger">{start.error.message}</SettingsNote>}
+            <Button
+              variant="primary"
               disabled={label.trim() === "" || start.isPending}
               onClick={() => start.mutate()}
-              className={primary}
             >
-              {start.isPending && <Loader2 className="size-3 animate-spin" />}
+              {start.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {t("start wizard")}
-            </button>
+            </Button>
           </div>
         ) : (
           <CapturePanel
@@ -440,46 +432,42 @@ export function ReauthDialog({
             </p>
             {oauth && (
               <>
-                {start.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{start.error.message}</span>}
-                <button
-                  type="button"
+                {start.isError && <SettingsNote tone="danger">{start.error.message}</SettingsNote>}
+                <Button
+                  variant="primary"
                   disabled={!account || start.isPending}
                   onClick={() => account && start.mutate(account.id)}
-                  className={primary}
                 >
-                  {start.isPending && <Loader2 className="size-3 animate-spin" />}
+                  {start.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
                   {t("run setup-token wizard")}
-                </button>
+                </Button>
                 <div className="text-center font-mono text-2xs text-faint">{t("or")}</div>
               </>
             )}
             {oauth ? (
-              <label className="flex flex-col gap-1">
-                <span className="text-2xs text-faint">
-                  {t("oauth token")}
-                  {" · "}
-                  {t("checked against Anthropic before it is stored")}
-                </span>
-                <input
+              <SettingField
+                label={t("oauth token")}
+                hint={<>· {t("checked against Anthropic before it is stored")}</>}
+                tone="faint"
+              >
+                <Input
                   type="password"
                   autoComplete="off"
                   value={secret}
                   onChange={(e) => setSecret(e.target.value)}
                   placeholder="sk-ant-oat…"
-                  className={field}
+                  className="font-mono"
                 />
-              </label>
+              </SettingField>
             ) : stored.isPending ? (
-              <div className="flex items-center gap-1.5 font-mono text-2xs text-faint">
-                <Loader2 className="size-3 animate-spin" />
+              <SettingsNote tone="faint" className="flex items-center gap-1.5">
+                <CircleNotchIcon className="size-3 animate-spin" />
                 {t("reading this account's environment variables…")}
-              </div>
+              </SettingsNote>
             ) : stored.isError ? (
               <div className="flex flex-wrap items-center gap-2">
-                <span data-signal="failed" className="font-mono text-2xs text-danger">{stored.error.message}</span>
-                <button type="button" onClick={() => void stored.refetch()} className={secondary}>
-                  {t("try again")}
-                </button>
+                <SettingsNote tone="danger">{stored.error.message}</SettingsNote>
+                <Button onClick={() => void stored.refetch()}>{t("try again")}</Button>
               </div>
             ) : (
               <EnvBlockField
@@ -491,21 +479,20 @@ export function ReauthDialog({
                 hint={t("this is the block as stored; saving replaces it whole")}
               />
             )}
-            {paste.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{paste.error.message}</span>}
+            {paste.isError && <SettingsNote tone="danger">{paste.error.message}</SettingsNote>}
             {unverified && (
-              <span data-signal="warn" className="font-mono text-2xs text-warn-fg">
+              <SettingsNote tone="warn">
                 {t("saved, but it could not be checked: {{why}}", { why: unverified })}
-              </span>
+              </SettingsNote>
             )}
-            <button
-              type="button"
+            <Button
+              variant={oauth ? "secondary" : "primary"}
               disabled={!account || (oauth ? secret.trim() === "" : env === null || block.issue !== null) || stored.isError || paste.isPending}
               onClick={() => account && paste.mutate(account.id)}
-              className={oauth ? secondary : primary}
             >
-              {paste.isPending && <Loader2 className="size-3 animate-spin" />}
+              {paste.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {paste.isPending ? t("checking the token…") : t(oauth ? "save token" : "save environment variables")}
-            </button>
+            </Button>
           </div>
         )}
       </DialogContent>
@@ -584,37 +571,34 @@ export function UsageLoginDialog({
               "Runs `claude auth login` for this account in its own config dir, so Droppen can read its quota. Press verify once the CLI reports you are logged in.",
             )}
           </p>
-          {start.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{start.error.message}</span>}
+          {start.isError && <SettingsNote tone="danger">{start.error.message}</SettingsNote>}
           {terminalId ? (
             <div className={TERMINAL_BOX}>
               <XtermPane id={terminalId} visible />
             </div>
           ) : (
             !start.isError && (
-              <div className="flex items-center gap-1.5 font-mono text-2xs text-faint">
-                <Loader2 className="size-3 animate-spin" />
+              <SettingsNote tone="faint" className="flex items-center gap-1.5">
+                <CircleNotchIcon className="size-3 animate-spin" />
                 {t("starting the login wizard…")}
-              </div>
+              </SettingsNote>
             )
           )}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="primary"
               disabled={!account || !terminalId || verify.isPending}
               onClick={() => account && verify.mutate(account.id)}
-              className={cn(primary, "px-3")}
             >
-              {verify.isPending && <Loader2 className="size-3 animate-spin" />}
+              {verify.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {t("verify")}
-            </button>
+            </Button>
             {notYet && (
-              <span data-signal="warn" className="font-mono text-2xs text-warn-fg">
+              <SettingsNote tone="warn">
                 {t("not logged in yet — finish the login in the terminal")}
-              </span>
+              </SettingsNote>
             )}
-            {verify.isError && (
-              <span data-signal="failed" className="font-mono text-2xs text-danger">{verify.error.message}</span>
-            )}
+            {verify.isError && <SettingsNote tone="danger">{verify.error.message}</SettingsNote>}
           </div>
         </div>
       </DialogContent>

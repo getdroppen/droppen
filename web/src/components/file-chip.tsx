@@ -1,4 +1,4 @@
-import { Download, Eye, FileText } from "lucide-react";
+import { DownloadSimpleIcon, EyeIcon, FileTextIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DownloadLink } from "@/components/host-file";
@@ -18,9 +18,9 @@ export function FileChip({ name, path }: { name: string; path: string }) {
           aria-haspopup="dialog"
           className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 text-left hover:bg-hover hover:text-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
         >
-          <FileText className="size-3.5 shrink-0 text-muted" />
+          <FileTextIcon className="size-3.5 shrink-0 text-muted" />
           <span className="truncate font-mono">{name}</span>
-          <Eye className="size-3.5 shrink-0 text-muted" />
+          <EyeIcon className="size-3.5 shrink-0 text-muted" />
         </DialogTrigger>
         <DownloadLink
           path={path}
@@ -28,7 +28,7 @@ export function FileChip({ name, path }: { name: string; path: string }) {
           title={t("download {{name}}", { name })}
           className="flex w-8 shrink-0 items-center justify-center border-l border-border text-muted hover:bg-hover hover:text-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
         >
-          <Download className="size-3.5" />
+          <DownloadSimpleIcon className="size-3.5" />
           <span className="sr-only">{t("download {{name}}", { name })}</span>
         </DownloadLink>
       </span>

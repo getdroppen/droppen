@@ -1,61 +1,29 @@
 import { useSyncExternalStore } from "react";
 import { appUrl, hostMode, siteOrigin } from "@/lib/hub/hosts";
-import { DOWNLOAD_PATH } from "./get-droppen";
 
 /*
- * Cloud mode's public pages have no router: the landing page at `/` (signed
- * in or not), the download page at `/download`, the pricing page at
- * `/pricing`, the privacy notice at `/privacy`, the security design at
- * `/security` and the terms of service at `/terms` (each signed in or not), sign-in /
- * sign-up at their own paths, and `/verify`, where the verification mail's
- * link lands (signed in or not). The app's router only
- * mounts once a machine is open (`features/cloud/cloud-app.tsx`), so these
- * few paths are read straight off `location` and moved between with the
- * History API; TanStack's history (patched onto `pushState` /
- * `replaceState`) follows along, so the app later boots from whatever path
- * is current.
- *
- * Local mode (a remote-hand server's own shell) never reaches any of this.
- *
- * Where the hub serves the app and the public pages on hosts of their own
- * (`lib/hub/hosts.ts`), a link between them is an ordinary link to the other
- * host ({@link publicLink}), and `/` on the app host is the app.
+ * Cloud public pages live outside the app router, which mounts only when a
+ * machine opens. Read their paths from `location` and use the History API;
+ * TanStack's patched history methods keep the eventual app route in sync.
+ * Local mode never uses this module. Split app/site hosts use ordinary links.
  */
 
+export const DOWNLOAD_PATH = "/download";
 export const SIGN_IN_PATH = "/signin";
 export const SIGN_UP_PATH = "/signup";
-/** The verification mail's link: `/verify#t=<token>` (the token in the fragment). */
-export const VERIFY_PATH = "/verify";
-/** The plans, and the waitlist (`#waitlist`). */
+const VERIFY_PATH = "/verify";
 export const PRICING_PATH = "/pricing";
-/** The privacy notice. */
 export const PRIVACY_PATH = "/privacy";
-/** How the encryption works (`security/security.tsx`). */
 export const SECURITY_PATH = "/security";
-/** The terms of service (`terms/terms.tsx`). */
 export const TERMS_PATH = "/terms";
-/** The waitlist's form, on the pricing page. */
 export const WAITLIST_HREF = `${PRICING_PATH}#waitlist`;
 
-/**
- * Where the app starts: the machine list, or the sessions of the machine
- * last opened here. "Open app" on the landing page goes here, sign-in lands
- * here, and the installed app starts here (`start_url` in
- * `public/manifest.webmanifest`), so it never opens on the landing page.
- */
+/** The installed app's `start_url` and the destination after sign-in. */
 export const APP_PATH = "/sessions";
 
-/** What a signed-out visitor sees at `pathname`. */
-export type PublicPage = "landing" | "download" | "pricing" | "privacy" | "security" | "terms" | "signin" | "signup" | "verify";
+type PublicPage = "landing" | "download" | "pricing" | "privacy" | "security" | "terms" | "signin" | "signup" | "verify";
 
-/**
- * Only the bare root is the landing page. Sign-in and sign-up have their own
- * paths; every other path is a deep link into the app (a session, a terminal),
- * which keeps showing the sign-in form in place so the link still opens once
- * the visitor is in. On the app host of a hub that has one (`hostMode()`
- * `app`), the root is the app too: signed in, its start; signed out, the
- * sign-in form.
- */
+/* Deep links show auth in place while signed out so they can resume after sign-in. */
 export function publicPage(pathname: string): PublicPage {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path === "/") return hostMode() === "app" ? "signin" : "landing";
@@ -69,55 +37,35 @@ export function publicPage(pathname: string): PublicPage {
   return "signin";
 }
 
-/** Whether `pathname` is the landing page. */
 export function isLandingPath(pathname: string): boolean {
   return publicPage(pathname) === "landing";
 }
 
-/** The pages that are pages of their own whether or not this browser is signed in. */
-export type FrontPage = "landing" | "download" | "pricing" | "privacy" | "security" | "terms";
+const FRONT_PAGES = ["landing", "download", "pricing", "privacy", "security", "terms"] as const;
 
-const FRONT_PAGES: readonly PublicPage[] = ["landing", "download", "pricing", "privacy", "security", "terms"];
+/** The pages shown independently of sign-in state. */
+export type FrontPage = (typeof FRONT_PAGES)[number];
 
-/** `pathname`'s page if it is one of the {@link FrontPage}s. */
 export function frontPage(pathname: string): FrontPage | null {
   const page = publicPage(pathname);
-  return FRONT_PAGES.includes(page) ? (page as FrontPage) : null;
+  return (FRONT_PAGES as readonly PublicPage[]).includes(page) ? (page as FrontPage) : null;
 }
 
-/**
- * Whether `pathname` is a page of its own whether or not this browser is
- * signed in — the landing page, the download page, the pricing page, the
- * privacy notice, the security design or the terms — which starts nothing of the app
- * until the visitor goes on into it.
- */
 export function isFrontPath(pathname: string): boolean {
   return frontPage(pathname) !== null;
 }
 
-/**
- * What a page loading at `pathname` shows: the landing page at `/`, the
- * download page at `/download`, the pricing page at `/pricing`, the privacy
- * notice at `/privacy`, the security design at `/security` and the terms at
- * `/terms` whether or not
- * a device session is kept here;
- * signed out, the sign-in / sign-up forms (in place on a deep link); signed
- * in, the app — from its start rather than from a sign-in page (`replace`),
- * and from a deep link where it points. The verification link's page shows
- * signed in or not.
- */
-export function bootRoute(
-  pathname: string,
-  signedIn: boolean,
-): { [P in FrontPage]: { show: P } }[FrontPage] | { show: "verify" } | { show: "auth" } | { show: "app"; replace?: string } {
+type FrontRoute = { [P in FrontPage]: { show: P } }[FrontPage];
+type BootRoute = FrontRoute | { show: "verify" } | { show: "auth" } | { show: "app"; replace?: string };
+
+export function bootRoute(pathname: string, signedIn: boolean): BootRoute {
   const front = frontPage(pathname);
-  if (front) return { show: front } as { [P in FrontPage]: { show: P } }[FrontPage];
+  if (front) return { show: front };
   if (publicPage(pathname) === "verify") return { show: "verify" };
   if (!signedIn) return { show: "auth" };
   return isAuthPath(pathname) ? { show: "app", replace: APP_PATH } : { show: "app" };
 }
 
-/** Whether `pathname` is one of the sign-in / sign-up pages (not a route the app knows). */
 export function isAuthPath(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, "");
   return path === SIGN_IN_PATH || path === SIGN_UP_PATH;
@@ -138,7 +86,6 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/** The current path, re-read on back / forward and on {@link goPublic}. */
 export function usePathname(): string {
   return useSyncExternalStore(
     subscribe,
@@ -147,7 +94,6 @@ export function usePathname(): string {
   );
 }
 
-/** Move between the public pages without a reload (a new history entry unless `replace`). */
 export function goPublic(path: string, { replace = false }: { replace?: boolean } = {}): void {
   if (location.pathname === path) return;
   if (replace) history.replaceState(history.state, "", path);
@@ -180,21 +126,28 @@ export function publicHref(path: string): string {
 
 type LinkClick = { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; preventDefault(): void };
 
-/**
- * A link's click, done in place: a plain left click moves without a reload;
- * a modified click (new tab, new window) is left to the browser, and so is
- * any click on a link to another host ({@link publicHref}).
- */
+function beforeFragment(path: string): string {
+  const marker = path.indexOf("#");
+  const bare = marker === -1 ? path : path.slice(0, marker);
+  return bare.length > 1 ? bare.replace(/\/+$/, "") : bare;
+}
+
+/** Leave same-page fragment clicks to native scrolling and history. */
+function samePageFragment(path: string): boolean {
+  if (!path.includes("#") || typeof location === "undefined") return false;
+  return beforeFragment(path) === beforeFragment(location.pathname + location.search);
+}
+
 export function onPublicLink(path: string) {
   const elsewhere = publicHref(path) !== path;
   return (event: LinkClick) => {
     if (elsewhere || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (samePageFragment(path)) return;
     event.preventDefault();
     goPublic(path);
   };
 }
 
-/** A public link's `href` and click, for `<a {...publicLink(path)}>`. */
 export function publicLink(path: string): { href: string; onClick: (event: LinkClick) => void } {
   return { href: publicHref(path), onClick: onPublicLink(path) };
 }

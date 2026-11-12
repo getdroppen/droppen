@@ -1,15 +1,16 @@
-import { Fragment, type ComponentProps, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
-import i18n, { type TFunction } from "i18next";
+import { Fragment, type ComponentProps, type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { type TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Dialog as BaseDialog } from "@base-ui-components/react/dialog";
-import { ChevronDown, Info, X } from "lucide-react";
+import { CaretDownIcon, InfoIcon, XIcon } from "@phosphor-icons/react";
+import { useEventListener } from "usehooks-ts";
 import { CapsLabel } from "@/components/ui/caps-label";
+import { Sheet, SheetClose, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
-import { landingBundles } from "../copy";
-import { cjkTracking, FooterLine, PublicHeader, Section, SectionHead, SECURITY_EMAIL } from "../page-kit";
+import { cjkTracking, DocumentHead, MailLink, PASSIVE, PublicLayout, Section, SectionHead, SECURITY_EMAIL, SUBHEAD, TextLink, usePageMeta } from "../page-kit";
 import { Formula, FormulaProvider, MentionScope, withConcepts } from "./formula";
 import { RepoLink } from "./repo-link";
-import { securityBundles } from "./security-copy";
+import "../copy";
+import "./security-copy";
 
 /*
  * droppen.app/security: how the end-to-end encryption works, for a technical
@@ -35,33 +36,17 @@ import { securityBundles } from "./security-copy";
  * host), a full device (its admin), the content key (`MK`).
  */
 
-// Added, never overwriting: a key the app already translates keeps its wording.
-for (const bundles of [landingBundles, securityBundles]) {
-  for (const [lng, bundle] of Object.entries(bundles)) i18n.addResourceBundle(lng, "translation", bundle, true, false);
-}
-
-/** When the page last changed, as the page says it. */
 export const SECURITY_UPDATED = "2026-11-09";
 
-/** Where to report a vulnerability (`page-kit.tsx`, so the terms can name it without this page's chunk). */
+/** Re-exported from the shared kit to keep it out of this lazy chunk. */
 export { SECURITY_EMAIL };
 
-/** The page's sections, in order: the table of contents and the anchors. */
 export const SECURITY_SECTIONS = ["overview", "chain", "keys", "channels", "offline", "renewal", "threats", "verify"] as const;
-/** The identity renewal's parts, each with an anchor of its own. */
 export const RENEWAL_PARTS = ["renewal-why", "renewal-entry", "renewal-staging", "renewal-policy", "renewal-disputes", "renewal-groups", "renewal-hub"] as const;
-
-/**
- * Prose keeps its measure (46em: about 46 characters of Chinese, 95 of English a line) however wide
- * the column. What is not prose (formulas, quoted labels and paths, the algorithm table, paired
- * lists) takes the topic's whole width, so it is not wrapped short beside empty space.
- */
-const prose = "max-w-[46em] text-base text-pretty text-muted cjk-wrap";
 
 /** Below xl the 44px contents bar sits under the 56px header; an anchor stops below both. */
 const sectionScroll = "max-xl:scroll-mt-[6.5rem]";
 
-/** A section's head, with this page's 16px reading size for its lead (the shared head's is 14px). */
 function Head(props: ComponentProps<typeof SectionHead>) {
   return <SectionHead {...props} className={cn("[&>p]:text-base [&>p]:text-pretty [&>p]:cjk-wrap", props.className)} />;
 }
@@ -79,23 +64,10 @@ function titleWords(text: string): ReactNode {
   );
 }
 
-/**
- * A translated line in the page's mini-markup, written the same way in every
- * language, so each line stays one key (the English):
- * - `[[text|anchor]]`, a cross-reference: `<a href="#anchor">text</a>`;
- * - `[[path]]` or `[[text|path]]` (a target that is not an anchor): a path
- *   in the repository, linked on GitHub (`RepoLink`); `|/` is the repository;
- * - `**term**`, a key term: `<strong>` (it may hold a cross-reference);
- * - `**term** (reason)` or `**term**（理由）`: a parenthesis that follows a key
- *   term at once (after one space, or none) is that term's reason, kept in
- *   normal weight and the muted colour whatever holds it;
- * - `\n- `: a line that starts with "- " is a list item; items in a row make
- *   one `<ul>`, an ink square per item as in `List`, and any other line is a
- *   paragraph: the lead-in before the items, or a closing line after them.
- * A line with no "\n" stays inline (it fits in a `<p>` or a `<span>`); one
- * with lines becomes blocks (`<p>` and `<ul>` in a `<div>`), so `P` and `Note`
- * draw it in a `<div>`, and list items and table cells are `<div>`s. `small`:
- * in the 12px / 20px text of a table cell or a note.
+/*
+ * Translated mini-markup: `[[text|anchor/path]]` links, `**term**` marks key
+ * terms, an immediately following parenthesis is muted explanatory text, and
+ * newline-prefixed `- ` items form lists. Multiline input renders as blocks.
  */
 export function linked(node: ReactNode, small = false): ReactNode {
   if (typeof node !== "string") return node;
@@ -117,14 +89,12 @@ export function linked(node: ReactNode, small = false): ReactNode {
   return <div className={cn("flex flex-col", small ? "gap-1.5" : "gap-2")}>{blocks}</div>;
 }
 
-/** Whether a translated line is drawn as blocks (it has lines: list items, a lead-in, a closing line). */
 function hasLines(node: ReactNode): node is string {
   return typeof node === "string" && node.includes("\n");
 }
 
 const MARKUP = /\*\*(.+?)\*\*|\[\[([^\]|]+)(?:\|([^\]|]+))?\]\]/g;
 
-/** One line's key terms, their reasons and its cross-references. */
 function inline(line: string): ReactNode {
   if (!line.includes("**") && !line.includes("[[")) return withConcepts(line);
   const out: ReactNode[] = [];
@@ -150,9 +120,9 @@ function inline(line: string): ReactNode {
       }
     } else if (/^[a-z0-9-]+$/.test(m[3] ?? m[2]!)) {
       out.push(
-        <a key={m.index} href={`#${m[3] ?? m[2]}`} className="text-fg underline underline-offset-4 hover:no-underline">
+        <TextLink key={m.index} href={`#${m[3] ?? m[2]}`}>
           {m[2]}
-        </a>,
+        </TextLink>,
       );
     } else {
       out.push(
@@ -167,7 +137,6 @@ function inline(line: string): ReactNode {
   return out;
 }
 
-/** The parenthesis, `(…)` or `（…）`, that starts at `from` (after one space or none), up to the one that closes it. */
 function reason(line: string, from: number): { text: string; end: number; space: boolean } | null {
   const space = line[from] === " ";
   const start = space ? from + 1 : from;
@@ -183,7 +152,6 @@ function reason(line: string, from: number): { text: string; end: number; space:
   return null;
 }
 
-/** A line's list items: drawn like `List`, the square beside the first line of each. */
 function Items({ items, small }: { items: string[]; small: boolean }) {
   return (
     <ul className={cn("flex flex-col", small ? "gap-1" : "gap-2")}>
@@ -197,13 +165,11 @@ function Items({ items, small }: { items: string[]; small: boolean }) {
   );
 }
 
-/** A paragraph of a topic (a `<div>` when it holds a list). */
 function P({ children }: { children: ReactNode }) {
   const Block = hasLines(children) ? "div" : "p";
-  return <Block className={prose}>{linked(children)}</Block>;
+  return <Block className="max-w-[46em] text-base text-pretty text-muted cjk-wrap">{linked(children)}</Block>;
 }
 
-/** A topic's list: an ink square per item, as on the other public pages, in the topic's reading size. */
 function List({ items }: { items: ReactNode[] }) {
   return (
     <ul className="flex max-w-[46em] flex-col gap-2">
@@ -217,7 +183,7 @@ function List({ items }: { items: ReactNode[] }) {
   );
 }
 
-/** The code's own bytes, quoted, never translated (the formulas: `Formula`). */
+/** Protocol bytes are quoted verbatim and never translated. */
 function Spec({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-1 border-l border-border-strong py-0.5 pl-3 font-mono text-xs font-semibold leading-4 text-fg [overflow-wrap:anywhere]">{children}</div>;
 }
@@ -226,16 +192,10 @@ function Line({ children }: { children: ReactNode }) {
   return <code className="block">{children}</code>;
 }
 
-/** A small filled chip: what is still in testing, as the pricing page marks what it recommends. */
 function Chip({ children }: { children: ReactNode }) {
   return <span className={cn("inline-flex shrink-0 items-center bg-fg px-1.5 py-0.5 text-xs leading-4 font-semibold tracking-wider text-bg uppercase", cjkTracking)}>{children}</span>;
 }
 
-/**
- * One mechanism: its number and name on the left, what it does on the right;
- * `wide` puts the title above the content instead, for a topic whose content
- * is a two-column comparison (the overview's "what the Hub sees").
- */
 function Topic({ id, n, title, children, wide = false }: { id?: string; n: string; title: string; children: ReactNode; wide?: boolean }) {
   const anchor = id ?? `t${n.replace(".", "-")}`;
   if (wide) {
@@ -260,13 +220,12 @@ function Topic({ id, n, title, children, wide = false }: { id?: string; n: strin
   );
 }
 
-/** Two lists side by side (one above the other when narrow). */
 function Pair({ left, right }: { left: { title: string; items: string[] }; right: { title: string; items: string[] } }) {
   return (
     <div className="grid gap-6 md:grid-cols-2">
       {[left, right].map((side) => (
         <div key={side.title} className="flex min-w-0 flex-col gap-3">
-          <span className="text-base leading-6 font-semibold text-fg">{withConcepts(side.title)}</span>
+          <span className={SUBHEAD}>{withConcepts(side.title)}</span>
           <List items={side.items} />
         </div>
       ))}
@@ -274,19 +233,14 @@ function Pair({ left, right }: { left: { title: string; items: string[] }; right
   );
 }
 
-/**
- * The overview's two groups as the download page's definition list: a
- * full-width heading cell for each group, then its items in a ruled
- * two-column grid. The items alternate columns, so no column is left with a
- * long blank tail under a shorter list.
- */
+/** Alternate items across columns to balance uneven list lengths. */
 function Comparison({ left, right }: { left: { title: string; items: string[] }; right: { title: string; items: string[] } }) {
   return (
     <div className="grid border-t border-border md:grid-cols-2">
       {[left, right].map((side) => (
         <Fragment key={side.title}>
           <div className="border-b border-border px-6 py-3.5 md:col-span-2 max-md:px-4">
-            <span className="text-base leading-6 font-semibold text-fg">{withConcepts(side.title)}</span>
+            <span className={SUBHEAD}>{withConcepts(side.title)}</span>
           </div>
           {side.items.map((item, i) => {
             const alone = side.items.length % 2 === 1 && i === side.items.length - 1;
@@ -309,10 +263,7 @@ function Comparison({ left, right }: { left: { title: string; items: string[] };
   );
 }
 
-/**
- * A table that reads row by row: a grid from 1024px for the five-column key table, from 768px for the
- * three-column threat model (five columns need the width); each row's cells stack under its name below.
- */
+/** Five-column tables need more width; narrow layouts stack each row's cells. */
 function Table({ label, heads, rows }: { label: string; heads: string[]; rows: string[][] }) {
   const wide = heads.length >= 5;
   const grid = wide
@@ -323,7 +274,7 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
       <div role="row" className={cn("grid border-b border-border", wide ? "max-lg:hidden" : "max-md:hidden", grid)}>
         {heads.map((h, i) => (
           <span key={h} role="columnheader" className={cn("px-6 py-3", wide ? "max-lg:px-4" : "max-md:px-4", i > 0 && "border-l border-border")}>
-            <CapsLabel face="sans" className={cn("text-fg", cjkTracking, "text-xs font-semibold")}>{h}</CapsLabel>
+            <CapsLabel variant="section" className="text-fg">{h}</CapsLabel>
           </span>
         ))}
       </div>
@@ -356,12 +307,11 @@ function Table({ label, heads, rows }: { label: string; heads: string[]; rows: s
   );
 }
 
-/** A line for what the page leaves out on purpose, or what is not done. */
 function Note({ children }: { children: ReactNode }) {
   const Block = hasLines(children) ? "div" : "p";
   return (
     <div className="flex items-start gap-3 border-t border-border px-6 py-4 max-md:px-4">
-      <Info className="mt-0.5 size-4 shrink-0 text-muted" />
+      <InfoIcon className="mt-0.5 size-4 shrink-0 text-muted" />
       <Block className="max-w-[60em] text-base text-pretty text-muted cjk-wrap">{linked(children, true)}</Block>
     </div>
   );
@@ -370,15 +320,11 @@ function Note({ children }: { children: ReactNode }) {
 function Hero() {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-5 px-10 pt-16 pb-10 max-lg:pt-12 max-md:px-4 max-md:pt-10 max-md:pb-8">
-      <h1 className="max-w-[18em] text-5xl leading-display font-normal tracking-tight text-balance text-fg cjk-wrap md:cjk-keep max-md:text-3xl">
-        {titleWords(t("How Droppen's end-to-end encryption works."))}
-      </h1>
-      <p className="max-w-[44em] text-base leading-6 text-pretty text-muted cjk-wrap">
-        {t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
-      </p>
-      <p className="text-xs text-faint">{t("Last updated {{date}}", { date: SECURITY_UPDATED })}</p>
-    </div>
+    <DocumentHead
+      title={titleWords(t("How Droppen's end-to-end encryption works."))}
+      lead={t("A technical description for anyone who wants to verify our claims: who holds which key, how your devices agree on which devices belong to your account, what our servers can and cannot see, and what each of them could still do if it were malicious or compelled. It describes what Droppen does today; the parts that are not live yet, or still in testing, are marked as such.")}
+      note={t("Last updated {{date}}", { date: SECURITY_UPDATED })}
+    />
   );
 }
 
@@ -427,11 +373,11 @@ function Definitions() {
     >
       {/* Below lg the terms sit in each card; from lg they are the rail beside the two descriptions. */}
       <div className="border-b border-border px-6 py-3.5 lg:hidden max-md:px-4">
-        <span className="text-base leading-6 font-semibold text-fg">{t("Terms")}</span>
+        <span className={SUBHEAD}>{t("Terms")}</span>
       </div>
       <div className="hidden lg:contents">
         <div className="lg:col-start-1 lg:row-start-1 lg:border-r lg:border-b lg:border-border lg:py-3.5 lg:pr-6 lg:pl-[2.375rem]">
-          <span className="text-base leading-6 font-semibold text-fg">{t("Terms")}</span>
+          <span className={SUBHEAD}>{t("Terms")}</span>
         </div>
         {terms.map((label, i) => (
           <div key={label} className={cn("lg:col-start-1 lg:border-r lg:border-b lg:border-border lg:py-4 lg:pr-6 lg:pl-[2.375rem]", rowAt[i]!)}>
@@ -450,7 +396,7 @@ function Definitions() {
         >
           <dfn
             className={cn(
-              "text-base leading-6 font-semibold text-fg not-italic lg:row-start-1 lg:border-b lg:border-border lg:px-6 lg:py-3.5",
+              cn(SUBHEAD, "not-italic lg:row-start-1 lg:border-b lg:border-border lg:px-6 lg:py-3.5"),
               colAt[i]!,
               i === 0 && "lg:border-r",
             )}
@@ -482,7 +428,12 @@ function Definitions() {
 
 type TocEntry = { id: (typeof SECURITY_SECTIONS)[number]; title: string; line: string; chip?: string };
 
-/** The eight sections, with the words the page already translates for its contents. */
+function sectionLabel(t: TFunction, id: TocId): string {
+  const at = SECURITY_SECTIONS.indexOf(id) + 1;
+  const { title } = tocEntries(t).find((entry) => entry.id === id)!;
+  return `${String(at).padStart(2, "0")} · ${title}`;
+}
+
 function tocEntries(t: TFunction): TocEntry[] {
   return [
     { id: "overview", title: t("Overview"), line: t("What Droppen Hub and the relays see, and what they never see.") },
@@ -496,62 +447,67 @@ function tocEntries(t: TFunction): TocEntry[] {
   ];
 }
 
-/**
- * Which section the reader is in, and how far down the page they are. The page
- * scrolls in its own container (`data-testid="security"`), not the window; the
- * bar below xl takes a second line under the header.
+type TocId = TocEntry["id"];
+
+/*
+ * Track the custom scroll container once and share it between both mounted TOC
+ * views; otherwise the hidden view also subscribes to scroll updates.
  */
 function useReadingPosition(scroller: RefObject<HTMLDivElement | null>) {
-  const [active, setActive] = useState<(typeof SECURITY_SECTIONS)[number]>("overview");
+  const [active, setActive] = useState<TocId>("overview");
   const [progress, setProgress] = useState(0);
-  useEffect(() => {
+  const sections = useRef<{ id: TocId; at: HTMLElement }[]>([]);
+  const frame = useRef(0);
+
+  const update = useCallback(() => {
     const root = scroller.current;
     if (!root) return;
-    const sections = SECURITY_SECTIONS.map((id) => document.getElementById(id)).filter((e): e is HTMLElement => e !== null);
-    let frame = 0;
-    const update = () => {
-      frame = 0;
-      const header = document.querySelector("header");
-      const bar = document.querySelector<HTMLElement>("[data-security-toc-bar]");
-      const line = root.scrollTop + (header?.getBoundingClientRect().height ?? 56) + (bar?.offsetHeight ?? 0) + 16;
-      let next: (typeof SECURITY_SECTIONS)[number] = "overview";
-      for (const section of sections) {
-        const top = section.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
-        if (top <= line) {
-          const id = SECURITY_SECTIONS.find((candidate) => candidate === section.id);
-          if (id) next = id;
-        }
-      }
-      setActive((prev) => (prev === next ? prev : next));
-      const max = root.scrollHeight - root.clientHeight;
-      setProgress(max > 0 ? Math.min(1, Math.max(0, root.scrollTop / max)) : 0);
-    };
-    const onScroll = () => {
-      if (!frame) frame = requestAnimationFrame(update);
-    };
-    update();
-    root.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      if (frame) cancelAnimationFrame(frame);
-      root.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-    };
+    const header = document.querySelector("header");
+    const bar = document.querySelector<HTMLElement>("[data-security-toc-bar]");
+    const line = root.scrollTop + (header?.getBoundingClientRect().height ?? 56) + (bar?.offsetHeight ?? 0) + 16;
+    let next: TocId = "overview";
+    for (const { id, at } of sections.current) {
+      const top = at.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+      if (top <= line) next = id;
+    }
+    setActive((prev) => (prev === next ? prev : next));
+    const max = root.scrollHeight - root.clientHeight;
+    setProgress(max > 0 ? Math.min(1, Math.max(0, root.scrollTop / max)) : 0);
   }, [scroller]);
+
+  const onScroll = useCallback(() => {
+    if (frame.current) return;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      update();
+    });
+  }, [update]);
+
+  useEffect(() => {
+    sections.current = SECURITY_SECTIONS.map((id) => ({ id, at: document.getElementById(id) })).filter(
+      (section): section is { id: TocId; at: HTMLElement } => section.at !== null,
+    );
+    update();
+    return () => cancelAnimationFrame(frame.current);
+  }, [update]);
+
+  // The container scrolls; a resize is the xl bar appearing under the header. (React 19 types a
+  // ref's `current` as nullable, usehooks-ts types the element itself; the page owns the ref.)
+  useEventListener("scroll", onScroll, scroller as RefObject<HTMLDivElement>, PASSIVE);
+  useEventListener("resize", onScroll);
+
   return { active, progress };
 }
 
-/** The desktop chapter rail: sticky under the header, with the section the reader is in and a hairline progress. */
-function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
+function TocSidebar({ active, progress }: { active: TocId; progress: number }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
-  const { active, progress } = useReadingPosition(scroller);
   const percent = Math.round(progress * 100);
   return (
     <aside className="hidden border-r border-border xl:block">
       <div className="sticky top-14 max-h-[calc(100dvh-3.5rem)] overflow-y-auto px-6 pt-10 pb-8">
         <div className="flex items-center justify-between gap-2">
-          <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>
+          <CapsLabel variant="section">
             {t("On this page")}
           </CapsLabel>
           <span className="font-mono text-xs leading-4 tabular-nums text-faint">{String(percent).padStart(2, "0")}%</span>
@@ -586,10 +542,6 @@ function TocSidebar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }
   );
 }
 
-const TOC_SHEET =
-  "fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] overflow-y-auto border-t border-border-strong bg-bg outline-none md:right-auto md:left-1/2 md:w-[min(32rem,calc(100vw-2rem))] md:-translate-x-1/2 md:border-x";
-
-/** The phone/tablet chapter sheet: the same eight entries, with their one-line descriptions. */
 function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS)[number]; open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
@@ -603,95 +555,90 @@ function TocSheet({ active, open, onClose }: { active: (typeof SECURITY_SECTIONS
     return () => cancelAnimationFrame(frame);
   }, [open]);
   return (
-    <BaseDialog.Portal>
-      <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-black/20 dark:bg-black/60" />
-      <BaseDialog.Popup
-        className={TOC_SHEET}
-        finalFocus={() => {
-          const id = destinationRef.current;
-          destinationRef.current = null;
-          if (!id) return true;
-          const destination = document.getElementById(id);
-          if (!destination) return true;
-          // A chosen chapter is the reader's destination; do not undo its anchor
-          // scroll by returning focus to the trigger at the top of the page.
-          destination.tabIndex = -1;
-          destination.focus({ preventScroll: true });
-          return false;
-        }}
-      >
-        <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
-          <BaseDialog.Title className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</BaseDialog.Title>
-          <BaseDialog.Close aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
-            <X className="size-3.5" />
-          </BaseDialog.Close>
-        </div>
-        <nav aria-label={t("On this page")} data-testid="security-contents-sheet">
-          <ol className="divide-y divide-border">
-            {entries.map((e, i) => (
-              <li key={e.id}>
-                <a
-                  href={`#${e.id}`}
-                  onClick={() => {
-                    destinationRef.current = e.id;
-                    onClose();
-                  }}
-                  ref={active === e.id ? activeRef : undefined}
-                  aria-current={active === e.id ? "location" : undefined}
-                  className={cn(
-                    "flex gap-3 border-l-2 py-3 pr-4 pl-3 transition-colors",
-                    active === e.id ? "border-fg bg-raised" : "border-transparent hover:bg-hover",
-                  )}
-                >
-                  <span className="w-5 shrink-0 text-base leading-6 font-semibold tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-nowrap items-center gap-2 text-base leading-6 font-medium text-fg">
-                      <span className="min-w-0">{e.title}</span>
-                      {e.chip && <Chip>{e.chip}</Chip>}
-                    </span>
-                    <span className="mt-0.5 block text-xs leading-5 text-muted">{e.line}</span>
+    <SheetContent
+      showCloseButton={false}
+      className="fixed inset-x-0 bottom-0 z-50 max-h-[80dvh] gap-0 overflow-y-auto border-t border-border-strong bg-bg outline-none md:mx-auto md:w-[min(32rem,calc(100vw-2rem))] md:border-x"
+      finalFocus={() => {
+        const id = destinationRef.current;
+        destinationRef.current = null;
+        if (!id) return true;
+        const destination = document.getElementById(id);
+        if (!destination) return true;
+        // A chosen chapter is the reader's destination; do not undo its anchor
+        // scroll by returning focus to the trigger at the top of the page.
+        destination.tabIndex = -1;
+        destination.focus({ preventScroll: true });
+        return false;
+      }}
+    >
+      <div className="sticky top-0 z-10 flex h-9 items-center justify-between gap-2 border-b border-border bg-bg px-4">
+        <SheetTitle className="min-w-0 py-1.5 text-sm leading-5 font-semibold text-fg">{t("On this page")}</SheetTitle>
+        <SheetClose aria-label={t("close")} className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg pointer-coarse:size-9">
+          <XIcon className="size-3.5" />
+        </SheetClose>
+      </div>
+      <nav aria-label={t("On this page")} data-testid="security-contents-sheet">
+        <ol className="divide-y divide-border">
+          {entries.map((e, i) => (
+            <li key={e.id}>
+              <a
+                href={`#${e.id}`}
+                onClick={() => {
+                  destinationRef.current = e.id;
+                  onClose();
+                }}
+                ref={active === e.id ? activeRef : undefined}
+                aria-current={active === e.id ? "location" : undefined}
+                className={cn(
+                  "flex gap-3 border-l-2 py-3 pr-4 pl-3 transition-colors",
+                  active === e.id ? "border-fg bg-raised" : "border-transparent hover:bg-hover",
+                )}
+              >
+                <span className="w-5 shrink-0 text-base leading-6 font-semibold tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-nowrap items-center gap-2 text-base leading-6 font-medium text-fg">
+                    <span className="min-w-0">{e.title}</span>
+                    {e.chip && <Chip>{e.chip}</Chip>}
                   </span>
-                </a>
-              </li>
-            ))}
-          </ol>
-        </nav>
-      </BaseDialog.Popup>
-    </BaseDialog.Portal>
+                  <span className="mt-0.5 block text-xs leading-5 text-muted">{e.line}</span>
+                </span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </nav>
+    </SheetContent>
   );
 }
 
-/** Below xl: a 44px bar under the header that opens the chapter sheet. */
-function TocBar({ scroller }: { scroller: RefObject<HTMLDivElement | null> }) {
+function TocBar({ active }: { active: TocId }) {
   const { t } = useTranslation();
   const entries = tocEntries(t);
-  const { active } = useReadingPosition(scroller);
   const [open, setOpen] = useState(false);
   const current = entries.find((e) => e.id === active) ?? entries[0]!;
   const index = entries.findIndex((e) => e.id === current.id);
   return (
     <div data-security-toc-bar className="sticky top-14 z-40 border-b border-border bg-bg xl:hidden">
-      <BaseDialog.Root open={open} onOpenChange={setOpen}>
-        <BaseDialog.Trigger
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger
           data-testid="security-toc-trigger"
           className="flex h-11 w-full items-center gap-3 bg-bg px-4 text-left transition-colors hover:bg-hover data-[popup-open]:bg-hover md:px-6"
         >
-          <CapsLabel face="sans" className={cn(cjkTracking, "shrink-0 text-xs font-semibold")}>
+          <CapsLabel variant="section" className="shrink-0">
             {t("On this page")}
           </CapsLabel>
           <span className="flex min-w-0 flex-1 items-center gap-2 text-base text-fg">
             <span className="text-base font-semibold tabular-nums text-faint">{String(index + 1).padStart(2, "0")}</span>
             <span className="truncate">{current.title}</span>
           </span>
-          <ChevronDown className="size-4 shrink-0 text-muted" />
-        </BaseDialog.Trigger>
+          <CaretDownIcon className="size-4 shrink-0 text-muted" />
+        </SheetTrigger>
         <TocSheet active={active} open={open} onClose={() => setOpen(false)} />
-      </BaseDialog.Root>
+      </Sheet>
     </div>
   );
 }
 
-/** Who holds what, and where the ciphertext goes: from 768px a figure; below it, the same four boxes in a column. */
 function Overview() {
   const { t } = useTranslation();
   const devices = { title: t("Your browsers and phones"), lines: [t("device key · user key"), t("encrypt and decrypt here")] };
@@ -724,7 +671,7 @@ function Overview() {
         <text x={520} y={26} textAnchor="middle" className="fill-fg text-sm">
           {e2e}
         </text>
-        {/* The channel: ink, 2px, through the relay. */}
+        {/* the channel */}
         <path d="M256 92H404M636 92H784" className="stroke-fg" strokeWidth={2} fill="none" />
         <text x={330} y={84} textAnchor="middle" className="fill-muted text-sm">
           {wire}
@@ -732,7 +679,7 @@ function Overview() {
         <text x={710} y={84} textAnchor="middle" className="fill-muted text-sm">
           {wire}
         </text>
-        {/* The copy: dashed, 1.5px, an L each way. */}
+        {/* the copy */}
         <path d="M900 136V242.75H660M380 242.75H140V136" className="stroke-fg" strokeWidth={1.5} strokeDasharray="5 4" fill="none" />
         <text x={780} y={232} textAnchor="middle" className="fill-muted text-sm">
           {sealed}
@@ -779,7 +726,7 @@ function OverviewSection() {
     <Section id="overview" seam={false} rule={false} className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`01 · ${t("Overview")}`}
+          label={sectionLabel(t, "overview")}
           title={withConcepts(t("Your devices hold the keys. Our servers carry ciphertext."))}
           lead={withConcepts(t("Droppen runs Claude Code and Codex on your devices that run AI (in the protocol, hosts), and your browsers and phones control them over channels encrypted end to end. Droppen Hub, at droppen.app, keeps your account, the device chain and the encrypted copies; whoever runs it also deploys the web app at my.droppen.app. Droppen relays pass a channel's ciphertext on; Droppen Hub carries no channel (Hub). Neither holds a key that can decrypt anything. Droppen Hub is not open source: lines that rest on its own behaviour or policy are marked (Hub)."))}
         />
@@ -821,7 +768,6 @@ function OverviewSection() {
   );
 }
 
-/** The chain as it starts for a new account and as a removal continues it: each entry names the one before by its hash. */
 function ChainFigure() {
   const { t } = useTranslation();
   const entries = [
@@ -863,7 +809,7 @@ function ChainSection() {
     <Section id="chain" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`02 · ${t("The device chain")}`}
+          label={sectionLabel(t, "chain")}
           title={withConcepts(t("One signed list decides who is in your account."))}
           lead={withConcepts(t("The device chain is an append-only, hash-linked log of the account's devices and their public keys. Each entry is signed; every device, and every device that runs AI, checks the whole chain for itself, with the same rules implemented twice, in Rust and in TypeScript. Droppen Hub stores the chain and passes it on, but cannot add to it."))}
         />
@@ -925,7 +871,7 @@ function KeysSection() {
     <Section id="keys" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`03 · ${t("Keys")}`}
+          label={sectionLabel(t, "keys")}
           title={withConcepts(t("Every key, where it lives, and what it opens."))}
           lead={withConcepts(t("No server holds a key that can decrypt anything, and nothing is held in escrow: if you lose every browser and phone and have no recovery words, the copies on Droppen Hub can never be read again, not even by us; only what is still on your devices that run AI remains."))}
         />
@@ -976,7 +922,7 @@ function ChannelsSection() {
     <Section id="channels" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`04 · ${t("Channels and relays")}`}
+          label={sectionLabel(t, "channels")}
           title={withConcepts(t("Every channel is end to end, whichever path it takes."))}
           lead={withConcepts(t("Your device and a device that runs AI talk over one Noise channel. A Droppen relay only forwards its frames, and Droppen Hub carries no channel (Hub); when the two ends can reach each other, the same channel can also take a direct path."))}
         />
@@ -1009,7 +955,7 @@ function OfflineSection() {
     <Section id="offline" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`05 · ${t("Offline copies")}`}
+          label={sectionLabel(t, "offline")}
           title={withConcepts(t("History that you, and only you, can read while the device that runs AI is offline."))}
           lead={withConcepts(t("A device that runs AI writes its session list, its status and its sessions as encrypted, append-only streams that Droppen Hub stores and cannot read. Your devices read them back and accept a record only once a head signed by the device that runs AI covers it: each record is authenticated under the stream key and linked to the one before, and the signed head gives the newest link value."))}
         />
@@ -1039,7 +985,7 @@ function RenewalSection() {
     <Section id="renewal" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`06 · ${t("Identity renewal")}`}
+          label={sectionLabel(t, "renewal")}
           title={withConcepts(t("Renewing the identity key of a device that runs AI."))}
           lead={
             <span className="flex flex-col items-start gap-3">
@@ -1162,7 +1108,7 @@ function ThreatsSection() {
     <Section id="threats" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`07 · ${t("Threat model")}`}
+          label={sectionLabel(t, "threats")}
           title={withConcepts(t("Who could attack, and what each of them can do."))}
           lead={withConcepts(t("The design assumes Droppen Hub may be malicious, or compelled. Here is what each position can and cannot do, as the protocol stands today."))}
         />
@@ -1198,9 +1144,7 @@ function ThreatsSection() {
 function VerifySection() {
   const { t } = useTranslation();
   const mail = (
-    <a href={`mailto:${SECURITY_EMAIL}`} data-testid="security-email" className="text-fg underline underline-offset-4 hover:no-underline">
-      {SECURITY_EMAIL}
-    </a>
+    <MailLink email={SECURITY_EMAIL} testId="security-email" />
   );
   const choices = [
     [t("Signatures"), t("Ed25519, verified strictly, always behind a fixed label")],
@@ -1215,7 +1159,7 @@ function VerifySection() {
     <Section id="verify" seam="right" className={sectionScroll}>
       <MentionScope>
         <Head
-          label={`08 · ${t("Verify it yourself")}`}
+          label={sectionLabel(t, "verify")}
           title={withConcepts(t("Don't take our word for it."))}
           lead={withConcepts(t("Statements about the protocol, the apps and the local program come from this repository's code and design notes; Droppen Hub is not open source, and lines that rest on its own behaviour or policy, or on test results on droppen.app, are marked (Hub). Here is where to look."))}
         />
@@ -1223,7 +1167,7 @@ function VerifySection() {
           <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-6 gap-y-2">
             {choices.map(([name, value]) => (
               <div key={name} className="contents">
-                <dt className="text-base leading-6 font-semibold text-fg">{name}</dt>
+                <dt className={SUBHEAD}>{name}</dt>
                 <dd className="text-sm leading-6 text-muted [overflow-wrap:anywhere]">{value}</dd>
               </div>
             ))}
@@ -1262,81 +1206,34 @@ function VerifySection() {
   );
 }
 
-function useDocumentMeta() {
-  const { t, i18n: active } = useTranslation();
-  useEffect(() => {
-    const before = document.title;
-    document.title = t("How Droppen's encryption works — Droppen");
-    document.documentElement.lang = active.language;
-    const meta = document.querySelector('meta[name="description"]');
-    const description = meta?.getAttribute("content") ?? null;
-    meta?.setAttribute("content", t("The keys, the signed device chain, the channels, the offline copies and the threat model of Droppen's end-to-end encryption, and how to check them."));
-    return () => {
-      document.title = before;
-      if (meta && description !== null) meta.setAttribute("content", description);
-    };
-  }, [t, active.language]);
-}
-
-/** droppen.app/security, signed in or not. */
 export default function SecurityPage({ signedIn = false }: { signedIn?: boolean }) {
-  useDocumentMeta();
+  const { t } = useTranslation();
+  usePageMeta(
+    t("How Droppen's encryption works — Droppen"),
+    t("The keys, the signed device chain, the channels, the offline copies and the threat model of Droppen's end-to-end encryption, and how to check them."),
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Arrived at a part of the page (`/security#renewal`): the page was not there to scroll to yet.
-  // Fonts swap in after that first scroll, so ask again once they have settled.
-  useEffect(() => {
-    const id = window.location.hash.slice(1);
-    if (!id) return;
-    let live = true;
-    const interactions = ["hashchange", "pointerdown", "wheel", "touchstart", "keydown"] as const;
-    const unsubscribe = () => {
-      for (const type of interactions) window.removeEventListener(type, cancel);
-    };
-    const cancel = () => {
-      live = false;
-      unsubscribe();
-    };
-    const to = () => {
-      if (live && window.location.hash.slice(1) === id) document.getElementById(id)?.scrollIntoView();
-    };
-    const frame = requestAnimationFrame(to);
-    for (const type of interactions) window.addEventListener(type, cancel, { passive: true });
-    void document.fonts?.ready.then(() => {
-      if (live) to();
-      unsubscribe();
-    });
-    return () => {
-      live = false;
-      unsubscribe();
-      cancelAnimationFrame(frame);
-    };
-  }, []);
+  const { active, progress } = useReadingPosition(scrollRef);
   return (
-    <div ref={scrollRef} data-testid="security" className="h-full w-full overflow-y-auto bg-bg text-base [scrollbar-gutter:stable]">
-      <PublicHeader signedIn={signedIn} />
-      <div className="md:px-8">
-        <main className="mx-auto max-w-[1360px] md:border-x md:border-border">
-          <TocBar scroller={scrollRef} />
-          <FormulaProvider>
-            <Hero />
-            <Definitions />
-            <Section className="xl:grid xl:grid-cols-[20rem_minmax(0,1fr)]">
-              <TocSidebar scroller={scrollRef} />
-              <div className="min-w-0">
-                <OverviewSection />
-                <ChainSection />
-                <KeysSection />
-                <ChannelsSection />
-                <OfflineSection />
-                <RenewalSection />
-                <ThreatsSection />
-                <VerifySection />
-              </div>
-            </Section>
-          </FormulaProvider>
-          <FooterLine />
-        </main>
-      </div>
-    </div>
+    <PublicLayout testId="security" signedIn={signedIn} scrollerRef={scrollRef}>
+      <TocBar active={active} />
+      <FormulaProvider>
+        <Hero />
+        <Definitions />
+        <Section className="xl:grid xl:grid-cols-[20rem_minmax(0,1fr)]">
+          <TocSidebar active={active} progress={progress} />
+          <div className="min-w-0">
+            <OverviewSection />
+            <ChainSection />
+            <KeysSection />
+            <ChannelsSection />
+            <OfflineSection />
+            <RenewalSection />
+            <ThreatsSection />
+            <VerifySection />
+          </div>
+        </Section>
+      </FormulaProvider>
+    </PublicLayout>
   );
 }

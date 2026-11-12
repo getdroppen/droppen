@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Loader2 } from "lucide-react";
+import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { Centered, Note, Panel, primary, quiet } from "@/features/cloud/ui";
+import { hostOf } from "@/lib/move/env";
 import { type MoveOutcome, type MovePageProps, type PullSender, type ReceiverView, type SenderView, servePullSender, servePushReceiver } from "@/lib/move";
 
 /*
@@ -16,14 +17,6 @@ import { type MoveOutcome, type MovePageProps, type PullSender, type ReceiverVie
  */
 
 type T = (key: string, vars?: Record<string, unknown>) => string;
-
-const hostOf = (origin: string) => {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return origin;
-  }
-};
 
 /** How a move ended, as the person reads it. */
 export function outcomeText(t: T, outcome: MoveOutcome, hosts: { app: string; legacy: string }): string {
@@ -65,13 +58,13 @@ export function ReceiverPanel({ view, hosts }: { view: ReceiverView; hosts: { ap
           <p className="text-xs leading-5 text-fg">{t("Nothing to do here. To move this browser's device from {{legacy}}, open {{legacy}} and choose Move this browser.", hosts)}</p>
         ) : view.step === "waiting" || view.step === "verifying" ? (
           <p className="flex items-center gap-2 text-xs text-faint">
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
             {view.step === "waiting" ? t("waiting for {{legacy}}…", hosts) : t("signing in with the moved keys…")}
           </p>
         ) : view.step === "moved" ? (
           <Note tone="ok">
             <p data-signal="ok" className="flex items-center gap-2 text-xs text-ok">
-              <Check className="size-3" />
+              <CheckIcon className="size-3" />
               {t("This browser is now at {{app}}.", hosts)}
             </p>
             {view.wiped && <p className="text-xs leading-5 text-fg">{t("This window closes by itself.")}</p>}
@@ -124,7 +117,7 @@ export function SenderPanel({ view, hosts, onConfirm, onCancel }: { view: Sender
           </Note>
         ) : (
           <p className="flex items-center gap-2 text-xs text-faint">
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
             {view.step === "waiting" ? t("waiting for {{app}}…", hosts) : view.step === "wiping" ? t("removing the copy here…") : t("{{app}} is signing in with the keys…", hosts)}
           </p>
         )}

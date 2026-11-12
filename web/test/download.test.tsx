@@ -1,12 +1,4 @@
-// droppen.app/download (`features/landing/download.tsx`).
-//
-// What these pin: the hero has one action, the Mac App, with the other
-// platforms behind its `▾`; the server section opens on the detected (or
-// `?os=`) platform and keeps its three steps behind one tab; a browser installs
-// nothing; update, uninstall and verification are folded after both; a file
-// link is the release's own (or the release page), never an invented one; the
-// page reads in zh-CN, en, zh-TW and ja with every key translated; `/download`
-// is public signed in or not, and the landing page links it from its footer.
+// Download-page rendering, platform selection, maintenance, routing, and translations.
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -15,12 +7,10 @@ import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { landingBundles } from "../src/features/landing/copy.js";
 import { downloadJa, downloadZhCN, downloadZhTW } from "../src/features/landing/download-copy.js";
-import { detectKind, type EnvironmentHints, initialOs, osForKind } from "../src/features/landing/detect.js";
+import { detectKind, type EnvironmentHints, osForKind } from "../src/features/landing/detect.js";
 import DownloadPage from "../src/features/landing/download.js";
 import { parseLatestRelease, type LatestRelease } from "../src/lib/hub/releases.js";
 import {
-  APP_AVAILABLE,
-  APP_SIGN_IN_AVAILABLE,
   type Availability,
   AVAILABILITY,
   ATTESTATION_COMMAND,
@@ -30,7 +20,6 @@ import {
   downloadHref,
   type DownloadOs,
   INSTALL_COMMAND,
-  LINUX_AVAILABLE,
   LINGER_COMMAND,
   osOfSearch,
   RELEASES_URL,
@@ -196,11 +185,7 @@ test("detection, over real user agents: the device's kind, and the state it open
   }
 });
 
-test("the state: the address wins, then the session's choice, then the detected one", () => {
-  assert.equal(initialOs({ search: "?os=linux", remembered: "windows", detected: "macos-app" }), "linux");
-  assert.equal(initialOs({ search: "", remembered: "windows", detected: "macos-app" }), "windows");
-  assert.equal(initialOs({ search: "?os=nope", remembered: null, detected: "mobile" }), "mobile");
-  assert.equal(initialOs({ search: "", remembered: null, detected: null }), "macos-app", "the Mac by default");
+test("the address names a valid platform", () => {
   for (const os of DOWNLOAD_OSES) {
     assert.equal(osOfSearch(downloadHref(os).replace("/download", "")), os, "the address names it, and reads back");
   }
@@ -227,13 +212,19 @@ test("the page opens on the address's platform, else the detected one", () => {
 
 test("the Mac App: one download and its requirements; the other platforms are behind the arrow", () => {
   const html = draw("en", { release: RELEASE });
-  assert.match(html, new RegExp(`<a href="${DL}Droppen-0\\.2\\.129\\.dmg" data-variant="primary" data-testid="app-download"`));
+  const download = tag(html, "app-download");
+  assert.match(download, new RegExp(`href="${DL}Droppen-0\\.2\\.129\\.dmg"`));
+  assert.match(download, /data-variant="primary"/);
   assert.match(html, /data-testid="app-file-facts"[^>]*>v0\.2\.129 · 48 MB/);
   assert.ok(text(html).includes("macOS 13 or later · Apple silicon and Intel"));
   assert.match(block(html, "app-download", "</a>"), /<svg/, "the Apple mark leads the button");
   // Without an answer: the release page, in a new tab, and no invented version.
   const asking = draw("en");
-  assert.match(asking, new RegExp(`<a href="${RELEASES_URL}" target="_blank" rel="noopener noreferrer" data-variant="primary" data-testid="app-download"`));
+  const fallback = tag(asking, "app-download");
+  assert.match(fallback, new RegExp(`href="${RELEASES_URL}"`));
+  assert.match(fallback, /target="_blank"/);
+  assert.match(fallback, /rel="noopener noreferrer"/);
+  assert.match(fallback, /data-variant="primary"/);
   assert.doesNotMatch(asking, /data-testid="app-file-facts"/);
   // No App yet: the command is the way in, and it is the one action.
   const noApp = draw("zh-CN", { availability: { app: false, appSignIn: false, linux: true } });
@@ -322,11 +313,15 @@ test("the browser: nothing to install, approved by a device already in the accou
 
 test("maintenance is folded after both paths, and the old anchors open the part they name", () => {
   const html = draw("en", { release: RELEASE });
+  const manage = html.slice(html.indexOf('id="manage"'));
   for (const id of ["update", "uninstall", "verify"]) {
-    const details = html.match(new RegExp(`<details[^>]*id="${id}"[^>]*>`))![0];
-    assert.ok(details.includes("scroll-mt-14"), `#${id} clears the 56px header`);
-    assert.ok(!/\sopen(=|"|\s|>)/.test(details), `#${id} is folded`);
+    const item = tag(manage, `manage-${id}`);
+    assert.ok(item, `#${id} is an item`);
+    assert.ok(item.includes(`id="${id}"`), `#${id} keeps its anchor`);
+    assert.ok(item.includes("scroll-mt-14"), `#${id} clears the 56px header`);
   }
+  assert.equal((manage.match(/aria-expanded="false"/g) ?? []).length, 3, "all three folded");
+  assert.doesNotMatch(manage, /aria-expanded="true"/);
   assert.match(html, /data-testid="update-command"[^>]*>[^<]*.*curl -fsSL https:\/\/droppen\.app\/install\.sh \| sh/s);
   const steps = block(html, "uninstall-steps", "</ol>");
   assert.equal((steps.match(/<li/g) ?? []).length, 3);
@@ -338,13 +333,6 @@ test("maintenance is folded after both paths, and the old anchors open the part 
   assert.match(html, /<a href="\/security"[^>]*data-testid="download-security"/);
   assert.match(html, /data-testid="verify-download-link"/);
   assert.ok(html.indexOf('data-testid="phone-steps"') < html.indexOf('id="manage"'));
-});
-
-test("the switches degrade honestly: no App is the command, no Linux is a line — never a link to a file that is not there", () => {
-  assert.equal(APP_AVAILABLE, true, "the signed and notarised App ships from v0.2.123");
-  assert.equal(LINUX_AVAILABLE, true, "Linux tarballs and DROPPEN_CODE ship from v0.2.121");
-  assert.equal(APP_SIGN_IN_AVAILABLE, true);
-  assert.equal(AVAILABILITY.appSignIn, APP_SIGN_IN_AVAILABLE, "the page reads the switch");
 });
 
 test("it reads in zh-CN, zh-TW and ja, with nothing left in English", () => {
@@ -363,15 +351,14 @@ test("every key the download page uses is translated in all three tables, with t
   const source = readFileSync(new URL("../src/features/landing/download.tsx", import.meta.url), "utf8");
   const used = new Set<string>();
   for (const match of source.matchAll(/(?<![A-Za-z0-9_$.])t\("([^"]+)"/g)) used.add(match[1]!);
-  // Passed through `t(label)` by the server tabs, so the scanner cannot see them.
-  for (const label of ["macOS", "Linux", "Windows / WSL"]) used.add(label);
   assert.ok(used.size > 60, "the page's strings are found");
   const placeholders = (value: string) => [...value.matchAll(/\{\{\w+\}\}/g)].map((m) => m[0]).sort().join(",");
   for (const key of used) {
-    assert.ok(downloadZhCN[key], `zh-CN has ${JSON.stringify(key)}`);
-    for (const [lng, table] of [["zh-TW", downloadZhTW], ["ja", downloadJa]] as const) {
-      assert.ok(table[key], `${lng} has ${JSON.stringify(key)}`);
-      assert.equal(placeholders(table[key]!), placeholders(key), `${lng}: ${JSON.stringify(key)} keeps its placeholders`);
+    assert.ok(landingBundles["zh-CN"][key], `zh-CN has ${JSON.stringify(key)}`);
+    for (const lng of ["zh-TW", "ja"] as const) {
+      const value = landingBundles[lng][key];
+      assert.ok(value, `${lng} has ${JSON.stringify(key)}`);
+      assert.equal(placeholders(value), placeholders(key), `${lng}: ${JSON.stringify(key)} keeps its placeholders`);
     }
   }
 });

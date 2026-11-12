@@ -16,12 +16,14 @@ import test from "node:test";
 import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AddComputer, codeDeadline, CodeRoundView, codeTimeLeft, ENROLL_CODE_MS, formatCountdown, NewDeviceReady } from "../src/features/cloud/add-computer.js";
+import { AddComputer, codeDeadline, CodeRoundView, codeTimeLeft, ENROLL_CODE_MS, NewDeviceReady } from "../src/features/cloud/add-computer.js";
+import { formatCountdown } from "../src/lib/format.js";
 import { setHubShell } from "../src/features/machines/shells.js";
 import { addAsked, dismissHint, hintDismissed, openAddDevice, partnerFor, watchNewHost } from "../src/features/cloud/onboarding.js";
 import { AddDeviceHint, SideBySideTip } from "../src/features/cloud/onboarding-hints.js";
 import { makeSideBySide, paneFor, type ScreenMaker, SideBySideError, sideBySideLayout, whenLive, whenReady } from "../src/features/cloud/side-by-side.js";
-import { APP_DOWNLOAD_URL, DOWNLOAD_PATH, INSTALL_COMMAND, otherHub, RELEASES_URL, UNINSTALL_COMMAND } from "../src/features/landing/get-droppen.js";
+import { INSTALL_COMMAND, otherHub, RELEASES_URL, UNINSTALL_COMMAND } from "../src/features/landing/get-droppen.js";
+import { DOWNLOAD_PATH } from "../src/features/landing/route.js";
 import { LinkFirstRun } from "../src/features/link/first-run.js";
 import { cloudKey } from "../src/features/link/link-flow.js";
 import { LOCAL } from "../src/lib/machines/key.js";
@@ -177,7 +179,7 @@ test("the guide once the App is out and signs itself in — as every published A
   try {
     const html = draw(<AddComputer account={account(["m-1"]) as never} link={link as never} origin="wss://droppen.app" onDone={() => undefined} availability={{ app: true, appSignIn: true, linux: false }} />, "zh-CN");
     const words = text(html);
-    assert.match(html, new RegExp(`<a href="${APP_DOWNLOAD_URL.replace(/[.?]/g, "\\$&")}"[^>]*data-testid="add-app-download"`));
+    assert.match(html, new RegExp(`<a href="${RELEASES_URL.replace(/[.?]/g, "\\$&")}"[^>]*data-testid="add-app-download"`));
     assert.match(html, /<a href="\/download\?os=macos-app"[^>]*data-testid="add-download-link"/);
     for (const line of ["01 · 在那台设备上安装 Droppen App", "下载 Droppen App（macOS）", "02 · 在 App 里点「登录 Droppen」", "不需要登录页", "服务器或后台运行？", "显示一次性注册码"]) assert.ok(words.includes(line), `missing: ${line}`);
     assert.doesNotMatch(html, /data-testid="install-command"/, "the command is the server way's, behind its link");

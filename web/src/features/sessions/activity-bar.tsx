@@ -2,7 +2,7 @@
  * The live lines above the composer: what the session is doing now, and why
  * the message at the head of the queue is waiting.
  */
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
 import type { ActivityBanner, LiveSubtask, ResidentInfo, TurnProgress } from "@/features/sessions/session-activity";
@@ -104,7 +104,7 @@ export function ActivityBar({
             onClick={onStop}
             className="ml-auto flex h-6 shrink-0 items-center gap-1.5 border border-border-strong bg-bg px-2 font-sans text-2xs font-medium text-fg hover:bg-hover disabled:opacity-50"
           >
-            {stopping ? <Loader2 className="size-3 animate-spin" /> : <span data-signal="stop" aria-hidden="true" className="size-2 bg-danger" />}
+            {stopping ? <CircleNotchIcon className="size-3 animate-spin" /> : <span data-signal="stop" aria-hidden="true" className="size-2 bg-danger" />}
             {t("stop")}
           </button>
         )}

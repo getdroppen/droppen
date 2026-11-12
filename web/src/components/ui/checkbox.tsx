@@ -1,34 +1,25 @@
-import { Check } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox";
+import { cn } from "cn";
+import { CheckIcon } from "@phosphor-icons/react";
 
-/**
- * A square checkbox, drawn on the drafting sheet: a 14px `border-strong` box,
- * an ink fill and a 10px ink-on-paper check when chosen, a 2px ink ring on
- * keyboard focus, 16px under a finger. The real `<input type="checkbox">`
- * stays at the call site (its label, consent, `onChange` and form behaviour
- * are the page's), visually hidden; {@link CheckboxMark} is its sibling, so
- * `peer-*` reads the input's state.
- *
- * These are strings, not a wrapper component, for the same reason the settings
- * skeleton is (`features/settings/layout.ts`): a call site keeps the native
- * input in its own element tree, where tests and forms find it. Never leave a
- * native checkbox to the browser's own drawing, which is the one rounded, blue
- * control left on a square monochrome page.
- */
-export const CHECKBOX_LABEL = "flex cursor-pointer items-start gap-2 text-2xs text-muted";
-export const CHECKBOX_INPUT = "peer sr-only";
-export const CHECKBOX_BOX = cn(
-  "mt-0.5 flex size-3.5 shrink-0 items-center justify-center border border-border-strong bg-bg text-bg",
-  "peer-checked:border-fg peer-checked:bg-fg peer-checked:[&>svg]:opacity-100",
-  "peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-1 peer-focus-visible:outline-fg",
-  "peer-disabled:border-border pointer-coarse:size-4",
-);
-
-/** The box beside a `CHECKBOX_INPUT`; put it immediately after the input so `peer-*` matches. */
-export function CheckboxMark({ className }: { className?: string }) {
+function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
   return (
-    <span aria-hidden="true" data-audit-checkbox="" className={cn(CHECKBOX_BOX, className)}>
-      <Check className="size-2.5 opacity-0" />
-    </span>
+    <CheckboxPrimitive.Root
+      data-slot="checkbox"
+      className={cn(
+        "peer relative flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-input transition-colors outline-none group-has-disabled/field:opacity-50 group-has-[:focus-visible]/field-label:ring-0 group-has-[:focus-visible]/field-label:not-data-checked:border-input after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 aria-invalid:aria-checked:border-primary dark:bg-input/30 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground group-has-[:focus-visible]/field-label:data-checked:border-primary dark:data-checked:bg-primary",
+        className,
+      )}
+      {...props}
+    >
+      <CheckboxPrimitive.Indicator
+        data-slot="checkbox-indicator"
+        className="grid place-content-center text-current transition-none [&>svg]:size-3.5"
+      >
+        <CheckIcon />
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
   );
 }
+
+export { Checkbox };

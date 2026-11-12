@@ -1,5 +1,5 @@
-import { Select as BaseSelect } from "@base-ui-components/react/select";
-import { Settings } from "lucide-react";
+import { Select as BaseSelect } from "@base-ui/react/select";
+import { GearIcon } from "@phosphor-icons/react";
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import { GlyphIcon, type Glyph } from "@/components/glyph";
@@ -98,7 +98,7 @@ export function AgentSelect({
         <BaseSelect.Separator className="my-1.5 h-px bg-border" />
         <SelectItem value={MANAGE} data-manage-agents="" className="text-muted">
           <span className="flex min-w-0 items-center gap-2">
-            <Settings aria-hidden="true" className="size-3.5 shrink-0" />
+            <GearIcon aria-hidden="true" className="size-3.5 shrink-0" />
             <span className="min-w-0 truncate">{t("manage agents and accounts…")}</span>
           </span>
         </SelectItem>

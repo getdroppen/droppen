@@ -21,7 +21,7 @@ import {
 import { captureLinkFragments, forgetHandoff, HANDOFF_STORE_KEY, pendingHandoff, restoreReturn, takeReturn, type FragmentEnv } from "../src/features/link/fragment-boot.js";
 import { giveBack, RETURN_API } from "../src/features/link/link-return.js";
 import { type Attempt, type HandoffStatus, LinkOpener, type OpenerWindow } from "../src/features/link/opener.js";
-import { formatLeft } from "../src/features/link/browser-sign-in.js";
+import { formatCountdown } from "../src/lib/format.js";
 
 const fill = (n: number, b: number) => new Uint8Array(n).fill(b);
 
@@ -297,8 +297,8 @@ test("a blocked popup can go on in a browser tab with the same attempt", async (
 });
 
 test("how long the link still works reads as minutes and seconds", () => {
-  assert.equal(formatLeft(15 * 60_000), "15:00");
-  assert.equal(formatLeft(61_001), "1:02");
-  assert.equal(formatLeft(-5), "0:00");
+  assert.equal(formatCountdown(15 * 60_000), "15:00");
+  assert.equal(formatCountdown(61_001), "1:02");
+  assert.equal(formatCountdown(-5), "0:00");
   assert.equal(hex(fromHex("0a")), "0a");
 });

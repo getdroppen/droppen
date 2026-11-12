@@ -1,13 +1,5 @@
-// What only the owner can say on droppen.app's pages: owner placeholders,
-// such as the privacy notice's backup retention was until the owner gave it
-// (`BACKUPS_EXPIRE_DAYS` in `features/landing/privacy.tsx`, 2026-10-23).
-//
-// What these pin: a placeholder shows on the page marked, in every
-// language, and nowhere unmarked; and every
-// placeholder the source writes is in `web/owner-placeholders.txt`, the list
-// a release checks its built web app against
-// (`scripts/release-text-check.sh`, `release_text_owner_placeholders`): main
-// stays green with a placeholder left, a release cannot ship one.
+// Owner-supplied placeholders must render as marked values and match web/owner-placeholders.txt;
+// release_text_owner_placeholders prevents shipping an unresolved placeholder.
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -17,7 +9,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { landingBundles } from "../src/features/landing/copy.js";
-import PrivacyPage, { BACKUPS_EXPIRE_DAYS, marked, PLACEHOLDER } from "../src/features/landing/privacy.js";
+import { marked, PLACEHOLDER } from "../src/features/landing/page-kit.js";
+import PrivacyPage, { BACKUPS_EXPIRE_DAYS } from "../src/features/landing/privacy.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -54,7 +47,7 @@ test("a placeholder is a value in capitals and brackets, marked where it is said
   assert.doesNotMatch("30 days", PLACEHOLDER);
   assert.equal(marked("after 30 days."), "after 30 days.");
   const html = renderToStaticMarkup(<p>{marked("after [BACKUP RETENTION].")}</p>);
-  assert.equal(html, '<p>after <mark data-placeholder="" class="bg-warn/25 px-0.5 font-mono text-warn-fg">[BACKUP RETENTION]</mark>.</p>');
+  assert.match(html, /^<p>after <mark data-placeholder=""[^>]*>\[BACKUP RETENTION\]<\/mark>\.<\/p>$/);
 });
 
 test("the backups' period is said on the notice in every language, and no placeholder is left unmarked", () => {

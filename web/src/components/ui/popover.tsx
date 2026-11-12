@@ -1,4 +1,4 @@
-import { Popover as BasePopover } from "@base-ui-components/react/popover";
+import { Popover as BasePopover } from "@base-ui/react/popover";
 import { cn } from "@/lib/cn";
 
 export const Popover = BasePopover.Root;
@@ -15,7 +15,6 @@ export function PopoverContent({
 }) {
   return (
     <BasePopover.Portal>
-      {/* 4px off the trigger, like a select's list (docs/ui-spec.md §2). */}
       <BasePopover.Positioner side={side} sideOffset={4} className="z-50 outline-none">
         <BasePopover.Popup
           className={cn("popup-motion border border-border-strong bg-bg p-3 outline-none", className)}

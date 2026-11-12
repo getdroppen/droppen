@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Mail } from "lucide-react";
+import { CircleNotchIcon, EnvelopeSimpleIcon } from "@phosphor-icons/react";
 import { authErrorKind, type EmailStanding, type HubApi, HubApiError, type SignedIn } from "@/lib/hub/api";
 import type { CloudAccount } from "@/lib/hub/account";
 import { cn } from "@/lib/cn";
@@ -143,7 +143,7 @@ export function ResendControl({
           disabled={stage === "sending" || wait > 0}
           onClick={start}
         >
-          {stage === "sending" && <Loader2 className="size-3.5 animate-spin" />}
+          {stage === "sending" && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {wait > 0 ? t("send again in {{n}} s", { n: wait }) : t("send the link again")}
         </button>
         {stage === "sent" && (
@@ -244,7 +244,7 @@ export function CheckEmailScreen({
           </Note>
         ) : (
           <p className="flex items-center gap-2 text-xs text-faint">
-            <Loader2 className="size-3 shrink-0 animate-spin" />
+            <CircleNotchIcon className="size-3 shrink-0 animate-spin" />
             {email?.delivery === "pending" ? t("sending the mail…") : t("waiting for the link to be opened…")}
           </p>
         )}
@@ -339,7 +339,7 @@ export function VerifyEmailPage({ api, onContinue }: { api: HubApi; onContinue?:
       <Panel title={title}>
         {state.kind === "checking" && (
           <p className="flex items-center gap-2 text-xs text-faint">
-            <Loader2 className="size-3 shrink-0 animate-spin" />
+            <CircleNotchIcon className="size-3 shrink-0 animate-spin" />
             {t("checking the link…")}
           </p>
         )}
@@ -440,7 +440,7 @@ export function VerifyEmailBanner({ account }: { account: CloudAccount }) {
       className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2.5 shadow-[inset_2px_0_0_var(--color-warn)]"
     >
       <span className="flex min-w-[min(100%,16rem)] flex-1 items-start gap-3">
-        <Mail className="mt-1 size-3.5 shrink-0 text-faint" />
+        <EnvelopeSimpleIcon className="mt-1 size-3.5 shrink-0 text-faint" />
         <span className="min-w-0 flex-1 text-xs leading-5 text-muted">
           <span className="text-fg">
             {due !== null

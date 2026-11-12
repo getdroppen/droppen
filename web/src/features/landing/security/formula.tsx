@@ -1,35 +1,22 @@
-import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Check, Minus, Pin } from "lucide-react";
+import { useEventListener } from "usehooks-ts";
+import { CheckIcon, MinusIcon, PushPinIcon } from "@phosphor-icons/react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { BLOCKS, type BlockId, type FormulaBlock, type Kind, KINDS, type Lang, LANGS, PARTIES, type Party, type Roles, TERMS, type Words } from "./formula-data";
-import { type Analysis, analyze, flowOf, type Lit, lights } from "./formula-model";
-import { cjkTracking } from "../page-kit";
+import { type Analysis, analyze, flowOf, LIT_RANK, type Lit, lights } from "./formula-model";
+import { CAPTURE, cjkTracking } from "../page-kit";
 
 /*
- * The formulas of droppen.app/security, explorable (data: `formula-data.ts`,
- * tokens and flow: `formula-model.ts`).
- *
- * Every part of a formula is a focusable term, drawn by its kind (colour, and
- * weight and underline for whoever cannot tell the colours apart). Pointing
- * at one, or focusing it from the keyboard, lights the same value in every
- * formula on the page, inks where it is defined, outlines the calls that make
- * it and take it, and shows a short card: what it is and why it is there,
- * where it comes from and goes, who can know it. A click, a tap or Enter pins
- * the card, so two can be read side by side; Esc or a click elsewhere
- * unpins. Above each block, "view as" hides every value that party cannot
- * know. Screen readers get the same through `aria-describedby` (the hidden
- * glossary). Nothing moves: highlights are backgrounds and outlines, the
- * cards float in a portal, and the formula's text, selected and copied, is
- * the formula.
+ * Interactive, accessible formula explorer. Highlights never move the formula;
+ * hidden values remain copyable and available to screen readers, which use the
+ * hidden glossary through `aria-describedby`.
  */
 
 const ANALYSIS: Analysis = analyze();
 
-const RANK: Record<Lit, number> = { def: 3, same: 2, flow: 1, "": 0 };
-
-/** Who is pointing where, what is pinned, and whose view: the page's one state, read token by token. */
 class FormulaStore {
   hover: string | null = null;
   focus: string | null = null;
@@ -47,7 +34,6 @@ class FormulaStore {
     return () => void this.listeners.delete(listener);
   };
 
-  /** The card that is showing because of the pointer or the keyboard, not a pin. */
   passing(): string | null {
     const at = this.hover ?? this.focus;
     return at && at !== this.dismissed ? at : null;
@@ -58,7 +44,7 @@ class FormulaStore {
     const lit = new Map<string, Lit>();
     for (const active of new Set([this.pin, this.passing()])) {
       if (!active) continue;
-      for (const [key, value] of lights(ANALYSIS, active)) if (RANK[value] > RANK[lit.get(key) ?? ""]) lit.set(key, value);
+      for (const [key, value] of lights(ANALYSIS, active)) if (LIT_RANK[value] > LIT_RANK[lit.get(key) ?? ""]) lit.set(key, value);
     }
     this.lit = lit;
     for (const listener of this.listeners) listener();
@@ -68,7 +54,6 @@ class FormulaStore {
     return this.lit.get(occ) ?? "";
   }
 
-  /** Whether one of `concept`'s words on the page is pointed at, focused or pinned: then all of them light. */
   conceptLit(concept: ConceptId): boolean {
     return [this.pin, this.passing()].some((occ) => occ?.startsWith(`c:${concept}:`));
   }
@@ -87,17 +72,16 @@ function useStore(): FormulaStore {
   return store;
 }
 
-/** The page's language as the formulas' words know it. */
 function useLang(): Lang {
   const { i18n } = useTranslation();
-  const lng = i18n.language ?? "en";
+  const lng = i18n.language;
   if (lng.startsWith("zh")) return /TW|HK|MO|Hant/i.test(lng) ? "zh-TW" : "zh-CN";
   return (LANGS as readonly string[]).includes(lng) ? (lng as Lang) : lng.startsWith("ja") ? "ja" : "en";
 }
 
 const say = (words: Words, lang: Lang) => words[LANGS.indexOf(lang)] || words[0];
 
-/** Each kind's look: colour, and weight and underline so that colour is never the only cue. */
+/** Weight and underline ensure colour is never the only cue. */
 export const KIND_CLASS: Record<Kind, string> = {
   secret: "text-key-secret font-semibold underline decoration-solid",
   derived: "text-key-derived font-semibold underline decoration-double",
@@ -115,7 +99,7 @@ export const LIT_CLASS: Record<Lit, string> = {
   "": "",
 };
 
-/** Hatched in place of a value the chosen party cannot know: the text stays, for copying and for screen readers. */
+/** Hide values visually without removing them from copying or screen readers. */
 export const HIDDEN_CLASS = "text-transparent! decoration-transparent! [background-image:repeating-linear-gradient(135deg,var(--color-border-strong)_0_1.5px,transparent_1.5px_4px)]";
 
 function useKindName(): Record<Kind, string> {
@@ -140,15 +124,12 @@ const descId = (term: string) => `fx-${term.replace(/[^\w-]/g, "-")}`;
 const hiddenId = (party: Party) => `fx-hidden-${party}`;
 const HINT_ID = "fx-hint";
 
-/** Who "your device" and "the other device" are in `block`; a block of labels has no parties. */
 const rolesOf = (block: BlockId): Roles | undefined => (BLOCKS[block] as FormulaBlock).roles;
 
-/** Whether `term`, in a block with parties, is a value `view` cannot know. */
 function hiddenFrom(block: BlockId, term: string, view: Party | null): boolean {
   return !!view && !!rolesOf(block) && !TERMS[term]!.known.includes(view);
 }
 
-/** Pointing shows a card, focusing from the keyboard too; a click, a tap, Enter or Space pins it. */
 function interactions(store: FormulaStore, occ: string) {
   return {
     onPointerEnter: (e: ReactPointerEvent) => {
@@ -208,24 +189,14 @@ function Term({ block, occ, text, tabbable }: { block: BlockId; occ: string; tex
   );
 }
 
-/*
- * The page's two words for the two kinds of device — a device that runs AI
- * (the chain's host) and your browsers and phones (its full devices) — are
- * defined once at the top (`Definitions` in security.tsx) and explain
- * themselves wherever the page says them, with the same cards.
- */
+// Reuse the definitions' explanations wherever these terms appear.
 
-export const CONCEPTS = ["host", "client"] as const;
-export type ConceptId = (typeof CONCEPTS)[number];
+const CONCEPTS = ["host", "client"] as const;
+type ConceptId = (typeof CONCEPTS)[number];
 
-/**
- * The two words as the page spells them in each language: a device (or
- * devices) that run(s) AI, and browsers and phones (or a browser or phone).
- */
 export const CONCEPT_WORDS =
   /(\b[Dd]evices? that runs? AI\b|可运行 AI 的设备|可執行 AI 的裝置|AI を実行できる(?:あなたの|どの|各|すべての|別の|ほかの)?デバイス)|(\b[Bb]rowsers? (?:and|or) phones?\b|\b[Pp]hones? or browsers?\b|浏览器(?:和|或|、)手机|手机或浏览器|瀏覽器(?:和|或|、)手機|手機或瀏覽器|ブラウザ(?:や|と|、|・)スマホ|スマホ(?:や|と)ブラウザ)/g;
 
-/** `text` with each of the two words made explorable. */
 export function withConcepts(text: string): ReactNode {
   const out: ReactNode[] = [];
   let at = 0;
@@ -260,11 +231,7 @@ function useConceptWords(): Record<ConceptId, { name: string; says: string }> {
 
 const conceptDescId = (concept: ConceptId) => `fx-c-${concept}`;
 
-/**
- * A part of the page (a section) in which the two words are one tab stop
- * each: the first mention of each is reached with Tab, and the arrow keys
- * move from mention to mention inside the part.
- */
+/** Roving tab stop with arrow-key navigation between mentions. */
 interface MentionPart {
   first: Map<ConceptId, string>;
 }
@@ -348,14 +315,13 @@ function ConceptCard({ concept, pinned }: { concept: ConceptId; pinned: boolean 
       <div className="flex items-baseline gap-2">
         <span className="text-xs leading-5 font-semibold text-fg">{words.name}</span>
         <span className={cn("uppercase tracking-label text-xs leading-4 text-muted", cjkTracking)}>{t("Term")}</span>
-        {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
+        {pinned && <PushPinIcon className="ml-auto size-3 shrink-0 self-center text-muted" />}
       </div>
       <p className="text-xs leading-5 text-fg">{words.says}</p>
     </>
   );
 }
 
-/** "View as", with this block's roles, and the legend. */
 function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; legendId: string; showLegend: boolean; onLegend: () => void }) {
   const { t } = useTranslation();
   const store = useStore();
@@ -415,15 +381,19 @@ function Tools({ block, legendId, showLegend, onLegend }: { block: BlockId; lege
           </span>
         </>
       )}
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         aria-expanded={showLegend}
         aria-controls={legendId}
         onClick={onLegend}
-        className={cn("ml-auto uppercase tracking-label text-xs leading-4 text-faint underline decoration-dotted underline-offset-[3px] hover:text-fg", cjkTracking)}
+        className={cn(
+          "ml-auto h-auto px-0 text-xs leading-4 font-normal text-faint uppercase tracking-label underline decoration-dotted underline-offset-[3px] hover:bg-transparent hover:text-fg",
+          cjkTracking,
+        )}
       >
         {t("Legend")}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -449,7 +419,6 @@ function Legend({ id, open }: { id: string; open: boolean }) {
   );
 }
 
-/** One formula block, in the page's mono-block style, every part of it explorable. */
 export function Formula({ block }: { block: BlockId }) {
   const { t } = useTranslation();
   const [legend, setLegend] = useState(false);
@@ -468,7 +437,6 @@ export function Formula({ block }: { block: BlockId }) {
     else if (e.key === "Home") next = parts[0];
     else if (e.key === "End") next = parts[parts.length - 1];
     else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      // The first part of the next (or the previous) line.
       const codes = [...e.currentTarget.querySelectorAll("code")];
       const to = codes[codes.indexOf(line(parts[at]!)!) + (e.key === "ArrowDown" ? 1 : -1)];
       next = to ? parts.find((p) => line(p) === to) : undefined;
@@ -501,7 +469,6 @@ export function Formula({ block }: { block: BlockId }) {
   );
 }
 
-/** What a screen reader hears for a term: its kind, what it is, its flow, who knows it. */
 function useDescribe(): (term: string) => string {
   const { t } = useTranslation();
   const lang = useLang();
@@ -524,7 +491,6 @@ function useDescribe(): (term: string) => string {
   };
 }
 
-/** The descriptions `aria-describedby` points at: one per term on the page, never shown. */
 function Glossary() {
   const { t } = useTranslation();
   const describe = useDescribe();
@@ -552,47 +518,46 @@ function Glossary() {
   );
 }
 
-/** A card beside a block (or a word of the page): above it, or below when there is no room or the other card is above. */
+/** Prefer above, but avoid collisions with the other card and viewport edges. */
 function Card({ occ, pinned, below }: { occ: string; pinned: boolean; below: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  const frame = useRef(0);
+
+  const place = useCallback(() => {
+    const anchor = document.querySelector(`[data-occ="${occ}"]`);
+    const card = ref.current;
+    if (!anchor || !card) return;
+    const a = anchor.getBoundingClientRect();
+    const b = (anchor.closest("[data-formula]") ?? anchor).getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = document.documentElement.clientHeight || window.innerHeight;
+    const w = card.offsetWidth;
+    const h = card.offsetHeight;
+    const m = 8;
+    const gap = 6;
+    const above = b.top - gap - h;
+    const under = b.bottom + gap;
+    const fitsAbove = above >= m;
+    const fitsUnder = under + h <= vh - m;
+    let top = below ? (fitsUnder || !fitsAbove ? under : above) : fitsAbove || !fitsUnder ? above : under;
+    if (!fitsAbove && !fitsUnder) top = b.top - m > vh - b.bottom - m ? Math.max(m, above) : Math.min(under, vh - h - m);
+    const left = Math.max(m, Math.min(a.left, vw - w - m));
+    setAt({ left, top });
+  }, [occ, below]);
+
+  const later = useCallback(() => {
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(place);
+  }, [place]);
 
   useLayoutEffect(() => {
-    const place = () => {
-      const anchor = document.querySelector(`[data-occ="${occ}"]`);
-      const card = ref.current;
-      if (!anchor || !card) return;
-      const a = anchor.getBoundingClientRect();
-      const b = (anchor.closest("[data-formula]") ?? anchor).getBoundingClientRect();
-      const vw = document.documentElement.clientWidth || window.innerWidth;
-      const vh = document.documentElement.clientHeight || window.innerHeight;
-      const w = card.offsetWidth;
-      const h = card.offsetHeight;
-      const m = 8;
-      const gap = 6;
-      const above = b.top - gap - h;
-      const under = b.bottom + gap;
-      const fitsAbove = above >= m;
-      const fitsUnder = under + h <= vh - m;
-      let top = below ? (fitsUnder || !fitsAbove ? under : above) : fitsAbove || !fitsUnder ? above : under;
-      if (!fitsAbove && !fitsUnder) top = b.top - m > vh - b.bottom - m ? Math.max(m, above) : Math.min(under, vh - h - m);
-      const left = Math.max(m, Math.min(a.left, vw - w - m));
-      setAt({ left, top });
-    };
     place();
-    let frame = 0;
-    const later = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(place);
-    };
-    window.addEventListener("resize", later);
-    document.addEventListener("scroll", later, true);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("resize", later);
-      document.removeEventListener("scroll", later, true);
-    };
-  }, [occ, below]);
+    return () => cancelAnimationFrame(frame.current);
+  }, [place]);
+
+  useEventListener("resize", later);
+  useEventListener("scroll", later, undefined, CAPTURE);
 
   return createPortal(
     <div
@@ -623,7 +588,7 @@ function TermCard({ occ, pinned }: { occ: string; pinned: boolean }) {
       <div className="flex items-baseline gap-2">
         <code className={cn("font-mono text-xs decoration-1 underline-offset-[3px]", KIND_CLASS[def.kind])}>{o.text}</code>
         <span className={cn("uppercase tracking-label text-xs leading-4 text-muted", cjkTracking)}>{kinds[def.kind]}</span>
-        {pinned && <Pin className="ml-auto size-3 shrink-0 self-center text-muted" />}
+        {pinned && <PushPinIcon className="ml-auto size-3 shrink-0 self-center text-muted" />}
       </div>
       <p className="text-xs leading-5 text-fg">{say(def.says, lang)}</p>
       {(madeBy.length > 0 || usedBy.length > 0) && (
@@ -639,7 +604,7 @@ function TermCard({ occ, pinned }: { occ: string; pinned: boolean }) {
         <ul className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-sm leading-4">
           {PARTIES.map((party) => {
             const knows = def.known.includes(party);
-            const Icon = knows ? Check : Minus;
+            const Icon = knows ? CheckIcon : MinusIcon;
             return (
               <li key={party} className={cn("inline-flex items-center gap-0.5", knows ? "text-fg" : "text-faint line-through")}>
                 <Icon className="size-2.5 shrink-0" />
@@ -662,22 +627,24 @@ function Cards() {
   );
   const [pin, passing] = snapshot.split("|").map((s) => s || null) as [string | null, string | null];
 
-  useEffect(() => {
-    if (!pin && !passing) return;
-    const onKey = (e: KeyboardEvent) => {
+  // Esc unpins, and so does a press anywhere but the card, the term or the tools — but only while there is a card to unpin.
+  const onKey = useCallback(
+    (e: KeyboardEvent) => {
+      if (!pin && !passing) return;
       if (e.key === "Escape") store.update({ pin: null, dismissed: store.passing() ?? store.dismissed });
-    };
-    const onDown = (e: PointerEvent) => {
+    },
+    [pin, passing, store],
+  );
+  const onDown = useCallback(
+    (e: PointerEvent) => {
+      if (!pin && !passing) return;
       const target = e.target as Element | null;
-      if (store.pin && !target?.closest?.("[data-occ],[data-formula-popup],[data-formula-tools]")) store.update({ pin: null });
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onDown, true);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onDown, true);
-    };
-  }, [pin, passing, store]);
+      if (store.pin && !target?.closest("[data-occ],[data-formula-popup],[data-formula-tools]")) store.update({ pin: null });
+    },
+    [pin, passing, store],
+  );
+  useEventListener("keydown", onKey);
+  useEventListener("pointerdown", onDown, undefined, CAPTURE);
 
   const sameBlock = (a: string | null, b: string | null) => !!a && !!b && a.split(":")[0] === b.split(":")[0];
   return (
@@ -688,14 +655,13 @@ function Cards() {
   );
 }
 
-/** One announcement for the whole page when "view as" changes: whose view, and how many values it hides. */
+/** Announce view changes without announcing the initial page state. */
 function ViewAnnouncer() {
   const { t } = useTranslation();
   const store = useStore();
   const names = usePartyName();
   const view = useSyncExternalStore(store.subscribe, () => store.view, () => null);
   const [said, setSaid] = useState("");
-  // Said only when the choice changes, never on load.
   const last = useRef<Party | null>(null);
   useEffect(() => {
     if (view === last.current) return;
@@ -711,21 +677,21 @@ function ViewAnnouncer() {
   );
 }
 
-/** The page's formulas share one state: what is lit and pinned, and whose view. */
 export function FormulaProvider({ children }: { children: ReactNode }) {
   const [store] = useState(() => new FormulaStore());
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
-    const pointer = () => void (store.pointing = true);
-    const keyboard = () => void (store.pointing = false);
-    document.addEventListener("pointerdown", pointer, true);
-    document.addEventListener("keydown", keyboard, true);
-    return () => {
-      document.removeEventListener("pointerdown", pointer, true);
-      document.removeEventListener("keydown", keyboard, true);
-    };
+  }, []);
+  // A press points at things; the keyboard moves between them (that is what lights a term, not a pointer).
+  const pointer = useCallback(() => {
+    store.pointing = true;
   }, [store]);
+  const keyboard = useCallback(() => {
+    store.pointing = false;
+  }, [store]);
+  useEventListener("pointerdown", pointer, undefined, CAPTURE);
+  useEventListener("keydown", keyboard, undefined, CAPTURE);
   return (
     <StoreContext.Provider value={store}>
       {children}

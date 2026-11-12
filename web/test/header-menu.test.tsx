@@ -90,7 +90,7 @@ test("signed out: the menu offers sign-in and sign-up, and closes on Escape", as
   await press(button);
   assert.equal(button.getAttribute("aria-expanded"), "true");
   assert.equal(item("Sign in").getAttribute("href"), "/signin");
-  assert.equal(item("Create a free account").getAttribute("href"), "/signup");
+  assert.equal(item("Sign up").getAttribute("href"), "/signup");
 
   await key("Escape");
   assert.equal(button.getAttribute("aria-expanded"), "false");
@@ -114,7 +114,7 @@ test("signed out: the keyboard opens the menu and moves through its items", asyn
     await key("ArrowDown");
     record();
   }
-  assert.deepEqual(focused.slice(0, 2), ["Sign in", "Create a free account"]);
+  assert.deepEqual(focused.slice(0, 2), ["Sign in", "Sign up"]);
   await key("Escape");
   assert.equal(document.activeElement, button, "Escape returns focus to the trigger");
 });

@@ -25,7 +25,7 @@ export const MAX_INFO = 1024;
  * window, seven days. Management inside a channel is held to
  * `MANAGE_FRESHNESS_MS` (`chain.ts`) by the agent.
  */
-export const FRESHNESS_MAX_AGE_MS = CONTROL_FRESHNESS_MS;
+export { CONTROL_FRESHNESS_MS as FRESHNESS_MAX_AGE_MS };
 
 export interface HelloBody {
   chainSeq: number;

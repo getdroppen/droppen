@@ -9,7 +9,7 @@
  * (the caller holds it, `useHoldMachine`).
  */
 import i18n from "i18next";
-import { Check, ChevronDown } from "lucide-react";
+import { CheckIcon, CaretDownIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -152,7 +152,7 @@ function DeviceRow({
       >
         {note}
       </span>
-      <Check className={cn("size-3 shrink-0", selected ? "text-fg" : "invisible")} />
+      <CheckIcon className={cn("size-3 shrink-0", selected ? "text-fg" : "invisible")} />
     </button>
   );
 }
@@ -221,7 +221,7 @@ export function DevicePicker({
         )}
       >
         <Chosen machine={value} />
-        <ChevronDown className="size-3.5 shrink-0 text-faint transition-transform duration-150 ease-out group-data-[popup-open]:rotate-180" />
+        <CaretDownIcon className="size-3.5 shrink-0 text-faint transition-transform duration-150 ease-out group-data-[popup-open]:rotate-180" />
       </PopoverTrigger>
       {/* The select's list: 4px off the trigger, `border-strong`, no shadow,
           6px above/below the rows, 32px rows (44px touch). */}

@@ -14,7 +14,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { ImageIcon, ImageOff } from "lucide-react";
+import { ImageBrokenIcon, ImageIcon } from "@phosphor-icons/react";
 import { useEffect, useReducer } from "react";
 import { useTranslation } from "react-i18next";
 import { blobErrorText } from "@/components/blob-transfers";
@@ -167,7 +167,7 @@ export function ImageFallback({
   const { t } = useTranslation();
   return (
     <span data-image-fallback="" title={reason ?? undefined} className={cn(CARD, className)}>
-      <ImageOff aria-hidden className="size-3.5 shrink-0 text-faint" />
+      <ImageBrokenIcon aria-hidden className="size-3.5 shrink-0 text-faint" />
       <span className="min-w-0 truncate">{alt || t("image")}</span>
       {reason && <span className="min-w-0 truncate text-faint">{reason}</span>}
       {href && (

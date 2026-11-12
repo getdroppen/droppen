@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { LayoutGrid } from "lucide-react";
+import { SquaresFourIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useFeedSessions } from "@/app/global-feed";
@@ -155,7 +155,7 @@ export function ScreensRail() {
               >
                 {screen.emoji
                   ? <span aria-hidden="true" className="text-xl leading-none">{screen.emoji}</span>
-                  : <LayoutGrid aria-hidden="true" className="size-4" />}
+                  : <SquaresFourIcon aria-hidden="true" className="size-4" />}
                 {/* The last layout change has not reached the server; it is being retried. */}
                 {unsaved && (
                   <span

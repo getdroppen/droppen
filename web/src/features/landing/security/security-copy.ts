@@ -1,29 +1,13 @@
 /*
- * The words of the security design (`security.tsx`), droppen.app/security.
- * As everywhere (`src/i18n`), the keys are the English text, so English needs
- * no table; zh-CN, zh-TW and ja say the same things, and
- * `test/security-page.test.tsx` holds the three to the page's keys.
- *
- * Product words, as on the other public pages: a device (设备 / 裝置 /
- * デバイス), a device that runs AI (可运行 AI 的设备 / 可執行 AI 的裝置 /
- * AI を実行できるデバイス; the chain's host), a full device (完整设备 /
- * 完整裝置 / フルデバイス; its admin), the content key (内容密钥 / 內容金鑰 /
- * コンテンツ鍵; `MK`), the user key, the identity key, the recovery words:
- * the app's own names for them (`i18n/cloud-devices.ts`). Droppen Hub is
- * "Droppen Hub" or "Hub" in every language, a relay a Droppen relay. The
- * protocol's labels and formulas are code and stay in the page, untranslated.
- *
- * Its own chunk: loaded with the page only, never with the landing page.
+ * Security-page translations keyed by English source text; tests keep these
+ * bundles aligned with the page. Reuse product terminology from cloud devices.
+ * Protocol labels and formulas remain untranslated code.
  */
 
-type Bundle = Record<string, string>;
+import { columnOf, registerCopy, type CopyBundle, type CopyRow } from "../copy-table";
 
-/**
- * Each line once: the English (the key), then zh-CN, zh-TW and ja, in the
- * order the page says them. The English is not repeated per language, which
- * keeps the page's chunk small.
- */
-const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: string])[] = [
+/** English is the key and is not repeated in each language bundle. */
+const LINES: readonly CopyRow[] = [
 
   [
     "How Droppen's end-to-end encryption works.",
@@ -66,12 +50,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "由每台设备各自核验的签名名单。",
     "由每台裝置各自驗證的簽章名單。",
     "すべてのデバイスが自分で検証する、署名付きの名簿。",
-  ],
-  [
-    "Keys",
-    "密钥",
-    "金鑰",
-    "鍵",
   ],
   [
     "Every key, where it lives, how it is delivered, and the recovery words.",
@@ -1616,12 +1594,6 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "X25519。小位数の点は拒否",
   ],
   [
-    "Encryption",
-    "加密",
-    "加密",
-    "暗号化",
-  ],
-  [
     "Hash and KDF",
     "哈希与 KDF",
     "雜湊與 KDF",
@@ -1999,17 +1971,20 @@ const LINES: readonly (readonly [en: string, zhCN: string, zhTW: string, ja: str
     "見たり操作したりする場所：ブラウザやスマホで開く my.droppen.app。いまペアリングするものはすべてフルデバイスで、ユーザー鍵を持ち、アカウントのチェーンのエントリに署名します。",
   ],
   ["close", "关闭", "關閉", "閉じる"],
+
+  // Register furniture unique to this lazy chunk.
+  ["On this page", "本页", "本頁", "このページ"],
+  ["encrypted copy", "加密副本", "加密副本", "暗号化コピー"],
 ];
 
-const column = (i: 1 | 2 | 3): Bundle => Object.fromEntries(LINES.map((line) => [line[0], line[i]]));
+export const securityZhCN: CopyBundle = columnOf(LINES, 1);
+export const securityZhTW: CopyBundle = columnOf(LINES, 2);
+export const securityJa: CopyBundle = columnOf(LINES, 3);
 
-export const securityZhCN: Bundle = column(1);
-export const securityZhTW: Bundle = column(2);
-export const securityJa: Bundle = column(3);
-
-/** The page's tables, by language. */
-export const securityBundles: Record<"zh-CN" | "zh-TW" | "ja", Bundle> = {
+export const securityBundles: Record<"zh-CN" | "zh-TW" | "ja", CopyBundle> = {
   "zh-CN": securityZhCN,
   "zh-TW": securityZhTW,
   ja: securityJa,
 };
+
+registerCopy(securityBundles);

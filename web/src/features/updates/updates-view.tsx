@@ -5,10 +5,11 @@ import { useTranslation } from "react-i18next";
 import { useFeedSettings } from "@/app/global-feed";
 import { updateVersion, useDesktopUpdate, type UpdateStatus } from "@/app/desktop-update";
 import { Content } from "@/components/panel";
+import { DefinitionRow, DefinitionTable } from "@/components/ui/definition-table";
+import { SectionTitle } from "@/components/ui/section-title";
 import { Sheet } from "@/components/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
-import { cn } from "@/lib/cn";
 import { formatRelative } from "@/lib/format";
 
 /*
@@ -94,10 +95,6 @@ const notesComponents: React.ComponentProps<typeof ReactMarkdown>["components"] 
   ),
   pre: ({ children }) => <pre className="my-2 overflow-x-auto border border-border bg-raised px-2.5 py-2 font-mono text-2xs">{children}</pre>,
 };
-
-const row = "border-b border-border";
-const cellLabel = "py-1 pr-4 align-top font-mono text-2xs whitespace-nowrap text-faint";
-const cellValue = "py-1 font-mono text-xs break-all";
 
 export interface UpdatesPageProps {
   status: UpdateStatus | null;
@@ -297,35 +294,19 @@ export function UpdatesPage({ status, dismissed, onDismiss, onRestart, onCheck, 
         </section>
 
         <section className="p-3" data-testid="updates-facts">
-          <h2 data-label="" className="label-caps -mx-3 -mt-3 mb-3 flex h-9 items-center border-b border-border px-3 text-2xs text-fg">
-            {t("Release")}
-          </h2>
-          <table className="w-full max-w-xl">
-            <tbody>
-              <tr className={row}>
-                <td className={cellLabel}>{t("App")}</td>
-                <td className={cn(cellValue, "text-fg")}>{status.current}</td>
-              </tr>
-              {serverVersion && (
-                <tr className={row}>
-                  <td className={cellLabel}>{t("Server")}</td>
-                  <td className={cellValue}>{serverVersion}</td>
-                </tr>
-              )}
-              <tr className={row}>
-                <td className={cellLabel}>{t("Checked")}</td>
-                <td className={cellValue}>{checked}</td>
-              </tr>
-              <tr>
-                <td className={cellLabel}>{t("Release page")}</td>
-                <td className={cellValue}>
-                  <a href={release} target="_blank" rel="noreferrer" className="underline decoration-border-strong underline-offset-[3px] hover:decoration-fg">
-                    v{version}
-                  </a>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <SectionTitle>{t("Release")}</SectionTitle>
+          <DefinitionTable className="max-w-xl">
+            <DefinitionRow label={t("App")}>
+              <span className="text-fg">{status.current}</span>
+            </DefinitionRow>
+            {serverVersion && <DefinitionRow label={t("Server")}>{serverVersion}</DefinitionRow>}
+            <DefinitionRow label={t("Checked")}>{checked}</DefinitionRow>
+            <DefinitionRow label={t("Release page")}>
+              <a href={release} target="_blank" rel="noreferrer" className="underline decoration-border-strong underline-offset-[3px] hover:decoration-fg">
+                v{version}
+              </a>
+            </DefinitionRow>
+          </DefinitionTable>
         </section>
       </Sheet>
     </Content>

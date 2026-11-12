@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { PREFERENCE_ROW, ROW_LABEL, SECTION_TITLE } from "@/features/settings/layout";
+import { SettingRow, SettingsSection } from "@/features/settings/layout";
 import { isDesktopApp } from "@/lib/auth";
 import { useHomeMachine, useMachine } from "@/lib/machines/context";
 
@@ -22,17 +22,12 @@ export function SetupSection() {
 export function SetupSectionView({ onRerun }: { onRerun: () => void }) {
   const { t } = useTranslation();
   return (
-    <section data-testid="setup-section" className="border-b border-border p-3">
-      <h2 data-label="" className={SECTION_TITLE}>
-        {t("Setup")}
-      </h2>
-      <div className={PREFERENCE_ROW}>
-        <div className={ROW_LABEL}>{t("Check Claude Code and Codex, change where you use Droppen, pick a first folder again.")}</div>
-        {/* The shared 28px action: sans 12/500. */}
+    <SettingsSection title={t("Setup")} data-testid="setup-section">
+      <SettingRow tight label={t("Check Claude Code and Codex, change where you use Droppen, pick a first folder again.")}>
         <Button data-testid="setup-rerun" onClick={onRerun}>
           {t("Run setup again")}
         </Button>
-      </div>
-    </section>
+      </SettingRow>
+    </SettingsSection>
   );
 }

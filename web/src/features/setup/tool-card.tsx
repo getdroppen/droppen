@@ -4,8 +4,8 @@
  * for each state, and the card's header. `tools-step.tsx` owns the live step:
  * polling, the actions and the view around these cards.
  */
-import { Menu } from "@base-ui-components/react/menu";
-import { Ellipsis, KeyRound } from "lucide-react";
+import { Menu } from "@base-ui/react/menu";
+import { DotsThreeIcon, KeyIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
@@ -418,7 +418,7 @@ function CardBody({
   const shellKey =
     tool.shellKey && !tool.ready ? (
       <div data-testid="shell-key" className="mt-3 grid grid-cols-[14px_minmax(0,1fr)] items-start gap-2 border-t border-border pt-3 text-xs leading-[18px] text-muted">
-        <KeyRound className="mt-0.5 size-3.5 text-warn-fg" aria-hidden="true" />
+        <KeyIcon className="mt-0.5 size-3.5 text-warn-fg" aria-hidden="true" />
         <div>
           <span>{t(SHELL_KEY[id])}</span>{" "}
           <LinkButton onClick={() => acts.openAdvanced(id === "claude" ? "env" : "codex")}>{t("Add it to Droppen")}</LinkButton>
@@ -723,7 +723,7 @@ function MoreMenu({ onSso, disabled }: { onSso: () => void; disabled: boolean })
   return (
     <Menu.Root>
       <Menu.Trigger disabled={disabled} aria-label={t("More")} title={t("More")} className="flex h-7 items-center gap-1 px-1.5 text-xs text-muted hover:bg-hover hover:text-fg disabled:opacity-40">
-        <Ellipsis className="size-3.5" />
+        <DotsThreeIcon className="size-3.5" />
         {t("More")}
       </Menu.Trigger>
       <Menu.Portal>

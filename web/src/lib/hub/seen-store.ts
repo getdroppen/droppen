@@ -45,7 +45,7 @@ export const SEEN_CHANNEL = "rh.hub.seen";
 export const SEEN_DB_OPEN_MS = 10_000;
 const STORE = "seen";
 /** The one object store of {@link SEEN_DB}. */
-export const SEEN_STORE = STORE;
+export { STORE as SEEN_STORE };
 
 /** `localStorage`, or a stand-in. */
 export type SeenStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -127,9 +127,8 @@ export class MemorySeenStore implements SeenStore {
   }
 
   watch(heard: (account: string | null) => void): () => void {
-    const own = (account: string | null) => heard(account);
-    this.watchers.add(own);
-    return () => void this.watchers.delete(own);
+    this.watchers.add(heard);
+    return () => void this.watchers.delete(heard);
   }
 
   private queued<T>(work: () => T | Promise<T>): Promise<T> {
@@ -213,10 +212,6 @@ function unavailable(error: unknown): boolean {
   return error instanceof NotHere || name === "InvalidStateError" || name === "SecurityError";
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-}
-
 export interface IndexedDbSeenOptions {
   factory: IDBFactory;
   /** The database's name ({@link SEEN_DB}). */
@@ -264,7 +259,7 @@ export function indexedDbSeenStore(opts: IndexedDbSeenOptions): SeenStore {
     refused: "the browser would not open the seen record's database",
     unref: true,
     // Thrown at once: not to be had here (an opaque origin, storage turned off).
-    notHere: (error) => new NotHere(describe(error)),
+    notHere: (error) => new NotHere(describeError(error)),
   });
 
   /** The database, or `null` once this page keeps the records in the fallback. */
@@ -280,10 +275,10 @@ export function indexedDbSeenStore(opts: IndexedDbSeenOptions): SeenStore {
       if (!fallen) {
         const instead = opts.fallback();
         if (!instead) {
-          throw new SeenStoreError(`IndexedDB is not to be had here (${describe(error)}), and this browser kept what it verified of the account there: it is not read from localStorage instead — try again`, { cause: error });
+          throw new SeenStoreError(`IndexedDB is not to be had here (${describeError(error)}), and this browser kept what it verified of the account there: it is not read from localStorage instead — try again`, { cause: error });
         }
         fallen = instead;
-        console.warn(`seen record: IndexedDB is not to be had here (${describe(error)}): this page keeps the record in localStorage, where another page's stale copy can still lower it`);
+        console.warn(`seen record: IndexedDB is not to be had here (${describeError(error)}): this page keeps the record in localStorage, where another page's stale copy can still lower it`);
         listening?.();
         listening = null;
         listen();
@@ -403,11 +398,10 @@ export function indexedDbSeenStore(opts: IndexedDbSeenOptions): SeenStore {
       if (done.result) post(account);
     },
     watch(heard) {
-      const own = (account: string | null) => heard(account);
-      watchers.add(own);
+      watchers.add(heard);
       listen();
       return () => {
-        watchers.delete(own);
+        watchers.delete(heard);
         if (watchers.size === 0) {
           listening?.();
           listening = null;

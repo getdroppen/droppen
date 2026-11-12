@@ -1,7 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronRight } from "lucide-react";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { useDesktopUpdate, type UpdateStatus } from "@/app/desktop-update";
+import { SettingsSection } from "@/features/settings/layout";
 import { cn } from "@/lib/cn";
 
 /*
@@ -10,8 +11,6 @@ import { cn } from "@/lib/cn";
  * is where the page is reached the rest of the time. In a browser there is no
  * bridge and no line; the page itself says updates are the app's.
  */
-
-const sectionTitle = "label-caps -mx-3 -mt-3 mb-3 flex h-9 items-center border-b border-border px-3 text-2xs text-fg";
 
 export type UpdatesLineState = "up-to-date" | "ready" | "downloading" | "attention";
 
@@ -40,10 +39,7 @@ export function UpdatesRow({ status }: { status: UpdateStatus | null }) {
           ? t("Needs attention")
           : t("up to date");
   return (
-    <section className="border-b border-border p-3" data-testid="settings-updates">
-      <h2 data-label="" className={sectionTitle}>
-        {t("Updates")}
-      </h2>
+    <SettingsSection title={t("Updates")} data-testid="settings-updates">
       <Link
         to="/updates"
         aria-label={t("Open the update page")}
@@ -60,9 +56,9 @@ export function UpdatesRow({ status }: { status: UpdateStatus | null }) {
             {state}
           </span>
         </span>
-        <ChevronRight className="size-3.5 shrink-0 text-faint" strokeWidth={1.5} />
+        <CaretRightIcon className="size-3.5 shrink-0 text-faint" />
       </Link>
-    </section>
+    </SettingsSection>
   );
 }
 

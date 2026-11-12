@@ -6,13 +6,13 @@
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { type Accept } from "@/lib/e2e";
 import { cn } from "@/lib/cn";
 import { RenewalsAhead } from "./renewal";
 import { danger, primary, quiet } from "./ui";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
+import { CheckboxField } from "@/components/ui/checkbox-field";
 
 /** What saving 「谁可以控制这台电脑」 does (review D3): a list that lets a device in or shuts one out is confirmed first; one that changes nobody is saved at once. */
 export function controlSaveStep(change: { admitted: string[]; shutOut: string[] }): "confirm" | "save" {
@@ -72,7 +72,7 @@ export function ControlConfirm({
       )}
       <div className="flex gap-2">
         <button type="button" className={danger} disabled={busy} onClick={onConfirm} data-testid="control-confirm-button">
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {admitted.length > 0 ? t("allow full access") : t("save and rotate its key")}
         </button>
         <button type="button" className={quiet} disabled={busy} onClick={onCancel}>
@@ -163,26 +163,24 @@ export function HostControl({
             {candidates.length === 0 && <li className="text-2xs text-faint">{t("no other device to pick")}</li>}
             {candidates.map((c) => (
               <li key={c.id}>
-                <label className={cn(CHECKBOX_LABEL, "items-center font-mono text-2xs text-fg", !upgraded && "cursor-not-allowed opacity-60")}>
-                  <input
-                    type="checkbox"
-                    className={CHECKBOX_INPUT}
-                    disabled={!upgraded}
-                    checked={picked.has(c.id)}
-                    onChange={(e) => {
-                      const next = new Set(picked);
-                      if (e.target.checked) next.add(c.id);
-                      else next.delete(c.id);
-                      setPicked(next);
-                    }}
-                  />
-                  <CheckboxMark />
-                  <span className="min-w-0">
-                    {c.id}
-                    {c.host && <span className="text-faint">· {t("can run AI")}</span>}
-                    {c.limited && <span className="text-faint">· {t("limited device")}</span>}
-                  </span>
-                </label>
+                <CheckboxField
+                  disabled={!upgraded}
+                  checked={picked.has(c.id)}
+                  onCheckedChange={(checked) => {
+                    const next = new Set(picked);
+                    if (checked) next.add(c.id);
+                    else next.delete(c.id);
+                    setPicked(next);
+                  }}
+                  className={cn("items-center font-mono text-2xs text-fg", !upgraded && "cursor-not-allowed opacity-60")}
+                  label={
+                    <>
+                      {c.id}
+                      {c.host && <span className="text-faint">· {t("can run AI")}</span>}
+                      {c.limited && <span className="text-faint">· {t("limited device")}</span>}
+                    </>
+                  }
+                />
               </li>
             ))}
           </ul>
@@ -235,7 +233,7 @@ export function HostControl({
               disabled={busy || !upgraded || outdated || exposed.length > 0}
               onClick={() => (controlSaveStep({ admitted, shutOut }) === "confirm" ? setConfirming(true) : onSave(from))}
             >
-              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
               {t("save")}
             </button>
             <button type="button" className={quiet} disabled={busy} onClick={onCancel}>

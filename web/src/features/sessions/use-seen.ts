@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useDebounceCallback, useEventCallback } from "usehooks-ts";
 import type { components } from "@/api/schema";
 import { feedRow, useGlobalFeedStore } from "@/app/global-feed";
 import { browserPresence } from "@/lib/presence";
@@ -86,54 +87,57 @@ export function useReportSeen(session: SessionRef, reporting: SeenReporting = {}
   // render.
   const store = useGlobalFeedStore();
 
-  // Held in refs so the effects below can report, or arrive, without having to
-  // re-bind the window listeners on every new message.
-  const scheduleRef = useRef<() => void>(() => {});
-  const arriveRef = useRef<() => void>(() => {});
   // Read at schedule time and again at fire time, like visibility.
   const attendingRef = useRef(attending);
   attendingRef.current = attending;
   const onArrivalRef = useRef(reporting.onArrival);
   onArrivalRef.current = reporting.onArrival;
 
+  // The session this hook is for, read again when a response comes back: an
+  // answer about the last one must not reach the new one's `onArrival`.
+  const targetRef = useRef({ machine, source, id });
+  targetRef.current = { machine, source, id };
+  // Unmounted: a response still in flight belongs to nothing.
+  const aliveRef = useRef(true);
+  // The next report is an arrival's. Cleared by the report that goes, and by
+  // one that does not: an arrival only counts if the reader is still there.
+  const arrivingRef = useRef(false);
+
+  const post = useEventCallback(() => {
+    const arrival = arrivingRef.current;
+    const at = targetRef.current;
+    arrivingRef.current = false;
+    if (!presence.present() || !attendingRef.current) return;
+    void apiFor(at.machine)
+      .POST("/api/sessions/{source}/{id}/seen", {
+        params: { path: { source: at.source as Source, id: at.id } },
+      })
+      .then(
+        (res) => {
+          const now = targetRef.current;
+          if (!aliveRef.current || now.machine !== at.machine || now.source !== at.source || now.id !== at.id) return;
+          if (arrival && res.data) onArrivalRef.current?.(res.data.previousReadAt ?? null);
+        },
+        // Offline: nothing was marked, so nothing moved — the next report tries again.
+        () => undefined,
+      );
+  });
+  const report = useDebounceCallback(post, DEBOUNCE_MS);
+
+  const schedule = useEventCallback(() => {
+    if (!presence.present() || !attendingRef.current) return;
+    report();
+  });
+
+  const arrive = useEventCallback(() => {
+    if (!presence.present() || !attendingRef.current) return;
+    arrivingRef.current = true;
+    schedule();
+  });
+
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // The next report is an arrival's. Cleared by the report that goes, and by
-    // one that does not: an arrival only counts if the reader is still there.
-    let arriving = false;
-    // An answer that comes back after the view moved on to another session is
-    // about the last one, and must not reach the new one's `onArrival`.
-    let alive = true;
-
-    const post = () => {
-      timer = undefined;
-      const arrival = arriving;
-      arriving = false;
-      if (!presence.present() || !attendingRef.current) return;
-      void apiFor(machine)
-        .POST("/api/sessions/{source}/{id}/seen", {
-          params: { path: { source: source as Source, id } },
-        })
-        .then(
-          (res) => {
-            if (alive && arrival && res.data) onArrivalRef.current?.(res.data.previousReadAt ?? null);
-          },
-          // Offline: nothing was marked, so nothing moved — the next report tries again.
-          () => undefined,
-        );
-    };
-
-    const schedule = () => {
-      if (!presence.present() || !attendingRef.current) return;
-      if (timer !== undefined) clearTimeout(timer);
-      timer = setTimeout(post, DEBOUNCE_MS);
-    };
-
-    const arrive = () => {
-      if (!presence.present() || !attendingRef.current) return;
-      arriving = true;
-      schedule();
-    };
+    aliveRef.current = true;
+    arrivingRef.current = false;
     // Back at a page that had been left: the reader returning to it, which is
     // an arrival like the window coming back into focus. Leaving needs nothing
     // here — every report checks presence before it goes.
@@ -153,8 +157,6 @@ export function useReportSeen(session: SessionRef, reporting: SeenReporting = {}
       if (arrivesAt((event as CustomEvent<unknown>).detail, source, id)) arrive();
     };
 
-    scheduleRef.current = schedule;
-    arriveRef.current = arrive;
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", arrive);
     window.addEventListener(ARRIVE_EVENT, onNav);
@@ -162,16 +164,14 @@ export function useReportSeen(session: SessionRef, reporting: SeenReporting = {}
     arrive();
 
     return () => {
-      alive = false;
-      if (timer !== undefined) clearTimeout(timer);
-      scheduleRef.current = () => {};
-      arriveRef.current = () => {};
+      aliveRef.current = false;
+      report.cancel();
       unsubscribePresence();
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", arrive);
       window.removeEventListener(ARRIVE_EVENT, onNav);
     };
-  }, [machine, source, id, presence]);
+  }, [machine, source, id, presence, arrive, report]);
 
   // Being read again — the pane focused, the transcript scrolled down to the
   // newest message — is itself a look at whatever arrived meanwhile. Only the
@@ -181,9 +181,9 @@ export function useReportSeen(session: SessionRef, reporting: SeenReporting = {}
     const focused = attentive && !wasAttentive.current;
     wasAttentive.current = attentive;
     if (!reading) return;
-    if (focused) arriveRef.current();
-    else scheduleRef.current();
-  }, [reading, attentive]);
+    if (focused) arrive();
+    else schedule();
+  }, [reading, attentive, arrive, schedule]);
 
   // The optimistic half: while it is being read, it reads as read.
   useEffect(() => {
@@ -201,7 +201,7 @@ export function useReportSeen(session: SessionRef, reporting: SeenReporting = {}
       const next = feedRow(store.getSnapshot(), ref)?.updatedAt;
       if (next === last) return;
       last = next;
-      scheduleRef.current();
+      schedule();
     });
-  }, [store, machine, source, id]);
+  }, [store, machine, source, id, schedule]);
 }

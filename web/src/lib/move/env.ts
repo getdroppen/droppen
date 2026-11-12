@@ -135,14 +135,13 @@ function pageStorage(): MoveStorage {
   };
 }
 
-/**
- * The hub's own name root (the legacy host) and its app host as
- * `/.well-known/droppen-hub` said them, held to the apex this page came from
- * (`lib/hub/hosts.ts` `moveOrigins`): `null` on any other page, or when the
- * hub names no app host.
- */
-export function pinnedOrigins(): MoveOrigins | null {
-  return moveOrigins();
+/** `origin`'s host, or the string itself when it is not a URL. */
+export function hostOf(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
 }
 
 /** The page's own. */
@@ -157,7 +156,7 @@ export function browserEnv(): MoveEnv {
     tabs: sharedTabs(),
     fetch: (input, init) => globalThis.fetch(input, init),
     hub: hubOrigin(),
-    pinned: pinnedOrigins(),
+    pinned: moveOrigins(),
     open: (url, name) => window.open(url, name, "popup,width=480,height=640"),
     opener: () => (window.opener as PeerWindow | null) ?? null,
     onMessage(fn) {

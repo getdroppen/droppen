@@ -15,6 +15,8 @@
  * (`rh-local-cache`: they rebuild), Cache Storage and `sessionStorage`.
  */
 import { KEY_STORE_DB, KEY_STORE_STORE } from "@/lib/e2e/keystore";
+import { SESSION_KEY } from "@/lib/hub/api";
+import { DEVICE_KEY_NOTE_PREFIX, DEVICE_NOTE_PREFIX } from "@/lib/hub/account-storage";
 import { SEEN_DB, SEEN_IN_IDB, SEEN_STORE } from "@/lib/hub/seen-store";
 import { HUB_ONLY_KEY } from "@/lib/transport/p2p";
 
@@ -40,8 +42,8 @@ export function movedDatabase(db: string, store: string): MovedDatabase | undefi
 /** `localStorage` entries moved by their name's start (each ends in the account, the device, or both). */
 const MOVED_PREFIXES = [
   // The device id and the key it was registered with, and what the browser noted about its device (forgetBrowser's notes).
-  "rh.hub.device.",
-  "rh.hub.devicekey.",
+  DEVICE_NOTE_PREFIX,
+  DEVICE_KEY_NOTE_PREFIX,
   "rh.hub.lost.",
   "rh.hub.lost-why.",
   "rh.hub.afresh.",
@@ -75,7 +77,7 @@ const MOVED_PREFIXES = [
 const MOVED_NAMES = [SEEN_IN_IDB, "rh.relays.manual", HUB_ONLY_KEY, "droppen.e2e-compat", "rh.theme", "rh.fontSize", "rh.lang"];
 
 /** Never moved, whatever the lists above say: the session, the push subscription, the move's own notes. */
-const NEVER_MOVED = ["rh.hub.session", "rh.hub.push.", "rh.hub.move."];
+const NEVER_MOVED = [SESSION_KEY, "rh.hub.push.", "rh.hub.move."];
 
 /** Whether the `localStorage` entry `name` is moved. */
 export function movesLocal(name: string): boolean {
@@ -83,7 +85,4 @@ export function movesLocal(name: string): boolean {
   return MOVED_NAMES.includes(name) || MOVED_PREFIXES.some((p) => name.startsWith(p) && name.length > p.length);
 }
 
-/** Where this browser notes its device id for `account` (`rh.hub.device.<account>`, `lib/hub/account.ts`). */
-export const DEVICE_NOTE_PREFIX = "rh.hub.device.";
-/** Where it notes the signing key that device id was registered with (hex). */
-export const DEVICE_KEY_NOTE_PREFIX = "rh.hub.devicekey.";
+export { DEVICE_KEY_NOTE_PREFIX, DEVICE_NOTE_PREFIX };

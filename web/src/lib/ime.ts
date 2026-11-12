@@ -10,6 +10,12 @@ export function isImeKeydown(e: React.KeyboardEvent<Element>): boolean {
   return e.nativeEvent.isComposing || e.keyCode === 229;
 }
 
+/** The send chord: Enter, no IME, and the modifier the prefs ask for (otherwise Shift+Enter is a newline). */
+export function isSendKeydown(e: React.KeyboardEvent<Element>, enterSendsModifier: boolean): boolean {
+  if (e.key !== "Enter" || isImeKeydown(e)) return false;
+  return enterSendsModifier ? e.metaKey || e.ctrlKey : !e.shiftKey;
+}
+
 /**
  * Tracks an active IME composition on a textarea. While composing, a
  * controlled value must only mirror the DOM (no persistence, no fan-out to

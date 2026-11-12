@@ -5,7 +5,7 @@
 
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronRight } from "lucide-react";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { type CloudAccount } from "@/lib/hub/account";
 import type { HubLink } from "@/lib/hub/link";
 import { useStore } from "@/lib/machines/store";
@@ -41,7 +41,7 @@ export function ThisDeviceSection({ name, relays }: { name: string | null; relay
         {relays && (
           <details open={relaysOpen} onToggle={(e) => setRelaysOpen(e.currentTarget.open)} className="group/relays">
             <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-6 py-2 select-none hover:bg-hover max-md:px-4 [&::-webkit-details-marker]:hidden">
-              <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-muted transition-transform group-open/relays:rotate-90" />
+              <CaretRightIcon aria-hidden="true" className="size-3 shrink-0 text-muted transition-transform group-open/relays:rotate-90" />
               <span className="text-[13px] font-medium text-fg">{t("Relays")}</span>
               <span className="min-w-0 truncate text-xs text-muted">{t("what carries a connection that is not direct")}</span>
             </summary>

@@ -1,4 +1,4 @@
-import { ContextMenu as BaseContextMenu } from "@base-ui-components/react/context-menu";
+import { ContextMenu as BaseContextMenu } from "@base-ui/react/context-menu";
 import { cn } from "@/lib/cn";
 
 export const ContextMenu = BaseContextMenu.Root;

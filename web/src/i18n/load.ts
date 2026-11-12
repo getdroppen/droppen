@@ -1,4 +1,5 @@
 import type { i18n as I18n } from "i18next";
+import type { ReactNode } from "react";
 import type { Root } from "react-dom/client";
 import type { Language } from "./match";
 
@@ -70,8 +71,13 @@ export function languageLoader(i18n: I18n, chunks: Partial<Record<Language, Lang
  * take longer than that, when the page is drawn in what it has (English) and
  * changes language once they come, rather than stay blank. Renders keep
  * their order, and happen however `shown` settles.
+ *
+ * `wrap` is the app's own context around every page it draws (`main.tsx`
+ * passes the icon weight). It is applied here, at the one root every page
+ * goes through, so the app's shell, the public pages and the hub's chunks are
+ * all drawn inside it without each of them remembering to.
  */
-export function rootAfter(root: Root, shown: Promise<void>, waitMs: number): Root {
+export function rootAfter(root: Root, shown: Promise<void>, waitMs: number, wrap?: (children: ReactNode) => ReactNode): Root {
   const ready = new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, waitMs);
     const done = () => {
@@ -81,8 +87,9 @@ export function rootAfter(root: Root, shown: Promise<void>, waitMs: number): Roo
     shown.then(done, done);
   });
   const after = (then: () => void) => void ready.then(then);
+  const drawn = (children: ReactNode) => (wrap ? wrap(children) : children);
   return {
-    render: (children) => after(() => root.render(children)),
+    render: (children) => after(() => root.render(drawn(children))),
     unmount: () => after(() => root.unmount()),
   };
 }

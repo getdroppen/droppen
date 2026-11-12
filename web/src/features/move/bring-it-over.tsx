@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { Note, secondary } from "@/features/cloud/ui";
 import { localDevice, watchMoves } from "@/lib/move";
 import { onlyUnfinishedHere } from "@/lib/move/receiver";
+import { hostOf } from "@/lib/move/env";
 import { type MoveOutcome, startPull } from "./index";
 
 /*
@@ -15,14 +16,6 @@ import { type MoveOutcome, startPull } from "./index";
  * with no pairing. Whether droppen.app holds one cannot be seen from here
  * (its storage is its own): the window says so if it does not.
  */
-
-const hostOf = (origin: string) => {
-  try {
-    return new URL(origin).host;
-  } catch {
-    return origin;
-  }
-};
 
 export type BringState = { kind: "idle" } | { kind: "busy" } | { kind: "failed"; message: string };
 
@@ -36,7 +29,7 @@ export function BringItOverView({ legacy, state, onBring }: { legacy: string; st
         <p className="text-xs leading-5 font-medium text-fg">{t("Used Droppen at {{legacy}} in this browser?", { legacy: host })}</p>
         <p className="text-xs leading-5 text-muted">{t("Bring it over: a {{legacy}} window opens, you confirm there, and this browser opens here as the same device, without adding it again.", { legacy: host })}</p>
         <button type="button" data-testid="bring-it-over" className={secondary} disabled={state.kind === "busy"} onClick={onBring}>
-          {state.kind === "busy" && <Loader2 className="size-3.5 animate-spin" />}
+          {state.kind === "busy" && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {t("Bring it over")}
         </button>
         {state.kind === "failed" && (

@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, ClipboardPaste, Hash, Loader2 } from "lucide-react";
+import { CircleNotchIcon, ClipboardIcon, HashIcon, WarningIcon } from "@phosphor-icons/react";
 import { type ChainState, offerFromText } from "@/lib/e2e";
 import { formatAsOf, formatRelative } from "@/lib/format";
 import { type CloudAccount, deviceFingerprint, hasRunAi, type RotationReport } from "@/lib/hub/account";
@@ -149,7 +149,7 @@ export function RetireReplacedPrompt({
             }
           }}
         >
-          {state === "busy" && <Loader2 className="size-3.5 animate-spin" />}
+          {state === "busy" && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {state === "busy" ? t("removing and rotating keys…") : t("remove {{id}}", { id: device })}
         </button>
         <button type="button" className={quiet} disabled={state === "busy"} onClick={() => setState("kept")}>
@@ -298,7 +298,7 @@ function PasteOffer({ onText }: { onText: (text: string) => void }) {
       />
       <div className="flex gap-2">
         <button type="submit" data-variant="primary" className={primary} disabled={!text.trim()}>
-          <ClipboardPaste className="size-3.5" />
+          <ClipboardIcon className="size-3.5" />
           {t("read it")}
         </button>
         {navigator.clipboard?.readText && (
@@ -371,10 +371,10 @@ function EnterCode({ account, onCandidate }: { account: CloudAccount; onCandidat
     >
       <p className="text-xs leading-5 text-muted">{t("On the new browser, choose “use a code instead”, then type the 8 digits it shows.")}</p>
       {pairings === null ? (
-        <Loader2 className="size-4 animate-spin text-faint" />
+        <CircleNotchIcon className="size-4 animate-spin text-faint" />
       ) : pairings.length === 0 ? (
         <p className="flex items-center gap-2 text-2xs text-faint">
-          <Loader2 className="size-3 animate-spin" />
+          <CircleNotchIcon className="size-3 animate-spin" />
           {t("no device is showing a code yet…")}
         </p>
       ) : (
@@ -415,13 +415,13 @@ function EnterCode({ account, onCandidate }: { account: CloudAccount; onCandidat
       />
       {wrong && (
         <p className="flex items-start gap-1.5 text-2xs text-danger">
-          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+          <WarningIcon className="mt-0.5 size-3 shrink-0" />
           {t("That did not work, and the code is spent. On the new device, start again for a new code.")}
         </p>
       )}
       <ErrorLine message={wrong ? null : error} />
       <button type="submit" data-variant="primary" className={primary} disabled={busy || !pairing || digits.length !== 8}>
-        {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Hash className="size-3.5" />}
+        {busy ? <CircleNotchIcon className="size-3.5 animate-spin" /> : <HashIcon className="size-3.5" />}
         {t("check the code")}
       </button>
     </form>
@@ -528,7 +528,7 @@ export function ConfirmCandidate({
             }
           }}
         >
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {joining ? t("the fingerprints match: approve it") : t("the fingerprints match: add it")}
         </button>
         <button type="button" className={quiet} disabled={busy} onClick={onCancel}>

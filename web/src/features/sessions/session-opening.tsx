@@ -5,7 +5,7 @@
  * against. The device's name, the connection's countdown and "retry now" are
  * the cloud bar's, above the view, and are not said again here.
  */
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -63,7 +63,7 @@ export function SessionOpening({ opening, live }: { opening: FeedOpening | null;
       {/* The words hang under the spinner rather than beside it in the flow,
           so the spinner stays exactly where it is when they come and go. */}
       <div className="relative flex">
-        <Loader2 className="size-4 animate-spin" />
+        <CircleNotchIcon className="size-4 animate-spin" />
         {said && (
           <div className="absolute top-full left-1/2 mt-2 flex w-max -translate-x-1/2 flex-col items-center gap-1.5">
             <span data-opening-line="" className="whitespace-nowrap font-mono text-2xs text-muted tabular-nums">

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bot, ChevronLeft, Sparkles, Terminal } from "lucide-react";
+import { RobotIcon, CaretLeftIcon, SparkleIcon, TerminalIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MachineLink } from "@/app/machine-route";
@@ -230,7 +230,7 @@ export function ChatHome() {
             title={t("back")}
             className="flex size-9 shrink-0 items-center justify-center text-muted hover:bg-hover md:hidden"
           >
-            <ChevronLeft className="size-4" />
+            <CaretLeftIcon className="size-4" />
           </MachineLink>
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold max-md:text-[15px]">{t("new chat")}</span>
         </>}
@@ -294,15 +294,15 @@ export function ChatHome() {
             <Tabs value={backend} onValueChange={(v) => setBackend(v as Backend)}>
               <TabsList className="w-72 max-w-full">
                 <TabsTab value="claude" className="gap-1.5">
-                  <Sparkles className="size-3 shrink-0" />
+                  <SparkleIcon className="size-3 shrink-0" />
                   claude
                 </TabsTab>
                 <TabsTab value="codex" className="gap-1.5">
-                  <Terminal className="size-3 shrink-0" />
+                  <TerminalIcon className="size-3 shrink-0" />
                   codex
                 </TabsTab>
                 <TabsTab value="api" className="gap-1.5">
-                  <Bot className="size-3 shrink-0" />
+                  <RobotIcon className="size-3 shrink-0" />
                   api
                 </TabsTab>
               </TabsList>

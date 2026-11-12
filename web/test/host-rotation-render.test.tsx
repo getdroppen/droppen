@@ -12,6 +12,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { CheckboxField } from "../src/components/ui/checkbox-field.js";
 import { ControlConfirm, HostControl } from "../src/features/cloud/devices.js";
 import { DeviceRow, type DeviceRowView, rowMenuItems } from "../src/features/cloud/device-row.js";
 import { AlwaysConfirmSetting, EndPauseConfirm, EnterCode, PushRenewNotice, RenewalLine, RenewalNotice, RenewalsAhead, RenewPanel } from "../src/features/cloud/renewal.js";
@@ -248,18 +249,18 @@ test("the account's 「总在设备上确认」 is off by default, written on th
   const html = draw(<AlwaysConfirmSetting runner={runner} account={account} />);
   assert.ok(html.includes("Always confirm on the device when renewing an identity key"));
   assert.ok(html.includes("On this device, only sign renewals confirmed on the device"));
-  assert.doesNotMatch(html, /checked=""/);
+  assert.doesNotMatch(html, /aria-checked="true"/);
   assert.ok(draw(<AlwaysConfirmSetting runner={runner} account={account} />, "zh-CN").includes("更换身份密钥时总在设备上确认"));
   assert.ok(draw(<AlwaysConfirmSetting runner={runner} account={account} />, "zh-TW").includes("更換身分金鑰時總在裝置上確認"));
   assert.ok(draw(<AlwaysConfirmSetting runner={runner} account={account} />, "ja").includes("ID 鍵の更新は常にデバイス上で確認する"));
   assert.ok(draw(<AlwaysConfirmSetting runner={runner} account={account} />, "zh-CN").includes("这台设备只签在设备上确认的换钥"));
   // The account's policy (on the chain) and this device's own guard, each its own switch.
-  assert.match(draw(<AlwaysConfirmSetting runner={runner} account={{ alwaysAssured: true, localAssured: () => true, setLocalAssured: () => undefined } as never} />), /checked=""[\s\S]*checked=""/);
+  assert.match(draw(<AlwaysConfirmSetting runner={runner} account={{ alwaysAssured: true, localAssured: () => true, setLocalAssured: () => undefined } as never} />), /aria-checked="true"[\s\S]*aria-checked="true"/);
   drive(AlwaysConfirmSetting, { runner, account }, [
     (tree) => {
-      const boxes = tree.filter((e) => e.type === "input");
-      void (boxes[0]!.props.onChange as (e: unknown) => Promise<void>)({ target: { checked: true } });
-      (boxes[1]!.props.onChange as (e: unknown) => void)({ target: { checked: true } });
+      const boxes = tree.filter((e) => e.type === CheckboxField);
+      void (boxes[0]!.props.onCheckedChange as (checked: boolean) => Promise<void>)(true);
+      (boxes[1]!.props.onCheckedChange as (checked: boolean) => void)(true);
     },
   ]);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -274,8 +275,8 @@ test("turning confirming on the device off is asked before it is written; with n
   // Unchecking asks; nothing is written yet.
   const asked = drive(AlwaysConfirmSetting, { runner, account: on }, [
     (tree) => {
-      const box = tree.find((e) => e.type === "input")!;
-      void (box.props.onChange as (e: unknown) => Promise<void>)({ target: { checked: false } });
+      const box = tree.find((e) => e.type === CheckboxField)!;
+      void (box.props.onCheckedChange as (checked: boolean) => Promise<void>)(false);
     },
   ]);
   void asked;
@@ -283,8 +284,8 @@ test("turning confirming on the device off is asked before it is written; with n
   assert.deepEqual(set, [], "not written before the person confirms");
   const confirming = drive(AlwaysConfirmSetting, { runner, account: on }, [
     (tree) => {
-      const box = tree.find((e) => e.type === "input")!;
-      void (box.props.onChange as (e: unknown) => Promise<void>)({ target: { checked: false } });
+      const box = tree.find((e) => e.type === CheckboxField)!;
+      void (box.props.onCheckedChange as (checked: boolean) => Promise<void>)(false);
     },
     (tree) => (tree.find((e) => e.props["data-testid"] === "renewal-policy-off-yes")!.props.onClick as () => void)(),
   ]);
@@ -350,7 +351,7 @@ test("a host that must renew first is let control no other host: Save is off and
   const primary = (tree: El[]) => tree.find((e) => e.type === "button" && e.props["data-variant"] === "primary")!;
   const pick = (id: string) => [
     (tree: El[]) => (tree.filter((e) => e.type === "input" && e.props.type === "radio")[2]!.props.onChange as () => void)(),
-    (tree: El[]) => (tree.filter((e) => e.type === "input" && e.props.type === "checkbox")[id === "m-1" ? 0 : 1]!.props.onChange as (e: unknown) => void)({ target: { checked: true } }),
+    (tree: El[]) => (tree.filter((e) => e.type === CheckboxField)[id === "m-1" ? 0 : 1]!.props.onCheckedChange as (checked: boolean) => void)(true),
   ];
   const exposed = drive(HostControl, props, pick("m-1"));
   assert.match(exposed.html, /data-testid="control-exposed" data-signal="warn"/);

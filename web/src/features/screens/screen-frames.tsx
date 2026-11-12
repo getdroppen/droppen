@@ -1,4 +1,4 @@
-import { RefreshCw, X } from "lucide-react";
+import { ArrowsClockwiseIcon, XIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { PaneTreeView } from "@/app/pane-tree-view";
 import { useScreens } from "@/app/screens";
@@ -28,7 +28,7 @@ function ScreenSyncNotices({ id }: { id: string }) {
           role="status"
           className="pointer-events-auto flex items-center gap-2 rounded border border-border bg-panel px-2 py-1 font-mono text-2xs text-muted shadow-sm"
         >
-          <RefreshCw aria-hidden="true" className="size-3 text-accent" />
+          <ArrowsClockwiseIcon aria-hidden="true" className="size-3 text-accent" />
           {t("this screen was changed on another device and has been synced to the latest")}
           <button
             type="button"
@@ -36,7 +36,7 @@ function ScreenSyncNotices({ id }: { id: string }) {
             onClick={() => dismissConflictNotice(id)}
             className="rounded text-faint hover:text-fg"
           >
-            <X className="size-3" />
+            <XIcon className="size-3" />
           </button>
         </div>
       )}
@@ -55,7 +55,7 @@ function ScreenSyncNotices({ id }: { id: string }) {
             onClick={() => dismissMachinesDropped(id)}
             className="rounded text-faint hover:text-fg"
           >
-            <X className="size-3" />
+            <XIcon className="size-3" />
           </button>
         </div>
       )}

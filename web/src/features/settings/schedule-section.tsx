@@ -1,15 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SourceIcon } from "@/components/source-icon";
-import { FolderSearch, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { FolderSimpleIcon, CircleNotchIcon, PencilSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { useFeedSettings } from "@/app/global-feed";
+import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
+import { CheckboxField } from "@/components/ui/checkbox-field";
+import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { localLoginHint } from "@/features/accounts/account-picker";
 import { accountsForProvider, localLoginOf, localLoginSignedOut, useAccounts, useStartAccount } from "@/features/accounts/use-accounts";
 import {
@@ -33,14 +36,14 @@ import {
 import { DirBrowser } from "@/features/sessions/dir-browser";
 import { cn } from "@/lib/cn";
 import { formatUntil, shortenHome } from "@/lib/format";
-import { isImeKeydown } from "@/lib/ime";
 import { Sheet } from "@/components/sheet";
 import {
-  SETTINGS_ACTION,
-  SETTINGS_ACTION_PRIMARY,
-  SETTINGS_COLUMN,
-  SETTINGS_FIELD,
+  SettingField,
+  SettingsColumn,
+  SettingsHint,
+  SettingsNote,
 } from "@/features/settings/layout";
+import { InlineEdit } from "@/features/settings/inline-edit";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
 import type { MachineKey } from "@/lib/machines/key";
@@ -50,9 +53,7 @@ type TaskStatus = components["schemas"]["TaskStatus"];
 // The agents a schedule can run: the ACP agent is not one of them (yet).
 type Source = CliSource;
 
-export const scheduledTasksKey = (machine: MachineKey) => mq(machine, "scheduled-tasks");
-
-const field = SETTINGS_FIELD;
+const scheduledTasksKey = (machine: MachineKey) => mq(machine, "scheduled-tasks");
 
 /** Sunday first, because `Date.getDay` and cron both number it zero. */
 const WEEKDAY_KEYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -124,13 +125,11 @@ function StatusDot({ task }: { task: ScheduledTask }) {
   );
 }
 
-/** Name cell that turns into an input on click; Enter commits, Escape reverts. */
 function TaskName({ task }: { task: ScheduledTask }) {
   const machine = useMachine();
   const api = useApi();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState<string | null>(null);
 
   const rename = useMutation({
     mutationFn: async (name: string) => {
@@ -141,51 +140,14 @@ function TaskName({ task }: { task: ScheduledTask }) {
       if (res.error) throw new Error(res.error.error);
       return res.data;
     },
-    onSuccess: () => {
-      setDraft(null);
-      void queryClient.invalidateQueries({ queryKey: scheduledTasksKey(machine) });
-    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: scheduledTasksKey(machine) }),
   });
 
-  const commit = () => {
-    const next = (draft ?? "").trim();
-    if (next === "" || next === task.name) {
-      setDraft(null);
-      return;
-    }
-    rename.mutate(next);
-  };
-
-  if (draft === null) {
-    return (
-      <button
-        type="button"
-        title={t("rename task")}
-        onClick={() => setDraft(task.name)}
-        className="max-w-40 truncate rounded px-1 text-left font-mono text-xs text-fg hover:bg-hover"
-      >
-        {task.name}
-      </button>
-    );
-  }
   return (
-    <input
-      autoFocus
-      value={draft}
-      disabled={rename.isPending}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (isImeKeydown(e)) return;
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          setDraft(null);
-        }
-      }}
-      className={cn(field, "w-40")}
+    <InlineEdit
+      value={task.name}
+      title={t("rename task")}
+      onCommit={(name) => rename.mutateAsync(name)}
     />
   );
 }
@@ -383,7 +345,7 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
   };
 
   return (
-    <div className={cn(SETTINGS_COLUMN, "mt-2 flex w-full flex-col gap-2 border border-border bg-panel p-2")}>
+    <SettingsColumn className="mt-2 flex w-full flex-col gap-2 border border-border bg-panel p-2">
       <Tabs value={source} onValueChange={(v) => switchSource(v as Source)}>
         <TabsList className="w-full">
           <TabsTab value="claude">claude</TabsTab>
@@ -410,12 +372,12 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
       <div className="flex flex-col gap-1">
         <span className="text-xs text-muted">{t("schedule")}</span>
         {advanced ? (
-          <input
+          <Input
             value={rawExpr}
             onChange={(e) => setRawExpr(e.target.value)}
             spellCheck={false}
             placeholder="0 9 * * *"
-            className={cn(field, "font-mono")}
+            className="font-mono"
           />
         ) : (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -445,16 +407,16 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
             )}
             {preset.preset === "everyNHours" ? (
               <>
-                <input
+                <Input
                   type="number"
                   min={1}
                   max={23}
                   value={preset.n}
                   onChange={(e) => setPreset({ ...preset, n: clampNumber(e.target.value, 1, 23, 1) })}
-                  className={cn(field, "w-16")}
+                  className="w-16"
                 />
                 <span className="text-xs text-muted">{t("hours, at minute")}</span>
-                <input
+                <Input
                   type="number"
                   min={0}
                   max={59}
@@ -462,18 +424,18 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
                   onChange={(e) =>
                     setPreset({ ...preset, minute: clampNumber(e.target.value, 0, 59, 0) })
                   }
-                  className={cn(field, "w-16")}
+                  className="w-16"
                 />
               </>
             ) : (
-              <input
+              <Input
                 type="time"
                 value={hhmm(preset.hour, preset.minute)}
                 onChange={(e) => {
                   const picked = parseHhmm(e.target.value);
                   if (picked) setPreset({ ...preset, ...picked });
                 }}
-                className={cn(field, "w-28")}
+                className="w-28"
               />
             )}
           </div>
@@ -483,21 +445,21 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
           <span className="text-xs text-muted">
             <ScheduleSummary expr={expr} />
           </span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             onClick={() => {
               // Leaving the presets seeds the raw field with what they built, so
               // the advanced view starts from the schedule that was on screen.
               if (!advanced) setRawExpr(expr);
               setAdvanced(!advanced);
             }}
-            className="ml-auto rounded px-1.5 py-0.5 text-xs font-medium text-muted hover:bg-hover hover:text-fg"
+            className="ml-auto h-auto px-1.5 py-0.5 text-xs"
           >
             {advanced ? t("use the presets") : t("advanced")}
-          </button>
+          </Button>
         </div>
         {verdict.kind === "invalid" && (
-          <span data-signal="failed" className="font-mono text-2xs text-danger">
+          <SettingsNote tone="danger">
             {verdict.reason === "fieldCount"
               ? t("a schedule is five fields: minute hour day-of-month month day-of-week")
               : verdict.reason === "tooLong"
@@ -505,10 +467,10 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
                 : verdict.reason === "empty"
                   ? t("the schedule is empty")
                   : t("one of the five fields is not a value cron accepts")}
-          </span>
+          </SettingsNote>
         )}
         {upcoming.length > 0 && (
-          <span className="font-mono text-xs text-muted">
+          <SettingsNote tone="muted" className="text-xs">
             {t("next: {{times}}", {
               // The weekday earns its place here: "Tue Sep 8, 09:00" is the
               // reading that catches a `* * * * 2` meant as `* * * * 1`, which
@@ -525,14 +487,14 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
                 )
                 .join(" · "),
             })}
-          </span>
+          </SettingsNote>
         )}
-        <span className="text-xs text-muted">
+        <SettingsHint>
           {t(
             "The schedule is read in the server's time zone. The times above are drawn in this browser's ({{zone}}), so they only match if the server keeps the same clock.",
             { zone: Intl.DateTimeFormat().resolvedOptions().timeZone },
           )}
-        </span>
+        </SettingsHint>
       </div>
 
       <div className="flex flex-col gap-1">
@@ -555,7 +517,7 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
               browsing ? "bg-hover text-fg" : "bg-bg text-muted",
             )}
           >
-            <FolderSearch className="size-3.5" />
+            <FolderSimpleIcon className="size-3.5" />
           </button>
         </div>
         {recentCwds.length > 0 && (
@@ -589,90 +551,72 @@ function TaskForm({ initial, onDone }: { initial?: ScheduledTask; onDone: () => 
         )}
       </div>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-muted">{t("prompt")}</span>
-        <textarea
+      <SettingField label={t("prompt")}>
+        <Textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={4}
           placeholder={t("what should the agent do each time?")}
-          className="w-full resize-y border border-border bg-bg px-3 py-2 text-[13px] leading-[18px] text-fg placeholder:text-faint hover:border-border-strong focus:border-fg"
         />
-      </label>
+      </SettingField>
 
       <div className="flex flex-wrap items-end gap-2">
-        <label className="flex min-w-32 flex-1 flex-col gap-1">
-          <span className="text-xs text-muted">{t("model")}</span>
+        <SettingField label={t("model")} className="min-w-32 flex-1">
           <ModelSelect
             models={models}
             value={model}
             customId={customModel}
             onChange={setModel}
-            className={cn(field, "cursor-pointer")}
+            className="cursor-pointer"
             leading={{ value: "", label: t("CLI default") }}
           />
-        </label>
+        </SettingField>
         {efforts.length > 0 && (
-          <label className="flex min-w-24 flex-1 flex-col gap-1">
-            <span className="text-xs text-muted">{t("effort")}</span>
+          <SettingField label={t("effort")} className="min-w-24 flex-1">
             <SelectField
               value={effortToSend}
               onValueChange={setEffort}
               options={[{ value: "", label: t("CLI default") }, ...efforts.map((e) => ({ value: e, label: e }))]}
             />
-          </label>
+          </SettingField>
         )}
-        <label className="flex min-w-32 flex-1 flex-col gap-1">
-          <span className="text-xs text-muted">{t("permission")}</span>
+        <SettingField label={t("permission")} className="min-w-32 flex-1">
           <SelectField
             value={permission}
             onValueChange={setPermission}
             options={[{ value: "", label: t("CLI default") }, ...PERMISSION_OPTIONS[source].map((p) => ({ value: p, label: p }))]}
           />
-        </label>
+        </SettingField>
       </div>
 
-      <label className={cn(CHECKBOX_LABEL, "text-xs")}>
-        <input type="checkbox" className={CHECKBOX_INPUT} checked={skipIfBusy} onChange={(e) => setSkipIfBusy(e.target.checked)} />
-        <CheckboxMark />
-        <span className="min-w-0 text-xs text-muted">
-          {t(
-            "Skip a run while the session the previous one started is still working, instead of stacking a second session on top of it.",
-          )}
-        </span>
-      </label>
+      <CheckboxField
+        checked={skipIfBusy}
+        onCheckedChange={setSkipIfBusy}
+        className="text-xs"
+        labelClassName="text-xs text-muted"
+        label={t(
+          "Skip a run while the session the previous one started is still working, instead of stacking a second session on top of it.",
+        )}
+      />
 
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-muted">{t("name (optional)")}</span>
-        <input
+      <SettingField label={t("name (optional)")}>
+        <Input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t("nightly review")}
-          className={field}
         />
-      </label>
+      </SettingField>
 
-      {save.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{save.error.message}</span>}
+      {save.isError && <SettingsNote tone="danger">{save.error.message}</SettingsNote>}
 
       <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          disabled={!ready}
-          onClick={() => save.mutate()}
-          data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
-        >
-          {save.isPending && <Loader2 className="size-3 animate-spin" />}
+        <Button variant="primary" disabled={!ready} onClick={() => save.mutate()}>
+          {save.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
           {initial ? t("save") : t("add task")}
-        </button>
-        <button
-          type="button"
-          onClick={onDone}
-          className={SETTINGS_ACTION}
-        >
-          {t("cancel")}
-        </button>
+        </Button>
+        <Button onClick={onDone}>{t("cancel")}</Button>
       </div>
-    </div>
+    </SettingsColumn>
   );
 }
 
@@ -710,13 +654,13 @@ function TaskRow({ task }: { task: ScheduledTask }) {
 
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/40 py-1.5">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         disabled={toggle.isPending}
         onClick={() => toggle.mutate()}
         title={task.enabled ? t("enabled — click to pause") : t("paused — click to enable")}
         aria-label={task.enabled ? t("enabled — click to pause") : t("paused — click to enable")}
-        className="flex size-4 shrink-0 items-center justify-center rounded hover:bg-hover disabled:opacity-40"
+        className="size-4 p-0"
       >
         <span
           className={cn(
@@ -724,7 +668,7 @@ function TaskRow({ task }: { task: ScheduledTask }) {
             task.enabled ? "text-accent" : "text-faint opacity-50",
           )}
         />
-      </button>
+      </Button>
       <TaskName task={task} />
       <SourceIcon source={task.source} className="text-muted" />
       {/* The directory is what says which project a nightly task acts on, and
@@ -745,56 +689,57 @@ function TaskRow({ task }: { task: ScheduledTask }) {
       </span>
       <StatusDot task={task} />
       <div className="ml-auto flex items-center gap-1">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           title={t("edit task")}
           aria-label={t("edit task")}
           onClick={() => setEditing(!editing)}
-          className={cn(
-            "flex size-6 items-center justify-center rounded hover:bg-hover",
-            editing ? "text-accent" : "text-muted hover:text-fg",
-          )}
+          className={cn("size-6 p-0", editing ? "text-accent" : "hover:text-fg")}
         >
-          <Pencil className="size-3.5" />
-        </button>
+          <PencilSimpleIcon className="size-3.5" />
+        </Button>
         {confirming ? (
           <>
-            <span data-signal="warn" className="font-mono text-2xs text-warn-fg">{t("delete this task?")}</span>
-            <button
-              type="button"
+            <SettingsNote tone="warn">{t("delete this task?")}</SettingsNote>
+            <Button
+              variant="ghost"
               disabled={remove.isPending}
-              onClick={() => remove.mutate()} data-signal="failed" className="rounded px-1.5 py-0.5 font-mono text-2xs text-danger hover:bg-danger/15 disabled:opacity-40"
+              onClick={() => remove.mutate()}
+              data-signal="failed"
+              className="h-auto px-1.5 py-0.5 font-mono text-2xs text-danger hover:bg-danger/15"
             >
               {remove.isPending ? t("removing…") : t("remove")}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => setConfirming(false)}
-              className="rounded px-1.5 py-0.5 font-mono text-2xs text-muted hover:bg-hover"
+              className="h-auto px-1.5 py-0.5 font-mono text-2xs"
             >
               {t("cancel")}
-            </button>
+            </Button>
           </>
         ) : (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             title={t("delete task")}
             aria-label={t("delete task")}
-            onClick={() => setConfirming(true)} data-signal="failed" className="flex size-6 items-center justify-center rounded text-muted hover:bg-hover hover:text-danger"
+            onClick={() => setConfirming(true)}
+            data-signal="failed"
+            className="size-6 p-0 hover:text-danger"
           >
-            <Trash2 className="size-3.5" />
-          </button>
+            <TrashIcon className="size-3.5" />
+          </Button>
         )}
       </div>
       {/* A failure has to be readable without a hover: on a phone there is none. */}
       {isLoud(task.lastStatus) && task.lastError && (
-        <span data-signal="failed" className="w-full font-mono text-2xs break-all text-danger">{task.lastError}</span>
+        <SettingsNote tone="danger" className="w-full break-all">{task.lastError}</SettingsNote>
       )}
       {toggle.isError && (
-        <span data-signal="failed" className="w-full font-mono text-2xs text-danger">{toggle.error.message}</span>
+        <SettingsNote tone="danger" className="w-full">{toggle.error.message}</SettingsNote>
       )}
       {remove.isError && (
-        <span data-signal="failed" className="w-full font-mono text-2xs text-danger">{remove.error.message}</span>
+        <SettingsNote tone="danger" className="w-full">{remove.error.message}</SettingsNote>
       )}
       {editing && <TaskForm initial={task} onDone={() => setEditing(false)} />}
     </div>
@@ -820,13 +765,15 @@ export function ScheduleSection() {
 
   return (
     <Sheet className="p-3">
-      <p className={cn(SETTINGS_COLUMN, "text-xs leading-[18px] text-muted")}>
-        {t(
-          "Each task starts a new session on its own schedule — there is no injecting a message into a session you already have open. The expression is read in the server's time zone, not this browser's, and a run whose time passed while the server was down is not made up afterwards: it simply waits for the next one.",
-        )}
-      </p>
+      <SettingsColumn>
+        <SettingsHint>
+          {t(
+            "Each task starts a new session on its own schedule — there is no injecting a message into a session you already have open. The expression is read in the server's time zone, not this browser's, and a run whose time passed while the server was down is not made up afterwards: it simply waits for the next one.",
+          )}
+        </SettingsHint>
+      </SettingsColumn>
 
-      <div className={cn(SETTINGS_COLUMN, "mt-3")}>
+      <SettingsColumn className="mt-3">
         {isPending && <Spinner />}
         {data && (
           <>
@@ -838,22 +785,18 @@ export function ScheduleSection() {
             )}
           </>
         )}
-      </div>
+      </SettingsColumn>
 
-      <div className={cn(SETTINGS_COLUMN, "mt-3")}>
+      <SettingsColumn className="mt-3">
         {adding ? (
           <TaskForm onDone={() => setAdding(false)} />
         ) : (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
-          >
-            <Plus className="size-3" />
+          <Button variant="primary" onClick={() => setAdding(true)}>
+            <PlusIcon className="size-3" />
             {t("add scheduled task")}
-          </button>
+          </Button>
         )}
-      </div>
+      </SettingsColumn>
     </Sheet>
   );
 }

@@ -14,9 +14,9 @@ import { gb, PLAN_NUMBERS, PRO_PRICE, THROTTLED_KB_PER_SEC, yearlySaving } from 
 import PrivacyPage, { PRIVACY_UPDATED, UNVERIFIED_ACCOUNT_DAYS } from "../src/features/landing/privacy.js";
 import { PLAN_TABLE } from "../src/lib/hub/plan.js";
 import { bootRoute, frontPage, isAuthPath, isFrontPath, PRICING_PATH, PRIVACY_PATH, publicPage } from "../src/features/landing/route.js";
-import { looksLikeEmail, PRIVACY_EMAIL, submitWaitlist, type WaitlistState, waitlistProblem } from "../src/features/landing/waitlist.js";
+import { PRIVACY_EMAIL } from "../src/features/landing/page-kit.js";
+import { looksLikeEmail, submitWaitlist, type WaitlistState, waitlistProblem } from "../src/features/landing/waitlist.js";
 import { HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "../src/lib/hub/api.js";
-import { signupModeOf } from "../src/features/landing/signup-mode.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { ja } from "../src/i18n/ja.js";
 import { zhCN } from "../src/i18n/zh-CN.js";
@@ -194,7 +194,7 @@ test("one primary action on the page: the waitlist form's, whatever the sign-up 
     assert.equal(primaries(html), 1, `${lng}: one primary`);
     assert.equal(primaries(part(html, "plans", "waitlist")), 0, `${lng}: the comparison has no actions`);
     assert.equal(primaries(part(html, "waitlist", "faq")), 1, `${lng}: the form`);
-    assert.match(part(html, "waitlist", "faq"), /<button type="submit" data-variant="primary" data-testid="waitlist-submit"/);
+    assert.match(part(html, "waitlist", "faq"), /<button type="submit" data-variant="primary" [^>]*data-testid="waitlist-submit"/);
   }
 });
 
@@ -210,7 +210,10 @@ test("by invite, the form starts on Free, or on Pro when the address says so", (
   assert.equal((html.match(/<input type="radio"[^>]*name="plan"/g) ?? []).length, 2);
   assert.match(html, /<fieldset[^>]*><legend[^>]*><span[^>]*>Plan<\/span><\/legend>/);
   assert.match(html, /data-testid="waitlist-form" data-plan="free"/);
-  assert.match(html, /<input id="waitlist-email" type="email" autoComplete="email" inputMode="email" required=""[^>]*name="email"/);
+  // An address, then the action, on one row, and no label over the field: its example shows what
+  // to type, and its own name is what a screen reader hears.
+  assert.doesNotMatch(html, /<label[^>]*for="waitlist-email"/);
+  assert.match(html, /<input [^>]*id="waitlist-email" type="email" autoComplete="email" inputMode="email"[^>]*required=""[^>]*placeholder="you@example.com" aria-label="E-mail address"[^>]*name="email"/);
   assert.doesNotMatch(html, /waitlist-privacy|No confirmation mail/);
 });
 
@@ -252,16 +255,12 @@ test("closed sign-up: closed for now, Free's waitlist and Pro's, and no invite c
   for (const [lng, line, invite] of [
     ["zh-CN", "目前暂停注册", /邀请/],
     ["zh-TW", "目前暫停註冊", /邀請/],
-    ["ja", "現在は新規登録を停止中", /招待/],
+    ["ja", "現在、新規登録を停止しています。", /招待/],
   ] as const) {
     const said = text(draw(lng, { signup: "closed" }));
     assert.ok(said.includes(line), `${lng}: ${line}`);
     assert.doesNotMatch(said, invite, `${lng}: no invite`);
   }
-});
-
-test("sign-up is open, written in the page: nothing is asked of the hub", () => {
-  assert.equal(signupModeOf(), "open");
 });
 
 test("the plans are facts, not buttons: signed in or not, the waitlist form is the page's way in", () => {

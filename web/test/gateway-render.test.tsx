@@ -198,7 +198,7 @@ test("with the gateway's devices: the bar says each device and how current an of
   assert.match(bar.textContent, /本设备/);
   assert.match(bar.textContent, /studio/);
   // How current the offline device's copy is, in the app's language: today, the time; in full, the day too.
-  assert.match(bar.textContent, /laptop截至 \d{2}:\d{2}/, "the offline device: how current its copy is");
+  assert.match(bar.textContent, /laptop截至 (\d{1,2}月\d{1,2}日 )?\d{2}:\d{2}/, "the offline device: how current its copy is");
   assert.match(find("data-device-choice").find((n) => n.getAttribute("data-device-choice") === "m-laptop")!.getAttribute("title") ?? "", /离线副本 · 截至 \d{1,2}月\d{1,2}日 \d{2}:\d{2}/);
   const laptop = find("data-device-choice").find((n) => n.getAttribute("data-device-choice") === "m-laptop")!;
   assert.equal(laptop.getAttribute("data-device-state"), "offline");
