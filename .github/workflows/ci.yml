@@ -496,6 +496,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # An edit to this block (its `needs`, `if` or `with`) changes only ci.yml,
+  # which does not turn the packaging jobs on (ci-changes.sh), so its pull
+  # request does not test it: after changing it, run CI by workflow_dispatch,
+  # which runs every area.
   desktop-linux:
     needs: [desktop-linux-server, desktop-linux-notices]
     if: ${{ !cancelled() && needs.desktop-linux-server.result == 'success' && needs.desktop-linux-notices.result == 'success' }}

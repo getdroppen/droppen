@@ -15,8 +15,10 @@
 # path under .github/ and a changed path no rule below knows all mean "every
 # area is true". A bug here can therefore waste a run, never hide a test. One
 # exception: a .github path turns desktop_package (the Linux app's packaging,
-# 20-25 minutes of two runners) on only if it is one of the packaging's own
-# workflow, scripts and pins.
+# 20-25 minutes of two runners) on only if it is one of the packaging's own:
+# workflows/desktop-linux.yml, workflows/release.yml (which calls it),
+# scripts/smoke-desktop-linux.sh, scripts/unpack-artifact.sh,
+# scripts/fetch-release-tool.sh, release-tools.lock, or this script.
 #
 # The map follows what each job reads, not its directory:
 #  - the web job's check:hub-api scans crates/droppen-agent/src,
@@ -113,7 +115,7 @@ while IFS= read -r path; do
     .github/*)
       github=$path
       case "$path" in
-        .github/workflows/desktop-linux.yml|.github/scripts/smoke-desktop-linux.sh|.github/scripts/unpack-artifact.sh|.github/scripts/fetch-release-tool.sh|.github/release-tools.lock)
+        .github/workflows/desktop-linux.yml|.github/workflows/release.yml|.github/scripts/smoke-desktop-linux.sh|.github/scripts/unpack-artifact.sh|.github/scripts/fetch-release-tool.sh|.github/release-tools.lock|.github/scripts/ci-changes.sh)
           desktop_package=1 ;;
       esac
       continue ;;
