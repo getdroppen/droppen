@@ -440,7 +440,33 @@ and the DMG, `droppen` as the publisher (the `.deb`'s maintainer) for now, the
 `devel` section, no GStreamer plugins in the AppImage (the web app plays no
 media), and the icons without the `@2x` one, which Tauri would install as the
 scale-2 icon of its size (`hicolor/256x256@2`, where a 512-pixel image
-belongs) rather than as the 256-pixel one. No release builds them yet.
+belongs) rather than as the 256-pixel one.
+
+`desktop/build-linux.sh` builds them, one architecture at a time, in Docker:
+
+```sh
+desktop/build-linux.sh --arch aarch64 --sidecar /path/to/linux/droppen-server   # HEAD
+desktop/build-linux.sh --arch x86_64 --ref v0.2.140 --sidecar …                # emulated on an Apple silicon Mac
+```
+
+Its image (`linux/Dockerfile`) is Ubuntu 22.04 by digest, whose glibc 2.35 is
+the oldest the app runs on (Ubuntu 22.04, Debian 12, Fedora 36 and newer),
+with the WebKitGTK stack from the live jammy archive and Rust; it is built
+afresh for every build. The app is built without the network, by the pinned
+tauri-cli, with the AppImage tools of `.github/release-tools.lock` where the
+bundler looks for them, so it downloads nothing, and the AppImage starts with
+the pinned runtime. Out come `Droppen-<version>-<arch>.AppImage`,
+`droppen_<version>_<amd64|arm64>.deb` and `LIBRARIES-<arch>.txt`: every file the
+AppImage takes from an Ubuntu package, with the package's version and source
+package. The `.deb` takes those libraries from the system instead (it depends
+on Ubuntu's WebKitGTK, GTK and appindicator). Both carry `LICENSE` and the
+Linux `THIRD_PARTY_NOTICES` (`third-party-notices.sh --platform linux`) in
+`/usr/lib/Droppen`; the AppImage also carries every library's copyright file,
+the licence texts they name, and `README.AppImage` (`linux/README.AppImage.in`:
+the AppImage runtime's and AppRun's notices, and where its source is). `linux/build-in-container.sh` checks both bundles as `build.sh` checks
+the Mac app (no test hooks, the updater key, the sidecar, the legal files), and
+that every file of the AppImage is the app's, a tool's or one installed
+package's. No release publishes them yet.
 
 Run the unit tests with `cargo test --workspace` here (`core/` holds everything
 testable without a window: port, PATH, the sidecar's lifecycle, instance
