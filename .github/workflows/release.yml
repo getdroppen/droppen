@@ -193,20 +193,26 @@ jobs:
               echo "::error::desktop/linux/Dockerfile installs Rust $docker_rust, not this workflow's $RUST_TOOLCHAIN"
               exit 1
             fi
-            # The .deb's Maintainer: the app crate's authors or else the
-            # bundle's publisher (tauri-bundler), still the placeholder
-            # "droppen" until a contact is chosen. A release names a real
-            # one, "Name <address>" as Debian's policy has it; a dry run may
-            # build with the placeholder.
-            maintainer=$(sed -n 's/^authors = \[\(.*\)\]$/\1/p' desktop/src-tauri/Cargo.toml | head -n 1)
-            [ -n "$maintainer" ] || maintainer=$(sed -n 's/^ *"publisher": *"\([^"]*\)".*/\1/p' desktop/src-tauri/tauri.linux.conf.json)
-            contact='<[^@>]+@[^>]+>'
-            if ! [[ "$maintainer" =~ $contact ]]; then
-              if [ "$publish" = true ]; then
-                echo "::error::the .deb's Maintainer would be \"$maintainer\", the placeholder: set bundle.publisher in desktop/src-tauri/tauri.linux.conf.json to \"Name <address>\" (it must pass the release text check) before the first Linux release"
-                exit 1
+            # The .deb's Maintainer, early: tauri-bundler writes the app
+            # crate's authors, or else the bundle's publisher, still the
+            # placeholder "droppen" until a contact is chosen. A release names
+            # one, "Name <local@domain>" as Debian's policy has it; a dry run
+            # may build with the placeholder. This reads the source, so it
+            # stops only what is sure to stop: the release job checks the
+            # Maintainer the built .debs carry, which is what counts
+            # (release-text-check-linux.sh --publish).
+            if grep -qE '^authors([[:space:]]|[.=])' desktop/src-tauri/Cargo.toml; then
+              echo "::notice::desktop/src-tauri/Cargo.toml sets the app's authors: the release job checks the Maintainer of the built .debs"
+            else
+              maintainer=$(sed -n 's/^ *"publisher": *"\([^"]*\)".*/\1/p' desktop/src-tauri/tauri.linux.conf.json)
+              contact='^[^<>@[:space:]][^<>@]* <[^<>@[:space:]]+@[^<>@[:space:]]+>$'
+              if ! [[ "$maintainer" =~ $contact ]]; then
+                if [ "$publish" = true ]; then
+                  echo "::error::the .deb's Maintainer would be \"$maintainer\", not a maintainer one can write to: set bundle.publisher in desktop/src-tauri/tauri.linux.conf.json to \"Name <local@domain>\" (it must pass the release text check) before the first Linux release"
+                  exit 1
+                fi
+                echo "::warning::the .deb's Maintainer is \"$maintainer\", the placeholder: a release would stop here"
               fi
-              echo "::warning::the .deb's Maintainer is \"$maintainer\", the placeholder: a release would stop here"
             fi
           fi
           # Once a release has offered the AppImages, every release with the
@@ -976,7 +982,7 @@ jobs:
           # The AppImages, the .debs and LIBRARIES-<arch>.txt: read and
           # signed here, never run.
           if [ "$DESKTOP_LINUX" = true ]; then
-            .github/scripts/unpack-desktop-linux.sh "$RUNNER_TEMP/dl/linux" "$RUNNER_TEMP/linux" "$PLAIN"
+            .github/scripts/unpack-desktop-linux.sh builds "$RUNNER_TEMP/dl/linux" "$RUNNER_TEMP/linux" "$PLAIN"
           fi
       - name: The secrets this run needs
         env:
@@ -1013,9 +1019,15 @@ jobs:
         run: .github/scripts/release-names.sh
       - name: Text check of the staged release
         run: .github/scripts/release-text-check-staged.sh "$RUNNER_TEMP/a/staged/release"
-      - name: Text check of the Linux app
+      # And for a release the .debs' Maintainer, as the built packages carry
+      # it: a maintainer one can write to, not the placeholder "droppen".
+      - name: Text check of the Linux app, and a release's maintainer
         if: env.DESKTOP_LINUX == 'true'
-        run: .github/scripts/release-text-check-linux.sh "$RUNNER_TEMP/linux" "$PLAIN"
+        run: |
+          set -euo pipefail
+          args=()
+          [ "$PUBLISH" != true ] || args+=(--publish)
+          .github/scripts/release-text-check-linux.sh ${args[@]+"${args[@]}"} "$RUNNER_TEMP/linux" "$PLAIN"
       # The stage job ran npm install scripts: the files the release takes from the
       # source must be the source's, byte for byte, and NOTES.md (the release's
       # page, install command and all) what the source writes.
@@ -1260,7 +1272,7 @@ jobs:
             $unpack "$RUNNER_TEMP/dl/signed/signed.tar" "$SIGNED_SHA" "$RUNNER_TEMP/desktop" "$ALLOW_SIGNED"
           fi
           if [ "$DESKTOP_LINUX" = true ]; then
-            .github/scripts/unpack-desktop-linux.sh "$RUNNER_TEMP/dl/linux" "$RUNNER_TEMP/desktop-linux" "$PLAIN"
+            .github/scripts/unpack-desktop-linux.sh all "$RUNNER_TEMP/dl/linux" "$RUNNER_TEMP/desktop-linux" "$PLAIN"
           fi
       - name: latest.json (droppen-update-manifest write)
         if: env.DESKTOP == 'true'
@@ -1406,7 +1418,7 @@ jobs:
             cp "$RUNNER_TEMP/a/checked/checked/latest.json" "$RUNNER_TEMP/desktop/updater/"
           fi
           if [ "$DESKTOP_LINUX" = true ]; then
-            .github/scripts/unpack-desktop-linux.sh "$RUNNER_TEMP/dl/linux" "$RUNNER_TEMP/desktop-linux" "$PLAIN"
+            .github/scripts/unpack-desktop-linux.sh all "$RUNNER_TEMP/dl/linux" "$RUNNER_TEMP/desktop-linux" "$PLAIN"
           fi
       - name: The files to attest
         env:

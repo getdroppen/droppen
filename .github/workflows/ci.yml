@@ -343,6 +343,7 @@ jobs:
       - run: bash .github/scripts/approve-fork-runs.test.sh
       - run: bash .github/scripts/fetch-release-tool.test.sh
       - run: bash .github/scripts/unpack-artifact.test.sh
+      - run: bash .github/scripts/release-linux.test.sh
 
   # The desktop workspace's tests, without Tauri: `desktop/core` builds on
   # Linux (its macOS-only paths have stubs), and this runs none of the app

@@ -71,10 +71,12 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    ships with the Mac app, since the two share one `latest.json`, and all
    four files or none. The workflow stops a run whose notes name only some
    of them, or that names them without `Droppen-X.Y.Z.dmg`. It also stops a
-   release whose `.deb` would still name the placeholder maintainer
-   `droppen`: `bundle.publisher` in
-   `desktop/src-tauri/tauri.linux.conf.json` must be `Name <address>`, as
-   Debian's policy has it, and must pass the release text check.
+   release whose `.deb`s would still name the placeholder maintainer
+   `droppen`: the `release` job reads the `Maintainer` of the built `.deb`s,
+   which must be `Name <local@domain>`, as Debian's policy has it (`meta`
+   stops it earlier when the source already says so). Set `bundle.publisher`
+   in `desktop/src-tauri/tauri.linux.conf.json` (or the app crate's
+   `authors`, which Tauri takes first); it must pass the release text check.
    **Once a release has had the Linux app, every release with the Mac app
    needs it too**, or AppImage installs would find no update. `meta` stops
    such a run when it can read the latest release, and
@@ -160,7 +162,7 @@ the fallback whenever GitHub Actions cannot be used.
 | `desktop-arch` | macOS ×2 | nothing | `desktop/build.sh --arch aarch64` and `--arch x86_64`, each with that architecture's server from `server-macos` and the app's notices from `notices`, beside `stage` (unsigned, no DMG) |
 | `desktop` | macOS | nothing | `desktop/build.sh --from-apps`: the two apps' main programs fused with `lipo`, the staged universal server put in, sealed ad hoc and checked as a build (unsigned; nothing compiled) |
 | `desktop-linux` | Linux x86_64, Linux arm64, Linux | nothing | only with the Linux app: `.github/workflows/desktop-linux.yml`, which CI runs on the pull requests that touch the packaging. `desktop/build-linux.sh` for each architecture, with that architecture's server from `server-linux` and the Linux notices from `notices`: Ubuntu 22.04 by digest, the bundling without the network with the AppImage tools of `.github/release-tools.lock`, every check, `LIBRARIES-<arch>.txt`, then the Ubuntu source of every package the AppImage carries, from the same image's apt lists. The smoke tests: each `.deb` and AppImage on Ubuntu 22.04, Debian 12 and Ubuntu 24.04, and the AppImage through FUSE. `Droppen-X.Y.Z-linux-sources.tar` (`desktop/linux/sources-tar.sh`) |
-| `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature); with the Linux app, its text checked with the names (`.github/scripts/release-text-check-linux.sh`: the `LIBRARIES` files, the `.deb`s' control file, licence and notices read out by name, `README.AppImage`), then each AppImage's update signature (`droppen-update-signer sign`, which reads its bytes); once `install.sh` pins the release key, the signature over the server's `SHA256SUMS` ([The release key](#the-release-key)) |
+| `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature); with the Linux app, its text checked with the names (`.github/scripts/release-text-check-linux.sh`: the `LIBRARIES` files, the `.deb`s' control file, licence and notices read out by name, `README.AppImage`; for a release, the `.deb`s' `Maintainer` a contact), then each AppImage's update signature (`droppen-update-signer sign`, which reads its bytes); once `install.sh` pins the release key, the signature over the server's `SHA256SUMS` ([The release key](#the-release-key)) |
 | `verify` | macOS | nothing | `latest.json` by `droppen-update-manifest write` (which verifies the signature with `tauri.conf.json`'s key; with the Linux app, `--linux` for both AppImages); `scripts/publish-release.sh --dry-run` (with the Linux app `--desktop-linux`), every check (`latest.json` against its archive, its AppImages and the key included) against this repository's releases, read-only; its `SHA256SUMS` |
 | `publish` | macOS | `contents: write`, the OIDC token; only when publishing a `v*` tag | the attestations of every file (the Linux app's nine with it) and `scripts/publish-release.sh --verify-tag --skip-manifest-check --sums-expected` (with the Linux app `--desktop-linux`): the release of the tag, made once |
 
@@ -178,7 +180,11 @@ The trust boundaries:
   replaced while the run waits for an approval is refused, and unpacks it
   into an empty directory of its own, only if every member is a plain file or
   directory on the expected paths (`.github/scripts/unpack-artifact.sh`).
-  Two artifacts never share a directory.
+  Two artifacts never share a directory. An artifact is a plain tar, read by
+  the system's `tar` with the system's `PATH`: tar picks a decompressor by an
+  archive's first bytes, whatever its options say, and runs it from `PATH`,
+  so a compressed one is refused before tar sees it
+  (`.github/scripts/tar-guard.sh`).
 - **One job holds the secrets, approved once per run.** `release` is the
   only job in the `release` environment, so GitHub itself makes it wait for
   the owner's approval, every run, whatever the workflow says. A job gets
@@ -198,7 +204,9 @@ The trust boundaries:
   nothing from an artifact is run: the app, the DMG, the AppImages, the
   `.deb`s and the tarballs are only read, signed and handed on; the staged
   tarballs and the `.deb`s are read member by member, never unpacked by their
-  own paths. The job has no write token and no OIDC
+  own paths (a `.deb`'s members as gzips of plain tars only, which the
+  system's `gzip` and `tar` read with the system's `PATH`:
+  `.github/scripts/tar-guard.sh`). The job has no write token and no OIDC
   token (`contents: read`), so a dry run never holds one. Each step gets only
   the secrets it uses in its own `env:`: the Developer ID and the notary's
   password the keychain and notarisation steps (the keychain is deleted right

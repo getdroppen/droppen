@@ -477,10 +477,13 @@ without `--linux` the manifest is the Mac's alone, byte for byte as before.
   maintainer.** A release has it when its notes name its four files (both
   AppImages, both `.deb`s), beside `Droppen-X.Y.Z.dmg`: `release.yml`'s `meta`
   refuses notes that name only some of them, or name them without the DMG.
-  It also refuses to publish while the `.deb`'s `Maintainer` would be the
-  placeholder `droppen` (`bundle.publisher` in
-  `desktop/src-tauri/tauri.linux.conf.json`; Debian's policy wants
-  `Name <address>`). A dry run builds it with the placeholder, and says so.
+  The `release` job refuses to publish `.deb`s whose `Maintainer` is not a
+  contact, `Name <local@domain>` as Debian's policy wants, the placeholder
+  `droppen` included; it reads the built packages' control files (`meta`
+  stops earlier when `bundle.publisher` in
+  `desktop/src-tauri/tauri.linux.conf.json` already says so, and the app
+  crate sets no authors). A dry run builds it with the placeholder, and says
+  so.
   The `release` job signs each AppImage's update
   (`droppen-update-signer sign Droppen-X.Y.Z-<arch>.AppImage --version X.Y.Z`),
   `verify` writes `latest.json` with `--linux` for both, and both
