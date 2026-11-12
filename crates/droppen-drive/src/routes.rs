@@ -1771,11 +1771,17 @@ pub struct GoneCwds {
     id = "gone_cwds",
     group = "sessions",
     summary = "Directories that are gone",
-    responses(200 = "Working directories of this machine's sessions that are no longer directories, sorted")
+    responses(200 = "Working directories of this machine's sessions that are no longer directories, sorted, as looked at within the last half minute")
 )]
 pub async fn gone_cwds(State(state): State<DriveState>) -> Json<GoneCwds> {
-    let bindings = state.drive.accounts.session_account_map().await;
-    let cwds = state.drive.transcripts.gone_cwds(&state.drive.paths, &bindings).await;
+    let drive = &state.drive;
+    let cwds = drive
+        .gone_dirs
+        .answer(|| async {
+            let bindings = drive.accounts.session_account_map().await;
+            drive.transcripts.session_cwds(&drive.paths, &bindings).await
+        })
+        .await;
     Json(GoneCwds { cwds })
 }
 

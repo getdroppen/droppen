@@ -21,6 +21,7 @@ pub mod chat_delivery;
 pub mod children;
 pub mod context;
 pub mod delivery;
+pub mod gone;
 pub mod index;
 pub mod loader;
 pub mod mentions;
@@ -1035,50 +1036,17 @@ impl TranscriptSources {
         ranked.into_iter().take(RECENT_CWDS_LIMIT).map(|(cwd, _)| cwd).collect()
     }
 
-    /// The working directories of the machine's sessions that are no longer
-    /// there, sorted: a worktree removed once its work was merged, a temporary
-    /// repository a harness cleaned up after itself. Their sessions stay
-    /// readable, but nothing can be started in them again, so the new-session
-    /// picker leaves them out.
-    ///
-    /// Every scope counts, as in [`Self::recent_cwds`]. Each directory is looked
-    /// at now rather than through `repo::repo_key`'s cache, which never forgets a
-    /// directory it has seen. Only a definite answer counts as gone: a `stat`
-    /// that is refused or does not answer in time (a stalled network mount)
-    /// leaves the directory listed.
-    pub async fn gone_cwds(&self, paths: &Paths, bindings: &std::collections::BTreeMap<String, String>) -> Vec<String> {
-        use futures_util::StreamExt;
-
-        let sessions = self
-            .list_and_filter(paths, bindings, &DriverStates::default(), None, None, ScopeFilter::All)
-            .await;
-        let cwds: std::collections::BTreeSet<String> = sessions
+    /// Every working directory of the machine's sessions, once each: what
+    /// [`gone::GoneDirs`] looks at. Every scope counts, as in
+    /// [`Self::recent_cwds`].
+    pub async fn session_cwds(&self, paths: &Paths, bindings: &std::collections::BTreeMap<String, String>) -> std::collections::BTreeSet<String> {
+        self.list_and_filter(paths, bindings, &DriverStates::default(), None, None, ScopeFilter::All)
+            .await
             .iter()
             .filter_map(|session| session.cwd.as_ref().filter(|cwd| !cwd.is_empty()).cloned())
-            .collect();
-        let mut gone: Vec<String> = futures_util::stream::iter(cwds)
-            .map(|cwd| async move {
-                let gone = match tokio::time::timeout(GONE_STAT_TIMEOUT, tokio::fs::metadata(&cwd)).await {
-                    Ok(Ok(meta)) => !meta.is_dir(),
-                    Ok(Err(error)) => matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory),
-                    Err(_) => false,
-                };
-                gone.then_some(cwd)
-            })
-            .buffer_unordered(GONE_STAT_CONCURRENCY)
-            .filter_map(|cwd| async move { cwd })
             .collect()
-            .await;
-        gone.sort();
-        gone
     }
 }
-
-/// How long one working directory's `stat` may take before it counts as there.
-const GONE_STAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// How many working directories are looked at at once.
-const GONE_STAT_CONCURRENCY: usize = 16;
 
 /// The `error` a send to somebody else's session is refused with.
 ///

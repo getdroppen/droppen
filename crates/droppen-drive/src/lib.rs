@@ -68,6 +68,9 @@ pub struct Drive {
     pub composer: composer_prefs::ComposerPrefsStore,
     /// User-set session titles.
     pub titles: titles::TitlesStore,
+    /// Which session directories are gone, as the new-session picker last
+    /// asked: kept for half a minute, each directory looked at once at a time.
+    pub gone_dirs: droppen_sessions::gone::GoneDirs,
     /// Local accounts, live logins, tickets and failed-login counters.
     ///
     /// Here rather than as a field of its own on
@@ -110,6 +113,7 @@ impl Drive {
             quota,
             composer: composer_prefs::ComposerPrefsStore::new(paths.clone()),
             titles: titles::TitlesStore::new(paths.clone()),
+            gone_dirs: Default::default(),
             paths,
             transcripts,
         })

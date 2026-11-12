@@ -9907,7 +9907,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Working directories of this machine's sessions that are no longer directories, sorted */
+            /** @description Working directories of this machine's sessions that are no longer directories, sorted, as looked at within the last half minute */
             200: {
                 headers: {
                     [name: string]: unknown;

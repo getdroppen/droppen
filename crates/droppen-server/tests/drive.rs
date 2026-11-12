@@ -701,9 +701,11 @@ async fn gone_directories_are_the_session_directories_no_longer_there() {
         Some(4)
     );
 
-    // The answer is the disk's now, not what it was the last time it was asked.
+    // Asked again within half a minute, it is the same answer: the disk is not
+    // looked at for every picker that opens (`droppen_sessions::gone`, which
+    // pins when it looks again).
     std::fs::create_dir_all(&removed).expect("the worktree, added again");
-    assert_eq!(probe.get_json("/api/sessions/gone-cwds").await["cwds"], json!([path(&file)]));
+    assert_eq!(probe.get_json("/api/sessions/gone-cwds").await["cwds"], json!(expected));
 
     probe.stop().await;
 }
