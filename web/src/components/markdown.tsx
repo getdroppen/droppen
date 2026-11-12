@@ -231,7 +231,30 @@ function useMathKit(text: string): MathKit | undefined {
   return wanted ? (kit ?? mathKit) : undefined;
 }
 
+/** The part of an mdast node the line-break pass reads and writes. */
+type MdNode = { type: string; value?: string; children?: MdNode[] };
+
+/**
+ * Each newline inside a paragraph as a line break, where markdown draws a
+ * soft break as a space. Code, inline code and raw HTML keep their text in
+ * `value` rather than in `text` children, so their newlines stay as typed.
+ */
+function keepLineBreaks(node: MdNode): void {
+  if (!node.children) return;
+  node.children = node.children.flatMap((child): MdNode[] => {
+    if (child.type !== "text" || !child.value?.includes("\n")) {
+      keepLineBreaks(child);
+      return [child];
+    }
+    return child.value
+      .split(/\r?\n/)
+      .flatMap((line, i): MdNode[] => (i === 0 ? [{ type: "text", value: line }] : [{ type: "break" }, { type: "text", value: line }]));
+  });
+}
+const remarkLineBreaks = () => keepLineBreaks;
+
 const PLAIN = [remarkGfm];
+const LINES = [remarkGfm, remarkLineBreaks];
 
 /**
  * Copy the TeX of the formula a click (or Enter or Space on a focused one)
@@ -263,10 +286,16 @@ function copyFormula(event: React.MouseEvent | React.KeyboardEvent, copied: stri
   );
 }
 
-export function Markdown({ text, className }: { text: string; className?: string }) {
+/**
+ * `lineBreaks` keeps every newline the writer typed as a new line: a person's
+ * message, where Enter means one. An agent's reply is markdown as written,
+ * its single newlines soft.
+ */
+export function Markdown({ text, className, lineBreaks = false }: { text: string; className?: string; lineBreaks?: boolean }) {
   const { t } = useTranslation();
   const math = useMathKit(text);
   const copied = t("copied");
+  const plain = lineBreaks ? LINES : PLAIN;
   return (
     <div
       className={cn("min-w-0 text-[13px] leading-[21px] break-words max-md:text-sm max-md:leading-[22px]", className)}
@@ -274,7 +303,7 @@ export function Markdown({ text, className }: { text: string; className?: string
       onKeyDown={math ? (event) => copyFormula(event, copied) : undefined}
     >
       <ReactMarkdown
-        remarkPlugins={math ? [remarkGfm, ...math.remarkPlugins] : PLAIN}
+        remarkPlugins={math ? [...plain, ...math.remarkPlugins] : plain}
         rehypePlugins={math ? [[math.rehypeTypeset, { copyTitle: t("click to copy the TeX") }]] : undefined}
         components={components}
         urlTransform={urlTransform}
