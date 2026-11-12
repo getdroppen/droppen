@@ -759,7 +759,8 @@ async function auditAgents(theme, view) {
       const grid = document.querySelector("[data-acp-grid]") ?? document.querySelector("[data-acp-preset]")?.closest("ul");
       const cards = [...document.querySelectorAll("[data-acp-card], [data-acp-preset] > button, [data-add-card]")];
       const card = document.querySelector("[data-acp-card]") ?? document.querySelector("[data-acp-preset] > button");
-      const hint = document.querySelector('[data-tab-panel="acp"] > p');
+      // The tab's lead: a `SettingsHint` in the panel's `SettingsColumn`.
+      const hint = document.querySelector('[data-tab-panel="acp"] > div:first-child > p');
       const visible = (e) => e && e.getBoundingClientRect().width > 0;
       const invalid = [...(root ?? document.body).querySelectorAll("button,input,[role=tab],li,pre,dl")]
         .filter(visible)
@@ -803,7 +804,7 @@ async function auditAgents(theme, view) {
       if (parseFloat(before.card?.radius ?? "1") !== 0) fail("agents.card-radius", before.card?.radius, "0");
       const firstRow = before.cards.filter((c) => c && Math.abs(c.y - before.cards[0].y) < 1);
       if (new Set(firstRow.map((c) => Math.round(c.h))).size > 1) fail("agents.card-height", firstRow, "one height per row");
-      if ((before.hint?.w ?? 0) > 768.5) fail("agents.text-column", before.hint?.w, "text within 48rem");
+      if (!before.hint || before.hint.w > 768.5) fail("agents.text-column", before.hint?.w ?? null, "the tab's lead, within 48rem");
       if (desktop) {
         await page.locator("[data-acp-card]").first().hover();
         await page.waitForTimeout(200);
