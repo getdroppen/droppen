@@ -147,6 +147,24 @@ if (fs.readFileSync(flag("--archive"), "utf8").includes("tampered")) {
   process.stderr.write("refused: the signature does not verify the archive with this key\n");
   process.exit(1);
 }
+// --linux <arch>=<AppImage>,<.sig>, as the real tool takes it: the manifest
+// offers that AppImage, under its release name, with that .sig; an AppImage
+// that says "tampered" does not verify.
+for (const [i, arg] of process.argv.entries()) {
+  if (arg !== "--linux") continue;
+  const [arch, paths] = process.argv[i + 1].split("=");
+  const [appimage, sig] = paths.split(",");
+  const target = "linux-" + arch + "-appimage";
+  const offered = manifest.platforms[target];
+  if (require("path").basename(appimage) !== "Droppen-" + manifest.version + "-" + arch + ".AppImage" || !offered || offered.signature !== fs.readFileSync(sig, "utf8").trim()) {
+    process.stderr.write("refused: " + target + ": not the AppImage the manifest offers\n");
+    process.exit(1);
+  }
+  if (fs.readFileSync(appimage, "utf8").includes("tampered")) {
+    process.stderr.write("refused: " + target + ": the signature does not verify the archive with this key\n");
+    process.exit(1);
+  }
+}
 console.log(file + ": Droppen " + manifest.version + " is fit to publish");
 `;
 
@@ -217,6 +235,76 @@ function desktopDir(version, { dmg = "stapled dmg", announced = version } = {}) 
   writeFileSync(join(dir, "updater", "Droppen.app.tar.gz.sig"), `SIG-${announced}\n`);
   writeFileSync(join(dir, "updater", "latest.json"), manifest(announced));
   return dir;
+}
+
+const ARCHES = ["aarch64", "x86_64"];
+
+/** latest.json of a release with the Linux app too: it offers the AppImages. */
+function linuxManifest(version) {
+  const json = JSON.parse(manifest(version));
+  for (const arch of ARCHES) {
+    json.platforms[`linux-${arch}-appimage`] = {
+      signature: `SIG-${version}-${arch}`,
+      url: `https://github.com/getdroppen/droppen/releases/download/v${version}/Droppen-${version}-${arch}.AppImage`,
+    };
+  }
+  return `${JSON.stringify(json, null, 2)}\n`;
+}
+
+/** The Linux app's files of x.y.z `v` on a release, in the order they go up and are summed. */
+const linuxNames = (v) => [
+  `Droppen-${v}-aarch64.AppImage`,
+  `Droppen-${v}-x86_64.AppImage`,
+  `droppen_${v}_arm64.deb`,
+  `droppen_${v}_amd64.deb`,
+  "LIBRARIES-aarch64.txt",
+  "LIBRARIES-x86_64.txt",
+  `Droppen-${v}-linux-sources.tar`,
+];
+/** The same with each AppImage's signature after it: what --desktop-linux publishes. */
+const linuxUpload = (v) => linuxNames(v).flatMap((name) => (name.endsWith(".AppImage") ? [name, `${name}.sig`] : [name]));
+
+/** A tar archive of a library's source, as the sources tar is. */
+function sourcesTar() {
+  const dir = mkdtempSync(join(root, "sources-"));
+  writeFileSync(join(dir, "webkit2gtk.tar.xz"), "a library's source");
+  execFileSync("tar", ["-cf", "sources.tar", "webkit2gtk.tar.xz"], { cwd: dir, env: { ...process.env, COPYFILE_DISABLE: "1" } });
+  return readFileSync(join(dir, "sources.tar"));
+}
+
+/** The Linux app's files of x.y.z `version` and the AppImages' signatures, by name. */
+function linuxFiles(version) {
+  const files = {};
+  for (const name of linuxUpload(version)) {
+    const arch = ARCHES.find((a) => name.includes(`-${a}.AppImage`));
+    if (name.endsWith(".sig")) files[name] = `SIG-${version}-${arch}\n`;
+    else if (name.endsWith("-linux-sources.tar")) files[name] = sourcesTar();
+    else files[name] = `${name} of ${version}`;
+  }
+  return files;
+}
+
+/** The --desktop and --desktop-linux directories of a release of both apps. */
+function bothApps(version) {
+  const desktop = desktopDir(version);
+  writeFileSync(join(desktop, "updater", "latest.json"), linuxManifest(version));
+  const linux = join(root, `linux-${version}`);
+  mkdirSync(linux);
+  for (const [name, content] of Object.entries(linuxFiles(version))) writeFileSync(join(linux, name), content);
+  return [desktop, linux];
+}
+
+/** Today, once v0.2.126 has shipped both apps and is the latest release. */
+function withLinuxRelease({ omit = [] } = {}) {
+  const assets = {
+    "Droppen-0.2.126.dmg": "stapled dmg 0.2.126",
+    "Droppen.app.tar.gz": "archive 0.2.126",
+    "Droppen.app.tar.gz.sig": "SIG-0.2.126\n",
+    ...linuxFiles("0.2.126"),
+    "latest.json": linuxManifest("0.2.126"),
+  };
+  for (const name of omit) delete assets[name];
+  setState([release("v0.2.126", assets), ...state().releases.filter((r) => r.tag_name !== "v0.2.126")], "v0.2.126");
 }
 
 function run(args) {
@@ -801,5 +889,257 @@ describe("under the runner's locale", () => {
     assert.equal(r.code, 0, r.stderr);
     assert.equal(state().latest, "v0.2.126");
     assert.equal(state().releases.find((x) => x.tag_name === "v0.2.126").draft, false);
+  });
+});
+
+describe("the Linux app", () => {
+  /** Runs, and checks that it failed with `message` and wrote nothing. */
+  async function refused(args, message) {
+    const r = await run(args);
+    assert.notEqual(r.code, 0, r.stdout);
+    assert.match(r.stderr, message);
+    assert.deepEqual(writes(), []);
+    return r;
+  }
+  const names = (call) => call.filter((a) => a.startsWith("/")).map((a) => a.split("/").pop());
+  const toolChecks = () =>
+    existsSync(env.FAKE_TOOL_LOG)
+      ? readFileSync(env.FAKE_TOOL_LOG, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+          .filter((c) => c[0] === "check")
+      : [];
+  const listed = (sums) =>
+    readFileSync(sums, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => line.split("  ./")[1]);
+
+  test("with both apps: the Linux files and their signatures go up after the Mac's, before latest.json, in SHA256SUMS", async () => {
+    const server = serverDir("v0.2.126");
+    const [desktop, linux] = bothApps("0.2.126");
+    const both = ["v0.2.126", "--server", server, "--desktop", desktop, "--desktop-linux", linux];
+    const sums = join(root, "SHA256SUMS.attested");
+    const dry = await run([...both, "--dry-run", "--sums-out", sums]);
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.deepEqual(writes(), []);
+    // The dry run says which files would go up, the Linux app's in a write of their own.
+    const planned = dry.stdout.split("\n").filter((line) => line.startsWith("would run:"));
+    assert.equal(planned.length, 5, dry.stdout);
+    assert.match(planned[1], /^would run: gh release upload v0\.2\.126 .*\/Droppen-0\.2\.126\.dmg /);
+    assert.match(planned[2], /^would run: gh release upload v0\.2\.126 .*\/Droppen-0\.2\.126-aarch64\.AppImage .*\/Droppen-0\.2\.126-linux-sources\.tar$/);
+    assert.match(planned[3], /^would run: gh release upload v0\.2\.126 .*\/latest\.json$/);
+    assert.match(dry.stdout, /ok: Droppen-0\.2\.126-aarch64\.AppImage Droppen-0\.2\.126-aarch64\.AppImage\.sig .* Droppen-0\.2\.126-linux-sources\.tar/);
+    const all = [
+      "droppen-v0.2.126-macos-universal.tar.gz",
+      "remote-hand-v0.2.126-macos-universal.tar.gz",
+      "Droppen-0.2.126.dmg",
+      "Droppen.app.tar.gz",
+      "Droppen.app.tar.gz.sig",
+      ...linuxUpload("0.2.126"),
+      "latest.json",
+    ];
+    assert.deepEqual(listed(sums), all);
+    // --local-only sums the same files: none is carried.
+    const local = join(root, "SHA256SUMS.local");
+    assert.equal((await run([...both, "--dry-run", "--local-only", "--sums-out", local])).code, 0);
+    assert.equal(readFileSync(local, "utf8"), readFileSync(sums, "utf8"));
+
+    const r = await run([...both, "--sums-expected", sums]);
+    assert.equal(r.code, 0, r.stderr);
+    const w = writes();
+    assert.deepEqual(
+      w.map((c) => c[1]),
+      ["create", "upload", "upload", "upload", "edit"],
+    );
+    assert.deepEqual(names(w[1]), ["Droppen-0.2.126.dmg", "Droppen.app.tar.gz", "Droppen.app.tar.gz.sig"]);
+    assert.deepEqual(names(w[2]), linuxUpload("0.2.126"));
+    assert.deepEqual(names(w[3]), ["latest.json"]);
+    const published = state().releases.find((x) => x.tag_name === "v0.2.126");
+    assert.equal(published.assets.at(-1).name, "latest.json");
+    assert.equal(state().latest, "v0.2.126");
+    // Every check of latest.json verified both AppImages against their own signatures.
+    const checks = toolChecks();
+    assert.ok(checks.length > 0);
+    for (const arch of ARCHES) {
+      const appimage = join(linux, `Droppen-0.2.126-${arch}.AppImage`);
+      assert.ok(
+        checks.every((c) => c[c.indexOf(`${arch}=${appimage},${appimage}.sig`) - 1] === "--linux"),
+        JSON.stringify(checks),
+      );
+    }
+  });
+
+  test("without the desktop apps: the AppImages, .debs, LIBRARIES and sources tar are carried forward, byte for byte, never their signatures", async () => {
+    withLinuxRelease();
+    const r = await run(["v0.2.127", "--server", serverDir("v0.2.127")]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(
+      calls()
+        .filter((c) => c[1] === "download")
+        .map((c) => [c[2], c[c.indexOf("--pattern") + 1]]),
+      [
+        ["v0.2.126", "latest.json"],
+        ["v0.2.126", "Droppen.app.tar.gz"],
+        ["v0.2.126", "Droppen-0.2.126.dmg"],
+        ...linuxNames("0.2.126").map((name) => ["v0.2.126", name]),
+      ],
+    );
+    const w = writes();
+    assert.deepEqual(
+      w.map((c) => c[1]),
+      ["create", "upload", "upload", "upload", "edit"],
+    );
+    assert.deepEqual(names(w[1]), ["Droppen-0.2.126.dmg"]);
+    assert.deepEqual(names(w[2]), linuxNames("0.2.126"));
+    assert.deepEqual(names(w[3]), ["latest.json"]);
+    for (const name of [...linuxNames("0.2.126"), "latest.json"]) {
+      assert.deepEqual(readFileSync(join(filesDir, "v0.2.127", name)), readFileSync(join(filesDir, "v0.2.126", name)), name);
+    }
+    const published = state()
+      .releases.find((x) => x.tag_name === "v0.2.127")
+      .assets.map((a) => a.name);
+    assert.ok(!published.some((name) => name.endsWith(".sig")), published.join(" "));
+    const sums = readFileSync(join(filesDir, "v0.2.127", "SHA256SUMS"), "utf8");
+    for (const name of linuxNames("0.2.126")) assert.ok(sums.includes(`  ./${name}\n`), name);
+    // The carried AppImages were checked against the signatures latest.json
+    // offers them with (the stand-in refuses any other .sig).
+    const linuxCheck = toolChecks().find((c) => c.includes("--linux"));
+    assert.ok(linuxCheck, JSON.stringify(toolChecks()));
+    assert.deepEqual(
+      linuxCheck.flatMap((arg, i) => (arg === "--linux" ? [linuxCheck[i + 1].replace(/=.*\/(.*),.*\/(.*)$/, "=$1,$2")] : [])),
+      ARCHES.map((arch) => `${arch}=Droppen-0.2.126-${arch}.AppImage,Droppen-0.2.126-${arch}.AppImage.sig`),
+    );
+    assert.match(r.stdout, /ok: v0\.2\.126's Droppen-0\.2\.126-aarch64\.AppImage .* Droppen-0\.2\.126-linux-sources\.tar go on v0\.2\.127 unchanged/);
+
+    // What release.yml attests lists them as the checked dry run does.
+    const server = serverDir("v0.2.128");
+    rmSync(env.FAKE_TOOL_LOG, { force: true });
+    const checked = join(root, "SHA256SUMS.checked");
+    assert.equal((await run(["v0.2.128", "--server", server, "--dry-run", "--sums-out", checked])).code, 0);
+    const only = join(root, "SHA256SUMS.only");
+    rmSync(env.FAKE_TOOL_LOG, { force: true });
+    assert.equal((await run(["v0.2.128", "--server", server, "--sums-only", only])).code, 0);
+    assert.deepEqual(toolChecks(), []);
+    assert.equal(readFileSync(only, "utf8"), readFileSync(checked, "utf8"));
+    assert.deepEqual(listed(only).slice(2), ["Droppen-0.2.126.dmg", ...linuxNames("0.2.126"), "latest.json"]);
+  });
+
+  test("an AppImage is never carried forward without the sources tar of its version", async () => {
+    withLinuxRelease({ omit: ["Droppen-0.2.126-linux-sources.tar"] });
+    const server = serverDir("v0.2.127");
+    await refused(
+      ["v0.2.127", "--server", server],
+      /v0\.2\.126 has Droppen-0\.2\.126-aarch64\.AppImage but not Droppen-0\.2\.126-linux-sources\.tar, the corresponding source of the libraries it bundles/,
+    );
+    // Another version's sources are not its sources.
+    withLinuxRelease({ omit: ["Droppen-0.2.126-linux-sources.tar"] });
+    const s = state();
+    s.releases[0].assets.push(release("v0.2.126", { "Droppen-0.2.125-linux-sources.tar": sourcesTar() }).assets[0]);
+    setState(s.releases, "v0.2.126");
+    await refused(["v0.2.127", "--server", server], /has Droppen-0\.2\.126-aarch64\.AppImage but not Droppen-0\.2\.126-linux-sources\.tar/);
+    // Nor is a file that is no tar archive.
+    withLinuxRelease();
+    writeFileSync(join(filesDir, "v0.2.126", "Droppen-0.2.126-linux-sources.tar"), "not a tar");
+    await refused(["v0.2.127", "--server", server], /v0\.2\.126's Droppen-0\.2\.126-linux-sources\.tar is not a tar archive/);
+  });
+
+  test("what is carried is the whole Linux app of the version latest.json announces, the AppImages it signed", async () => {
+    const server = serverDir("v0.2.127");
+    withLinuxRelease({ omit: ["droppen_0.2.126_arm64.deb"] });
+    await refused(["v0.2.127", "--server", server], /not the Linux app's files of 0\.2\.126, the version its latest\.json announces/);
+    withLinuxRelease();
+    writeFileSync(join(filesDir, "v0.2.126", "Droppen-0.2.126-x86_64.AppImage"), "tampered AppImage");
+    await refused(["v0.2.127", "--server", server], /v0\.2\.126's AppImages were refused: they are not the ones v0\.2\.126's latest\.json offers/);
+    // A latest.json that offers the AppImages, on a release without them.
+    withLinuxRelease({ omit: linuxUpload("0.2.126") });
+    await refused(["v0.2.127", "--server", server], /offers the AppImages of 0\.2\.126, but v0\.2\.126 has none of the Linux app's files/);
+    // The Linux app's files, with a latest.json that does not offer them.
+    withLinuxRelease();
+    writeFileSync(join(filesDir, "v0.2.126", "latest.json"), manifest("0.2.126"));
+    await refused(["v0.2.127", "--server", server], /v0\.2\.126 has the Linux app's files .*, but its latest\.json does not offer the AppImages/);
+  });
+
+  test("--desktop-linux takes the whole Linux app, each AppImage signed as latest.json offers it, with its sources", async () => {
+    const server = serverDir("v0.2.126");
+    const [desktop, linux] = bothApps("0.2.126");
+    const both = ["v0.2.126", "--server", server, "--desktop", desktop, "--desktop-linux", linux];
+    const sources = join(linux, "Droppen-0.2.126-linux-sources.tar");
+    const sig = join(linux, "Droppen-0.2.126-x86_64.AppImage.sig");
+    const appimage = join(linux, "Droppen-0.2.126-aarch64.AppImage");
+    const latest = join(desktop, "updater", "latest.json");
+
+    rmSync(sources);
+    await refused(both, /no .*\/Droppen-0\.2\.126-linux-sources\.tar: the Linux app is published with all its files/);
+    writeFileSync(sources, "not a tar");
+    await refused(both, /Droppen-0\.2\.126-linux-sources\.tar is not a tar archive of the AppImages' library sources/);
+    writeFileSync(sources, sourcesTar());
+
+    rmSync(sig);
+    await refused(both, /no .*\/Droppen-0\.2\.126-x86_64\.AppImage\.sig \(droppen-update-signer sign/);
+    writeFileSync(sig, "SIG-other\n");
+    await refused(both, /does not offer Droppen-0\.2\.126-x86_64\.AppImage with Droppen-0\.2\.126-x86_64\.AppImage\.sig/);
+    writeFileSync(sig, "SIG-0.2.126-x86_64\n");
+
+    writeFileSync(latest, manifest("0.2.126"));
+    await refused(both, /does not offer Droppen-0\.2\.126-aarch64\.AppImage with/);
+    writeFileSync(latest, linuxManifest("0.2.126"));
+
+    writeFileSync(appimage, "tampered AppImage");
+    await refused(both, /updater\/latest\.json was refused/);
+    writeFileSync(appimage, "an AppImage");
+
+    writeFileSync(join(linux, "E2E-TEST-BUILD.txt"), "An end-to-end test build.");
+    await refused(both, /linux-0\.2\.126 is an end-to-end test build: never published/);
+    rmSync(join(linux, "E2E-TEST-BUILD.txt"));
+
+    const r = await run(both);
+    assert.equal(r.code, 0, r.stderr);
+  });
+
+  test("notes that name this version's AppImage need --desktop-linux", async () => {
+    const dir = serverDir("v0.2.126");
+    writeFileSync(join(dir, "NOTES.md"), "## Droppen App\n\n`Droppen-0.2.126.dmg` for the Mac, `Droppen-0.2.126-x86_64.AppImage` for Linux.\n");
+    await refused(["v0.2.126", "--server", dir, "--desktop", desktopDir("0.2.126")], /NOTES\.md announces Droppen-0\.2\.126-x86_64\.AppImage, but there is no --desktop-linux/);
+    const [desktop, linux] = bothApps("0.2.126");
+    const r = await run(["v0.2.126", "--server", dir, "--desktop", desktop, "--desktop-linux", linux]);
+    assert.equal(r.code, 0, r.stderr);
+    // A server-only release after it, whose notes name only that earlier app, carries it forward.
+    const next = serverDir("v0.2.127");
+    writeFileSync(join(next, "NOTES.md"), "A server fix. The Linux app stays `Droppen-0.2.126-x86_64.AppImage`.\n");
+    const carried = await run(["v0.2.127", "--server", next]);
+    assert.equal(carried.code, 0, carried.stderr);
+    for (const name of linuxNames("0.2.126")) {
+      assert.deepEqual(readFileSync(join(filesDir, "v0.2.127", name)), readFileSync(join(linux, name)), name);
+    }
+  });
+
+  test("once a published latest.json offers the AppImages, a release of the desktop app needs the Linux app too", async () => {
+    withLinuxRelease();
+    await refused(
+      ["v0.2.127", "--server", serverDir("v0.2.127"), "--desktop", desktopDir("0.2.127")],
+      /v0\.2\.126's latest\.json offers the Linux app's AppImages: a release with the desktop app needs --desktop-linux too/,
+    );
+    // Still so once a server-only release has carried it forward.
+    const carried = await run(["v0.2.127", "--server", join(root, "server-v0.2.127")]);
+    assert.equal(carried.code, 0, carried.stderr);
+    rmSync(logFile);
+    await refused(["v0.2.128", "--server", serverDir("v0.2.128"), "--desktop", desktopDir("0.2.128")], /v0\.2\.127's latest\.json offers the Linux app's AppImages/);
+    const [desktop, linux] = bothApps("0.2.128");
+    const r = await run(["v0.2.128", "--server", join(root, "server-v0.2.128"), "--desktop", desktop, "--desktop-linux", linux]);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(state().latest, "v0.2.128");
+  });
+
+  test("contradictory options", async () => {
+    const server = serverDir("v0.2.126");
+    const [desktop, linux] = bothApps("0.2.126");
+    await refused(["v0.2.126", "--server", server, "--desktop-linux", linux], /--desktop-linux needs --desktop: the Linux and macOS apps ship together/);
+    await refused(["v0.2.126-rc.1", "--server", server, "--desktop", desktop, "--desktop-linux", linux], /is a prerelease/);
+    await refused(
+      ["v0.2.126", "--server", server, "--desktop", desktop],
+      /latest\.json offers the Linux app's AppImages \(linux-aarch64-appimage linux-x86_64-appimage\), but there is no --desktop-linux/,
+    );
   });
 });

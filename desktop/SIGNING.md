@@ -403,7 +403,14 @@ without `--linux` the manifest is the Mac's alone, byte for byte as before.
   for Updates…* says the update service is unavailable.
   `scripts/publish-release.sh` makes sure of it:
   - **With the desktop app** (`--desktop`) it uploads the `latest.json`
-    `desktop/updater-artifacts.sh` wrote for this version.
+    `desktop/updater-artifacts.sh` wrote for this version. With the Linux app
+    too (`--desktop-linux <dir>`, only beside `--desktop`: the two apps ship
+    together), it uploads the AppImages and their `.sig` files, the `.deb`s,
+    `LIBRARIES-<arch>.txt` and `Droppen-<version>-linux-sources.tar`, and
+    requires that `latest.json` to offer each AppImage with its `.sig` (and
+    verifies them). Once a published `latest.json` offers the AppImages,
+    `--desktop` without `--desktop-linux` is refused: AppImage installs would
+    find no update in the next one.
   - **Without it** (a server-only fix) it carries the latest release's
     `latest.json` forward, byte for byte: its URL names the archive on the
     release of the version it announces, which stays where it is. It takes it
@@ -419,6 +426,16 @@ without `--linux` the manifest is the Mac's alone, byte for byte as before.
   - It also carries that release's `Droppen-<version>.dmg` forward, which must
     be the version the carried `latest.json` announces (and stapled): the
     download page's button goes to the latest release for the DMG.
+  - When the carried `latest.json` offers the AppImages, it carries the Linux
+    app's files forward too, from the same release: both AppImages, both
+    `.deb`s, both `LIBRARIES-<arch>.txt` and the sources tar, all of the
+    version it announces, the AppImages verified against the signatures it
+    offers (their `.sig` files stay on their own release, as
+    `Droppen.app.tar.gz.sig` does). **An AppImage never goes on a release
+    without the `Droppen-<version>-linux-sources.tar` of its version**, the
+    corresponding source of the LGPL and GPL libraries it bundles: a release
+    that would carry one without it is refused, as is a partial set, or Linux
+    files beside a `latest.json` that does not offer them.
   - **A prerelease** (`v1.2.3-rc.1`) never becomes the latest release: it is
     published as a GitHub prerelease, with no `latest.json`.
 - **"Latest" only moves forward:** `scripts/publish-release.sh` refuses a
@@ -430,7 +447,8 @@ without `--linux` the manifest is the Mac's alone, byte for byte as before.
 - **`latest.json` is uploaded last, and the release becomes the latest only
   after it.** `scripts/publish-release.sh` creates the release as a draft
   (invisible, and never GitHub's "latest"), uploads the server's files, the
-  desktop app's (or the carried DMG), then `latest.json` on its own; checks
+  desktop app's (or the carried DMG), the Linux app's (or the carried ones),
+  then `latest.json` on its own; checks
   that the draft holds exactly those files; then publishes it and marks it
   latest in one step, and checks that
   `.../releases/latest/download/latest.json` is the file it uploaded. Apps
