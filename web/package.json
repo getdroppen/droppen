@@ -32,8 +32,6 @@
     "i18next": "^26.3.6",
     "jsqr": "^1.4.0",
     "katex": "^0.19.1",
-    "mermaid": "12.2.0",
-    "motion": "^14.9.0",
     "openapi-fetch": "^0.13.4",
     "pele": "1.13.0",
     "qrcode-generator": "^2.0.4",
