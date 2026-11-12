@@ -200,13 +200,13 @@ async function auditSettings(theme, view) {
     const s = getComputedStyle(e);
     return { focusVisible: e.matches(":focus-visible"), width: s.outlineWidth, style: s.outlineStyle, color: s.outlineColor, offset: s.outlineOffset, bg: s.backgroundColor };
   });
-  await page.locator('[data-audit-row="checkbox"] input').focus();
+  await page.locator('[data-audit-row="checkbox"] [data-audit-checkbox]').focus();
+  await page.waitForTimeout(200);
   const checkboxFocus = await page.evaluate(() => {
-    const input = document.querySelector('[data-audit-row="checkbox"] input');
-    const box = input?.nextElementSibling;
+    const box = document.querySelector('[data-audit-row="checkbox"] [data-audit-checkbox]');
     const s = box ? getComputedStyle(box) : null;
     return {
-      focusVisible: input?.matches(":focus-visible") ?? null,
+      focusVisible: box?.matches(":focus-visible") ?? null,
       width: s?.outlineWidth ?? null,
       style: s?.outlineStyle ?? null,
       color: s?.outlineColor ?? null,
@@ -243,7 +243,7 @@ async function auditSettings(theme, view) {
     const normal = options.find((o) => !o.hasAttribute("data-selected") && !o.hasAttribute("data-highlighted"));
     const chevron = document.querySelector('[data-audit-row="model"] button svg');
     // The rotation lives on the icon's wrapper (`[&>svg]:size-…`), not on the
-    // lucide `<svg>` itself.
+    // Phosphor `<svg>` itself.
     const chevronIcon = chevron?.parentElement;
     const trigger = document.querySelector('[data-audit-row="model"] button');
     return {
@@ -759,7 +759,8 @@ async function auditAgents(theme, view) {
       const grid = document.querySelector("[data-acp-grid]") ?? document.querySelector("[data-acp-preset]")?.closest("ul");
       const cards = [...document.querySelectorAll("[data-acp-card], [data-acp-preset] > button, [data-add-card]")];
       const card = document.querySelector("[data-acp-card]") ?? document.querySelector("[data-acp-preset] > button");
-      const hint = document.querySelector('[data-tab-panel="acp"] > p');
+      // The tab's lead: a `SettingsHint` in the panel's `SettingsColumn`.
+      const hint = document.querySelector('[data-tab-panel="acp"] > div:first-child > p');
       const visible = (e) => e && e.getBoundingClientRect().width > 0;
       const invalid = [...(root ?? document.body).querySelectorAll("button,input,[role=tab],li,pre,dl")]
         .filter(visible)
@@ -803,7 +804,7 @@ async function auditAgents(theme, view) {
       if (parseFloat(before.card?.radius ?? "1") !== 0) fail("agents.card-radius", before.card?.radius, "0");
       const firstRow = before.cards.filter((c) => c && Math.abs(c.y - before.cards[0].y) < 1);
       if (new Set(firstRow.map((c) => Math.round(c.h))).size > 1) fail("agents.card-height", firstRow, "one height per row");
-      if ((before.hint?.w ?? 0) > 768.5) fail("agents.text-column", before.hint?.w, "text within 48rem");
+      if (!before.hint || before.hint.w > 768.5) fail("agents.text-column", before.hint?.w ?? null, "the tab's lead, within 48rem");
       if (desktop) {
         await page.locator("[data-acp-card]").first().hover();
         await page.waitForTimeout(200);

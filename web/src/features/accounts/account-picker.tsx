@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { CaretDownIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
@@ -355,7 +355,7 @@ export function AccountPicker({
             ~
           </span>
         )}
-        <ChevronDown className="size-2.5 shrink-0 text-faint" />
+        <CaretDownIcon className="size-2.5 shrink-0 text-faint" />
       </PopoverTrigger>
       <PopoverContent side="bottom" className="max-h-[50vh] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto">
         <AccountRows

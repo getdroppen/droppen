@@ -4,7 +4,7 @@
  * takes down its own block and nothing else.
  */
 import { PluginHostProvider, type Icon, type PluginHost } from "@droppen/plugin-sdk";
-import { Puzzle } from "lucide-react";
+import { PuzzlePieceIcon } from "@phosphor-icons/react";
 import { Component, Suspense, type ErrorInfo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
@@ -64,7 +64,7 @@ export function PluginBoundary({ host, name, children }: { host: PluginHost; nam
 export function PluginIcon({ host, icon: Glyph, className }: { host: PluginHost; icon: Icon; className?: string }) {
   return (
     <PluginHostProvider value={host}>
-      <Catch pluginId={host.pluginId} fallback={() => <Puzzle className={className} aria-hidden strokeWidth={1.5} />}>
+      <Catch pluginId={host.pluginId} fallback={() => <PuzzlePieceIcon className={className} aria-hidden />}>
         <Glyph className={className} aria-hidden />
       </Catch>
     </PluginHostProvider>

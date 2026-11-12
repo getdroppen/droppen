@@ -6,7 +6,7 @@
  * never gets the welcome page itself.
  */
 import { useNavigate } from "@tanstack/react-router";
-import { Info, X } from "lucide-react";
+import { InfoIcon, XIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { isDesktopApp } from "@/lib/auth";
@@ -38,7 +38,7 @@ export function SetupBarView({ bar, onOpen, onDismiss }: { bar: SetupBar; onOpen
       role="note"
       className="flex shrink-0 items-center gap-2 border-b border-border py-1 pr-1.5 pl-2.5 text-xs"
     >
-      <Info className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
+      <InfoIcon className="size-3.5 shrink-0 text-muted" aria-hidden="true" />
       <span className="min-w-0 flex-1 leading-4">
         {bar.kind === "noTool" ? t("No AI tool is ready on this device yet.") : bar.left === 1 ? t("Setup: 1 step left") : t("Setup: {{n}} steps left", { n: bar.left })}
       </span>
@@ -53,7 +53,7 @@ export function SetupBarView({ bar, onOpen, onDismiss }: { bar: SetupBar; onOpen
           onClick={onDismiss}
           className="flex size-5 shrink-0 items-center justify-center text-muted hover:bg-hover hover:text-fg"
         >
-          <X className="size-3" />
+          <XIcon className="size-3" />
         </button>
       )}
     </div>

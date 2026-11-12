@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
+import { CircleNotchIcon } from "@phosphor-icons/react";
+import { CheckboxField } from "@/components/ui/checkbox-field";
 import { ASSURANCE_AUTO, ASSURANCE_ON_DEVICE, type Assurance } from "@/lib/e2e";
 import { formatAsOf } from "@/lib/format";
 import { type CloudAccount, type PauseEnding, RenewalError } from "@/lib/hub/account";
@@ -88,7 +88,7 @@ export function RenewalLine({
     case "renewing":
       return (
         <span data-testid={`renewal-${id}`} data-renewal="renewing" className="flex items-center gap-1.5 text-2xs leading-4 text-muted">
-          <Loader2 className="size-3 animate-spin" />
+          <CircleNotchIcon className="size-3 animate-spin" />
           {t("renewing its identity key… (about 2 minutes)")}
         </span>
       );
@@ -357,14 +357,14 @@ export function RenewPanel({
         <>
           {busy && step && (
             <span data-testid={`renew-step-${host}`} className="flex items-center gap-1.5 text-2xs text-muted">
-              <Loader2 className="size-3 animate-spin" />
+              <CircleNotchIcon className="size-3 animate-spin" />
               {step === "waiting" ? t("waiting for every sign-in with the old key to confirm the new one (about 2 minutes)…") : t("renewing its identity key…")}
             </span>
           )}
           <ErrorLine message={error} />
           <div className="flex gap-2">
             <button type="button" data-variant="primary" data-testid={`renew-start-${host}`} className={primary} disabled={busy} onClick={() => void go()}>
-              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
               {t("renew identity key")}
             </button>
             <button type="button" className={quiet} disabled={busy} onClick={onDone}>
@@ -493,52 +493,49 @@ export function AlwaysConfirmSetting({
           </span>
         </div>
       )}
-      <label
+      <CheckboxField
         data-testid="always-confirm"
-        className={cn(CHECKBOX_LABEL, "items-start gap-3 text-xs", (busy || !chosen) && "cursor-not-allowed opacity-60")}
-      >
-        <input
-          type="checkbox"
-          className={CHECKBOX_INPUT}
-          checked={chosen && account.alwaysAssured}
-          disabled={busy || !chosen}
-          onChange={(e) => {
-            if (e.target.checked) void write(true);
-            else setAskingOff(true);
-          }}
-        />
-        <CheckboxMark />
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="flex items-center gap-2 font-mono text-xs text-fg">
-            {t("Always confirm on the device when renewing an identity key")}
-            <span className={badge}>{t("account")}</span>
-          </span>
-          <span className="text-xs leading-5 text-muted">
-            {t("Off: a device that runs AI renews its identity key on its own, in about 2 minutes, after a device that could control it is removed. On: each renewal waits for you to type the code that device shows.")}
-          </span>
-        </span>
-      </label>
-      <label data-testid="local-assured" className={cn(CHECKBOX_LABEL, "items-start gap-3 text-xs")}>
-        <input
-          type="checkbox"
-          className={CHECKBOX_INPUT}
-          checked={local}
-          onChange={(e) => {
-            account.setLocalAssured(e.target.checked);
-            setLocal(e.target.checked);
-          }}
-        />
-        <CheckboxMark />
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="flex items-center gap-2 font-mono text-xs text-fg">
-            {t("On this device, only sign renewals confirmed on the device")}
-            <span className={badge}>{t("this device")}</span>
-          </span>
-          <span className="text-xs leading-5 text-muted">
-            {t("Whatever the account says, this device then signs no automatic renewal: each one it does waits for the code.")}
-          </span>
-        </span>
-      </label>
+        checked={chosen && account.alwaysAssured}
+        disabled={busy || !chosen}
+        onCheckedChange={(checked) => {
+          if (checked) void write(true);
+          else setAskingOff(true);
+        }}
+        className={cn("items-start gap-3 text-xs", (busy || !chosen) && "cursor-not-allowed opacity-60")}
+        labelClassName="flex min-w-0 flex-col gap-0.5"
+        label={
+          <>
+            <span className="flex items-center gap-2 font-mono text-xs text-fg">
+              {t("Always confirm on the device when renewing an identity key")}
+              <span className={badge}>{t("account")}</span>
+            </span>
+            <span className="text-xs leading-5 text-muted">
+              {t("Off: a device that runs AI renews its identity key on its own, in about 2 minutes, after a device that could control it is removed. On: each renewal waits for you to type the code that device shows.")}
+            </span>
+          </>
+        }
+      />
+      <CheckboxField
+        data-testid="local-assured"
+        checked={local}
+        onCheckedChange={(checked) => {
+          account.setLocalAssured(checked);
+          setLocal(checked);
+        }}
+        className="items-start gap-3 text-xs"
+        labelClassName="flex min-w-0 flex-col gap-0.5"
+        label={
+          <>
+            <span className="flex items-center gap-2 font-mono text-xs text-fg">
+              {t("On this device, only sign renewals confirmed on the device")}
+              <span className={badge}>{t("this device")}</span>
+            </span>
+            <span className="text-xs leading-5 text-muted">
+              {t("Whatever the account says, this device then signs no automatic renewal: each one it does waits for the code.")}
+            </span>
+          </>
+        }
+      />
       <ErrorLine message={error} />
     </div>
   );
@@ -607,7 +604,7 @@ export function EndPauseConfirm({
       )}
       <span className="flex flex-wrap gap-2">
         <button type="button" data-testid="end-pause-yes" className={cn(danger, "h-7 px-3 text-xs")} disabled={busy || blocked} onClick={onConfirm}>
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {t("end pause")}
         </button>
         <button type="button" data-testid="end-pause-no" className={cn(quiet, "h-7 px-3 text-xs")} disabled={busy} onClick={onCancel}>
@@ -634,7 +631,7 @@ export function RenewalNotice({ runner }: { runner: RenewalRunner }) {
       {renewing.length > 0 && (
         <div data-testid="renewal-renewing" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-6 py-2.5 max-md:px-4">
           <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs leading-5 text-muted">
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
             {t("renewing the identity key of {{ids}}", { ids: renewing.join(", ") })}
           </span>
         </div>

@@ -4,7 +4,8 @@
  * in step with `features/settings/`, `features/cloud/` and `components/ui/`.
  *
  * `?fixture=settings` (default), `?fixture=devices`, `?fixture=agents`
- * (`&view=cards|details|empty`), `?fixture=new-chat` (`&state=claude|api|
+ * (`&view=cards|details|empty`), `?fixture=landing`,
+ * `?fixture=new-chat` (`&state=claude|api|
  * signed-out|list`, the instant-chat home in the real chat layout),
  * `?fixture=diagrams` (a transcript of the diagram types messages draw),
  * `?fixture=hostile` (the reviewer's worst-case fences beside one normal
@@ -40,7 +41,7 @@ import { requestImage } from "@/components/image-lightbox";
 import { DiagramRendering, Markdown } from "@/components/markdown";
 import { MermaidBlock } from "@/components/mermaid-block";
 import { Button } from "@/components/ui/button";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
+import { CheckboxField } from "@/components/ui/checkbox-field";
 import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -57,6 +58,7 @@ import { NO_PROGRESS, type StreamProgress } from "@/lib/hub/streams";
 import { setCurrentShell } from "@/lib/machines/registry";
 import type { AppShell, MachineInfo } from "@/lib/machines/runtime";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
+import LandingPage from "@/features/landing/landing";
 import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
 import type { FeedOpening } from "@/features/sessions/session-feed-pool";
@@ -69,7 +71,7 @@ import { useTranslation } from "react-i18next";
 import { AcpDetailsBody, AcpTabView } from "@/features/settings/agents/acp-tab";
 import { AgentsTabStrip } from "@/features/settings/agents/agents-section";
 import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/agents-tabs";
-import { PREFERENCE_ROW, ROW_HINT, ROW_LABEL, SECTION_TITLE } from "@/features/settings/layout";
+import { SettingRow, SettingsSection } from "@/features/settings/layout";
 import { applyLanguage, type LanguagePref } from "@/i18n";
 
 const query = new URLSearchParams(location.search);
@@ -78,15 +80,11 @@ const fixture = query.get("fixture") ?? "settings";
 
 function Row({ id, label, hint, children }: { id: string; label: string; hint: string; children: React.ReactNode }) {
   return (
-    <div data-audit-row={id} className={`${PREFERENCE_ROW} mt-3`}>
-      <div>
-        <div className={ROW_LABEL}>{label}</div>
-        <div className={ROW_HINT}>{hint}</div>
-      </div>
+    <SettingRow data-audit-row={id} className="mt-3" label={label} hint={hint}>
       <div data-audit-control className="w-full">
         {children}
       </div>
-    </div>
+    </SettingRow>
   );
 }
 
@@ -109,10 +107,7 @@ function SettingsFixture() {
   return (
     <div className="@container/settings mx-auto max-w-3xl p-4">
       <header className="mb-3 flex h-8 items-center border-b border-border px-4 text-[13px] font-semibold">Settings</header>
-      <section className="border-b border-border p-3">
-        <h2 data-label="" className={SECTION_TITLE}>
-          Preferences
-        </h2>
+      <SettingsSection title="Preferences">
         <Row id="grouping" label="Session list grouping" hint="Group sessions by project directory">
           <Tabs value="flat" onValueChange={() => undefined}>
             <TabsList className="w-full">
@@ -150,11 +145,7 @@ function SettingsFixture() {
           <Switch on label="Push notifications" labelHidden onChange={() => undefined} />
         </Row>
         <Row id="checkbox" label="Remove the device" hint="It loses access at once">
-          <label className={CHECKBOX_LABEL}>
-            <input type="checkbox" className={CHECKBOX_INPUT} defaultChecked />
-            <CheckboxMark />
-            <span className="min-w-0">also rotate the content keys</span>
-          </label>
+          <CheckboxField defaultChecked label="also rotate the content keys" />
         </Row>
         <Row id="actions" label="Connection" hint="Check the link to the hub">
           <div className="flex gap-1.5">
@@ -162,7 +153,7 @@ function SettingsFixture() {
             <Button variant="primary">Save</Button>
           </div>
         </Row>
-      </section>
+      </SettingsSection>
     </div>
   );
 }
@@ -1118,6 +1109,15 @@ async function mountSessionFromCopy(): Promise<void> {
 // i18n (counts, "5 min ago", the diagram and picture controls' labels, what an
 // opening session waits for): English unless `&lang=` names another of the
 // app's languages.
+
+// The landing page in full, with the hub's switches at their defaults and no
+// release to look up: the page's own composition, for a live screenshot.
+function LandingFixture() {
+  return <LandingPage release={null} />;
+}
+
+// Fixture copy goes through i18n: English unless `&lang=` names another app
+// language.
 if (fixture === "new-chat") {
   await mountNewChat();
 } else if (fixture === "cloud-bar") {
@@ -1127,7 +1127,7 @@ if (fixture === "new-chat") {
 } else if (fixture === "session-from-copy") {
   await mountSessionFromCopy();
 } else {
-  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening")
+  if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening" || fixture === "landing")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
   if (fixture === "images") {
     // Cloud mode is the hub's marker in the shell (`lib/hub/config.ts`),
@@ -1154,6 +1154,8 @@ if (fixture === "new-chat") {
       <ImagesFixture />
     ) : fixture === "session-opening" ? (
       <SessionOpeningFixture />
+    ) : fixture === "landing" ? (
+      <LandingFixture />
     ) : (
       <SettingsFixture />
     ),

@@ -1,4 +1,4 @@
-import { ChevronsLeft, ChevronsRight } from "lucide-react";
+import { CaretDoubleLeftIcon, CaretDoubleRightIcon } from "@phosphor-icons/react";
 import { createContext, useContext, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
@@ -86,7 +86,7 @@ export function Panel({
             onClick={toggle}
             className="flex size-5 items-center justify-center text-muted hover:bg-hover hover:text-fg"
           >
-            <ChevronsRight className="size-3.5" />
+            <CaretDoubleRightIcon className="size-3.5" />
           </button>
           <span
             data-label="" className="label-caps mt-2 text-2xs text-faint"
@@ -133,7 +133,7 @@ export function PanelHeader({ title, extra }: { title: string; extra?: React.Rea
             onClick={collapse.toggle}
             className="flex size-5 shrink-0 items-center justify-center text-faint hover:bg-hover hover:text-fg max-md:hidden"
           >
-            <ChevronsLeft className="size-3.5" />
+            <CaretDoubleLeftIcon className="size-3.5" />
           </button>
         )}
         <span className="truncate text-xs font-semibold text-fg">{title}</span>

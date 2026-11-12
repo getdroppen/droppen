@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Download, FileText } from "lucide-react";
+import { ArrowLeftIcon, DownloadSimpleIcon, FileTextIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DownloadLink, HostImage } from "@/components/host-file";
@@ -49,7 +49,7 @@ export function FilePreview({
             onClick={onClose}
             className="flex size-8 shrink-0 items-center justify-center rounded text-muted hover:bg-hover"
           >
-            <ArrowLeft className="size-4" />
+            <ArrowLeftIcon className="size-4" />
           </button>
         )}
         <span
@@ -63,7 +63,7 @@ export function FilePreview({
           title={t("download")}
           className="flex shrink-0 items-center gap-1 rounded px-2 py-2 text-xs text-accent hover:bg-hover"
         >
-          <Download className="size-3.5" />
+          <DownloadSimpleIcon className="size-3.5" />
           {t("download")}
         </DownloadLink>
       </header>
@@ -111,7 +111,7 @@ export function FilePreview({
           </div>
           {data.binary ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto p-4 text-center text-xs text-muted">
-              <FileText className="size-8 shrink-0 text-faint" />
+              <FileTextIcon className="size-8 shrink-0 text-faint" />
               <p className="max-w-full break-words font-mono text-fg">{basename(file)}</p>
               <p>{t("binary file · use download")}</p>
             </div>

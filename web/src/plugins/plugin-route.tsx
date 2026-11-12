@@ -11,7 +11,7 @@
  */
 import { localize } from "@droppen/plugin-sdk";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { Puzzle } from "lucide-react";
+import { PuzzlePieceIcon } from "@phosphor-icons/react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
@@ -36,7 +36,7 @@ export function PluginUnavailable({ message, detail, hint, warn }: { message: st
       data-signal={warn ? "warn" : undefined}
       className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center"
     >
-      <Puzzle className={cn("size-5", warn ? "text-warn-fg" : "text-faint")} strokeWidth={1.5} />
+      <PuzzlePieceIcon className={cn("size-5", warn ? "text-warn-fg" : "text-faint")} />
       <span className="text-xs text-fg">{message}</span>
       {detail && <span className="max-w-md font-mono text-2xs break-words text-faint">{detail}</span>}
       {hint && <span className="max-w-md text-2xs text-muted">{hint}</span>}

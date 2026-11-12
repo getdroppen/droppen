@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { mnemonicCompletions } from "@/lib/e2e";
 import { formatExactTime } from "@/lib/format";
 import { AccountError, type CloudAccount } from "@/lib/hub/account";
@@ -217,7 +217,7 @@ export function RecoverForm({ account, onPending }: { account: CloudAccount; onP
       <PhraseInput value={phrase} onChange={setPhrase} onCheck={setCheck} />
       <ErrorLine message={error} />
       <button type="submit" disabled={busy || check?.kind !== "ok"} data-variant="primary" className={primary}>
-        {busy && <Loader2 className="size-3.5 animate-spin" />}
+        {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
         {t("recover")}
       </button>
     </form>
@@ -264,7 +264,7 @@ export function PendingScreen({ account, onActive, onRemoved, onSignOut }: { acc
           {t("This device joined with the recovery words and is waiting. Approve it from another device of this account — every device shows a warning until then — or activate it here after the waiting period.")}
         </p>
         <p className="flex items-center gap-2 text-2xs text-faint">
-          <Loader2 className="size-3 animate-spin" />
+          <CircleNotchIcon className="size-3 animate-spin" />
           {ready ? t("it can activate itself now") : t("it can activate itself from {{time}}", { time: readyText })}
         </p>
         {asking ? (
@@ -289,7 +289,7 @@ export function PendingScreen({ account, onActive, onRemoved, onSignOut }: { acc
             <PhraseInput value={phrase} onChange={setPhrase} onCheck={setCheck} />
             <ErrorLine message={error} />
             <button type="submit" disabled={busy || check?.kind !== "ok"} data-variant="primary" className={primary}>
-              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
               {t("activate this device")}
             </button>
           </form>

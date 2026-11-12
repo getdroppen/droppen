@@ -1,4 +1,4 @@
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRightIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -47,7 +47,7 @@ export function CodeServerMissingNotice() {
         className="inline-flex items-center gap-0.5 self-start text-xs text-fg underline decoration-border-strong underline-offset-[3px] hover:decoration-fg"
       >
         {t("How to install code-server")}
-        <ArrowUpRight className="size-3" aria-hidden="true" />
+        <ArrowUpRightIcon className="size-3" aria-hidden="true" />
       </a>
     </div>
   );

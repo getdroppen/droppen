@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useInterval } from "usehooks-ts";
 
 /**
  * A clock for text that is relative to *now* rather than to the data.
@@ -18,13 +19,11 @@ import { useEffect, useState } from "react";
  */
 export function useTicker(intervalMs: number, active = true): number {
   const [now, setNow] = useState(() => Date.now());
+  // Fires immediately as well as on the interval: a component that mounts
+  // after a long idle would otherwise show a stale instant for a whole tick.
   useEffect(() => {
-    if (!active) return;
-    // Fires immediately as well as on the interval: a component that mounts
-    // after a long idle would otherwise show a stale instant for a whole tick.
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(timer);
+    if (active) setNow(Date.now());
   }, [intervalMs, active]);
+  useInterval(() => setNow(Date.now()), active ? intervalMs : null);
   return now;
 }

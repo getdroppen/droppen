@@ -15,7 +15,7 @@ import "@/index.css";
 import { applyLanguage } from "@/i18n";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Loader2, Plus, UserRound } from "lucide-react";
+import { ArrowLeftIcon, CircleNotchIcon, PlusIcon, UserCircleIcon } from "@phosphor-icons/react";
 import type { components } from "@/api/schema";
 import { cn } from "@/lib/cn";
 import type { CloudAccount } from "@/lib/hub/account";
@@ -172,11 +172,11 @@ function DevicesShot() {
         <>
           <AccountName account={account} link={null as never} />
           <button type="button" className={cn(quiet, "h-7 min-w-0 px-2")} title={t("back to {{name}}", { name: backName })} aria-label={t("back to {{name}}", { name: backName })}>
-            <ArrowLeft className="size-3.5 shrink-0" />
+            <ArrowLeftIcon className="size-3.5 shrink-0" />
             <span className="max-w-40 truncate max-sm:hidden">{backName}</span>
           </button>
           <button type="button" className={cn(quiet, "h-7 px-2")} title={t("account settings")} aria-label={t("account settings")}>
-            <UserRound className="size-3.5 shrink-0" />
+            <UserCircleIcon className="size-3.5 shrink-0" />
             <span className="max-sm:hidden">{t("my account")}</span>
           </button>
           <SignOutChoice account={account}>
@@ -199,7 +199,7 @@ function DevicesShot() {
           </p>
         </div>
         <button type="button" data-variant="primary" data-testid="add-device" className={cn(primary, "max-md:w-full")}>
-          <Plus className="size-3.5" />
+          <PlusIcon className="size-3.5" />
           {t("add a device")}
         </button>
       </div>
@@ -266,7 +266,7 @@ function PairShot() {
             {t("this device")}: <Fingerprint value={FINGERPRINT} />
           </p>
           <p className="flex items-center gap-2 text-2xs text-faint">
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
             {t("waiting for the other device…")}
           </p>
         </div>

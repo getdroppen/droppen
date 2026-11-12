@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useMediaQuery } from "usehooks-ts";
 
 /**
  * Whether the reader asked the system for less motion.
@@ -9,21 +9,6 @@ import { useSyncExternalStore } from "react";
  */
 const QUERY = "(prefers-reduced-motion: reduce)";
 
-function media(): MediaQueryList | null {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(QUERY) : null;
-}
-
-function subscribe(onChange: () => void): () => void {
-  const mq = media();
-  if (!mq) return () => {};
-  mq.addEventListener("change", onChange);
-  return () => mq.removeEventListener("change", onChange);
-}
-
-const getSnapshot = () => media()?.matches ?? false;
-// A prerender (and the tests) has no media queries: full motion is the default.
-const getServerSnapshot = () => false;
-
 export function usePrefersReducedMotion(): boolean {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useMediaQuery(QUERY, { defaultValue: false });
 }

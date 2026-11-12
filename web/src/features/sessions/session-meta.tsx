@@ -2,10 +2,10 @@
  * The session header's secondary facts, formatted in one place and shown
  * behind a chip.
  */
-import { Check, Copy, Info } from "lucide-react";
-import { useState } from "react";
+import { CheckIcon, CopyIcon, InfoIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useCopy } from "@/lib/clipboard";
 import { formatBytes, formatCompact, formatInt, formatTime } from "@/lib/format";
 
 /** The session facts the header keeps behind a chip, already formatted. */
@@ -74,19 +74,10 @@ function MetaRow({ label, value }: { label: string; value: string }) {
  */
 export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
+  // No clipboard permission (or no secure context): the path in the popover
+  // is selectable text, which is the fallback that always works.
+  const { copied, copy } = useCopy();
   const cwd = facts.cwd;
-
-  const copy = async (path: string) => {
-    try {
-      await navigator.clipboard.writeText(path);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // No clipboard permission (or no secure context): the path in the popover
-      // is selectable text, which is the fallback that always works.
-    }
-  };
 
   return (
     <Popover>
@@ -95,7 +86,7 @@ export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
         aria-label={t("session details")}
         className="flex h-5 shrink-0 items-center gap-1 px-1.5 font-mono text-2xs text-faint hover:bg-hover hover:text-fg"
       >
-        <Info className="size-3 shrink-0" />
+        <InfoIcon className="size-3 shrink-0" />
         <span className="tabular-nums">{formatCompact(facts.items)}</span>
       </PopoverTrigger>
       <PopoverContent side="bottom" className="w-72 max-w-[calc(100vw-2rem)]">
@@ -111,10 +102,10 @@ export function SessionMetaChip({ facts }: { facts: SessionMetaFacts }) {
                   type="button"
                   title={copied ? t("copied") : t("copy")}
                   aria-label={copied ? t("copied") : t("copy")}
-                  onClick={() => void copy(cwd)}
+                  onClick={() => copy(cwd)}
                   className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
                 >
-                  {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+                  {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
                 </button>
               </div>
             </div>

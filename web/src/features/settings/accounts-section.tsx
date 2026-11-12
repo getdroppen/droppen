@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CheckIcon, CircleNotchIcon, PencilSimpleIcon, PlusIcon, ArrowsClockwiseIcon, TrashIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import { CheckboxField } from "@/components/ui/checkbox-field";
+import { Input } from "@/components/ui/input";
 import { SelectField } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
@@ -39,14 +41,10 @@ import { activeRests, limitEventsKey } from "@/features/accounts/account-rest";
 import { RestChip } from "@/features/accounts/rest-chip";
 import { ReauthDialog, SetupTokenDialog, UsageLoginDialog } from "@/features/settings/account-wizards";
 import { LimitEventsPanel } from "@/features/settings/limit-events-panel";
-import { isImeKeydown } from "@/lib/ime";
 import { cn } from "@/lib/cn";
-import {
-  SETTINGS_ACTION,
-  SETTINGS_ACTION_PRIMARY,
-  SETTINGS_COLUMN,
-  SETTINGS_FIELD,
-} from "@/features/settings/layout";
+import { PROVIDER_NAME } from "@/lib/provider-name";
+import { SettingsColumn, SettingField, SettingsHint, SettingsNote } from "@/features/settings/layout";
+import { InlineEdit } from "@/features/settings/inline-edit";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
 
@@ -61,18 +59,11 @@ class DuplicateAccountError extends Error {
   }
 }
 
-/** Proper names, untranslated: they are the products' own spelling. */
-const PROVIDER_NAME: Record<AccountProvider, string> = { claude: "Claude Code", codex: "Codex" };
-
-const field = SETTINGS_FIELD;
-
-/** Label cell that turns into an input on click; Enter commits, Escape reverts. */
 function AccountLabel({ account }: { account: Account }) {
   const machine = useMachine();
   const api = useApi();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState<string | null>(null);
 
   const rename = useMutation({
     mutationFn: async (label: string) => {
@@ -84,51 +75,16 @@ function AccountLabel({ account }: { account: Account }) {
       return res.data;
     },
     onSuccess: () => {
-      setDraft(null);
       void queryClient.invalidateQueries({ queryKey: accountsKey(machine) });
       void queryClient.invalidateQueries({ queryKey: quotaKey(machine) });
     },
   });
 
-  const commit = () => {
-    const next = (draft ?? "").trim();
-    if (next === "" || next === account.label) {
-      setDraft(null);
-      return;
-    }
-    rename.mutate(next);
-  };
-
-  if (draft === null) {
-    return (
-      <button
-        type="button"
-        title={t("rename account")}
-        onClick={() => setDraft(account.label)}
-        className="max-w-40 truncate rounded px-1 text-left font-mono text-xs text-fg hover:bg-hover"
-      >
-        {account.label}
-      </button>
-    );
-  }
   return (
-    <input
-      autoFocus
-      value={draft}
-      disabled={rename.isPending}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (isImeKeydown(e)) return;
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          setDraft(null);
-        }
-      }}
-      className={cn(field, "w-40")}
+    <InlineEdit
+      value={account.label}
+      title={t("rename account")}
+      onCommit={(label) => rename.mutateAsync(label)}
     />
   );
 }
@@ -269,109 +225,102 @@ function AccountRow({
         </span>
       )}
       {usage === "ready" && (
-        <span data-signal="ok" className="flex items-center gap-0.5 font-mono text-2xs text-ok">
-          <Check className="size-3" />
+        <SettingsNote tone="ok" className="flex items-center gap-0.5">
+          <CheckIcon className="size-3" />
           {t("usage enabled")}
-        </span>
+        </SettingsNote>
       )}
       {usage === "unavailable" && (
-        <span className="font-mono text-2xs text-faint" title={t("the last quota probe failed; it will be retried")}>
+        <SettingsNote tone="faint" title={t("the last quota probe failed; it will be retried")}>
           {t("usage unavailable")}
-        </span>
+        </SettingsNote>
       )}
       {usage === "login_expired" &&
         (notice === "login_expired_idle" ? (
-          <span className="font-mono text-2xs text-faint">
-            {t("usage login expired · only affects the idle-time fallback")}
-          </span>
+          <SettingsNote tone="faint">{t("usage login expired · only affects the idle-time fallback")}</SettingsNote>
         ) : (
-          <span data-signal="warn" className="font-mono text-2xs text-warn-fg">{t("usage login expired")}</span>
+          <SettingsNote tone="warn">{t("usage login expired")}</SettingsNote>
         ))}
       {(usage === "login_needed" || usage === "login_expired") && (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           onClick={onEnableUsage}
           title={t("log this account in to /usage so its quota shows up")}
-          className="rounded px-1.5 py-0.5 text-xs font-medium text-fg hover:bg-hover"
+          className="h-auto px-1.5 py-0.5 text-xs text-fg"
         >
           {usage === "login_expired" ? t("log in to usage again") : t("enable usage")}
-        </button>
+        </Button>
       )}
       <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1">
         {accountRotationToggleShown(account) && (
-          <label
-            className={cn(CHECKBOX_LABEL, "mr-1 shrink-0 items-center text-xs", rotate.isPending && "cursor-not-allowed opacity-60")}
+          <CheckboxField
+            checked={rotating ?? false}
+            disabled={rotate.isPending}
+            onCheckedChange={(checked) => rotate.mutate(checked)}
+            className={cn("mr-1 shrink-0 items-center text-xs", rotate.isPending && "cursor-not-allowed opacity-60")}
             title={t("in the pool, a session moves to another pool account when its account hits a limit, and sessions from other pool accounts may move here; off keeps this account out in both directions")}
-          >
-            <input
-              type="checkbox"
-              className={CHECKBOX_INPUT}
-              checked={rotating ?? false}
-              disabled={rotate.isPending}
-              onChange={(e) => rotate.mutate(e.target.checked)}
-            />
-            <CheckboxMark />
-            <span className="min-w-0 text-xs text-muted">{t("auto-rotation")}</span>
-          </label>
+            labelClassName="text-xs text-muted"
+            label={t("auto-rotation")}
+          />
         )}
         {/*
           An env account's block is editable in place; an OAuth one has a
           credential to replace, not fields to correct.
         */}
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           onClick={onReauth}
           title={
             account.kind === "env"
               ? t("edit this account's environment variables")
               : t("replace this account's credential, keeping its sessions")
           }
-          className="rounded px-1.5 py-0.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
+          className="h-auto gap-1 px-1.5 py-0.5 font-mono text-2xs"
         >
-          {account.kind === "env" ? (
-            <Pencil className="mr-1 inline size-3 align-[-2px]" />
-          ) : (
-            <RefreshCw className="mr-1 inline size-3 align-[-2px]" />
-          )}
+          {account.kind === "env" ? <PencilSimpleIcon className="size-3" /> : <ArrowsClockwiseIcon className="size-3" />}
           {account.kind === "env" ? t("edit") : t("re-auth")}
-        </button>
+        </Button>
         {confirming ? (
           <>
-            <span data-signal="warn" className="font-mono text-2xs text-warn-fg">{t("remove this account?")}</span>
-            <button
-              type="button"
+            <SettingsNote tone="warn">{t("remove this account?")}</SettingsNote>
+            <Button
+              variant="ghost"
               disabled={remove.isPending}
-              onClick={() => remove.mutate()} data-signal="failed" className="rounded px-1.5 py-0.5 text-xs font-medium text-danger hover:bg-hover disabled:opacity-40"
+              onClick={() => remove.mutate()}
+              data-signal="failed"
+              className="h-auto px-1.5 py-0.5 text-xs text-danger hover:bg-hover hover:text-danger"
             >
               {remove.isPending ? t("removing…") : t("remove")}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => setConfirming(false)}
-              className="rounded px-1.5 py-0.5 font-mono text-2xs text-muted hover:bg-hover"
+              className="h-auto px-1.5 py-0.5 font-mono text-2xs"
             >
               {t("cancel")}
-            </button>
+            </Button>
           </>
         ) : (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
             title={t("delete account")}
             aria-label={t("delete account")}
-            onClick={() => setConfirming(true)} data-signal="failed" className="flex size-6 items-center justify-center rounded text-muted hover:bg-hover hover:text-danger"
+            onClick={() => setConfirming(true)}
+            data-signal="failed"
+            className="size-6 p-0 hover:text-danger"
           >
-            <Trash2 className="size-3.5" />
-          </button>
+            <TrashIcon className="size-3.5" />
+          </Button>
         )}
       </div>
       {remove.isError && (
-        <span data-signal="failed" className="w-full font-mono text-2xs text-danger">{remove.error.message}</span>
+        <SettingsNote tone="danger" className="w-full">{remove.error.message}</SettingsNote>
       )}
       {clearRest.isError && (
-        <span data-signal="failed" className="w-full font-mono text-2xs text-danger">{clearRest.error.message}</span>
+        <SettingsNote tone="danger" className="w-full">{clearRest.error.message}</SettingsNote>
       )}
       {rotate.isError && (
-        <span data-signal="failed" className="w-full font-mono text-2xs text-danger">{rotate.error.message}</span>
+        <SettingsNote tone="danger" className="w-full">{rotate.error.message}</SettingsNote>
       )}
     </div>
   );
@@ -464,7 +413,7 @@ function AddAccountForm({
   const ready = label.trim() !== "" && credentialReady && !add.isPending;
 
   return (
-    <div className={cn(SETTINGS_COLUMN, "mt-2 flex flex-col gap-2 border border-border bg-panel p-2")}>
+    <SettingsColumn className="mt-2 flex flex-col gap-2 border border-border bg-panel p-2">
       <div className="flex flex-col gap-1">
         <span className="text-xs text-muted">{t("cli")}</span>
         <Tabs
@@ -480,8 +429,7 @@ function AddAccountForm({
           </TabsList>
         </Tabs>
       </div>
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-muted">{t("how it authenticates")}</span>
+      <SettingField label={t("how it authenticates")}>
         {provider === "claude" ? (
           <SelectField<AddMode>
             value={mode}
@@ -491,44 +439,32 @@ function AddAccountForm({
         ) : (
           <span className="font-mono text-2xs text-muted">{t(MODE_KEY.env)}</span>
         )}
-      </label>
+      </SettingField>
 
       {effectiveMode === "oauth_wizard" ? (
         <>
-          <p className="text-xs leading-[18px] text-muted">
+          <SettingsHint>
             {t(
               "Runs `claude setup-token` in a terminal here. Nothing opens a browser: copy the URL it prints, authorize it yourself, and paste the code back — the token is then stored as a new account.",
             )}
-          </p>
+          </SettingsHint>
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={onRunWizard}
-              data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
-            >
+            <Button variant="primary" onClick={onRunWizard}>
               {t("run setup-token wizard")}
-            </button>
-            <button
-              type="button"
-              onClick={onDone}
-              className={SETTINGS_ACTION}
-            >
-              {t("cancel")}
-            </button>
+            </Button>
+            <Button onClick={onDone}>{t("cancel")}</Button>
           </div>
         </>
       ) : (
         <>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted">{t("label")}</span>
-            <input
+          <SettingField label={t("label")}>
+            <Input
               autoFocus
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder={t("work account")}
-              className={field}
             />
-          </label>
+          </SettingField>
           {kind === "env" ? (
             <EnvBlockField
               provider={provider}
@@ -538,55 +474,38 @@ function AddAccountForm({
               warning={block.warning}
             />
           ) : (
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted">
-                {t("oauth token")}
-                {" · "}
-                {t("stored on the server, never shown again")}
-              </span>
-              <input
+            <SettingField label={t("oauth token")} hint={<>· {t("stored on the server, never shown again")}</>}>
+              <Input
                 type="password"
                 autoComplete="off"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
                 placeholder="sk-ant-oat…"
-                className={field}
               />
-            </label>
+            </SettingField>
           )}
           {unverified && (
-            <span data-signal="warn" className="font-mono text-2xs text-warn-fg">
+            <SettingsNote tone="warn">
               {t("saved, but it could not be checked: {{why}}", { why: unverified })}
-            </span>
+            </SettingsNote>
           )}
           {add.isError && (
-            <span data-signal="failed" className="font-mono text-2xs text-danger">
+            <SettingsNote tone="danger">
               {add.error instanceof DuplicateAccountError
                 ? t("Already registered as {{label}}", { label: add.error.existingLabel })
                 : add.error.message}
-            </span>
+            </SettingsNote>
           )}
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              disabled={!ready}
-              onClick={() => add.mutate()}
-              data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
-            >
-              {add.isPending && <Loader2 className="size-3 animate-spin" />}
+            <Button variant="primary" disabled={!ready} onClick={() => add.mutate()}>
+              {add.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
               {t("add account")}
-            </button>
-            <button
-              type="button"
-              onClick={onDone}
-              className={SETTINGS_ACTION}
-            >
-              {t("cancel")}
-            </button>
+            </Button>
+            <Button onClick={onDone}>{t("cancel")}</Button>
           </div>
         </>
       )}
-    </div>
+    </SettingsColumn>
   );
 }
 
@@ -758,21 +677,21 @@ export function AccountsSection({ provider }: { provider: AccountProvider }) {
   return (
     <div data-tab-panel={provider} className="p-3">
       {provider === "claude" && (
-        <>
-          <p className={cn(SETTINGS_COLUMN, "text-xs leading-[18px] text-muted")}>
+        <SettingsColumn>
+          <SettingsHint>
             {t(
               "Sessions started under an account use Droppen's own Claude config dir, so they never touch your local login. Sessions you start from a terminal keep using the local login.",
             )}
-          </p>
-          <p className={cn(SETTINGS_COLUMN, "mt-1 text-xs leading-[18px] text-muted")}>
+          </SettingsHint>
+          <SettingsHint className="mt-1">
             {t("A local token is handed to the CLI through its environment instead, for the session it starts.")}
-          </p>
+          </SettingsHint>
           {settings?.claudeManagedDir && (
-            <p className={cn(SETTINGS_COLUMN, "mt-1 font-mono text-xs text-muted")}>
+            <p className="mt-1 font-mono text-xs text-muted">
               {t("managed config dir")}: <span className="break-all text-muted">{settings.claudeManagedDir}</span>
             </p>
           )}
-        </>
+        </SettingsColumn>
       )}
 
       <div>
@@ -799,11 +718,11 @@ export function AccountsSection({ provider }: { provider: AccountProvider }) {
           />
         )}
         {setDefault.isError && (
-          <p data-signal="failed" className="mt-1 font-mono text-2xs text-danger">{setDefault.error.message}</p>
+          <SettingsNote as="p" tone="danger" className="mt-1">{setDefault.error.message}</SettingsNote>
         )}
       </div>
 
-      <div className={cn(SETTINGS_COLUMN, "mt-3")}>
+      <SettingsColumn className="mt-3">
         {adding ? (
           <AddAccountForm
             provider={addProvider}
@@ -812,16 +731,12 @@ export function AccountsSection({ provider }: { provider: AccountProvider }) {
             onDone={() => setAdding(false)}
           />
         ) : (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
-          >
-            <Plus className="size-3" />
+          <Button variant="primary" onClick={() => setAdding(true)}>
+            <PlusIcon className="size-3" />
             {t("add account")}
-          </button>
+          </Button>
         )}
-      </div>
+      </SettingsColumn>
 
       {/* The raw limit messages the server recorded, for whoever wants the CLIs' exact wording. */}
       {data && <LimitEventsPanel accounts={data.accounts} />}

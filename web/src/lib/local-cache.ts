@@ -19,8 +19,7 @@
 const DB = "rh-local-cache";
 const STORE = "kv";
 /** The database and store the cache is kept in (the key move empties them where the keys left). */
-export const LOCAL_CACHE_DB = DB;
-export const LOCAL_CACHE_STORE = STORE;
+export { DB as LOCAL_CACHE_DB, STORE as LOCAL_CACHE_STORE };
 
 /**
  * How long any one operation may take before it counts as a miss. An IndexedDB

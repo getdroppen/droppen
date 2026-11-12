@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowUpCircle } from "lucide-react";
+import { ArrowCircleUpIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RailHint } from "@/components/ui/rail-hint";
@@ -224,9 +224,8 @@ export function DesktopUpdate() {
       }
     >
       <span data-signal={badge === "problem" ? "warn" : undefined} className="relative flex items-center justify-center">
-        <ArrowUpCircle
+        <ArrowCircleUpIcon
           className={cn("size-3.5", ready ? "text-fg" : badge === "problem" ? "text-warn-fg" : undefined)}
-          strokeWidth={1.5}
         />
         <Mark badge={badge} />
       </span>

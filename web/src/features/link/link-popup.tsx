@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Loader2 } from "lucide-react";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
-import { cn } from "@/lib/cn";
+import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
+import { CheckboxField } from "@/components/ui/checkbox-field";
 import { base32, formatEnrollCode, fromHex, hex, sealLinkReturn, utf8 } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
 import { chainV3Writable } from "@/lib/hub/api";
@@ -13,8 +12,7 @@ import { addHost, type AddStep } from "./add-host";
 import type { HubLink } from "@/lib/hub/link";
 import { HOSTS_KEY, limitOf, type LimitHit } from "@/lib/hub/plan";
 import { hubShell } from "@/features/machines/shells";
-import { DOWNLOAD_PATH } from "@/features/landing/get-droppen";
-import { publicHref } from "@/features/landing/route";
+import { DOWNLOAD_PATH, publicHref } from "@/features/landing/route";
 import { hubHosts } from "@/lib/hub/hosts";
 import { LimitNote, useMe } from "@/features/cloud/plan";
 import { Centered, ErrorLine, errorText, field, Note, Panel, primary, quiet } from "@/features/cloud/ui";
@@ -280,7 +278,7 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
       <Centered>
         <Panel title={t("add a device")}>
           <p className="flex items-center gap-2 text-xs text-faint">
-            <Loader2 className="size-3 animate-spin" />
+            <CircleNotchIcon className="size-3 animate-spin" />
             {t("waiting for the device's page…")}
           </p>
         </Panel>
@@ -427,7 +425,7 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
         <Panel title={t("add a device")}>
           <Note tone="ok">
             <span data-signal="ok" className="flex items-center gap-2 font-mono text-xs text-ok" data-testid="link-done">
-              <Check className="size-3" />
+              <CheckIcon className="size-3" />
               {step.already
                 ? t("This device is already in your account.")
                 : handoff
@@ -479,17 +477,13 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
               <p data-signal="failed" className="text-xs text-danger" data-testid="link-warning">
                 {t("This address does not look like Droppen on a device of your own.")}
               </p>
-              <label className={cn(CHECKBOX_LABEL, "items-center text-xs text-fg")}>
-                <input
-                  type="checkbox"
-                  className={CHECKBOX_INPUT}
-                  checked={confirmHost}
-                  onChange={(e) => setConfirmHost(e.target.checked)}
-                  data-testid="link-confirm-host"
-                />
-                <CheckboxMark />
-                <span className="min-w-0">{t("I confirm {{host}} is my own device", { host })}</span>
-              </label>
+              <CheckboxField
+                checked={confirmHost}
+                onCheckedChange={setConfirmHost}
+                data-testid="link-confirm-host"
+                className="items-center text-xs text-fg"
+                label={t("I confirm {{host}} is my own device", { host })}
+              />
             </Note>
           )}
           {tier === "public" && (
@@ -553,7 +547,7 @@ export function LinkFlow({ account, link }: { account: CloudAccount; link: HubLi
           {step.kind === "adding" ? (
             <>
               <p className="flex items-center gap-2 text-xs text-faint" data-testid="link-adding">
-                <Loader2 className="size-3 animate-spin" />
+                <CircleNotchIcon className="size-3 animate-spin" />
                 {step.what === "code"
                   ? t("issuing a one-time code…")
                   : step.what === "proof"

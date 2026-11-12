@@ -2,14 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Sheet } from "@/components/sheet";
 import {
-  SECTION_TITLE,
-  SETTINGS_ACTION,
-  SETTINGS_ACTION_PRIMARY,
-  SETTINGS_COLUMN,
-  SETTINGS_FIELD,
+  SettingField,
+  SettingsColumn,
+  SettingsNote,
+  SettingsSection,
+  SettingsTable,
+  SettingsTableRow,
 } from "@/features/settings/layout";
 import { cn } from "@/lib/cn";
 import { formatTime } from "@/lib/format";
@@ -18,7 +21,7 @@ import { cloudKey, cloudStatusQuery, failure, useLinkFlow } from "./link-flow";
 import type { OpenerState } from "./opener";
 import { BrowserSignInWaiting, startDroppenSignIn } from "./browser-sign-in";
 import { useApi, useMachine } from "@/lib/machines/context";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
+import { CheckboxField } from "@/components/ui/checkbox-field";
 import { Switch } from "@/components/ui/switch";
 
 /*
@@ -36,22 +39,6 @@ type CloudStatus = components["schemas"]["CloudStatus"];
 export type CloudRotation = components["schemas"]["CloudRotation"];
 
 export { cloudKey };
-
-const sectionTitle = SECTION_TITLE;
-const primary = SETTINGS_ACTION_PRIMARY;
-const quiet = SETTINGS_ACTION;
-// A relay URL is a value, so mono; the box still measures like every field.
-const field = `${SETTINGS_FIELD} font-mono`;
-
-/** Two keys/values in a row of the status table. */
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <tr className="border-b border-border">
-      <td className="py-1 pr-4 align-top font-mono text-2xs whitespace-nowrap text-faint">{label}</td>
-      <td className="py-1 font-mono text-xs break-all">{children}</td>
-    </tr>
-  );
-}
 
 function Fingerprint({ value }: { value: string | null | undefined }) {
   if (!value) return null;
@@ -165,11 +152,8 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
 
   return (
     <Page>
-      <section className="border-b border-border p-3" data-testid="droppen-section" data-state={status.state} data-flow={flow.kind}>
-        <h2 data-label="" className={sectionTitle}>
-          Droppen
-        </h2>
-        <div className={cn(SETTINGS_COLUMN, "flex flex-col gap-3")}>
+      <SettingsSection title="Droppen" data-testid="droppen-section" data-state={status.state} data-flow={flow.kind}>
+        <SettingsColumn className="flex flex-col gap-3">
           {!status.localAuth ? (
             <NoLocalAccount />
           ) : busy || flow.kind === "closed" || flow.kind === "expired" || (flow.kind === "error" && status.state === "none") ? (
@@ -208,11 +192,10 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
               onFresh={() => fresh.mutate()}
             />
           )}
-        </div>
-      </section>
+        </SettingsColumn>
+      </SettingsSection>
       {(status.state === "linked" || status.state === "not_hosting") && status.localAuth && (
-        <section className="border-b border-border p-3">
-          <h2 data-label="" className={sectionTitle}>{t("who sees your other devices here")}</h2>
+        <SettingsSection title={t("who sees your other devices here")}>
           <RemoteAccess
             status={status}
             busy={access.isPending || claim.isPending}
@@ -220,7 +203,7 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
             onClaim={() => claim.mutate()}
             error={access.isError ? access.error.message : claim.isError ? claim.error.message : null}
           />
-        </section>
+        </SettingsSection>
       )}
       {(status.state === "linked" ||
         status.state === "not_hosting" ||
@@ -228,9 +211,8 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
         status.state === "removed" ||
         status.state === "broken") &&
         status.localAuth && (
-        <section className="border-b border-border p-3">
-          <h2 data-label="" className={sectionTitle}>{t("disconnect this device")}</h2>
-          <div className={cn(SETTINGS_COLUMN, "flex flex-col gap-2")}>
+        <SettingsSection title={t("disconnect this device")}>
+          <SettingsColumn className="flex flex-col gap-2">
             <p className="text-xs text-muted">
               {t("Stops its Droppen link and deletes its Droppen keys here. It keeps working locally exactly as before. Remove it on droppen.app too, if it is still listed there.")}
             </p>
@@ -238,32 +220,31 @@ export function DroppenSection({ embedded = false }: { embedded?: boolean } = {}
               <p className="text-xs text-muted">{t("Only {{owner}}, who signed this device in, can disconnect it.", { owner: status.owner ?? "—" })}</p>
             ) : !confirmUnlink ? (
               <div>
-                <button type="button" className={quiet} data-testid="droppen-unlink" onClick={() => setConfirmUnlink(true)}>
+                <Button data-testid="droppen-unlink" onClick={() => setConfirmUnlink(true)}>
                   {t("disconnect this device")}
-                </button>
+                </Button>
               </div>
             ) : (
               <div className="flex flex-col gap-2">
                 {status.state === "linked" && (
-                  <label className={cn(CHECKBOX_LABEL, "items-center text-2xs text-muted")}>
-                    <input type="checkbox" className={CHECKBOX_INPUT} checked={deleteCopies} onChange={(e) => setDeleteCopies(e.target.checked)} />
-                    <CheckboxMark />
-                    <span className="min-w-0">{t("also delete its encrypted copy on droppen.app")}</span>
-                  </label>
+                  <CheckboxField
+                    checked={deleteCopies}
+                    onCheckedChange={setDeleteCopies}
+                    className="items-center text-2xs text-muted"
+                    label={t("also delete its encrypted copy on droppen.app")}
+                  />
                 )}
                 <div className="flex items-center gap-2">
-                  <button type="button" data-variant="primary" className={primary} disabled={unlink.isPending} data-testid="droppen-unlink-confirm" onClick={() => unlink.mutate()}>
+                  <Button variant="primary" disabled={unlink.isPending} data-testid="droppen-unlink-confirm" onClick={() => unlink.mutate()}>
                     {unlink.isPending ? t("disconnecting…") : t("disconnect")}
-                  </button>
-                  <button type="button" className={quiet} onClick={() => setConfirmUnlink(false)}>
-                    {t("cancel")}
-                  </button>
+                  </Button>
+                  <Button onClick={() => setConfirmUnlink(false)}>{t("cancel")}</Button>
                 </div>
-                {unlink.isError && <div data-signal="failed" className="font-mono text-2xs break-words text-danger">{unlink.error.message}</div>}
+                {unlink.isError && <SettingsNote tone="danger" className="break-words">{unlink.error.message}</SettingsNote>}
               </div>
             )}
-          </div>
-        </section>
+          </SettingsColumn>
+        </SettingsSection>
       )}
     </Page>
   );
@@ -281,7 +262,7 @@ function UnencryptedNote() {
   const { t } = useTranslation();
   if (!unencryptedOverNetwork()) return null;
   return (
-    <p data-testid="droppen-remote-unencrypted" data-signal="warn" className={cn(SETTINGS_COLUMN, "font-mono text-xs text-warn-fg")}>
+    <p data-testid="droppen-remote-unencrypted" data-signal="warn" className="w-full max-w-3xl font-mono text-xs text-warn-fg">
       {t("This page is open over the network without encryption (http://): others on the network can read what it shows, your other devices' sessions included.")}
     </p>
   );
@@ -313,7 +294,7 @@ export function RemoteAccess({
   const { t } = useTranslation();
   if (!status.canManage) {
     return (
-      <div className={cn(SETTINGS_COLUMN, "flex flex-col gap-2")}>
+      <SettingsColumn className="flex flex-col gap-2">
         <p data-testid="droppen-remote-self" data-remote={status.seesOtherDevices ? "on" : "off"} className="text-xs text-muted">
           {status.seesOtherDevices
             ? t("This local account sees your other devices here.")
@@ -322,28 +303,28 @@ export function RemoteAccess({
               : t("Nobody sees your other devices here until whoever added this device says so in these settings.")}
         </p>
         {status.seesOtherDevices && <UnencryptedNote />}
-      </div>
+      </SettingsColumn>
     );
   }
   if (status.canClaim) {
     return (
-      <div data-testid="droppen-remote-claim" className={cn(SETTINGS_COLUMN, "flex flex-col gap-2")}>
+      <SettingsColumn data-testid="droppen-remote-claim" className="flex flex-col gap-2">
         <p className="text-xs text-muted">
           {t("Nobody sees your other devices here yet: this device joined Droppen without signing in here (or the local account that did is gone). If you added it, say so: then you see them here, and decide who else does.")}
         </p>
         <div>
-          <button type="button" className={quiet} data-testid="droppen-claim" disabled={busy} onClick={onClaim}>
+          <Button data-testid="droppen-claim" disabled={busy} onClick={onClaim}>
             {t("I added this device")}
-          </button>
+          </Button>
         </div>
         <UnencryptedNote />
-        {error && <p data-signal="failed" className="font-mono text-2xs break-words text-danger">{error}</p>}
-      </div>
+        {error && <SettingsNote as="p" tone="danger" className="break-words">{error}</SettingsNote>}
+      </SettingsColumn>
     );
   }
   const accounts = status.accounts ?? [];
   return (
-    <div data-testid="droppen-remote-access" className={cn(SETTINGS_COLUMN, "flex flex-col gap-2")}>
+    <SettingsColumn data-testid="droppen-remote-access" className="flex flex-col gap-2">
       <p className="text-xs text-muted">
         {t("Your other devices' sessions show in this device's app only to these local accounts. Anyone using one of them sees what those devices copy here.")}
       </p>
@@ -366,8 +347,8 @@ export function RemoteAccess({
           </li>
         ))}
       </ul>
-      {error && <p data-signal="failed" className="font-mono text-2xs break-words text-danger">{error}</p>}
-    </div>
+      {error && <SettingsNote as="p" tone="danger" className="break-words">{error}</SettingsNote>}
+    </SettingsColumn>
   );
 }
 
@@ -402,24 +383,27 @@ function SignedOut(props: {
         <p className="text-xs text-muted">{t("Only {{owner}} can sign this device in.", { owner: status.owner })}</p>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" data-variant="primary" className={primary} data-testid="droppen-sign-in" disabled={!status.canManage || !props.hubValid} onClick={props.onSignIn}>
+        <Button variant="primary" data-testid="droppen-sign-in" disabled={!status.canManage || !props.hubValid} onClick={props.onSignIn}>
           {t("Sign in to Droppen")}
-        </button>
-        <button type="button" className="font-mono text-xs text-muted underline-offset-2 hover:text-fg hover:underline" onClick={() => props.setAdvanced(!props.advanced)}>
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => props.setAdvanced(!props.advanced)}
+          className="h-auto px-0 font-mono text-xs text-muted underline-offset-2 hover:bg-transparent hover:text-fg hover:underline"
+        >
           {props.advanced ? t("hide advanced") : t("advanced")}
-        </button>
+        </Button>
       </div>
       {props.advanced && (
-        <label className={cn(SETTINGS_COLUMN, "flex flex-col gap-1")}>
-          <span className="text-xs text-muted">{t("hub address")}</span>
-          <input
+        <SettingField label={t("hub address")}>
+          <Input
             value={props.hubInput}
             onChange={(e) => props.setHubInput(e.target.value)}
             placeholder={hubWebOrigin(status.hub) ?? status.hubWeb}
             spellCheck={false}
-            className={cn(field, !props.hubValid && "border-danger/60")}
+            className={cn("font-mono", !props.hubValid && "border-danger/60")}
           />
-        </label>
+        </SettingField>
       )}
     </>
   );
@@ -453,12 +437,8 @@ function InProgress({
             : flow.message}
         </p>
         <div className="flex gap-2">
-          <button type="button" data-variant="primary" className={primary} onClick={onRetry}>
-            {t("try again")}
-          </button>
-          <button type="button" className={quiet} onClick={onCancel}>
-            {t("cancel")}
-          </button>
+          <Button variant="primary" onClick={onRetry}>{t("try again")}</Button>
+          <Button onClick={onCancel}>{t("cancel")}</Button>
         </div>
       </>
     );
@@ -489,23 +469,21 @@ function InProgress({
       )}
       <div className="flex flex-wrap gap-2">
         {flow.kind === "blocked" ? (
-          <button type="button" data-variant="primary" className={primary} data-testid="droppen-open-popup" onClick={onReopen}>
+          <Button variant="primary" data-testid="droppen-open-popup" onClick={onReopen}>
             {t("open droppen.app")}
-          </button>
+          </Button>
         ) : flow.kind === "waiting" || flow.kind === "closed" ? (
-          <button type="button" className={quiet} data-testid="droppen-reopen" onClick={onReopen}>
+          <Button data-testid="droppen-reopen" onClick={onReopen}>
             {t("open the window again")}
-          </button>
+          </Button>
         ) : null}
         {(flow.kind === "blocked" || flow.kind === "closed") && attempt?.handoffUrl && onContinueInBrowser && (
-          <button type="button" className={quiet} data-testid="droppen-continue-in-browser" onClick={onContinueInBrowser}>
+          <Button data-testid="droppen-continue-in-browser" onClick={onContinueInBrowser}>
             {t("continue in a browser tab instead")}
-          </button>
+          </Button>
         )}
         {flow.kind !== "finishing" && flow.kind !== "enrolling" && (
-          <button type="button" className={quiet} data-testid="droppen-cancel" onClick={onCancel}>
-            {t("cancel")}
-          </button>
+          <Button data-testid="droppen-cancel" onClick={onCancel}>{t("cancel")}</Button>
         )}
       </div>
     </>
@@ -528,34 +506,32 @@ function Linked({ status, onAggregator, aggregatorBusy }: { status: CloudStatus;
   }, [link, status.state, t]);
   return (
     <>
-      <table className={SETTINGS_COLUMN} data-testid="droppen-linked">
-        <tbody>
-          <Row label={t("account")}>
+      <SettingsTable data-testid="droppen-linked">
+          <SettingsTableRow label={t("account")}>
             {status.account?.email ?? status.account?.id ?? "—"}
             {status.account && <div className="text-xs text-muted">{status.account.fingerprint}</div>}
-          </Row>
-          <Row label={t("this device")}>
+          </SettingsTableRow>
+          <SettingsTableRow label={t("this device")}>
             {status.machine.hostname} · {status.machine.id ?? "—"}
             <div className="text-xs text-muted">{status.machine.fingerprint}</div>
-          </Row>
-          <Row label={t("link")}>
+          </SettingsTableRow>
+          <SettingsTableRow label={t("link")}>
             <span data-signal={link?.connected ? "ok" : "warn"} className={link?.connected ? "text-ok" : "text-warn-fg"} data-testid="droppen-connection">
               {connection}
             </span>
-          </Row>
+          </SettingsTableRow>
           {link?.machines != null && (
-            <Row label={t("in the account")}>{t("devices that run AI: {{machines}} · other devices: {{devices}}", { machines: link.machines, devices: link.devices ?? 0 })}</Row>
+            <SettingsTableRow label={t("in the account")}>{t("devices that run AI: {{machines}} · other devices: {{devices}}", { machines: link.machines, devices: link.devices ?? 0 })}</SettingsTableRow>
           )}
-          <Row label={t("aggregator")}>
+          <SettingsTableRow label={t("aggregator")}>
             <AggregatorLine aggregator={status.aggregator} canManage={status.canManage} busy={aggregatorBusy} onSet={onAggregator} />
-          </Row>
-          {status.owner && <Row label={t("signed in by")}>{status.owner}</Row>}
-        </tbody>
-      </table>
+          </SettingsTableRow>
+          {status.owner && <SettingsTableRow label={t("signed in by")}>{status.owner}</SettingsTableRow>}
+      </SettingsTable>
       {link?.alarms.map((alarm) => (
-        <p key={alarm} data-signal="failed" className="font-mono text-2xs break-words text-danger">
+        <SettingsNote as="p" key={alarm} tone="danger" className="break-words">
           {alarm}
-        </p>
+        </SettingsNote>
       ))}
     </>
   );
@@ -595,9 +571,9 @@ export function AggregatorLine({
       <div className="flex flex-wrap items-center gap-2">
         <span className={aggregator.enabled ? "text-fg" : "text-faint"}>{line}</span>
         {canManage && (
-          <button type="button" className={quiet} disabled={busy} data-testid="droppen-aggregate" onClick={() => onSet(!aggregator.enabled)}>
+          <Button disabled={busy} data-testid="droppen-aggregate" onClick={() => onSet(!aggregator.enabled)}>
             {aggregator.enabled ? t("turn off") : t("turn on")}
-          </button>
+          </Button>
         )}
       </div>
       {aggregator.enabled && missing.length > 0 && (
@@ -608,14 +584,12 @@ export function AggregatorLine({
         </span>
       )}
       {aggregator.enabled && outdated.length > 0 && (
-        <span data-signal="warn" className="text-2xs text-warn-fg">
+        <SettingsNote tone="warn" mono={false}>
           {t("update Droppen on {{ids}}: until then this device cannot control them", { ids: outdated.join(", ") })}
-        </span>
+        </SettingsNote>
       )}
       {aggregator.enabled && aggregator.error && (
-        <span data-signal="warn" className="text-2xs break-words text-warn-fg">
-          {aggregator.error}
-        </span>
+        <SettingsNote tone="warn" mono={false} className="break-words">{aggregator.error}</SettingsNote>
       )}
       {aggregator.enabled && canManage && <span className="text-xs text-muted">{t("turning it off deletes the other devices' content keys here")}</span>}
     </div>
@@ -697,21 +671,19 @@ export function RotationNote({
       {canManage &&
         (confirming ? (
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" data-variant="primary" data-testid="droppen-fresh-confirm" className={primary} disabled={busy} onClick={onFresh}>
+            <Button variant="primary" data-testid="droppen-fresh-confirm" disabled={busy} onClick={onFresh}>
               {busy ? t("making a new identity…") : t("add this device again with a new identity")}
-            </button>
-            <button type="button" className={quiet} disabled={busy} onClick={() => setConfirming(false)}>
-              {t("cancel")}
-            </button>
+            </Button>
+            <Button disabled={busy} onClick={() => setConfirming(false)}>{t("cancel")}</Button>
           </div>
         ) : (
           <div>
-            <button type="button" data-testid="droppen-fresh" className={quiet} onClick={() => setConfirming(true)}>
+            <Button data-testid="droppen-fresh" onClick={() => setConfirming(true)}>
               {t("add this device again with a new identity")}
-            </button>
+            </Button>
           </div>
         ))}
-      {error && <div data-signal="failed" className="font-mono text-2xs break-words text-danger">{error}</div>}
+      {error && <SettingsNote as="p" tone="danger" className="break-words">{error}</SettingsNote>}
     </div>
   );
 }
@@ -724,9 +696,7 @@ function Removed({ onRejoin, canManage }: { onRejoin: () => void; canManage: boo
         {t("This device was removed from the account on droppen.app. It keeps working locally.")}
       </p>
       <div>
-        <button type="button" data-variant="primary" className={primary} disabled={!canManage} onClick={onRejoin}>
-          {t("join again")}
-        </button>
+        <Button variant="primary" disabled={!canManage} onClick={onRejoin}>{t("join again")}</Button>
       </div>
     </>
   );

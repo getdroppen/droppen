@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { CaretDownIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -165,7 +165,7 @@ export function SessionAccountBadge({
               ↻
             </span>
           )}
-          <ChevronDown className="size-2.5 shrink-0 opacity-70" />
+          <CaretDownIcon className="size-2.5 shrink-0 opacity-70" />
         </PopoverTrigger>
         <PopoverContent
           side="bottom"
@@ -185,7 +185,7 @@ export function SessionAccountBadge({
                   onClick={() => bind.mutate(pending.id)}
                   data-variant="primary" className="flex h-6.5 items-center gap-1.5 bg-fg px-2.5 text-xs font-medium text-bg hover:bg-fg/85 disabled:opacity-40"
                 >
-                  {bind.isPending && <Loader2 className="size-3 animate-spin" />}
+                  {bind.isPending && <CircleNotchIcon className="size-3 animate-spin" />}
                   {t("switch")}
                 </button>
                 <button
@@ -266,7 +266,7 @@ function LocalLoginBadge({
           )}
         >
           <span className="max-w-40 truncate">{signedOut ? t("local (not signed in)") : t("local")}</span>
-          <ChevronDown className="size-2.5 shrink-0 opacity-70" />
+          <CaretDownIcon className="size-2.5 shrink-0 opacity-70" />
         </PopoverTrigger>
         <PopoverContent side="bottom" className="max-h-[60vh] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto">
           <LocalLoginExplainer id={id} owned={owned} login={login} onOpenSession={onOpenSession} onDone={() => setOpen(false)} />

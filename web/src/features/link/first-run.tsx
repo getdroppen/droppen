@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
+import { XIcon } from "@phosphor-icons/react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { isCloud } from "@/lib/hub/config";
@@ -78,7 +78,7 @@ function FirstRunCard({ className }: { className?: string }) {
       <div className="flex items-center justify-between gap-2">
         <CapsLabel>Droppen</CapsLabel>
         <button type="button" aria-label={t("not now")} title={t("not now")} onClick={dismiss} className="flex size-5 items-center justify-center text-muted hover:bg-hover hover:text-fg">
-          <X className="size-3" />
+          <XIcon className="size-3" />
         </button>
       </div>
       <p className="text-xs leading-5 text-fg">{t("Sign in to Droppen to see your other devices here, and to use this one from your phone.")}</p>

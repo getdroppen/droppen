@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { MonitorIcon, MoonIcon, SunIcon } from "@phosphor-icons/react";
 
 export type ThemeMode = "auto" | "light" | "dark";
 
@@ -59,10 +59,10 @@ export const NEXT_MODE: Record<ThemeMode, ThemeMode> = {
 };
 
 /** The icon of each mode in the theme toggle. */
-export const MODE_ICONS: Record<ThemeMode, typeof Sun> = {
-  auto: Monitor,
-  light: Sun,
-  dark: Moon,
+export const MODE_ICONS: Record<ThemeMode, typeof SunIcon> = {
+  auto: MonitorIcon,
+  light: SunIcon,
+  dark: MoonIcon,
 };
 
 /** Whether the page is painted dark now; follows the theme toggle. */

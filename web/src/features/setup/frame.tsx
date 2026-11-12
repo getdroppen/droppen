@@ -8,9 +8,8 @@
  * the frame's lines and the rail's divider. Under 960px the rail is a row of
  * four cells across the top, and no marks are drawn.
  */
-import { Menu } from "@base-ui-components/react/menu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Globe, Info } from "lucide-react";
+import { CheckIcon, CaretDownIcon, GlobeIcon, InfoIcon } from "@phosphor-icons/react";
 import { forwardRef, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -18,6 +17,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { activeLanguage, LanguageMenu } from "@/components/language-menu";
 import { RegMark } from "@/components/reg-mark";
 import { Button } from "@/components/ui/button";
+import { DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { applyLanguage, storedLanguagePref, type LanguagePref } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
@@ -74,15 +74,15 @@ function LanguagePicker() {
   };
   return (
     <LanguageMenu value={prefs?.language ?? chosen} onChoose={choose} look="guide">
-      <Menu.Trigger
+      <DropdownMenuTrigger
         aria-label={t("Language")}
         title={t("Language")}
         className="flex h-6 shrink-0 items-center gap-1 px-2 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
       >
-        <Globe className="size-3" />
+        <GlobeIcon className="size-3" />
         <span lang={active.id}>{active.label}</span>
-        <ChevronDown className="size-2.5" />
-      </Menu.Trigger>
+        <CaretDownIcon className="size-2.5" />
+      </DropdownMenuTrigger>
     </LanguageMenu>
   );
 }
@@ -171,7 +171,7 @@ export function StepRail({ current, progress, onGoto }: { current: StepId; progr
                 <span className={cn("font-mono text-2xs tabular-nums", on ? "text-bg/70" : "text-faint")}>{String(stepNumber(step)).padStart(2, "0")}</span>
                 <span className="truncate text-[13px] leading-[18px]">{t(STEP_LABEL[step])}</span>
                 <span className={cn("flex items-center gap-1 font-mono text-[10px] leading-[14px]", state === "done" ? "text-fg" : "text-faint")}>
-                  {!on && state === "done" && <Check className="size-3" aria-hidden="true" />}
+                  {!on && state === "done" && <CheckIcon className="size-3" aria-hidden="true" />}
                   {word && <span className="max-[960px]:sr-only">{t(word)}</span>}
                 </span>
               </button>
@@ -282,7 +282,7 @@ export const StepHeader = forwardRef<HTMLHeadingElement, { kicker: string; title
 export function FootNote({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className={cn("mt-[18px] grid max-w-[720px] grid-cols-[14px_minmax(0,1fr)] gap-2 text-xs leading-[18px] text-muted", className)}>
-      <Info className="mt-0.5 size-3.5" aria-hidden="true" />
+      <InfoIcon className="mt-0.5 size-3.5" aria-hidden="true" />
       <span>{children}</span>
     </div>
   );

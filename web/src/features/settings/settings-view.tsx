@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { MachineLink, useMachineNavigate } from "@/app/machine-route";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
 import { useFeedSessions, useFeedSettings } from "@/app/global-feed";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -16,14 +18,14 @@ import { SettingsUpdatesRow } from "@/features/updates/updates-row";
 import { ScheduleSection } from "@/features/settings/schedule-section";
 import { askedSection, SECTION_LABEL, sectionsFor, type SectionId } from "@/features/settings/sections";
 import {
-  PREFERENCE_ROW,
-  ROW_HINT,
-  ROW_LABEL,
-  SECTION_TITLE,
-  SETTINGS_ACTION,
-  SETTINGS_ACTION_PRIMARY,
-  SETTINGS_COLUMN,
-  SETTINGS_FIELD,
+  SettingField,
+  SettingRow,
+  SettingsColumn,
+  SettingsHint,
+  SettingsNote,
+  SettingsSection,
+  SettingsTable,
+  SettingsTableRow,
 } from "@/features/settings/layout";
 import { SetupSection } from "@/features/setup/settings-section";
 import { AgentsSection } from "@/features/settings/agents/agents-section";
@@ -46,10 +48,6 @@ import { useApi, useHomeMachine, useMachine, useOpenMachines } from "@/lib/machi
 import { mq } from "@/lib/machines/query";
 
 type Prefs = components["schemas"]["Prefs"];
-
-// One row grid for the whole page (features/settings/layout.ts): a fixed
-// 16rem label and 14rem control from 36rem up, stacked below it.
-const preferenceRow = PREFERENCE_ROW;
 
 /** A boolean setting: the one square switch (`components/ui/switch`), in the settings page's sans label voice. */
 function SettingSwitch({
@@ -91,6 +89,15 @@ function usePrefs() {
   return { prefs, save };
 }
 
+/** A pref this browser has not loaded yet; the row keeps its height. */
+function LoadingValue() {
+  return (
+    <SettingsNote tone="muted" className="text-xs">
+      …
+    </SettingsNote>
+  );
+}
+
 /** Exported for the render tests (`test/cross-device-render.test.tsx`). */
 export function PreferencesSection() {
   const machine = useMachine();
@@ -104,15 +111,8 @@ export function PreferencesSection() {
   const [showHiddenFiles, setShowHiddenFiles] = useShowHiddenFiles();
 
   return (
-    <section className="border-b border-border p-3">
-      <h2 data-label="" className={SECTION_TITLE}>
-        {t("preferences")}
-      </h2>
-      <div className={preferenceRow}>
-        <div>
-          <div className={ROW_LABEL}>{t("session list grouping")}</div>
-          <div className={ROW_HINT}>{t("group sessions by project directory")}</div>
-        </div>
+    <SettingsSection title={t("preferences")}>
+      <SettingRow label={t("session list grouping")} hint={t("group sessions by project directory")}>
         {prefs ? (
           <Tabs
             className="w-full"
@@ -125,14 +125,10 @@ export function PreferencesSection() {
             </TabsList>
           </Tabs>
         ) : (
-          <span className="font-mono text-xs text-muted">…</span>
+          <LoadingValue />
         )}
-      </div>
-      <div className={cn(preferenceRow, "mt-3")}>
-        <div>
-          <div className={ROW_LABEL}>{t("subagent tree")}</div>
-          <div className={ROW_HINT}>{t("list the subagents a session delegated to under it")}</div>
-        </div>
+      </SettingRow>
+      <SettingRow className="mt-3" label={t("subagent tree")} hint={t("list the subagents a session delegated to under it")}>
         {prefs ? (
           // Opt-in: the server only looks for subagents once this is on.
           <SettingSwitch
@@ -142,14 +138,10 @@ export function PreferencesSection() {
             onChange={(on) => save.mutate({ ...prefs, subagentTree: on ? "on" : "off" })}
           />
         ) : (
-          <span className="font-mono text-xs text-muted">…</span>
+          <LoadingValue />
         )}
-      </div>
-      <div className={cn(preferenceRow, "mt-3")}>
-        <div>
-          <div className={ROW_LABEL}>{t("message display")}</div>
-          <div className={ROW_HINT}>{t("chat bubbles or a flat list")}</div>
-        </div>
+      </SettingRow>
+      <SettingRow className="mt-3" label={t("message display")} hint={t("chat bubbles or a flat list")}>
         {prefs ? (
           <Tabs
             className="w-full"
@@ -162,16 +154,12 @@ export function PreferencesSection() {
             </TabsList>
           </Tabs>
         ) : (
-          <span className="font-mono text-xs text-muted">…</span>
+          <LoadingValue />
         )}
-      </div>
+      </SettingRow>
       {onMain ? (
         <>
-          <div className={cn(preferenceRow, "mt-3")}>
-            <div>
-              <div className={ROW_LABEL}>{t("font size")}</div>
-              <div className={ROW_HINT}>{t("scales the whole UI, synced across devices")}</div>
-            </div>
+          <SettingRow className="mt-3" label={t("font size")} hint={t("scales the whole UI, synced across devices")}>
             {prefs ? (
               // Four sizes: a select, not a segmented control.
               <SelectField
@@ -186,14 +174,10 @@ export function PreferencesSection() {
                 onValueChange={(v) => save.mutate({ ...prefs, fontSize: v as Prefs["fontSize"] })}
               />
             ) : (
-              <span className="font-mono text-xs text-muted">…</span>
+              <LoadingValue />
             )}
-          </div>
-          <div className={cn(preferenceRow, "mt-3")}>
-            <div>
-              <div className={ROW_LABEL}>{t("language")}</div>
-              <div className={ROW_HINT}>{t("auto follows the browser language")}</div>
-            </div>
+          </SettingRow>
+          <SettingRow className="mt-3" label={t("language")} hint={t("auto follows the browser language")}>
             {prefs ? (
               // Five languages: a select. An 11px segmented strip could not
               // hold 简体 / 繁體 / 日本語 without shrinking the text.
@@ -210,30 +194,34 @@ export function PreferencesSection() {
                 onValueChange={(v) => save.mutate({ ...prefs, language: v as Prefs["language"] })}
               />
             ) : (
-              <span className="font-mono text-xs text-muted">…</span>
+              <LoadingValue />
             )}
-          </div>
+          </SettingRow>
         </>
       ) : (
         // The page's font size and language are the main device's prefs
         // (`PrefsSync`): set here they would be saved on this device and
         // never applied.
-        <div data-appearance-on-main="" className={cn(preferenceRow, "mt-3")}>
-          <div className={ROW_HINT}>{t("Font size and language follow the main device: change them in its settings.")}</div>
-          <MachineLink machine={home} to="/settings" className="shrink-0 text-[13px] font-medium text-fg underline underline-offset-2 hover:text-muted">
-            {t("main device settings")}
-          </MachineLink>
+        <div data-appearance-on-main="">
+          <SettingRow
+            className="mt-3"
+            hint={t("Font size and language follow the main device: change them in its settings.")}
+          >
+            <MachineLink
+              machine={home}
+              to="/settings"
+              className="shrink-0 text-[13px] font-medium text-fg underline underline-offset-2 hover:text-muted"
+            >
+              {t("main device settings")}
+            </MachineLink>
+          </SettingRow>
         </div>
       )}
-      <div className={cn(preferenceRow, "mt-3")}>
-        <div>
-          <div className={ROW_LABEL}>{t("composer send shortcut")}</div>
-          <div className={ROW_HINT}>
-            {prefs?.composerSend === "modifier"
-              ? t("⌘/Ctrl+Enter sends · Enter inserts a newline")
-              : t("Enter sends · Shift+Enter inserts a newline")}
-          </div>
-        </div>
+      <SettingRow className="mt-3" label={t("composer send shortcut")} hint={
+        prefs?.composerSend === "modifier"
+          ? t("⌘/Ctrl+Enter sends · Enter inserts a newline")
+          : t("Enter sends · Shift+Enter inserts a newline")
+      }>
         {prefs ? (
           <Tabs
             className="w-full"
@@ -246,16 +234,10 @@ export function PreferencesSection() {
             </TabsList>
           </Tabs>
         ) : (
-          <span className="font-mono text-xs text-muted">…</span>
+          <LoadingValue />
         )}
-      </div>
-      <div className={cn(preferenceRow, "mt-3")}>
-        <div>
-          <div className={ROW_LABEL}>{t("show hidden files")}</div>
-          <div className={ROW_HINT}>
-            {t("dot-files in the file browser · this device only")}
-          </div>
-        </div>
+      </SettingRow>
+      <SettingRow className="mt-3" label={t("show hidden files")} hint={t("dot-files in the file browser · this device only")}>
         <Tabs
           className="w-full"
           value={showHiddenFiles ? "show" : "hide"}
@@ -266,8 +248,8 @@ export function PreferencesSection() {
             <TabsTab value="show">{t("show")}</TabsTab>
           </TabsList>
         </Tabs>
-      </div>
-    </section>
+      </SettingRow>
+    </SettingsSection>
   );
 }
 
@@ -281,54 +263,47 @@ export function PreferencesSection() {
 export function MessageRenderingSection() {
   const { t } = useTranslation();
   const { prefs, save } = usePrefs();
+  const rows = [
+    {
+      key: "math" as const,
+      label: t("LaTeX math"),
+      hint: t("$…$ and $$…$$ in messages · code stays as written"),
+      value: prefs?.math,
+    },
+    {
+      key: "diagrams" as const,
+      label: t("Mermaid diagrams"),
+      hint: t("```mermaid blocks in messages · other code stays as written"),
+      value: prefs?.diagrams,
+    },
+  ];
   return (
-    <section className="border-b border-border p-3">
-      <h2 data-label="" className={SECTION_TITLE}>
-        {t("message rendering")}
-      </h2>
-      <div className={preferenceRow}>
-        <div>
-          <div className={ROW_LABEL}>{t("LaTeX math")}</div>
-          <div className={ROW_HINT}>{t("$…$ and $$…$$ in messages · code stays as written")}</div>
-        </div>
-        {prefs ? (
-          <Tabs
-            className="w-full"
-            // A server from before the pref sends none, and typesets.
-            value={prefs.math ?? "rendered"}
-            onValueChange={(v) => save.mutate({ ...prefs, math: v as Prefs["math"] })}
-          >
-            <TabsList className="w-full">
-              <TabsTab value="rendered">{t("rendered")}</TabsTab>
-              <TabsTab value="source">{t("source")}</TabsTab>
-            </TabsList>
-          </Tabs>
-        ) : (
-          <span className="font-mono text-xs text-muted">…</span>
-        )}
-      </div>
-      <div className={cn(preferenceRow, "mt-3")}>
-        <div>
-          <div className={ROW_LABEL}>{t("Mermaid diagrams")}</div>
-          <div className={ROW_HINT}>{t("```mermaid blocks in messages · other code stays as written")}</div>
-        </div>
-        {prefs ? (
-          <Tabs
-            className="w-full"
-            // A server from before the pref sends none, and draws them.
-            value={prefs.diagrams ?? "rendered"}
-            onValueChange={(v) => save.mutate({ ...prefs, diagrams: v as Prefs["diagrams"] })}
-          >
-            <TabsList className="w-full">
-              <TabsTab value="rendered">{t("rendered")}</TabsTab>
-              <TabsTab value="source">{t("source")}</TabsTab>
-            </TabsList>
-          </Tabs>
-        ) : (
-          <span className="font-mono text-xs text-muted">…</span>
-        )}
-      </div>
-    </section>
+    <SettingsSection title={t("message rendering")}>
+      {rows.map((row, i) => (
+        <SettingRow
+          key={row.key}
+          className={i > 0 ? "mt-3" : undefined}
+          label={row.label}
+          hint={row.hint}
+        >
+          {prefs ? (
+            <Tabs
+              className="w-full"
+              // A server from before the pref sends none, and typesets.
+              value={row.value ?? "rendered"}
+              onValueChange={(v) => save.mutate({ ...prefs, [row.key]: v as Prefs["math"] })}
+            >
+              <TabsList className="w-full">
+                <TabsTab value="rendered">{t("rendered")}</TabsTab>
+                <TabsTab value="source">{t("source")}</TabsTab>
+              </TabsList>
+            </Tabs>
+          ) : (
+            <LoadingValue />
+          )}
+        </SettingRow>
+      ))}
+    </SettingsSection>
   );
 }
 
@@ -368,30 +343,32 @@ function NotificationsSection() {
   };
 
   return (
-    <section className="border-b border-border p-3">
-      <h2 data-label="" className={SECTION_TITLE}>
-        {t("notifications")}
-      </h2>
-      <div className={preferenceRow}>
-        <div className="min-w-0">
-          <div className={ROW_LABEL}>{t("push notifications")}</div>
-          <div className={ROW_HINT}>
-            {t("Ping this browser when a session finishes a turn or asks for input.")}
-          </div>
-          {state === "denied" && (
-            <div data-signal="warn" className="mt-0.5 text-2xs text-warn-fg">
-              {t("Blocked for this site — re-allow notifications in the browser's site settings.")}
-            </div>
-          )}
-          {state === "unsupported" && (
-            <div className="mt-0.5 text-2xs text-muted">
-              {t("Unavailable here: push needs a service worker, which means a production build over https (or localhost).")}
-            </div>
-          )}
-          {error !== "" && <div data-signal="failed" className="mt-0.5 font-mono text-2xs text-danger">{error}</div>}
-        </div>
+    <SettingsSection title={t("notifications")}>
+      <SettingRow
+        label={t("push notifications")}
+        hint={t("Ping this browser when a session finishes a turn or asks for input.")}
+        labelExtra={
+          <>
+            {state === "denied" && (
+              <SettingsNote tone="warn" mono={false} className="mt-0.5 block">
+                {t("Blocked for this site — re-allow notifications in the browser's site settings.")}
+              </SettingsNote>
+            )}
+            {state === "unsupported" && (
+              <SettingsNote tone="muted" mono={false} className="mt-0.5 block">
+                {t("Unavailable here: push needs a service worker, which means a production build over https (or localhost).")}
+              </SettingsNote>
+            )}
+            {error !== "" && (
+              <SettingsNote tone="danger" className="mt-0.5 block">
+                {error}
+              </SettingsNote>
+            )}
+          </>
+        }
+      >
         {state === "loading" ? (
-          <span className="font-mono text-xs text-muted">…</span>
+          <LoadingValue />
         ) : state === "on" || state === "off" ? (
           // A boolean, so a square switch, not a 24px button with a verb.
           <SettingSwitch
@@ -401,10 +378,12 @@ function NotificationsSection() {
             onChange={() => void toggle()}
           />
         ) : (
-          <span className="shrink-0 font-mono text-xs text-muted">{t("unavailable")}</span>
+          <SettingsNote tone="muted" className="shrink-0 text-xs">
+            {t("unavailable")}
+          </SettingsNote>
         )}
-      </div>
-    </section>
+      </SettingRow>
+    </SettingsSection>
   );
 }
 
@@ -454,48 +433,39 @@ function PhoneNotificationsSection() {
 
   const dirty = endpoint.trim() !== "" || baseUrl !== null;
   const armed = config?.hasEndpoint ?? false;
-  // A device key and an address: values, so mono.
-  const field = cn(SETTINGS_FIELD, "font-mono");
 
   return (
-    <section className="border-b border-border p-3">
-      <h2 data-label="" className={SECTION_TITLE}>
-        {t("phone notifications")}
-      </h2>
-      <div className={cn(SETTINGS_COLUMN, "flex flex-col gap-2")}>
-        <p className="text-xs leading-[18px] text-muted">
+    <SettingsSection title={t("phone notifications")}>
+      <SettingsColumn className="flex flex-col gap-2">
+        <SettingsHint>
           {t(
             "Lets a session interrupt you on purpose — when it is blocked on a decision, has found something you would want to stop for, or has finished. Delivered by Bark on iOS; the device key stays on the server and is never given to the agent.",
           )}
-        </p>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">
-            {t("bark device key or endpoint")}{" "}
-            {armed && t("· saved (enter a new one to replace)")}
-          </span>
-          <input
+        </SettingsHint>
+        <SettingField
+          label={t("bark device key or endpoint")}
+          hint={armed ? t("· saved (enter a new one to replace)") : undefined}
+        >
+          <Input
             type="password"
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
             placeholder={config?.endpointMask || "https://api.day.app/…"}
-            className={field}
+            className="font-mono"
           />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">{t("address your phone opens")}</span>
-          <input
+        </SettingField>
+        <SettingField label={t("address your phone opens")}>
+          <Input
             value={baseUrl ?? config?.baseUrl ?? ""}
             onChange={(e) => setBaseUrl(e.target.value)}
             placeholder={window.location.origin}
-            className={field}
+            className="font-mono"
           />
-          <span className="text-xs text-muted">
-            {t("Tapping a notification opens the session it came from. Leave it empty for no link.")}
-          </span>
-        </label>
+        </SettingField>
+        <SettingsHint>{t("Tapping a notification opens the session it came from. Leave it empty for no link.")}</SettingsHint>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant="primary"
             disabled={!dirty || save.isPending}
             onClick={() => {
               setSent(false);
@@ -508,22 +478,19 @@ function PhoneNotificationsSection() {
                 ...(!armed && endpoint.trim() !== "" ? { enabled: true } : {}),
               });
             }}
-            data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
           >
             {save.isPending ? t("saving…") : t("save")}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             disabled={!armed || dirty || test.isPending}
             onClick={() => {
               setSent(false);
               test.mutate();
             }}
             title={dirty ? t("save first") : undefined}
-            className={SETTINGS_ACTION}
           >
             {test.isPending ? t("sending…") : t("send test")}
-          </button>
+          </Button>
           {armed && (
             <span className="ml-auto">
               <SettingSwitch
@@ -539,15 +506,13 @@ function PhoneNotificationsSection() {
           )}
         </div>
         {armed && !config?.enabled && (
-          <span data-signal="warn" className="font-mono text-2xs text-warn-fg">
-            {t("Turned off — sessions are not offered the notification skill.")}
-          </span>
+          <SettingsNote tone="warn">{t("Turned off — sessions are not offered the notification skill.")}</SettingsNote>
         )}
-        {sent && <span data-signal="ok" className="font-mono text-2xs text-ok">{t("test notification sent")}</span>}
-        {save.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{save.error.message}</span>}
-        {test.isError && <span data-signal="failed" className="font-mono text-2xs text-danger">{test.error.message}</span>}
-      </div>
-    </section>
+        {sent && <SettingsNote tone="ok">{t("test notification sent")}</SettingsNote>}
+        {save.isError && <SettingsNote tone="danger">{save.error.message}</SettingsNote>}
+        {test.isError && <SettingsNote tone="danger">{test.error.message}</SettingsNote>}
+      </SettingsColumn>
+    </SettingsSection>
   );
 }
 
@@ -568,35 +533,29 @@ function InstallSection() {
   if (state === "hidden") return null;
 
   return (
-    <section className="border-b border-border p-3">
-      <h2 data-label="" className={SECTION_TITLE}>
-        {t("install")}
-      </h2>
-      <div className={preferenceRow}>
-        <div className="min-w-0">
-          <div className={ROW_LABEL}>{t("home screen app")}</div>
-          <div className={ROW_HINT}>
-            {t("Opens full-screen with its own icon, and can badge it when a session needs you.")}
-          </div>
-          {state === "ios-hint" && (
-            <div className="mt-0.5 text-xs text-muted">
+    <SettingsSection title={t("install")}>
+      <SettingRow
+        label={t("home screen app")}
+        hint={t("Opens full-screen with its own icon, and can badge it when a session needs you.")}
+        labelExtra={
+          state === "ios-hint" ? (
+            <SettingsNote tone="muted" mono={false} className="mt-0.5 block text-xs">
               {t("On iOS: tap the Share button in Safari, then “Add to Home Screen”.")}
-            </div>
-          )}
-        </div>
+            </SettingsNote>
+          ) : undefined
+        }
+      >
         {state === "promptable" ? (
-          <button
-            type="button"
-            onClick={() => void promptInstall()}
-            data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
-          >
+          <Button variant="primary" onClick={() => void promptInstall()}>
             {t("install app")}
-          </button>
+          </Button>
         ) : state === "installed" ? (
-          <span data-signal="ok" className="shrink-0 font-mono text-2xs text-ok">{t("installed")}</span>
+          <SettingsNote tone="ok" className="shrink-0">
+            {t("installed")}
+          </SettingsNote>
         ) : null}
-      </div>
-    </section>
+      </SettingRow>
+    </SettingsSection>
   );
 }
 
@@ -635,55 +594,43 @@ function ChatProviderSection() {
   });
 
   const dirty = baseUrl !== null || apiKey !== "" || model !== null;
-  // A base URL, a key and a model id: values, so mono.
-  const field = cn(SETTINGS_FIELD, "font-mono");
 
   return (
-    <section className="border-b border-border p-3">
-      <h2 data-label="" className={SECTION_TITLE}>
-        {t("instant chat · api provider")}
-      </h2>
-      <div className={cn(SETTINGS_COLUMN, "flex flex-col gap-2")}>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">{t("base url (openai-compatible)")}</span>
-          <input
+    <SettingsSection title={t("instant chat · api provider")}>
+      <SettingsColumn className="flex flex-col gap-2">
+        <SettingField label={t("base url (openai-compatible)")}>
+          <Input
             value={baseUrl ?? provider?.baseUrl ?? ""}
             onChange={(e) => setBaseUrl(e.target.value)}
             placeholder="https://openrouter.ai/api/v1"
-            className={field}
+            className="font-mono"
           />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">
-            {t("api key")} {provider?.hasKey && t("· saved (enter a new one to replace)")}
-          </span>
-          <input
+        </SettingField>
+        <SettingField
+          label={t("api key")}
+          hint={provider?.hasKey ? t("· saved (enter a new one to replace)") : undefined}
+        >
+          <Input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={provider?.hasKey ? "••••••••" : "sk-or-…"}
-            className={field}
+            className="font-mono"
           />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">{t("default model")}</span>
-          <input
+        </SettingField>
+        <SettingField label={t("default model")}>
+          <Input
             value={model ?? provider?.model ?? ""}
             onChange={(e) => setModel(e.target.value)}
             placeholder="openai/gpt-5.5"
-            className={field}
+            className="font-mono"
           />
-        </label>
-        <button
-          type="button"
-          disabled={!dirty || save.isPending}
-          onClick={() => save.mutate()}
-          data-variant="primary" className={SETTINGS_ACTION_PRIMARY}
-        >
+        </SettingField>
+        <Button variant="primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
           {t("save")}
-        </button>
-      </div>
-    </section>
+        </Button>
+      </SettingsColumn>
+    </SettingsSection>
   );
 }
 
@@ -721,27 +668,29 @@ function GeneralSettings() {
       <InstallSection />
       <ChatProviderSection />
       <SettingsUpdatesRow />
-      <section className="p-3">
-        <h2 data-label="" className={SECTION_TITLE}>
-          {t("server info")}
-        </h2>
+      <SettingsSection title={t("server info")} className="border-b-0">
         {isPending && <Spinner />}
         {data && (
-          <table className={SETTINGS_COLUMN}>
-            <tbody>
-              {rows.map(([k, v]) => (
-                <tr key={k} className="border-b border-border">
-                  <td className="py-1 pr-4 align-top font-mono text-2xs whitespace-nowrap text-faint">{k}</td>
-                  <td className="py-1 font-mono text-xs break-all">{v}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <SettingsTable>
+            {rows.map(([k, v]) => (
+              <SettingsTableRow key={k} label={k}>
+                {v}
+              </SettingsTableRow>
+            ))}
+          </SettingsTable>
         )}
-      </section>
+      </SettingsSection>
     </Sheet>
   );
 }
+
+const SECTION_VIEW: Record<SectionId, () => ReactNode> = {
+  general: GeneralSettings,
+  accounts: AgentsSection,
+  access: AccessSection,
+  plugins: PluginsSection,
+  "scheduled tasks": ScheduleSection,
+};
 
 export function SettingsView() {
   const { t } = useTranslation();
@@ -766,6 +715,7 @@ export function SettingsView() {
     setChosen(next);
     if (search.section) void navigate({ to: "/settings", search: {}, replace: true });
   };
+  const View = SECTION_VIEW[section];
   return (
     <>
       <Panel className="max-md:hidden">
@@ -814,19 +764,7 @@ export function SettingsView() {
           {devices && <span className="flex min-w-0 md:hidden">{devices}</span>}
         </header>
         <div className="flex min-h-0 flex-1 flex-col">
-          {section === "general" ? (
-            <GeneralSettings />
-          ) : section === "accounts" ? (
-            <AgentsSection />
-          ) : section === "access" ? (
-            <AccessSection />
-          ) : !cloud && section === "plugins" ? (
-            <Sheet>
-              <PluginsSection />
-            </Sheet>
-          ) : (
-            <ScheduleSection />
-          )}
+          <View />
         </div>
       </Content>
     </>

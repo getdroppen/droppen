@@ -184,7 +184,7 @@ test("a veto lists what it takes out before it is signed; what the devices this 
   assert.match(html, /data-testid="veto-target-d-z2"[^]*brought in by d-xyz/);
   assert.match(html, /data-testid="veto-voids-words"/, "the recovery words go with it: said before it is signed");
   // The choice: the list, by whom, which runs AI, and what taking them out costs.
-  assert.match(html, /data-testid="veto-also-trusted"(?![^>]*checked)/, "off by default");
+  assert.match(html, /aria-checked="false"[^>]*data-testid="veto-also-trusted"/, "off by default");
   assert.ok(html.includes("Also remove what your other devices added while this browser held it back, and what those added:"));
   assert.match(html, /data-testid="veto-target-d-c"[^]*brought in by d-b/);
   assert.match(html, /data-testid="veto-target-m-9"[^]*can run AI/);

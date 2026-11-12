@@ -6,6 +6,7 @@
  * the session list shows. No React and no requests: `welcome-view.tsx` and
  * `bars.tsx` draw these, the tests run them.
  */
+import { PROVIDER_NAME } from "@/lib/provider-name";
 import type { SetupProgress, SetupTool, StepId, StepState, ToolsReport } from "./types";
 
 /** The steps, in order. */
@@ -181,7 +182,7 @@ export function whichBar(input: { desktopApp: boolean; progress: SetupProgress |
 }
 
 /** A tool's product name: never translated. */
-export const TOOL_NAME: Record<SetupTool["id"], string> = { claude: "Claude Code", codex: "Codex" };
+export const TOOL_NAME: Record<SetupTool["id"], string> = PROVIDER_NAME;
 
 /** Where a tool stands, in step 01's words (`tools.st.*`). */
 export type ToolStatus = "ready" | "notInstalled" | "tooOld" | "signedOut" | "plan";

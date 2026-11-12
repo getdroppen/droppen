@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { SOURCE_URL } from "../page-kit";
+import { SOURCE_URL, TextLink } from "../page-kit";
 
 /*
  * The security page's paths in the repository (`scripts/verify-web.mjs`,
@@ -15,20 +15,16 @@ import { SOURCE_URL } from "../page-kit";
  * static render.
  */
 
-/** The repository the links lead into, as the build answer names it. */
-export const SOURCE_REPO = "getdroppen/droppen";
+const SOURCE_REPO = "getdroppen/droppen";
+const BUILD_INFO_PATH = "/.well-known/droppen-build";
 
-/** Where the server says which build it serves. */
-export const BUILD_INFO_PATH = "/.well-known/droppen-build";
-
-/** The commit a `/.well-known/droppen-build` answer names, when it is one (7 to 64 hex digits) of this repository; else null. */
+/** Reject commits from other repositories or malformed build metadata. */
 export function buildCommit(answer: unknown): string | null {
   if (answer === null || typeof answer !== "object") return null;
   const { commit, repo } = answer as { commit?: unknown; repo?: unknown };
   return repo === SOURCE_REPO && typeof commit === "string" && /^[0-9a-f]{7,64}$/.test(commit) ? commit : null;
 }
 
-/** A path in the repository on GitHub at `rev`: `blob/` for a file (its last part has a dot), `tree/` for a directory; "/" is the repository itself. */
 export function repoHref(path: string, rev: string): string {
   if (path === "/") return SOURCE_URL;
   return `${SOURCE_URL}/${/\.[^/]*$/.test(path) ? "blob" : "tree"}/${rev}/${path}`;
@@ -37,7 +33,6 @@ export function repoHref(path: string, rev: string): string {
 let known: string | null | undefined;
 let asking: Promise<string | null> | undefined;
 
-/** The served build's commit, asked once per page load (null: the server did not say). */
 function askBuildCommit(): Promise<string | null> {
   asking ??= fetch(BUILD_INFO_PATH, { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : null))
@@ -46,7 +41,6 @@ function askBuildCommit(): Promise<string | null> {
   return asking;
 }
 
-/** The revision the links point at: the served build's commit once known, `main` until then. */
 function useSourceRev(): string {
   const [rev, setRev] = useState(() => known ?? "main");
   useEffect(() => {
@@ -61,12 +55,11 @@ function useSourceRev(): string {
   return rev;
 }
 
-/** A path in the repository, linked on GitHub; its text the path as written, copyable as before. */
 export function RepoLink({ path, children }: { path: string; children?: ReactNode }) {
   const rev = useSourceRev();
   return (
-    <a href={repoHref(path, rev)} className="whitespace-nowrap text-fg underline underline-offset-4 hover:no-underline">
+    <TextLink href={repoHref(path, rev)} nowrap>
       {children ?? path}
-    </a>
+    </TextLink>
   );
 }

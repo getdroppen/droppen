@@ -1,40 +1,29 @@
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Loader2 } from "lucide-react";
+import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
+import { Button } from "@/components/ui/button";
 import { CapsLabel } from "@/components/ui/caps-label";
+import { Input } from "@/components/ui/input";
 import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
 import { cn } from "@/lib/cn";
+import { PRIVACY_EMAIL, SUBHEAD } from "./page-kit";
+import { SIGNUP_COPY } from "./signup-copy";
 import { PRO_PRICE } from "./pricing-plans";
-import { cjkTracking, landingPrimary } from "./page-kit";
 
-/*
- * The waitlist form on droppen.app/pricing (`#waitlist`): an e-mail address,
- * for Pro (word when it can be bought), or — where sign-up is by invite or
- * closed — a plan to choose too: Free (an invite, or word when sign-up
- * opens) or Pro. Submitting is joining: no
- * confirmation mail, and the hub
- * answers the same whether the address was on the list already
- * (`POST /v1/waitlist`, docs/hub-api/http.md). Its outcomes, said plainly:
- * on the list; not an address; a throwaway address; too many tries from this
- * network (with when to try again); the hub out of reach.
- */
 
-/** Where the form is: idle, sending, joined, or refused and why. */
 export type WaitlistState =
   | { kind: "idle" }
   | { kind: "sending" }
   | { kind: "done"; plan: WaitlistPlan }
   | { kind: "error"; reason: WaitlistProblem; retryMinutes?: number };
 
-export type WaitlistProblem = "email" | "disposable" | "rate" | "unreachable";
+type WaitlistProblem = "email" | "disposable" | "rate" | "unreachable";
 
-/** Whether `text` could be an address at all (the hub has the last word). */
 export function looksLikeEmail(text: string): boolean {
   const email = text.trim();
   return email.length <= 254 && /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email);
 }
 
-/** Why the hub refused, as the form tells it. */
 export function waitlistProblem(error: unknown): { reason: WaitlistProblem; retryMinutes?: number } {
   if (error instanceof HubApiError) {
     if (error.status === 429) return { reason: "rate", retryMinutes: Math.max(1, Math.ceil((error.retryAfterMs ?? 60_000) / 60_000)) };
@@ -44,7 +33,6 @@ export function waitlistProblem(error: unknown): { reason: WaitlistProblem; retr
   return { reason: "unreachable" };
 }
 
-/** Join, and say how it went (an address that cannot be one is not sent). */
 export async function submitWaitlist(
   api: Pick<HubApi, "joinWaitlist">,
   input: { email: string; plan: WaitlistPlan; locale?: string },
@@ -60,8 +48,7 @@ export async function submitWaitlist(
 
 type T = (key: string, opts?: Record<string, unknown>) => string;
 
-/** A refusal in words. */
-export function problemText(state: { reason: WaitlistProblem; retryMinutes?: number }, t: T): string {
+function problemText(state: { reason: WaitlistProblem; retryMinutes?: number }, t: T): string {
   switch (state.reason) {
     case "email":
       return t("That does not look like an e-mail address. Check it and try again.");
@@ -74,10 +61,6 @@ export function problemText(state: { reason: WaitlistProblem; retryMinutes?: num
   }
 }
 
-/** The privacy contact, for removals and requests about data (the owner's word, 2026-10-23). */
-export const PRIVACY_EMAIL = "privacy@droppen.app";
-
-/** The two plans as one segmented choice: native radios, so keyboards and screen readers get them for free. */
 function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: WaitlistPlan) => void }) {
   const { t } = useTranslation();
   const options: { id: WaitlistPlan; name: string; price: string }[] = [
@@ -87,7 +70,7 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="mb-1.5">
-        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("Plan")}</CapsLabel>
+        <CapsLabel variant="section">{t("Plan")}</CapsLabel>
       </legend>
       <div className="grid grid-cols-2 gap-px border border-border-strong bg-border-strong">
         {options.map((o) => (
@@ -109,102 +92,89 @@ function PlanChoice({ plan, onPlan }: { plan: WaitlistPlan; onPlan: (plan: Waitl
   );
 }
 
-/** Joined: what happens next, and nothing else to do. */
 function Joined({ plan, signup, onAgain }: { plan: WaitlistPlan; signup: SignupMode; onAgain: () => void }) {
   const { t } = useTranslation();
   return (
-    <div role="status" data-testid="waitlist-done" data-plan={plan} className="flex max-w-[34rem] flex-col gap-3 border border-border bg-raised px-5 py-5 max-md:px-4">
-      <p className="flex items-start gap-2.5 text-base leading-6 font-semibold text-fg">
-        <Check aria-hidden="true" className="mt-1 size-4 shrink-0" />
+    <div role="status" data-testid="waitlist-done" data-plan={plan} className="flex w-full flex-col gap-3 border border-border bg-raised px-5 py-5 max-md:px-4">
+      <p className={cn("flex items-start gap-2.5", SUBHEAD)}>
+        <CheckIcon aria-hidden="true" className="mt-1 size-4 shrink-0" />
         <span>
-          {plan === "pro"
-            ? t("You're on the list: we'll e-mail you when Pro opens.")
-            : signup === "closed"
-              ? t("You're on the list: we'll e-mail you when sign-up opens.")
-              : t("You're on the list: we'll e-mail you an invite.")}
+          {plan === "pro" ? t("You're on the list: we'll e-mail you when Pro opens.") : t(SIGNUP_COPY[signup].joined)}
         </span>
       </p>
       <p className="text-sm leading-6 text-muted">{t("We'll send nothing else. To be taken off the list, write to {{email}}.", { email: PRIVACY_EMAIL })}</p>
-      <button type="button" onClick={onAgain} data-testid="waitlist-again" className="w-fit text-sm text-fg underline underline-offset-4 hover:no-underline">
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={onAgain}
+        data-testid="waitlist-again"
+        className="h-auto w-fit px-0 text-sm text-fg underline underline-offset-4 hover:bg-transparent hover:no-underline"
+      >
         {t("Add another address")}
-      </button>
+      </Button>
     </div>
   );
 }
 
-/**
- * The e-mail field at the public pages' size and face: 36px, sans 14px (16px
- * on phones), the field's own border as the auxiliary cue and the page's 2px
- * keyboard-focus ring (docs/ui-spec.md §1). `field` in `features/cloud/ui` is
- * the app's 12px mono control, which is not this page's face.
- */
-const emailField =
-  "h-9 w-full border border-border bg-bg px-2.5 text-sm text-fg placeholder:text-faint focus:border-fg max-md:h-10 max-md:text-base";
-
-/**
- * The form. `plan` is the page's (from `?plan=`); with `onPlan` the form
- * offers both plans to choose from, without it only `plan` is joined. `signup` is the hub's sign-up mode (`signup-mode.ts`), for what
- * joining Free brings. `state` stands in for the form's own (tests, previews).
- */
 export function WaitlistForm({
   api,
   plan,
   onPlan,
-  state: given,
+  initialState,
   signup = "open",
 }: {
   api: Pick<HubApi, "joinWaitlist">;
   plan: WaitlistPlan;
   onPlan?: (plan: WaitlistPlan) => void;
-  state?: WaitlistState;
+  initialState?: WaitlistState;
   signup?: SignupMode;
 }) {
   const { t, i18n } = useTranslation();
   const [email, setEmail] = useState("");
-  const [own, setOwn] = useState<WaitlistState>({ kind: "idle" });
-  const state = given ?? own;
-  if (state.kind === "done") return <Joined plan={state.plan} signup={signup} onAgain={() => setOwn({ kind: "idle" })} />;
+  const [state, setState] = useState<WaitlistState>(initialState ?? { kind: "idle" });
+  if (state.kind === "done") return <Joined plan={state.plan} signup={signup} onAgain={() => setState({ kind: "idle" })} />;
   const sending = state.kind === "sending";
   const refused = state.kind === "error" ? state : null;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (sending) return;
-    setOwn({ kind: "sending" });
-    setOwn(await submitWaitlist(api, { email, plan, locale: i18n.language }));
+    setState({ kind: "sending" });
+    setState(await submitWaitlist(api, { email, plan, locale: i18n.language }));
   };
   return (
-    <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" data-plan={plan} className="flex max-w-[34rem] flex-col gap-5">
+    <form noValidate onSubmit={(e) => void submit(e)} data-testid="waitlist-form" data-plan={plan} className="flex w-full flex-col gap-5">
       {onPlan && <PlanChoice plan={plan} onPlan={onPlan} />}
-      <label className="flex flex-col gap-1.5">
-        <CapsLabel face="sans" className={cn(cjkTracking, "text-xs font-semibold")}>{t("E-mail address")}</CapsLabel>
-        <input
+      <div className="flex mx-auto w-full max-w-[26rem] flex-col gap-2 max-md:max-w-none">
+        <Input
           id="waitlist-email"
           type="email"
           name="email"
           autoComplete="email"
           inputMode="email"
+          spellCheck={false}
           required
           maxLength={254}
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
-            if (refused) setOwn({ kind: "idle" });
+            if (refused) setState({ kind: "idle" });
           }}
-          placeholder="you@example.com"
+          placeholder={t("you@example.com")}
+          aria-label={t("E-mail address")}
           aria-invalid={refused?.reason === "email" || refused?.reason === "disposable" ? true : undefined}
           aria-describedby={refused ? "waitlist-error" : undefined}
-          className={emailField}
+          className="h-10 text-sm max-md:h-11"
         />
-      </label>
-      {refused && (
-        <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="text-xs font-semibold leading-4 text-danger">
-          {problemText(refused, t)}
-        </p>
-      )}
-      <button type="submit" data-variant="primary" data-testid="waitlist-submit" disabled={sending} className={cn(landingPrimary, "w-full self-center sm:w-fit max-md:h-10")}>
-        {sending && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
-        {t("Join the waitlist")}
-      </button>
+        <Button type="submit" variant="primary" size="lg" data-testid="waitlist-submit" disabled={sending} className="h-10 w-full">
+          {sending ? <CircleNotchIcon aria-hidden="true" className="size-3.5 animate-spin" /> : <CheckIcon className="size-3.5" />}
+          {t("Join the waitlist")}
+        </Button>
+        {refused && (
+          <p id="waitlist-error" role="alert" data-signal="failed" data-testid="waitlist-error" data-reason={refused.reason} className="text-xs font-semibold leading-4 text-danger">
+            {problemText(refused, t)}
+          </p>
+        )}
+      </div>
     </form>
   );
 }

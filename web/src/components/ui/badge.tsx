@@ -1,10 +1,6 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 
-/**
- * A small outlined tag. Claude and Codex are told apart by their words, not a
- * tint: the source tags read `CLAUDE` / `CODEX` like every other machine label.
- */
 const badgeVariants = cva(
   "inline-flex items-center px-1 font-mono text-[10px] leading-[14px] whitespace-nowrap shadow-[inset_0_0_0_1px_var(--color-border)]",
   {

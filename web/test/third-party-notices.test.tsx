@@ -20,7 +20,7 @@ import { I18nextProvider } from "react-i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { collect, evaluate, failureText, NOTICES_FILE, recorder, render, workerNoticeProblem } from "../build/third-party-notices.mjs";
 import { landingBundles } from "../src/features/landing/copy.js";
-import { FooterLine, NOTICES_PATH, SOURCE_URL } from "../src/features/landing/page-kit.js";
+import { NOTICES_PATH, PublicFooter, SOURCE_URL } from "../src/features/landing/page-kit.js";
 import { makeI18n } from "./render.js";
 
 test("a diagram-worker asset without recorded modules fails the notices build", () => {
@@ -163,7 +163,7 @@ test("every public page's footer links the notices the build writes and the sour
     void i18n.changeLanguage(lng);
     const html = renderToStaticMarkup(
       <I18nextProvider i18n={i18n}>
-        <FooterLine />
+        <PublicFooter />
       </I18nextProvider>,
     );
     assert.match(html, new RegExp(`<a href="/THIRD_PARTY_NOTICES\\.txt"[^>]*data-testid="footer-licences"[^>]*>${label}</a>`), lng);

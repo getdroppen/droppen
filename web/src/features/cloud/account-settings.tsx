@@ -35,7 +35,7 @@
  */
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, KeyRound, Loader2, Plus } from "lucide-react";
+import { ArrowLeftIcon, CircleNotchIcon, KeyIcon, PlusIcon } from "@phosphor-icons/react";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { cn } from "@/lib/cn";
 import { formatMoment } from "@/lib/format";
@@ -44,7 +44,7 @@ import type { CloudAccount } from "@/lib/hub/account";
 import { type AccountPasskey, HubApiError, PASSWORD_MIN_CHARS, type Proof, type Reauth, SIGNUP_CONFIG, type SignInMethods } from "@/lib/hub/api";
 import type { HubLink } from "@/lib/hub/link";
 import { fromBase64Url, pageCredentials, passkeyAdd, passkeyCancelled, passkeyPrf, passkeyReauth, signalUnknownCredential } from "@/lib/hub/passkey";
-import { CHECKBOX_INPUT, CHECKBOX_LABEL, CheckboxMark } from "@/components/ui/checkbox";
+import { CheckboxField } from "@/components/ui/checkbox-field";
 import { Switch } from "@/components/ui/switch";
 import { AccountAlerts } from "./account-alerts";
 import { useAccountVersion } from "./devices";
@@ -77,7 +77,7 @@ export function AccountScreen({ account, link }: { account: CloudAccount; link: 
         <>
           <AccountName account={account} link={link} />
           <button type="button" data-testid="account-back" className={cn(quiet, "h-7 px-2")} onClick={() => openMyDevices()}>
-            <ArrowLeft className="size-3.5 shrink-0" />
+            <ArrowLeftIcon className="size-3.5 shrink-0" />
             {t("my devices")}
           </button>
           <SignOutChoice account={account}>
@@ -222,7 +222,7 @@ export function AccountSettings({
         </div>
         {canAdd && editing === null && (
           <button type="button" data-variant="primary" data-testid="add-passkey" className={cn(primary, "max-md:w-full")} onClick={() => setEditing({ kind: "add" })}>
-            <Plus className="size-3.5" />
+            <PlusIcon className="size-3.5" />
             {t("add a passkey")}
           </button>
         )}
@@ -244,7 +244,7 @@ export function AccountSettings({
             </div>
           ) : (
             <div className="flex h-12 items-center px-6 max-md:px-4">
-              <Loader2 className="size-4 animate-spin text-faint" />
+              <CircleNotchIcon className="size-4 animate-spin text-faint" />
             </div>
           )
         ) : (
@@ -540,7 +540,7 @@ function PasswordForm({ account, token, methods, webauthn, onDone, onCancel }: {
       </label>
       <div className="flex flex-wrap gap-2">
         <button type="submit" data-variant="primary" className={primary} disabled={busy || next.length === 0 || !proof.ready}>
-          {busy && <Loader2 className="size-3.5 animate-spin" />}
+          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {proof.withPasskey ? t("check with a passkey and save") : t("save")}
         </button>
         <button type="button" className={quiet} onClick={onCancel}>
@@ -576,7 +576,7 @@ function RemovePassword({ account, token, methods, webauthn, onDone, onCancel }:
         {proof.fields}
         <div className="flex flex-wrap gap-2">
           <button type="button" className={cn(danger, "h-7 px-3 text-xs pointer-coarse:h-9")} disabled={busy || !proof.ready} onClick={() => void go()}>
-            {busy && <Loader2 className="size-3 animate-spin" />}
+            {busy && <CircleNotchIcon className="size-3 animate-spin" />}
             {t("remove the password")}
           </button>
           <button type="button" className={cn(quiet, "h-7 pointer-coarse:h-9")} onClick={onCancel}>
@@ -654,22 +654,27 @@ function AddPasskey({
           <span className="text-2xs text-muted">{t("name (optional)")}</span>
           <input className={field} value={label} maxLength={64} placeholder={t("e.g. iPhone, 1Password")} onChange={(e) => setLabel(e.target.value)} />
         </label>
-        <label className={cn(CHECKBOX_LABEL, "text-xs", !v3 && "cursor-not-allowed opacity-60")}>
-          <input type="checkbox" className={CHECKBOX_INPUT} checked={join} disabled={!v3} onChange={(e) => setJoin(e.target.checked)} />
-          <CheckboxMark />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-xs font-medium text-fg">{t("new devices can join with it")}</span>
-            <span className="text-xs leading-5 text-muted">
-              {v3
-                ? t("A new phone or browser that signs in with this passkey asks to join, and waits until you approve it from another of your devices with the QR code or code it shows.")
-                : t("This needs the account upgraded first (in my devices).")}
-            </span>
-          </span>
-        </label>
+        <CheckboxField
+          checked={join}
+          disabled={!v3}
+          onCheckedChange={setJoin}
+          className={cn("text-xs", !v3 && "cursor-not-allowed opacity-60")}
+          labelClassName="flex min-w-0 flex-col gap-0.5"
+          label={
+            <>
+              <span className="text-xs font-medium text-fg">{t("new devices can join with it")}</span>
+              <span className="text-xs leading-5 text-muted">
+                {v3
+                  ? t("A new phone or browser that signs in with this passkey asks to join, and waits until you approve it from another of your devices with the QR code or code it shows.")
+                  : t("This needs the account upgraded first (in my devices).")}
+              </span>
+            </>
+          }
+        />
         {proof.fields}
         <div className="flex flex-wrap gap-2">
           <button type="submit" data-variant="primary" className={primary} disabled={busy || note !== null || !proof.ready}>
-            {busy && <Loader2 className="size-3.5 animate-spin" />}
+            {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
             {t("create a passkey")}
           </button>
           <button type="button" className={quiet} onClick={note !== null ? onDone : onCancel}>
@@ -773,7 +778,7 @@ function PasskeyRow({
     <li data-testid="passkey-row" data-passkey={p.id} className="border-t border-border">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 px-6 py-3 max-md:px-4">
         <div className="flex min-w-0 flex-1 items-start gap-2.5 max-md:basis-full">
-          <KeyRound className="mt-0.5 size-4 shrink-0 text-muted" />
+          <KeyIcon className="mt-0.5 size-4 shrink-0 text-muted" />
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="truncate text-[13px] font-medium text-fg">{p.label || p.provider}</span>
             <span className="font-mono text-2xs break-words text-faint">{meta.join(" · ")}</span>
@@ -806,7 +811,7 @@ function PasskeyRow({
       </div>
       {busy === "join" && (
         <p className="flex items-center gap-2 px-6 pb-3 text-2xs text-faint max-md:px-4">
-          <Loader2 className="size-3 animate-spin" />
+          <CircleNotchIcon className="size-3 animate-spin" />
           {t("asking the passkey…")}
         </p>
       )}
@@ -856,7 +861,7 @@ function PasskeyRow({
                   })
                 }
               >
-                {busy === "remove" && <Loader2 className="size-3 animate-spin" />}
+                {busy === "remove" && <CircleNotchIcon className="size-3 animate-spin" />}
                 {t("remove")}
               </button>
               <button type="button" className={cn(quiet, "h-7 pointer-coarse:h-9")} onClick={() => setEditing(null)}>
@@ -926,7 +931,7 @@ function RecoveryWordsSection({
             disabled={editing !== null || busy}
             onClick={() => (has ? setEditing({ kind: "words" }) : void make())}
           >
-            {busy && <Loader2 className="size-3 animate-spin" />}
+            {busy && <CircleNotchIcon className="size-3 animate-spin" />}
             {has ? t("make new recovery words") : t("create new recovery words")}
           </button>
         )}
@@ -937,7 +942,7 @@ function RecoveryWordsSection({
             <p className="text-xs leading-5 text-muted">{t("The words you wrote down before stop working. Have something to write the new ones on.")}</p>
             <div className="flex flex-wrap gap-2">
               <button type="button" className={cn(secondary, "h-7 px-3 text-xs pointer-coarse:h-9")} disabled={busy} onClick={() => void make()}>
-                {busy && <Loader2 className="size-3 animate-spin" />}
+                {busy && <CircleNotchIcon className="size-3 animate-spin" />}
                 {t("make new recovery words")}
               </button>
               <button type="button" className={cn(quiet, "h-7 pointer-coarse:h-9")} onClick={() => setEditing(null)}>
@@ -1108,7 +1113,7 @@ export function DeleteAccountForm({
         {proof.fields}
         <div className="flex flex-wrap gap-2">
           <button type="submit" data-testid="delete-account-confirm" className={cn(danger, "h-7 px-3 text-xs pointer-coarse:h-9")} disabled={busy || !matches || !proof.ready}>
-            {busy && <Loader2 className="size-3 animate-spin" />}
+            {busy && <CircleNotchIcon className="size-3 animate-spin" />}
             {t("delete the account for good")}
           </button>
           <button type="button" className={cn(quiet, "h-7 pointer-coarse:h-9")} disabled={busy} onClick={onCancel}>

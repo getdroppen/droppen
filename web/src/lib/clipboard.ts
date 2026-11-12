@@ -5,6 +5,7 @@
  * focuses its address bar).
  */
 import { useEffect, useRef, useState } from "react";
+import { useCopyToClipboard } from "usehooks-ts";
 
 /** How long `copied` stays true: long enough to read, short enough not to linger. */
 const COPIED_MS = 1500;
@@ -23,32 +24,22 @@ export function useCopy({
   onError?: () => void;
 } = {}): { copied: boolean; copy: (text: string) => void } {
   const [copied, setCopied] = useState(false);
+  const [, write] = useCopyToClipboard();
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   return {
     copied,
     copy: (text) => {
-      const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-      if (!clipboard || typeof clipboard.writeText !== "function") {
-        onError?.();
-        return;
-      }
-      let write: Promise<void>;
-      try {
-        write = clipboard.writeText(text);
-      } catch {
-        onError?.();
-        return;
-      }
-      void write.then(
-        () => {
-          setCopied(true);
-          clearTimeout(timer.current);
-          timer.current = setTimeout(() => setCopied(false), COPIED_MS);
-          onSuccess?.();
-        },
-        () => onError?.(),
-      );
+      void write(text).then((ok) => {
+        if (!ok) {
+          onError?.();
+          return;
+        }
+        setCopied(true);
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => setCopied(false), COPIED_MS);
+        onSuccess?.();
+      });
     },
   };
 }

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Upload } from "lucide-react";
+import { CircleNotchIcon, UploadSimpleIcon } from "@phosphor-icons/react";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { blobErrorText } from "@/components/blob-transfers";
@@ -73,9 +73,9 @@ export function UploadButton({ dir }: { dir: string }) {
         className="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-accent hover:bg-hover disabled:opacity-50"
       >
         {upload.isPending ? (
-          <Loader2 className="size-3.5 animate-spin" />
+          <CircleNotchIcon className="size-3.5 animate-spin" />
         ) : (
-          <Upload className="size-3.5" />
+          <UploadSimpleIcon className="size-3.5" />
         )}
         {t("upload")}
       </button>

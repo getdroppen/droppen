@@ -143,7 +143,8 @@ export type {
 } from "./api-views";
 
 
-const SESSION_KEY = "rh.hub.session";
+/** The kept hub session's `localStorage` key (`lib/move` must leave it behind). */
+export const SESSION_KEY = "rh.hub.session";
 /**
  * Known-client tokens, one per e-mail signed in with (`known_client`).
  * Kept across logout on purpose: the token only says this
@@ -159,7 +160,7 @@ const KNOWN_CLIENT_KEY = "rh.hub.knownClientHash:";
  * this browser (`rh.hub.knownClient:<e-mail>`). Moved to the hashed key as the
  * page starts ({@link migrateKnownClients}) or as the e-mail is next used.
  */
-const LEGACY_KNOWN_CLIENT_KEY = "rh.hub.knownClient:";
+export const LEGACY_KNOWN_CLIENT_KEY = "rh.hub.knownClient:";
 /** What the e-mail is hashed with: a label of its own, so the hash is of no use elsewhere. */
 const KNOWN_CLIENT_LABEL = "droppen/v1 known-client e-mail\0";
 

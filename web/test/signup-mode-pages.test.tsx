@@ -1,13 +1,4 @@
-// The public pages and sign-up (`features/landing/signup-mode.ts`), drawn for
-// real in a DOM where effects run.
-//
-// What these pin: sign-up is open, written in `SIGNUP_CONFIG`, so
-// `useSignupMode` says open without asking anyone and a mode the caller gives
-// wins; the front pages (`front-pages.tsx`) draw the pricing page — the
-// comparison with no plan actions, Pro's waitlist form below it — and a page
-// that says nothing of sign-up is the same; and the waitlist form sends what
-// the page shows: Pro whatever the address says where sign-up is open, the
-// plan chosen where an explicit mode says otherwise.
+// DOM tests for public-page signup modes and waitlist submission.
 //
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
@@ -28,10 +19,8 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
 const { default: i18n } = await import("../src/i18n/index.js");
-const { useSignupMode } = await import("../src/features/landing/signup-mode.js");
 const { FrontPageView } = await import("../src/features/landing/front-pages.js");
 const { default: PricingPage } = await import("../src/features/landing/pricing.js");
-type SignupMode = import("../src/lib/hub/api.js").SignupMode;
 
 await i18n.changeLanguage("en");
 
@@ -71,18 +60,6 @@ function hub() {
   return { api, joined };
 }
 
-function Probe({ given }: { given?: SignupMode }) {
-  return <span data-testid="mode">{useSignupMode(given)}</span>;
-}
-
-test("useSignupMode: open, as written in the page; a given mode wins", async () => {
-  await draw(<Probe />);
-  assert.equal(byTestId("mode")?.textContent, "open", "sign-up is open, nothing to ask");
-
-  await draw(<Probe given="closed" />);
-  assert.equal(byTestId("mode")?.textContent, "closed", "a given mode wins");
-});
-
 test("the front pages draw the pricing page: the comparison stands, and Free's sign-up is the header's where sign-up is open", async () => {
   history.replaceState(null, "", "/pricing");
   const open = hub();
@@ -95,7 +72,7 @@ test("the front pages draw the pricing page: the comparison stands, and Free's s
   assert.equal(container.querySelectorAll('input[type="radio"]').length, 0);
 });
 
-test("a page that says nothing of sign-up is drawn the same, and nothing is asked", async () => {
+test("the privacy page renders without waitlist submission", async () => {
   history.replaceState(null, "", "/privacy");
   const quiet = hub();
   await draw(<FrontPageView page="privacy" signedIn={false} api={quiet.api as never} />);

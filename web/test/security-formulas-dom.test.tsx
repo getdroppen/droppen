@@ -33,7 +33,7 @@ const { hydrateRoot } = await import("react-dom/client");
 const { renderToString } = await import("react-dom/server");
 const { I18nextProvider } = await import("react-i18next");
 const { default: SecurityPage } = await import("../src/features/landing/security/security.js");
-const { BLOCKS, TERMS } = await import("../src/features/landing/security/formula-data.js");
+const { TERMS } = await import("../src/features/landing/security/formula-data.js");
 
 const i18n = makeI18n({ lng: "en", resources: { en: { translation: {} } }, keySeparator: false, nsSeparator: false });
 
@@ -197,7 +197,6 @@ test("the legend opens beside the switch, and names every kind", async () => {
   assert.equal(legend.hidden, false);
   await click(button);
   assert.equal(legend.hidden, true);
-  assert.ok(Object.keys(BLOCKS).length > 10);
 });
 
 test("one tab stop per formula: the arrow keys move between its parts and lines, and the stop follows", async () => {

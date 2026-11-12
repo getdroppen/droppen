@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { useInterval } from "usehooks-ts";
+import { CheckIcon, CopyIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { isDesktopApp } from "@/lib/auth";
+import { useCopy } from "@/lib/clipboard";
+import { formatCountdown } from "@/lib/format";
 import type { Attempt, LinkOpener } from "./opener";
 
 /*
@@ -35,19 +38,9 @@ export function startDroppenSignIn(opener: LinkOpener, hubWeb: string, opts: { h
   else opener.open(hubWeb, { hub: opts.hub, aggregate: true });
 }
 
-/** `ms` as `m:ss`. */
-export function formatLeft(ms: number): string {
-  const seconds = Math.max(0, Math.ceil(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
 function useNow(everyMs: number, initial?: number): number {
   const [now, setNow] = useState(() => initial ?? Date.now());
-  useEffect(() => {
-    if (initial !== undefined) return;
-    const timer = setInterval(() => setNow(Date.now()), everyMs);
-    return () => clearInterval(timer);
-  }, [everyMs, initial]);
+  useInterval(() => setNow(Date.now()), initial === undefined ? everyMs : null);
   return now;
 }
 
@@ -58,20 +51,15 @@ const quiet =
 /** Copy `text`, saying so for a moment. */
 function CopyLink({ text }: { text: string }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
   return (
     <button
       type="button"
       className={quiet}
       data-testid="droppen-copy-link"
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
+      onClick={() => copy(text)}
     >
-      {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
       {copied ? t("copied") : t("copy link")}
     </button>
   );
@@ -116,8 +104,8 @@ export function BrowserSignInWaiting({
       </div>
       {/* Ticks every second: kept out of any surrounding live region, so a screen reader is not read the panel again each second. */}
       <p className="flex items-center gap-2 text-2xs text-faint" data-testid="droppen-browser-left" aria-live="off">
-        <Loader2 className="size-3 animate-spin" />
-        {left > 0 ? t("waiting for droppen.app… the link works for another {{left}}", { left: formatLeft(left) }) : t("waiting for droppen.app…")}
+        <CircleNotchIcon className="size-3 animate-spin" />
+        {left > 0 ? t("waiting for droppen.app… the link works for another {{left}}", { left: formatCountdown(left) }) : t("waiting for droppen.app…")}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button

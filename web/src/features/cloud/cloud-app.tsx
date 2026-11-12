@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { checkE2eSupport, compatCovers, E2eUnsupportedError, type E2eSupport, indexedDbKeyStore, keepStorage, type KeyStore, type UnreadableReason } from "@/lib/e2e";
 import { compatAgreedFor, compatModeActive, consentToCompat, e2eReadiness } from "@/lib/e2e/compat";
 import { AccountError, CloudAccount, KeysUnreadableError } from "@/lib/hub/account";
@@ -372,7 +372,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
   if (onLink && noOpener) return <NoOpenerScreen />;
   switch (phase.kind) {
     case "boot":
-      return <Centered><Loader2 className="size-4 animate-spin text-faint" /></Centered>;
+      return <Centered><CircleNotchIcon className="size-4 animate-spin text-faint" /></Centered>;
     case "front":
       return <FrontPageView page={frontPage(pathname) ?? "landing"} signedIn api={api} />;
     case "verify":
@@ -397,7 +397,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
       if (page === "verify") return <VerifyEmailPage api={api} />;
       // A browser that cannot run the encryption is told so first, before an
       // account is signed in to (or made) that it could not open here.
-      if (!support) return <Centered><Loader2 className="size-4 animate-spin text-faint" /></Centered>;
+      if (!support) return <Centered><CircleNotchIcon className="size-4 animate-spin text-faint" /></Centered>;
       if (!support.ok && !(compatCovers(support) && compatAgreedFor(support.missing))) {
         const compat = compatCovers(support);
         return (
@@ -855,11 +855,11 @@ export function GenesisScreen({ account, onDone }: { account: CloudAccount; onDo
         </p>
         <ErrorLine message={error} />
         <button type="button" data-variant="primary" disabled={busy !== null} onClick={() => void create(true)} className={primary}>
-          {busy === "with" && <Loader2 className="size-3.5 animate-spin" />}
+          {busy === "with" && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {t("create keys with recovery words")}
         </button>
         <button type="button" disabled={busy !== null} onClick={() => void create(false)} className={quiet}>
-          {busy === "without" && <Loader2 className="size-3.5 animate-spin" />}
+          {busy === "without" && <CircleNotchIcon className="size-3.5 animate-spin" />}
           {t("skip the recovery words")}
         </button>
       </Panel>

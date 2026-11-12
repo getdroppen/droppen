@@ -20,7 +20,7 @@
  */
 import { type ReactNode, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, LayoutGrid, UserRound } from "lucide-react";
+import { ArrowLeftIcon, SquaresFourIcon, UserCircleIcon } from "@phosphor-icons/react";
 import { goPublic } from "@/features/landing/route";
 import { cn } from "@/lib/cn";
 import type { CloudAccount } from "@/lib/hub/account";
@@ -79,7 +79,7 @@ export function AccountButton() {
       className="flex h-5 items-center gap-1 px-1.5 text-muted hover:bg-hover hover:text-fg"
       title={t("account settings")}
     >
-      <UserRound className="size-3" />
+      <UserCircleIcon className="size-3" />
       <span className="max-sm:hidden">{t("my account")}</span>
     </button>
   );
@@ -96,7 +96,7 @@ export function DevicesButton() {
       className="flex h-5 items-center gap-1 px-1.5 text-muted hover:bg-hover hover:text-fg"
       title={t("my devices")}
     >
-      <LayoutGrid className="size-3" />
+      <SquaresFourIcon className="size-3" />
       <span className="max-sm:hidden">{t("devices")}</span>
     </button>
   );
@@ -172,7 +172,7 @@ function MyDevicesFrame({ account, link, children }: { account: CloudAccount; li
               aria-label={t("back to {{name}}", { name: backName })}
               onClick={() => shell?.select(back)}
             >
-              <ArrowLeft className="size-3.5 shrink-0" />
+              <ArrowLeftIcon className="size-3.5 shrink-0" />
               <span className="max-w-40 truncate max-sm:hidden">{backName}</span>
             </button>
           )}
@@ -184,7 +184,7 @@ function MyDevicesFrame({ account, link, children }: { account: CloudAccount; li
             aria-label={t("account settings")}
             onClick={() => openAccount()}
           >
-            <UserRound className="size-3.5 shrink-0" />
+            <UserCircleIcon className="size-3.5 shrink-0" />
             <span className="max-sm:hidden">{t("my account")}</span>
           </button>
           <SignOutChoice account={account}>

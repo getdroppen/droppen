@@ -19,7 +19,7 @@
  * an API; `AcpTab` is the part that talks to the device.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, Plus, RefreshCw } from "lucide-react";
+import { CaretRightIcon, ArrowSquareOutIcon, PlusIcon, ArrowsClockwiseIcon } from "@phosphor-icons/react";
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
@@ -27,20 +27,15 @@ import type { components } from "@/api/schema";
 import { useFeedSessions } from "@/app/global-feed";
 import { GlyphIcon } from "@/components/glyph";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { RowMenu, type RowMenuItem } from "@/features/cloud/device-row";
 import { acpAgentsKey, splitArgs, useAcpAgents, useAcpCheck, type AcpAgentInfo } from "@/features/sessions/acp-agent";
 import { ACP_GLYPH, acpAgentGlyph } from "@/features/sessions/acp-agent-icons";
 import { applyPreset, CUSTOM_PRESET, newAgentId, type AcpAgentDraft, type AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
-import {
-  ROW_HINT,
-  SETTINGS_ACTION,
-  SETTINGS_ACTION_DANGER,
-  SETTINGS_ACTION_PRIMARY,
-  SETTINGS_COLUMN,
-  SETTINGS_FIELD,
-} from "@/features/settings/layout";
-import { cn } from "@/lib/cn";
+import { SettingField, SettingsColumn, SettingsHint, SettingsNote } from "@/features/settings/layout";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { mq } from "@/lib/machines/query";
 import { acpStatus, agoKey, checkFailed, type AcpCheck, type AcpStatus } from "./agents-tabs";
@@ -49,10 +44,8 @@ import { StatusWord } from "./status-word";
 type ModelList = components["schemas"]["ModelList"];
 
 /** Cards on the sheet's full width: three columns on a desktop sheet, one on a phone. */
-export const CARD_GRID = "grid grid-cols-[repeat(auto-fill,minmax(17.5rem,1fr))] gap-3";
-const CARD = "group/card flex min-w-0 flex-col gap-3 border border-border p-3 hover:border-border-strong";
+const CARD_GRID = "grid grid-cols-[repeat(auto-fill,minmax(17.5rem,1fr))] gap-3";
 const DIALOG_WIDTH = "w-[min(32rem,calc(100vw-2rem))]";
-const mono = cn(SETTINGS_FIELD, "font-mono");
 
 export function commandLine(agent: { command: string; args: readonly string[] }): string {
   return [agent.command, ...agent.args].join(" ");
@@ -112,7 +105,7 @@ export function AcpAgentCard({ agent, status, actions }: { agent: AcpAgentInfo; 
   ];
   const checkedAt = "check" in status ? status.check.checkedAt : null;
   return (
-    <li data-acp-card={agent.id} className={CARD}>
+    <li data-acp-card={agent.id} className="group/card flex min-w-0 flex-col gap-3 border border-border p-3 hover:border-border-strong">
       <div className="flex min-w-0 items-start gap-2">
         <GlyphIcon glyph={acpAgentGlyph(agent.id)} className="mt-0.5 size-4 text-muted" />
         <div className="min-w-0 flex-1">
@@ -156,7 +149,7 @@ export function AddCard({ label, hint, onClick }: { label: string; hint?: string
         className="flex min-h-[5.5rem] w-full flex-col items-center justify-center gap-1 border border-border px-3 text-xs font-medium text-muted hover:border-border-strong hover:text-fg"
       >
         <span className="flex items-center gap-1.5">
-          <Plus className="size-3.5" />
+          <PlusIcon className="size-3.5" />
           {label}
         </span>
         {hint && <span className="text-center text-2xs font-normal text-faint">{hint}</span>}
@@ -204,7 +197,7 @@ export function AcpEmpty({ presets, onPick }: { presets: readonly AcpAgentPreset
               <span className="mt-auto flex min-h-5 items-center justify-between gap-2">
                 <PresetAvailability preset={preset} added={false} />
                 <span className="flex items-center gap-1 text-xs font-medium text-muted group-hover/card:text-fg">
-                  <Plus className="size-3" />
+                  <PlusIcon className="size-3" />
                   {t("add")}
                 </span>
               </span>
@@ -235,9 +228,11 @@ export function AcpTabView({
   const failing = agents.filter((agent) => checkFailed(agent.lastCheck)).length;
   return (
     <div data-tab-panel="acp" className="p-3">
-      <p className={cn(SETTINGS_COLUMN, ROW_HINT)}>
-        {t("Any program that speaks the Agent Client Protocol over stdio. It has no accounts: an API key goes in its own environment. New sessions offer each one beside Claude Code and Codex.")}
-      </p>
+      <SettingsColumn>
+        <SettingsHint>
+          {t("Any program that speaks the Agent Client Protocol over stdio. It has no accounts: an API key goes in its own environment. New sessions offer each one beside Claude Code and Codex.")}
+        </SettingsHint>
+      </SettingsColumn>
       <div className="mt-3 mb-2 border-t border-border pt-3 font-mono text-2xs text-faint">
         {agents.length > 0 ? t("{{n}} agents", { n: agents.length }) : t("no ACP agents yet")}
         {failing > 0 && <> · {t("{{n}} cannot run", { n: failing })}</>}
@@ -355,9 +350,7 @@ export function AcpDetailsBody({
       <CheckFacts agent={agent} status={status} sessions={sessions} models={models} />
       {check && checkFailed(check) && <CheckError check={check} />}
       {check && checkFailed(check) && errorWithheld && (
-        <p data-acp-withheld="" className={ROW_HINT}>
-          {t("only a full device can see why it failed")}
-        </p>
+        <SettingsHint data-acp-withheld="">{t("only a full device can see why it failed")}</SettingsHint>
       )}
       {(agent.note || agent.homepage) && (
         <p className="text-2xs leading-4 text-faint">
@@ -371,9 +364,9 @@ export function AcpDetailsBody({
         </p>
       )}
       {error && (
-        <p data-signal="failed" className="text-xs text-danger">
+        <SettingsNote as="p" tone="danger" mono={false} className="text-xs">
           {error}
-        </p>
+        </SettingsNote>
       )}
       {confirming ? (
         // The confirmation takes the footer's place: what stays, what it takes to send again.
@@ -385,26 +378,26 @@ export function AcpDetailsBody({
             })}
           </p>
           <div className="flex flex-wrap items-center gap-1.5">
-            <button type="button" disabled={busy} onClick={onConfirmRemove} className={SETTINGS_ACTION_DANGER}>
+            <Button variant="danger" disabled={busy} onClick={onConfirmRemove}>
               {t("delete")}
-            </button>
-            <button type="button" disabled={busy} onClick={onCancelRemove} className={SETTINGS_ACTION}>
+            </Button>
+            <Button disabled={busy} onClick={onCancelRemove}>
               {t("cancel")}
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
-          <button type="button" disabled={busy || status.kind === "checking"} onClick={onCheck} className={SETTINGS_ACTION}>
-            <RefreshCw className="size-3" />
+          <Button disabled={busy || status.kind === "checking"} onClick={onCheck}>
+            <ArrowsClockwiseIcon className="size-3" />
             {t("check again")}
-          </button>
-          <button type="button" disabled={busy} onClick={onEdit} className={SETTINGS_ACTION}>
+          </Button>
+          <Button disabled={busy} onClick={onEdit}>
             {t("edit…")}
-          </button>
-          <button type="button" disabled={busy} onClick={onAskRemove} className={cn(SETTINGS_ACTION_DANGER, "ml-auto")}>
+          </Button>
+          <Button variant="danger" disabled={busy} onClick={onAskRemove} className="ml-auto">
             {t("delete…")}
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -424,7 +417,7 @@ export function PresetChoices({
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-2">
-      <p className={ROW_HINT}>{t("Start from a known agent or any command; every field stays editable.")}</p>
+      <SettingsHint>{t("Start from a known agent or any command; every field stays editable.")}</SettingsHint>
       <div className="flex flex-col">
         {[...presets, null].map((preset) => (
           <button
@@ -443,7 +436,7 @@ export function PresetChoices({
               {preset?.note && <span className="block text-2xs leading-4 text-faint">{preset.note}</span>}
             </span>
             {preset && <PresetAvailability preset={preset} added={added.has(preset.id)} />}
-            <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint" />
+            <CaretRightIcon aria-hidden="true" className="size-3 shrink-0 text-faint" />
           </button>
         ))}
       </div>
@@ -477,57 +470,63 @@ export function AgentFields({
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-2">
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-muted">{t("name")}</span>
-        <input
+      <SettingField label={t("name")}>
+        <Input
           value={draft.name}
           onChange={(e) => onDraft({ name: e.target.value })}
           placeholder={t("ACP agent")}
           autoComplete="off"
           spellCheck={false}
-          className={SETTINGS_FIELD}
         />
-      </label>
+      </SettingField>
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2 max-md:grid-cols-1">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">{t("command")}</span>
-          <input
+        <SettingField label={t("command")}>
+          <Input
             value={draft.command}
             onChange={(e) => onDraft({ command: e.target.value })}
             placeholder="/path/to/agent"
             autoComplete="off"
             spellCheck={false}
-            className={mono}
+            className="font-mono"
           />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted">{t("arguments (separated by spaces)")}</span>
-          <input value={args} onChange={(e) => onDraft({ args: e.target.value })} placeholder="acp" autoComplete="off" spellCheck={false} className={mono} />
-        </label>
+        </SettingField>
+        <SettingField label={t("arguments (separated by spaces)")}>
+          <Input
+            value={args}
+            onChange={(e) => onDraft({ args: e.target.value })}
+            placeholder="acp"
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono"
+          />
+        </SettingField>
       </div>
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-muted">
-          {t("environment (one KEY=VALUE per line)")}
-          {envNames.length > 0 && <> {t("· saved: {{names}} (a new block replaces them all)", { names: envNames.join(", ") })}</>}
-          {envNames.length > 0 && onClearEnv && (
-            <>
-              {" · "}
-              <button type="button" onClick={onClearEnv} className="underline hover:text-fg">
-                {t("clear variables")}
-              </button>
-            </>
-          )}
-        </span>
-        <textarea
+      <SettingField
+        label={
+          <>
+            {t("environment (one KEY=VALUE per line)")}
+            {envNames.length > 0 && <> {t("· saved: {{names}} (a new block replaces them all)", { names: envNames.join(", ") })}</>}
+            {envNames.length > 0 && onClearEnv && (
+              <>
+                {" · "}
+                <button type="button" onClick={onClearEnv} className="underline hover:text-fg">
+                  {t("clear variables")}
+                </button>
+              </>
+            )}
+          </>
+        }
+      >
+        <Textarea
           rows={3}
           value={env}
           onChange={(e) => onEnv(e.target.value)}
           placeholder={envNames.length > 0 ? "••••••••" : "KEY=…"}
           autoComplete="off"
           spellCheck={false}
-          className={cn(mono, "h-auto resize-y py-1.5 max-md:h-auto")}
+          className="py-1.5 font-mono"
         />
-      </label>
+      </SettingField>
       {status && (
         <div data-acp-check="" className="mt-1 flex flex-col gap-1.5 border-t border-border pt-2">
           <div className="flex items-center justify-between gap-2">
@@ -595,7 +594,6 @@ function AgentDialog({
   const [check, setCheck] = useState<AcpCheck | null>(existing?.lastCheck ?? null);
   const save = useMutation({
     mutationFn: async () => {
-      const target = id;
       const body =
         existing
           ? {
@@ -605,13 +603,13 @@ function AgentDialog({
               ...(env ? { env } : {}),
             }
           : { name, command, args: splitArgs(args), ...(env ? { env } : {}) };
-      const res = await api.PUT("/api/acp/agents/{id}", { params: { path: { id: target } }, body });
+      const res = await api.PUT("/api/acp/agents/{id}", { params: { path: { id } }, body });
       if (!res.data) throw new ApiError(res.error);
       setSaved(res.data);
       setDraft({ name: null, command: null, args: null });
       setEnv("");
-      void queryClient.invalidateQueries({ queryKey: mq(machine, "models", "acp", target) });
-      return runCheck(api, target);
+      void queryClient.invalidateQueries({ queryKey: mq(machine, "models", "acp", id) });
+      return runCheck(api, id);
     },
     onSuccess: (result) => {
       setCheck(result);
@@ -673,28 +671,24 @@ function AgentDialog({
               </p>
             )}
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                data-variant="primary"
+              <Button
+                variant="primary"
                 disabled={!command.trim() || save.isPending || (!!existing && !dirty && !checkFailed(check))}
                 onClick={() => save.mutate()}
-                className={SETTINGS_ACTION_PRIMARY}
               >
                 {existing ? t("save and check") : t("add and check")}
-              </button>
+              </Button>
               {existing && (
-                <button type="button" disabled={recheck.isPending || save.isPending} onClick={() => recheck.mutate()} className={SETTINGS_ACTION}>
-                  <RefreshCw className="size-3" />
+                <Button disabled={recheck.isPending || save.isPending} onClick={() => recheck.mutate()}>
+                  <ArrowsClockwiseIcon className="size-3" />
                   {t("check again")}
-                </button>
+                </Button>
               )}
-              <button type="button" onClick={onClose} className={SETTINGS_ACTION}>
-                {t("cancel")}
-              </button>
+              <Button onClick={onClose}>{t("cancel")}</Button>
               {described?.homepage && (
                 <a href={described.homepage} target="_blank" rel="noreferrer" className="ml-auto flex items-center gap-1 text-2xs text-muted underline hover:text-fg">
                   {t("learn more")}
-                  <ExternalLink className="size-3" />
+                  <ArrowSquareOutIcon className="size-3" />
                 </a>
               )}
             </div>

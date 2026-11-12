@@ -19,9 +19,11 @@
 import { localize } from "@droppen/plugin-sdk";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Sheet } from "@/components/sheet";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
-import { SETTINGS_ACTION, SETTINGS_ACTION_DANGER } from "@/features/settings/layout";
+import { SettingsHint, SettingsNote, SettingsSection } from "@/features/settings/layout";
 import { cn } from "@/lib/cn";
 import { isCloud } from "@/lib/hub/config";
 import { useApi } from "@/lib/machines/context";
@@ -32,9 +34,6 @@ import { installPlugin, uninstallPlugin } from "./install-api";
 import { ReloadNotice } from "./reload-notice";
 import { usePluginRegistry } from "./registry";
 import type { PluginStatus } from "./types";
-
-const row =
-  "flex max-w-xl flex-col items-start gap-2 @min-[36rem]/settings:flex-row @min-[36rem]/settings:items-center @min-[36rem]/settings:justify-between @min-[36rem]/settings:gap-4";
 
 /** The page after an install or uninstall: the modules already loaded cannot be replaced. */
 const reloadPage = () => window.location.reload();
@@ -77,7 +76,10 @@ function PluginRow({ status }: { status: PluginStatus }) {
     problem ? { text: problem, signal: "failed" } : null,
   ].filter((note) => note !== null);
   return (
-    <div className={cn(row, "mt-3 first:mt-0")} data-plugin-row={status.id}>
+    <div
+      className="mt-3 flex max-w-xl flex-col items-start gap-2 first:mt-0 @min-[36rem]/settings:flex-row @min-[36rem]/settings:items-center @min-[36rem]/settings:justify-between @min-[36rem]/settings:gap-4"
+      data-plugin-row={status.id}
+    >
       <div className="min-w-0">
         <div className="flex items-baseline gap-2 text-xs">
           <span>{name}</span>
@@ -86,15 +88,20 @@ function PluginRow({ status }: { status: PluginStatus }) {
           </span>
         </div>
         {notes.map((note) => (
-          <div
+          <SettingsNote
             key={note.text}
-            data-signal={note.signal ?? undefined}
-            className={cn("text-2xs break-words", note.signal === "failed" ? "text-danger" : note.signal === "warn" ? "text-warn-fg" : "text-faint")}
+            tone={note.signal === "failed" ? "danger" : note.signal === "warn" ? "warn" : "faint"}
+            mono={false}
+            className="block break-words"
           >
             {note.text}
-          </div>
+          </SettingsNote>
         ))}
-        {status.forced && <div className="text-2xs text-faint">{t("set by the server configuration")}</div>}
+        {status.forced && (
+          <SettingsNote tone="faint" mono={false} className="block">
+            {t("set by the server configuration")}
+          </SettingsNote>
+        )}
       </div>
       <div className="flex max-w-full shrink-0 items-center gap-2">
         <Tabs
@@ -116,14 +123,9 @@ function PluginRow({ status }: { status: PluginStatus }) {
             </TabsTab>
           </TabsList>
         </Tabs>
-        <button
-          type="button"
-          disabled={uninstall.isPending || toggle.isPending}
-          onClick={() => void askUninstall()}
-          className={SETTINGS_ACTION_DANGER}
-        >
+        <Button variant="danger" disabled={uninstall.isPending || toggle.isPending} onClick={() => void askUninstall()}>
           {uninstall.isPending ? t("uninstalling…") : t("uninstall")}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -154,47 +156,41 @@ export function PluginsSection() {
   );
   const statuses = registry.statuses;
   return (
-    <>
-      <section className="border-b border-border p-3">
-        <h2 data-label="" className="label-caps -mx-3 -mt-3 mb-3 flex h-9 items-center border-b border-border px-3 text-2xs text-fg">
-          {t("plugins")}
-        </h2>
+    <Sheet>
+      <SettingsSection title={t("plugins")}>
         {registry.reloadNeeded && <ReloadNotice className="mb-3" />}
         <p className="mb-3 max-w-xl text-2xs text-faint">
           {t("Plugins installed on this instance. Turning one off hides it here and keeps its data.")}
         </p>
         <div className="mb-3 flex max-w-xl flex-wrap items-center gap-2">
-          <button type="button" disabled={install.isPending} onClick={() => void pickAndInstall()} className={SETTINGS_ACTION}>
+          <Button disabled={install.isPending} onClick={() => void pickAndInstall()}>
             {install.isPending ? t("installing…") : t("Install from file…")}
-          </button>
+          </Button>
           {install.isError && (
-            <span data-signal="failed" className="min-w-0 text-2xs break-words text-danger">
+            <SettingsNote tone="danger" mono={false} className="min-w-0 break-words">
               {install.error.message}
-            </span>
+            </SettingsNote>
           )}
         </div>
         {statuses === null ? (
           <Spinner />
         ) : statuses.length === 0 ? (
-          <p className="max-w-xl text-2xs text-faint">{t("No plugins are installed on this instance.")}</p>
+          <SettingsHint className="max-w-xl text-2xs leading-4 text-faint">{t("No plugins are installed on this instance.")}</SettingsHint>
         ) : (
           statuses.map((status) => <PluginRow key={status.id} status={status} />)
         )}
-      </section>
+      </SettingsSection>
       {settings.map(({ plugin, block, key }) => {
         const Block = block.component;
         const title = localize(block.title, hostLocale());
         return (
-          <section key={key} className="border-b border-border p-3" data-plugin={plugin.id}>
-            <h2 data-label="" className="label-caps -mx-3 -mt-3 mb-3 flex h-9 items-center border-b border-border px-3 text-2xs text-fg">
-              {title}
-            </h2>
+          <SettingsSection key={key} title={title} data-plugin={plugin.id}>
             <PluginBoundary host={plugin.host} name={localize(plugin.status.name, hostLocale())}>
               <Block />
             </PluginBoundary>
-          </section>
+          </SettingsSection>
         );
       })}
-    </>
+    </Sheet>
   );
 }

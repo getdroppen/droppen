@@ -4,7 +4,7 @@
  * (first session) `first-step.tsx`: each is one component taking
  * {@link StepProps}, put in place in `welcome-view.tsx`.
  */
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRightIcon, CheckIcon } from "@phosphor-icons/react";
 import { type KeyboardEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { LiveDot } from "@/components/live-dot";
@@ -54,7 +54,7 @@ function ProbeLine({ tools }: { tools: ToolsReport | null | undefined }) {
         </>
       ) : found.length > 0 ? (
         <>
-          <Check className="size-3 shrink-0 text-fg" aria-hidden="true" />
+          <CheckIcon className="size-3 shrink-0 text-fg" aria-hidden="true" />
           {t("Found: {{list}}", { list: listOf(found, i18n.language) })}
         </>
       ) : (
@@ -182,7 +182,7 @@ function WhereCard({
       </span>
       <span className={cn("inline-flex items-center gap-1 font-mono text-2xs leading-5 font-medium whitespace-nowrap text-fg", disabled && "opacity-45")}>
         {action}
-        <ArrowRight className="size-3" aria-hidden="true" />
+        <ArrowRightIcon className="size-3" aria-hidden="true" />
       </span>
       <span className="col-start-2 col-end-4 max-w-[52em] text-xs leading-[19px] text-muted">
         <span className={cn(disabled && "opacity-45")}>{body}</span>
@@ -279,7 +279,7 @@ function toolSummary(tools: ToolsReport | null | undefined, id: "claude" | "code
   if (status === "ready") {
     return (
       <span className="inline-flex items-center gap-1.5 font-mono text-xs">
-        <Check className="size-3" aria-hidden="true" />
+        <CheckIcon className="size-3" aria-hidden="true" />
         {tool.login.plan ?? t("ready")}
       </span>
     );

@@ -1,6 +1,6 @@
 import type { components } from "@/api/schema";
 import { useMutation } from "@tanstack/react-query";
-import { Loader2, RotateCw, X, Zap } from "lucide-react";
+import { CircleNotchIcon, ArrowClockwiseIcon, XIcon, LightningIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
@@ -146,11 +146,11 @@ export function ServerQueueList({
                   )}
                 >
                   {busy ? (
-                    <Loader2 className="size-3 animate-spin" />
+                    <CircleNotchIcon className="size-3 animate-spin" />
                   ) : restarts ? (
-                    <RotateCw className="size-3" />
+                    <ArrowClockwiseIcon className="size-3" />
                   ) : (
-                    <Zap className="size-3" />
+                    <LightningIcon className="size-3" />
                   )}
                 </button>}
                 <button
@@ -159,7 +159,7 @@ export function ServerQueueList({
                   title={t("remove from queue")}
                   onClick={() => onDrop(message.id)} data-signal="failed" className="flex size-5 shrink-0 items-center justify-center rounded text-muted hover:bg-hover hover:text-danger disabled:opacity-40"
                 >
-                  <X className="size-3" />
+                  <XIcon className="size-3" />
                 </button>
               </>
             )}

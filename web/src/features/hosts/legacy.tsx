@@ -1,7 +1,7 @@
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import type { Root } from "react-dom/client";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { CircleNotchIcon } from "@phosphor-icons/react";
 import { HubApi } from "@/lib/hub/api";
 import { type BootUrl, bootPath } from "@/lib/hub/boot-url";
 import { hubOrigin } from "@/lib/hub/config";
@@ -260,7 +260,7 @@ export function MoveNotice({
           )}
           {busy && (
             <p className="flex items-center gap-2 text-xs text-muted">
-              <Loader2 className="size-3.5 animate-spin" />
+              <CircleNotchIcon className="size-3.5 animate-spin" />
               {step.kind === "moving" ? t("moving this browser…") : step.kind === "opening" ? t("opening your account…") : t("removing this browser…")}
             </p>
           )}

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet } from "@tanstack/react-router";
-import { Bot, Plus, Sparkles, Terminal, X } from "lucide-react";
+import { RobotIcon, PlusIcon, SparkleIcon, TerminalIcon, XIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
 import { Content, Panel, PanelHeader } from "@/components/panel";
@@ -58,7 +58,7 @@ export function ChatLayout() {
               title={t("new chat")}
               className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
             >
-              <Plus className="size-3.5" />
+              <PlusIcon className="size-3.5" />
             </MachineLink>
           }
         />
@@ -80,11 +80,11 @@ export function ChatLayout() {
               >
                 <div className="flex items-center gap-1.5">
                   {chat.kind === "claude" ? (
-                    <Sparkles className="size-3 shrink-0 text-accent" />
+                    <SparkleIcon className="size-3 shrink-0 text-accent" />
                   ) : chat.kind === "codex" ? (
-                    <Terminal className="size-3 shrink-0 text-muted" />
+                    <TerminalIcon className="size-3 shrink-0 text-muted" />
                   ) : (
-                    <Bot className="size-3 shrink-0 text-muted" />
+                    <RobotIcon className="size-3 shrink-0 text-muted" />
                   )}
                   <span className="min-w-0 flex-1 truncate text-xs">{chat.title}</span>
                 </div>
@@ -102,7 +102,7 @@ export function ChatLayout() {
                 title={chat.kind === "api" ? t("delete chat") : t("archive chat")}
                 onClick={() => remove.mutate(chat)} data-signal="failed" className="absolute top-1 right-1 hidden size-4.5 items-center justify-center rounded bg-panel text-muted group-hover:flex hover:text-danger"
               >
-                <X className="size-3" />
+                <XIcon className="size-3" />
               </button>
             </div>
           ))}

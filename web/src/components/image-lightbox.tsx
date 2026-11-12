@@ -1,4 +1,4 @@
-import { Download, ExternalLink, X } from "lucide-react";
+import { DownloadSimpleIcon, ArrowSquareOutIcon, XIcon } from "@phosphor-icons/react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -88,7 +88,7 @@ export function LightboxImage({
         )}
         actions={
           <DownloadLink path={source.path} inline title={t("download")} onClick={stop} className={OVERLAY_BUTTON}>
-            <Download className="size-4" />
+            <DownloadSimpleIcon className="size-4" />
           </DownloadLink>
         }
       />
@@ -219,7 +219,7 @@ function GithubLightboxImage({
           onClick={stop}
           className={OVERLAY_BUTTON}
         >
-          <Download className="size-4" />
+          <DownloadSimpleIcon className="size-4" />
         </a>
       }
     />
@@ -350,12 +350,12 @@ export function LightboxOverlay({
             onClick={stop}
             className={OVERLAY_BUTTON}
           >
-            <ExternalLink className="size-4" />
+            <ArrowSquareOutIcon className="size-4" />
           </a>
         )}
         {actions}
         <button type="button" title={t("back")} onClick={onClose} className={OVERLAY_BUTTON}>
-          <X className="size-4" />
+          <XIcon className="size-4" />
         </button>
       </div>
     </div>

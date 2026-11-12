@@ -1,23 +1,6 @@
-// The interface calls every device a device (docs/local-aggregator.md §3.1
-// 用词, §6; the user's decision): 「设备」 / 「裝置」 / 「デバイス」 /
-// "device", a device that runs AI included — 「可运行 AI 的设备」 where it has
-// to be told apart. "Machine" and "computer" stay in the code (`Machine*`,
-// `mq`, `machine` params), never on screen, in any of the four languages the
-// app ships: English (the keys themselves, `i18n/index.ts`), zh-CN, zh-TW, ja.
-// The device a page runs on included (the user's decision of 2026-10-18):
-// "this device", 「这台设备」 / 「這台裝置」 / 「このデバイス」 — never "this
-// computer", 本机 / 本機 or このコンピュータ — and "local" is 本地.
-//
-// Checked: every translation table, and every piece of text the interface
-// source puts on screen — JSX text, the `aria-label` / `title` / `placeholder`
-// / `alt` attributes, `{"…"}` and template literals in JSX, `t("…")` keys —
-// read from the TypeScript syntax tree, so comments and identifiers never
-// count. Chinese and Japanese words are looked for in every string literal.
-//
-// Known limits of the English check: a constant (or a template) holding the
-// words and rendered somewhere else, and `new Error("…")` messages shown
-// through `errorText`, are not followed — the error messages a device's
-// channel and an enrollment end in are i18n keys, checked below.
+// Enforce the product's device terminology in translations and rendered source strings.
+// The TypeScript AST scanner ignores comments and identifiers; English constants rendered
+// elsewhere and errorText values are covered indirectly or by their i18n keys.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -44,15 +27,17 @@ import { sourceFiles, sourceTexts } from "./screen-text.js";
  * Source not checked, with why: the landing page's selling copy
  * (`features/landing/copy.ts` and the sections that draw it) is marketing the
  * user approved, about the computer the AI CLIs run on (「手机上接着用电脑上的
- * AI」), not the interface; the i18n tables are checked as tables below. The
+ * AI」), not the interface; the i18n tables are checked as tables below. Its
+ * diagrams (`features/landing/figures/`) are part of the same picture: they
+ * name the computer, the relay and the phone under the drawings. The
  * download page, the pricing page with its waitlist, the privacy notice, the
  * security design, the terms of service and the frame around them all
  * (`download*.ts(x)`, `pricing*.ts(x)`, `waitlist.tsx`, `privacy.tsx`,
  * `security/*`, `terms/*`, `page-kit.tsx`) are the product's own words, and are checked like any other
  * interface source — their tables below.
  */
-const LANDING_MARKETING = ["copy.ts", "landing.tsx", "product-tour.tsx", "direct-path.tsx", "offline-copy.tsx", "kit.tsx", "motion.ts", "story.ts"];
-const NOT_INTERFACE = [...LANDING_MARKETING.map((file) => `features/landing/${file}`), "i18n/"];
+const LANDING_MARKETING = ["copy.ts", "landing.tsx", "product-tour.tsx"];
+const NOT_INTERFACE = [...LANDING_MARKETING.map((file) => `features/landing/${file}`), "features/landing/figures/", "i18n/"];
 
 const words = (s: string) => s.replace(/\{\{[^}]*\}\}/g, "");
 const ENGLISH = { test: (s: string) => /\bmachines?\b|\bcomputers?\b/i.test(s) || /\bPCs?\b/.test(s) };

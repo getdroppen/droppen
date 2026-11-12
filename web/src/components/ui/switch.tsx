@@ -1,15 +1,5 @@
 import { cn } from "@/lib/cn";
 
-/**
- * A square on/off switch (the drafting sheet has no round controls): a 24×14
- * ink track with an 8px square knob, the whole thing a 28px row (36px under a
- * finger). A switch that cannot move is `aria-disabled` rather than disabled,
- * so its tooltip still says why. `labelHidden`: the words beside it say what
- * it is, so its label is for screen readers only.
- *
- * One component for every switch in the app: a native checkbox drawn as a
- * switch (`features/settings`) or a hand-rolled track here would drift.
- */
 export function Switch({
   on,
   blocked = false,
