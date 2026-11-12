@@ -1,0 +1,150 @@
+name: desktop-linux
+
+# The Linux desktop app, for x86_64 and aarch64, each on a runner of its own
+# architecture: desktop/build-linux.sh (in desktop/linux/Dockerfile's image,
+# bundling without the network), then .github/scripts/smoke-desktop-linux.sh
+# on the artifact that made. ci.yml calls it for the pull requests that touch
+# the Linux app's packaging, and release.yml is to call it the same way. No
+# secret, no environment, read access only: nothing here signs or publishes.
+#
+# The caller hands it, as artifacts of its own run, each checked by the sha256
+# its job put out (.github/scripts/unpack-artifact.sh):
+#   server-linux-<arch>  server-linux-<arch>.tar: <arch>/droppen-server, the
+#                        Linux server of this commit (release.yml's
+#                        server-linux makes it)
+#   notices              notices.tar, with desktop-linux/THIRD_PARTY_NOTICES
+#                        (desktop/third-party-notices.sh --platform linux)
+# and gets back desktop-linux-<arch>: desktop-linux-<arch>.tar, with the
+# AppImage, the .deb and LIBRARIES-<arch>.txt in desktop-linux/, whose sha256
+# is the output sha_<arch>.
+on:
+  workflow_call:
+    inputs:
+      server-sha-x86_64:
+        description: sha256 of the server-linux-x86_64 artifact's tar
+        type: string
+        required: true
+      server-sha-aarch64:
+        description: sha256 of the server-linux-aarch64 artifact's tar
+        type: string
+        required: true
+      notices-sha:
+        description: sha256 of the notices artifact's tar
+        type: string
+        required: true
+    outputs:
+      sha_x86_64:
+        description: sha256 of the desktop-linux-x86_64 artifact's tar
+        value: ${{ jobs.build.outputs.sha_x86_64 }}
+      sha_aarch64:
+        description: sha256 of the desktop-linux-aarch64 artifact's tar
+        value: ${{ jobs.build.outputs.sha_aarch64 }}
+
+permissions:
+  contents: read
+
+env:
+  # The runners' disks are their own; the scripts' 25 GB floor is the release
+  # Mac's.
+  DROPPEN_MIN_FREE_GB: "2"
+  # What each artifact may hold (.github/scripts/unpack-artifact.sh).
+  ALLOW_NOTICES: '^(THIRD_PARTY_NOTICES|desktop(/THIRD_PARTY_NOTICES)?|desktop-linux(/THIRD_PARTY_NOTICES)?)$'
+  ALLOW_DESKTOP_LINUX: '^desktop-linux(/(Droppen-[0-9]+\.[0-9]+\.[0-9]+-(x86_64|aarch64)\.AppImage|droppen_[0-9]+\.[0-9]+\.[0-9]+_(amd64|arm64)\.deb|LIBRARIES-(x86_64|aarch64)\.txt))?$'
+
+jobs:
+  # desktop/build-linux.sh, with the caller's server and notices: the image,
+  # the crates, the app and its bundles without the network, their checks.
+  build:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    # Each leg sets only its own output.
+    outputs:
+      sha_x86_64: ${{ steps.pack.outputs.sha_x86_64 }}
+      sha_aarch64: ${{ steps.pack.outputs.sha_aarch64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: server-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dl/server
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notices
+          path: ${{ runner.temp }}/dl/notices
+      - name: Build the app (desktop/build-linux.sh)
+        id: pack
+        env:
+          ARCH: ${{ matrix.arch }}
+          SERVER_SHA: ${{ matrix.arch == 'aarch64' && inputs.server-sha-aarch64 || inputs.server-sha-x86_64 }}
+          NOTICES_SHA: ${{ inputs.notices-sha }}
+          # The build runs dependency code, so it is not given the names: the
+          # text check looks for "Kilerd" only, and the release job checks
+          # the names (scripts/release-text-check.sh).
+          DROPPEN_RELEASE_NAMES_DEFERRED: "1"
+        run: |
+          set -euo pipefail
+          a=$RUNNER_TEMP/a
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/server/server-linux-$ARCH.tar" "$SERVER_SHA" "$a/server" "^$ARCH(/droppen-server)?\$"
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/notices/notices.tar" "$NOTICES_SHA" "$a/notices" "$ALLOW_NOTICES"
+          chmod 755 "$a/server/$ARCH/droppen-server"
+          desktop/build-linux.sh --arch "$ARCH" --sidecar "$a/server/$ARCH/droppen-server" \
+            --notices "$a/notices/desktop-linux/THIRD_PARTY_NOTICES" --out "$RUNNER_TEMP/out/desktop-linux"
+          tar -cf "$RUNNER_TEMP/desktop-linux-$ARCH.tar" -C "$RUNNER_TEMP/out" desktop-linux
+          echo "sha_$ARCH=$(sha256sum "$RUNNER_TEMP/desktop-linux-$ARCH.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/desktop-linux-${{ matrix.arch }}.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  # The artifact, as users get it: the .deb and the AppImage on Ubuntu 22.04,
+  # Debian 12 and Ubuntu 24.04 in Docker, and the AppImage on the runner,
+  # mounted through FUSE (.github/scripts/smoke-desktop-linux.sh).
+  smoke:
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dl/desktop-linux
+      # What a desktop has and a runner may not: an X server (Xvfb), a D-Bus
+      # session, FUSE 3's fusermount3, and what the AppImage leaves to the
+      # system (linuxdeploy's excludelist: the graphics drivers' libraries,
+      # fontconfig and text rendering, the C++ runtime, a font), as the smoke
+      # script installs them in its containers.
+      - name: Xvfb, D-Bus, FUSE and the system libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends xvfb xauth dbus fuse3 \
+            libgl1 libegl1 libgles2 libgbm1 libfontconfig1 libfreetype6 libharfbuzz0b libfribidi0 \
+            libwayland-client0 libx11-xcb1 libxcb1 libexpat1 libgmp10 libgpg-error0 libstdc++6 fonts-dejavu-core
+      - name: Smoke tests
+        env:
+          ARCH: ${{ matrix.arch }}
+          SHA: ${{ matrix.arch == 'aarch64' && needs.build.outputs.sha_aarch64 || needs.build.outputs.sha_x86_64 }}
+        run: |
+          set -euo pipefail
+          .github/scripts/unpack-artifact.sh "$RUNNER_TEMP/dl/desktop-linux/desktop-linux-$ARCH.tar" "$SHA" "$RUNNER_TEMP/a" "$ALLOW_DESKTOP_LINUX"
+          .github/scripts/smoke-desktop-linux.sh "$RUNNER_TEMP/a/desktop-linux" --host

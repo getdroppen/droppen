@@ -16,7 +16,9 @@ jobs:
   # `.github/scripts/ci-changes.sh`. A job whose area is false is skipped, and
   # GitHub counts a skipped job as success for its required check, so a pull
   # request that touches only docs still merges. A push to main, a manual run,
-  # any `.github/` path and any doubt in the detector run every job.
+  # any `.github/` path and any doubt in the detector run every job; but the
+  # Linux packaging's, which a `.github/` path runs only if it is one of
+  # theirs, and a push to main never.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -29,6 +31,7 @@ jobs:
       server: ${{ steps.detect.outputs.server || 'true' }}
       release_tooling: ${{ steps.detect.outputs.release_tooling || 'true' }}
       desktop_core: ${{ steps.detect.outputs.desktop_core || 'true' }}
+      desktop_package: ${{ steps.detect.outputs.desktop_package || 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -398,6 +401,109 @@ jobs:
       - run: cargo clippy --locked --manifest-path desktop/Cargo.toml -p droppen-desktop --all-targets --features e2e -- -A warnings
       # One test at a time, as in `desktop-core`.
       - run: cargo test --locked --manifest-path desktop/Cargo.toml -p droppen-desktop -- --test-threads=1
+
+  # The Linux app's packaging, as the release is to build it: the reusable
+  # .github/workflows/desktop-linux.yml (desktop/build-linux.sh on a runner of
+  # each architecture, then the smoke tests), for the pull requests that touch
+  # it (the `desktop_package` area). What release.yml would hand that workflow
+  # is made here the same way: the web app and the Linux server of this commit
+  # for each architecture (release.yml's web and server-linux), and the Linux
+  # app's THIRD_PARTY_NOTICES (its notices job, on macOS, where cargo-about is
+  # pinned). Not on a push to main, which the pull request has run it for:
+  # it takes 20-25 minutes of two runners. Unsigned; nothing is published.
+  desktop-linux-server:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.desktop_package == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    # Each leg sets only its own output.
+    outputs:
+      sha_x86_64: ${{ steps.pack.outputs.sha_x86_64 }}
+      sha_aarch64: ${{ steps.pack.outputs.sha_aarch64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Build the web app and the server (scripts/build-linux-in-container.sh)
+        id: pack
+        env:
+          ARCH: ${{ matrix.arch }}
+          TZ: UTC
+        run: |
+          set -euo pipefail
+          npm install -g "pnpm@$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' package.json)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
+          pnpm install --frozen-lockfile --filter "@droppen/web..."
+          pnpm --filter @droppen/web build
+          image=$(sed -n 's/^IMAGE=//p' scripts/build-linux.sh)
+          case "$image" in rust:*@sha256:*) ;; *) echo "::error::cannot read the pinned IMAGE of scripts/build-linux.sh"; exit 1 ;; esac
+          work=$RUNNER_TEMP/work
+          mkdir -p "$work/src" "$work/out"
+          git archive --format=tar HEAD | tar -x -C "$work/src"
+          cp -R web/dist "$work/src/web/dist"
+          docker run --rm -v "$work:/work" -e DROPPEN_BUILD_REV="$(git rev-parse --short HEAD)" -e ARCHES="$ARCH" \
+            "$image" bash /work/src/scripts/build-linux-in-container.sh
+          tar -cf "$RUNNER_TEMP/server-linux-$ARCH.tar" -C "$work/out" "$ARCH/droppen-server"
+          echo "sha_$ARCH=$(sha256sum "$RUNNER_TEMP/server-linux-$ARCH.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/server-linux-${{ matrix.arch }}.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  desktop-linux-notices:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.desktop_package == 'true') }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    outputs:
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: THIRD_PARTY_NOTICES of the Linux app (desktop/third-party-notices.sh --platform linux)
+        id: pack
+        run: |
+          set -euo pipefail
+          .github/scripts/fetch-release-tool.sh cargo-about "$RUNNER_TEMP/tools"
+          export PATH="$RUNNER_TEMP/tools/bin:$PATH"
+          npm install -g "pnpm@$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' package.json)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"; export SOURCE_DATE_EPOCH
+          pnpm install --frozen-lockfile --filter "@droppen/web..."
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/droppen-server/Cargo.toml | head -n 1)
+          mkdir -p "$RUNNER_TEMP/out/desktop-linux"
+          desktop/third-party-notices.sh --platform linux "$GITHUB_WORKSPACE" "$RUNNER_TEMP/out/desktop-linux/THIRD_PARTY_NOTICES" \
+            "$crate" "$crate" "$(git rev-parse --short HEAD)"
+          COPYFILE_DISABLE=1 tar -cf "$RUNNER_TEMP/notices.tar" -C "$RUNNER_TEMP/out" desktop-linux/THIRD_PARTY_NOTICES
+          echo "sha=$(shasum -a 256 "$RUNNER_TEMP/notices.tar" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notices
+          path: ${{ runner.temp }}/notices.tar
+          if-no-files-found: error
+          retention-days: 3
+
+  desktop-linux:
+    needs: [desktop-linux-server, desktop-linux-notices]
+    if: ${{ !cancelled() && needs.desktop-linux-server.result == 'success' && needs.desktop-linux-notices.result == 'success' }}
+    uses: ./.github/workflows/desktop-linux.yml
+    with:
+      server-sha-x86_64: ${{ needs.desktop-linux-server.outputs.sha_x86_64 }}
+      server-sha-aarch64: ${{ needs.desktop-linux-server.outputs.sha_aarch64 }}
+      notices-sha: ${{ needs.desktop-linux-notices.outputs.sha }}
 
 
   secrets-scan:

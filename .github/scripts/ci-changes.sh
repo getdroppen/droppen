@@ -13,7 +13,10 @@
 # Fail open: a job runs unless this script can prove it is unnecessary. A push,
 # a manual run, a missing or unreadable base/head, a git error, an empty diff, a
 # path under .github/ and a changed path no rule below knows all mean "every
-# area is true". A bug here can therefore waste a run, never hide a test.
+# area is true". A bug here can therefore waste a run, never hide a test. One
+# exception: a .github path turns desktop_package (the Linux app's packaging,
+# 20-25 minutes of two runners) on only if it is one of the packaging's own
+# workflow, scripts and pins.
 #
 # The map follows what each job reads, not its directory:
 #  - the web job's check:hub-api scans crates/droppen-agent/src,
@@ -33,13 +36,20 @@
 #  - the desktop core tests read desktop/build.sh, desktop/e2e-identity.sh,
 #    scripts/install.sh, the root Cargo.toml and
 #    crates/droppen-search-path (the path dependency it compiles,
-#    which inherits that workspace's lints).
+#    which inherits that workspace's lints);
+#  - the Linux app's packaging (desktop-linux.yml) runs desktop/build-linux.sh
+#    and desktop/linux/, which read the app's Tauri configuration, build
+#    script, icons and lockfiles, desktop/build.sh (the tauri-cli version),
+#    the release scripts they source and scripts/release-public.sh (the
+#    cargo-about version), and makes the notices (desktop/third-party-notices.sh,
+#    about.toml, scripts/notices/) and the server (scripts/build-linux*.sh). It
+#    does not follow the app's or the server's code: those have their jobs.
 # Everything a rule does not name is unknown, and unknown runs every job.
 set -u
 
 # One output per job that can be skipped. secrets-scan is not here: it runs on
 # every pull request, whatever changed.
-AREAS="web web_tests ui_audit web_reproducible server release_tooling desktop_core"
+AREAS="web web_tests ui_audit web_reproducible server release_tooling desktop_core desktop_package"
 
 paths_file=""
 case "${1:-}" in
@@ -90,15 +100,23 @@ changed_paths() {
 changes=$(changed_paths) || { everything "the pull request's diff cannot be read"; exit 0; }
 [ -n "$changes" ] || { everything "the diff is empty"; exit 0; }
 
-web=0 web_tests=0 ui_audit=0 web_reproducible=0 server=0 release_tooling=0 desktop_core=0
+web=0 web_tests=0 ui_audit=0 web_reproducible=0 server=0 release_tooling=0 desktop_core=0 desktop_package=0
 unknown=""
+github=""
 
 while IFS= read -r path; do
   [ -n "$path" ] || continue
 
-  # A workflow or script of this repository: rerun all of it.
+  # A workflow or script of this repository: rerun all of it, but for the
+  # packaging, which only its own files there rerun.
   case "$path" in
-    .github/*) everything "a .github path changed: $path"; exit 0 ;;
+    .github/*)
+      github=$path
+      case "$path" in
+        .github/workflows/desktop-linux.yml|.github/scripts/smoke-desktop-linux.sh|.github/scripts/unpack-artifact.sh|.github/scripts/fetch-release-tool.sh|.github/release-tools.lock)
+          desktop_package=1 ;;
+      esac
+      continue ;;
   esac
 
   # Prose at the top of a tree whose jobs read code there, not these files.
@@ -159,6 +177,11 @@ while IFS= read -r path; do
       desktop_core=1; matched=1 ;;
   esac
 
+  case "$path" in
+    desktop/linux/*|desktop/build-linux.sh|desktop/build.sh|desktop/third-party-notices.sh|desktop/Cargo.toml|desktop/Cargo.lock|desktop/src-tauri/Cargo.toml|desktop/src-tauri/build.rs|desktop/src-tauri/build_config.rs|desktop/src-tauri/tauri.conf.json|desktop/src-tauri/tauri.linux.conf.json|desktop/src-tauri/icons/*|scripts/build-linux.sh|scripts/build-linux-in-container.sh|scripts/release-lib.sh|scripts/release-text-check.sh|scripts/release-public.sh|scripts/notices/*|about.toml|LICENSE)
+      desktop_package=1; matched=1 ;;
+  esac
+
   if [ "$matched" = 0 ]; then
     case "$path" in
       # Nothing any job reads: prose and repository metadata, named exactly.
@@ -175,6 +198,16 @@ if [ -n "$unknown" ]; then
 fi
 
 bool() { if [ "$1" = 1 ]; then echo true; else echo false; fi; }
+
+if [ -n "$github" ]; then
+  echo "ci-changes: running every job, the packaging's only for its own files (a .github path changed: $github)" >&2
+  for area in $AREAS; do
+    [ "$area" = desktop_package ] || emit "$area=true"
+  done
+  emit "desktop_package=$(bool "$desktop_package")"
+  exit 0
+fi
+
 emit "web=$(bool "$web")"
 emit "web_tests=$(bool "$web_tests")"
 emit "ui_audit=$(bool "$ui_audit")"
@@ -182,3 +215,4 @@ emit "web_reproducible=$(bool "$web_reproducible")"
 emit "server=$(bool "$server")"
 emit "release_tooling=$(bool "$release_tooling")"
 emit "desktop_core=$(bool "$desktop_core")"
+emit "desktop_package=$(bool "$desktop_package")"
