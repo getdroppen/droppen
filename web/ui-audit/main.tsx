@@ -18,9 +18,10 @@
  * (the real session view on droppen.app, drawn from the device's copy of the
  * session while the machine is asked for it; `&state=live`, once it has
  * answered; `&state=offline`, the page on the copy while the machine is
- * away) or `?fixture=welcome` (the desktop app's first-run guide and its
- * server's setup page, on each system the app runs on: `welcome.tsx`), plus
- * `?theme=dark`.
+ * away), `?fixture=desktop-app` (Settings → Desktop app, on each system and in
+ * each Start at Login state: `desktop-app.tsx`) or `?fixture=welcome` (the
+ * desktop app's first-run guide and its server's setup page, on each system
+ * the app runs on: `welcome.tsx`), plus `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -75,6 +76,7 @@ import { AgentsTabStrip } from "@/features/settings/agents/agents-section";
 import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/agents-tabs";
 import { SettingRow, SettingsSection } from "@/features/settings/layout";
 import { applyLanguage, type LanguagePref } from "@/i18n";
+import { mountDesktopApp } from "./desktop-app";
 import { mountWelcome } from "./welcome";
 
 const query = new URLSearchParams(location.search);
@@ -1131,6 +1133,8 @@ if (fixture === "new-chat") {
   await mountSessionFromCopy();
 } else if (fixture === "welcome") {
   await mountWelcome(query);
+} else if (fixture === "desktop-app") {
+  await mountDesktopApp(query);
 } else {
   if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening" || fixture === "landing")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");

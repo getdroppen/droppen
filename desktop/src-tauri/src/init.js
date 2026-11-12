@@ -34,14 +34,22 @@
 //   8. says, on the same bridge, whether a tray host shows the app's icon
 //      (src-tauri/src/tray.rs, host_present_at_start): without one, closing
 //      the window quits, and the guide says that instead of pointing at a
-//      tray icon.
+//      tray icon;
+//   9. serves the app's Settings → Desktop app
+//      (web/src/features/settings/desktop-app-section.tsx): the state the app
+//      pushes with settings(token, state), and the navigations openInBrowser(),
+//      setStartAtLogin(on), openLoginItems() and refreshDesktopSettings().
+//      The settings token stays in this script's closure — never a property of
+//      the bridge — and the app checks both it and the window's origin
+//      (src-tauri/src/desktop_settings.rs).
 //
 // __DROPPEN_NONCE__ is replaced with this launch's nonce when the window is made,
 // __DROPPEN_BRIDGE__ with the update bridge's own token (part 4),
 // __DROPPEN_LANGUAGES__ with the system's languages, comma-separated (part 5),
 // __DROPPEN_RELOAD_KEYS__ with true on Linux, false elsewhere (part 6),
 // __DROPPEN_START_AT_LOGIN__ with 1 when the app has Start at Login (part 7),
-// __DROPPEN_TRAY_HOST__ with 1 when a tray host is there (part 8).
+// __DROPPEN_TRAY_HOST__ with 1 when a tray host is there (part 8),
+// __DROPPEN_SETTINGS__ with the settings channel's token (part 9).
 //
 // It runs on any http://127.0.0.1 page, whatever its port: the server's port
 // can change while the window lives, and this script is fixed when the window
@@ -346,6 +354,13 @@
   var START_AT_LOGIN = "__DROPPEN_START_AT_LOGIN__" === "1";
   // 8. Whether a tray host shows the app's icon (web/src/lib/desktop-app.ts).
   var TRAY_HOST = "__DROPPEN_TRAY_HOST__" === "1";
+  // 9. The settings channel (web/src/features/settings/desktop-app-section.tsx):
+  //    the state the app pushes, and an ask that carries this launch's token.
+  var SETTINGS = "__DROPPEN_SETTINGS__";
+  var settingsState = null;
+  function settingsAsk(what, extra) {
+    location.assign("droppen-desktop://settings/" + what + "?token=" + encodeURIComponent(SETTINGS) + (extra || ""));
+  }
   var updateStatus = null;
   var restartToken = null;
   try {
@@ -369,6 +384,26 @@
         restartToUpdate: function () {
           if (!restartToken) return;
           location.assign("droppen-desktop://update/restart?token=" + encodeURIComponent(restartToken));
+        },
+        settings: function (bridge, state) {
+          if (bridge !== SETTINGS) return;
+          settingsState = state && typeof state === "object" ? JSON.stringify(state) : null;
+          window.dispatchEvent(new CustomEvent("droppen:settings"));
+        },
+        settingsState: function () {
+          return settingsState ? JSON.parse(settingsState) : null;
+        },
+        openInBrowser: function () {
+          settingsAsk("open-in-browser");
+        },
+        setStartAtLogin: function (on) {
+          settingsAsk("start-at-login", "&on=" + (on ? "1" : "0"));
+        },
+        openLoginItems: function () {
+          settingsAsk("login-items");
+        },
+        refreshDesktopSettings: function () {
+          settingsAsk("refresh");
         },
       }),
     });

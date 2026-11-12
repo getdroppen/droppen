@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | welcome | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | welcome | desktop-app | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -73,6 +73,7 @@ const runSessionOpening = which === "both" || which === "session-opening";
 const runNoCopy = which === "both" || which === "no-copy";
 const runSessionFromCopy = which === "both" || which === "session-from-copy";
 const runWelcome = which === "both" || which === "welcome";
+const runDesktopApp = which === "both" || which === "desktop-app";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -1539,8 +1540,8 @@ const WELCOME_SYSTEMS = [
 const START_AT_LOGIN_WORDS = /Start at login|登录时启动/;
 /** What only a Mac has, in the languages captured: never on the Linux app's pages. */
 const MAC_ONLY = /\bMacs?\b|macOS|menu.bar|Apple|xcode-select|菜单栏|访达/;
-/** What a page with no tray host must not promise: the tray icon, Open in Browser, or that closing keeps the app running. */
-const NO_TRAY_WORDS = /system tray|Open in Browser|系统托盘|在浏览器中打开|系統匣|在瀏覽器中打開|システムトレイ|ブラウザで開く|closing the window doesn.t stop it|关掉窗口不会停止它|關掉視窗不會停止它|ウインドウを閉じても止まりません/;
+/** What a page with no tray host must not promise: the tray icon, or that closing keeps the app running. */
+const NO_TRAY_WORDS = /system tray|系统托盘|系統匣|システムトレイ|closing the window doesn.t stop it|关掉窗口不会停止它|關掉視窗不會停止它|ウインドウを閉じても止まりません/;
 /** What a page with no tray host says instead of the tray lines. */
 const NO_TRAY_QUIT = /Closing the window quits Droppen|关掉窗口会退出 Droppen/;
 
@@ -1579,11 +1580,87 @@ async function auditWelcome(theme, view) {
         results.push({ mode: "welcome", screen, system: system.name, lang, theme, viewport: view.name, kicker: seen.kicker, startAtLogin: seen.startAtLogin });
         const where = { screen, system: system.name, lang };
         if (system.platform === "linux" && MAC_ONLY.test(seen.text)) fail("welcome.mac-words", { ...where, said: seen.text.match(MAC_ONLY)[0] }, "no Mac, macOS, menu bar or Apple on the Linux app's pages");
-        if (system.tray === "0" && NO_TRAY_WORDS.test(seen.text)) fail("welcome.no-tray-words", { ...where, said: seen.text.match(NO_TRAY_WORDS)[0] }, "no tray icon, Open in Browser, or closing that keeps the app running where there is no tray host");
+        if (system.tray === "0" && NO_TRAY_WORDS.test(seen.text)) fail("welcome.no-tray-words", { ...where, said: seen.text.match(NO_TRAY_WORDS)[0] }, "no tray icon, or closing that keeps the app running, where there is no tray host");
         if (system.tray === "0" && screen === "wrap" && !NO_TRAY_QUIT.test(seen.text)) fail("welcome.no-tray-quit", { ...where }, "closing the window quits Droppen");
         if (screen === "welcome" && seen.kicker?.trim() !== system.edition[lang]) fail("welcome.edition", { ...where, kicker: seen.kicker }, system.edition[lang]);
         if (screen === "welcome" && START_AT_LOGIN_WORDS.test(seen.text) !== (system.bridge === "1")) fail("welcome.summary-start-at-login", { ...where, text: seen.text.match(START_AT_LOGIN_WORDS)?.[0] ?? null }, system.bridge === "1" ? "step 04's line names Start at Login" : "step 04's line does not name Start at Login");
         if (screen === "wrap" && seen.startAtLogin !== (system.bridge === "1")) fail("welcome.start-at-login", { ...where, shown: seen.startAtLogin }, system.bridge === "1" ? "Start at Login, which the app offers" : "no Start at Login, which the app does not offer");
+      }
+    }
+  }
+  await page.close();
+}
+
+/** Settings → Desktop app (`?fixture=desktop-app`), on each system and in each Start at Login state. */
+const DESKTOP_APP_CASES = [
+  { name: "darwin-on", platform: "darwin", tray: "1", state: "on" },
+  { name: "darwin-off", platform: "darwin", tray: "1", state: "off" },
+  { name: "darwin-approval", platform: "darwin", tray: "1", state: "approval" },
+  { name: "darwin-failed", platform: "darwin", tray: "1", state: "failed" },
+  { name: "linux-on", platform: "linux", tray: "1", state: "on" },
+  { name: "linux-no-tray", platform: "linux", tray: "0", state: "on" },
+  { name: "linux-translocated", platform: "linux", tray: "1", state: "translocated" },
+  { name: "linux-no-login", platform: "linux", tray: "1", state: "no-login" },
+];
+/** Start at Login is on for these; off for the rest (a failed turn-on leaves it off). */
+const DESKTOP_APP_ON = new Set(["on", "approval"]);
+const DESKTOP_APP_OPEN = { en: "Open in Browser", "zh-CN": "在浏览器中打开" };
+
+/**
+ * The app window's Settings → Desktop app section
+ * (`?fixture=desktop-app`), as each system and Start at Login state shows it:
+ * Open in Browser always; Start at Login with the app's own state, the Login
+ * Items line when macOS waits for approval, and no row where the app offers
+ * none. Desktop width only: the section is a settings page, never a phone's.
+ * Captured: every case in English and Chinese, in each theme.
+ */
+async function auditDesktopApp(theme, view) {
+  if (view.name !== "desktop") return;
+  const page = await browser.newPage({ viewport: { width: view.width, height: view.height }, deviceScaleFactor: 1 });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "desktop-app", id, actual, expected });
+  for (const one of DESKTOP_APP_CASES) {
+    for (const lang of ["en", "zh-CN"]) {
+      await page.goto(`${base}ui-audit/index.html?fixture=desktop-app&platform=${one.platform}&tray=${one.tray}&state=${one.state}&lang=${lang}&theme=${theme}`);
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForSelector("[data-fixture-root] [data-testid='desktop-app-section']");
+      const seen = await page.evaluate(() => {
+        const section = document.querySelector("[data-testid='desktop-app-section']");
+        const toggle = document.querySelector("[data-testid='desktop-start-at-login']");
+        const rect = (element) => {
+          if (!element) return null;
+          const r = element.getBoundingClientRect();
+          return { x: +r.x.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+        };
+        return {
+          text: section?.innerText ?? "",
+          open: document.querySelector("[data-testid='desktop-open-in-browser'] button")?.textContent?.trim() ?? null,
+          loginRow: document.querySelector("[data-testid='desktop-start-at-login-row']") !== null,
+          checked: toggle?.getAttribute("aria-checked") ?? null,
+          blocked: toggle?.getAttribute("aria-disabled") ?? null,
+          openRow: rect(document.querySelector("[data-audit-row='desktop-open']")),
+          loginGeometry: rect(document.querySelector("[data-audit-row='desktop-login']")),
+          button: rect(document.querySelector("[data-testid='desktop-open-in-browser'] button")),
+        };
+      });
+      const tag = lang === "en" ? "" : `-${lang}`;
+      await page.screenshot({ path: `${out}/desktop-app-${one.name}${tag}-${theme}.png`, animations: "disabled" });
+      results.push({ mode: "desktop-app", ...one, lang, theme, ...seen });
+      const where = { case: one.name, lang };
+      const wantsLogin = one.state !== "no-login";
+      if (seen.open !== DESKTOP_APP_OPEN[lang]) fail("desktop-app.open", { ...where, open: seen.open }, DESKTOP_APP_OPEN[lang]);
+      if (seen.loginRow !== wantsLogin) fail("desktop-app.login-row", { ...where, shown: seen.loginRow }, wantsLogin ? "the Start at Login row" : "no Start at Login row");
+      if (wantsLogin && seen.checked !== String(DESKTOP_APP_ON.has(one.state))) fail("desktop-app.checked", { ...where, checked: seen.checked }, String(DESKTOP_APP_ON.has(one.state)));
+      if (seen.blocked !== (one.state === "translocated" ? "true" : null)) fail("desktop-app.blocked", { ...where, blocked: seen.blocked }, one.state === "translocated" ? "a blocked switch" : "an enabled switch");
+      if (one.state === "approval" && !/Allow Droppen in Login Items|在登录项里允许 Droppen/.test(seen.text)) fail("desktop-app.approval", { ...where }, "the Login Items line");
+      if (one.state === "failed" && !/Allow Droppen in Login Items|在登录项里允许 Droppen/.test(seen.text)) fail("desktop-app.failed", { ...where }, "the Login Items line");
+      if (one.state === "translocated" && !/Move Droppen to Applications first|先把 Droppen 移到/.test(seen.text)) fail("desktop-app.translocated", { ...where }, "the move note");
+      if (!wantsLogin && /Start Droppen at login|登录时启动 Droppen/.test(seen.text)) fail("desktop-app.no-login", { ...where }, "no Start at Login where the app offers none");
+      // The shared skeleton's measurements (docs/ui-spec.md §3/§4): 28px
+      // actions, 56px rows with a hint, both rows on the same column edges.
+      if (seen.button?.h !== 28) fail("desktop-app.button", { ...where, button: seen.button }, "a 28px action");
+      if (!seen.openRow || seen.openRow.h < 56) fail("desktop-app.row", { ...where, row: seen.openRow }, "a 56px row with its hint");
+      if (seen.loginGeometry && seen.openRow && (seen.loginGeometry.x !== seen.openRow.x || seen.loginGeometry.w !== seen.openRow.w)) {
+        fail("desktop-app.columns", { ...where, open: seen.openRow, login: seen.loginGeometry }, "the same label/control column edges");
       }
     }
   }
@@ -1606,6 +1683,7 @@ try {
         if (runNoCopy) await auditNoCopy(theme, view);
         if (runSessionFromCopy) await auditSessionFromCopy(theme, view);
         if (runWelcome) await auditWelcome(theme, view);
+        if (runDesktopApp) await auditDesktopApp(theme, view);
       }
     }
   }

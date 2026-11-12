@@ -377,17 +377,71 @@ fn app_menu<R: Runtime>(app: &AppHandle<R>, words: &Words) -> tauri::Result<Menu
 /// On the main thread only: it updates menu items, and Tauri's menu calls
 /// block when made from another thread.
 pub fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let on = app
+        .try_state::<LoginItem>()
+        .is_some_and(|login| !login.status(app).registered());
+    set_autostart(app, on)
+}
+
+/// Set *Start at Login* to `on`, as the menu bar's item and Settings →
+/// Desktop app both do. A state the platform already has is left alone, so a
+/// double click is harmless. On the main thread only, like
+/// [`toggle_autostart`].
+pub fn set_autostart<R: Runtime>(app: &AppHandle<R>, on: bool) -> bool {
     let Some(login) = app.try_state::<LoginItem>() else { return false };
-    let on = !login.status(app).registered();
-    let turned = login.set(app, on);
-    if let Some(items) = app.try_state::<Items<R>>() {
-        items.login.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).turn_on_failed = on && !turned.ok;
+    let status = login.status(app);
+    if status.registered() == on {
+        // Nothing to ask the platform. A switch asked off clears a failed
+        // turn-on's line, as the menu's own toggle does.
+        if !on {
+            record_turn_on_failed(app, false);
+        }
+        show_login_item(app, status);
+        return on;
     }
+    let turned = login.set(app, on);
+    record_turn_on_failed(app, on && !turned.ok);
     if on && turned.status == login_item::Status::RequiresApproval {
         crate::login_item::open_login_items();
     }
     show_login_item(app, turned.status);
     turned.status.registered()
+}
+
+/// Keep the last failed turn-on, for the menu's note and the settings state.
+fn record_turn_on_failed<R: Runtime>(app: &AppHandle<R>, failed: bool) {
+    if let Some(items) = app.try_state::<Items<R>>() {
+        items.login.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).turn_on_failed = failed;
+    }
+}
+
+/// The Start at Login state as the menu shows it: a fresh platform status,
+/// this launch's translocated copy, and the last failed turn-on. For Settings
+/// → Desktop app (`desktop_settings.rs`). Main thread only, like
+/// [`show_login_item`].
+pub fn login_shown<R: Runtime>(app: &AppHandle<R>) -> Option<login_item::Shown> {
+    let login = app.try_state::<LoginItem>()?;
+    let items = app.try_state::<Items<R>>();
+    let turn_on_failed = items
+        .as_ref()
+        .map(|items| {
+            items
+                .login
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .turn_on_failed
+        })
+        .unwrap_or(false);
+    let translocated = items.as_ref().is_some_and(|items| items.translocated);
+    Some(login_item::shown(login.status(app), translocated, turn_on_failed))
+}
+
+/// Read the login item's status now and show it, without the hover's wait: an
+/// explicit refresh from Settings → Desktop app. Main thread only, like
+/// [`show_login_item`].
+pub fn reread_login_item<R: Runtime>(app: &AppHandle<R>) {
+    let Some(login) = app.try_state::<LoginItem>() else { return };
+    show_login_item(app, login.status(app));
 }
 
 /// Read the login item's status again and show it — at most once per
@@ -473,6 +527,13 @@ static OPENING: AtomicBool = AtomicBool::new(false);
 /// thread of its own; its login page once it has one; and if it cannot, the
 /// plain page instead, and the log says why.
 pub fn open_in_browser<R: Runtime>(app: &AppHandle<R>) {
+    open_in_browser_from(app, "the menu bar");
+}
+
+/// [`open_in_browser`] with where it was asked from, for the log: the menu
+/// bar, or Settings → Desktop app. The action is the same, and its one guard
+/// means a double click — or both places at once — opens one browser.
+pub fn open_in_browser_from<R: Runtime>(app: &AppHandle<R>, from: &str) {
     let Some(shell) = app.try_state::<Arc<Shell>>().map(|shell| Arc::clone(&shell)) else {
         return;
     };
@@ -480,7 +541,7 @@ pub fn open_in_browser<R: Runtime>(app: &AppHandle<R>) {
         log::info!("open in browser: already under way");
         return;
     }
-    log::info!("open in browser, from the menu bar");
+    log::info!("open in browser, from {from}");
     let app = app.clone();
     std::thread::spawn(move || {
         match shell.open_in_browser() {

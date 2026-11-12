@@ -18,6 +18,7 @@ const SETTINGS = [
   "features/settings/security-section.tsx",
   "features/settings/account-wizards.tsx",
   "features/settings/limit-events-panel.tsx",
+  "features/settings/desktop-app-section.tsx",
   "features/setup/settings-section.tsx",
   "features/link/link-settings.tsx",
 ];

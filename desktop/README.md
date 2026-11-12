@@ -126,6 +126,13 @@ app's first-run guide offers, does not run on anything older.
   shows the app's icon (`init.js`, part 8; `tray::host_present_at_start`), so
   the first-run guide points at the switch only where there is one, and
   promises the tray only where a host is there.
+  Settings → Desktop app goes through the same script (`init.js`, part 9):
+  *Open in Browser*, *Start at Login* and the Login Items line are
+  `droppen-desktop://settings/…` navigations the window cancels, each carrying
+  a launch token the script keeps in its closure, and acted on only when the
+  asking window shows the app's server (`desktop_settings.rs`); the Start at
+  Login state comes back the other way, as a small script evaluated into that
+  origin.
 - **Run from a quarantined download** (App Translocation): a notice says to
   move Droppen to Applications, and *Start at Login* stays off until it is. A
   launch agent made before the app was moved is pointed at where it is now

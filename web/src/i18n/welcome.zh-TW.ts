@@ -141,9 +141,8 @@ export const welcomeZhTW: Record<string, string> = {
   "Let browsers on my local network in too": "讓區域網路裡的瀏覽器也能存取", // where.lan.title
   "Set a password for this device (advanced)": "設定這台裝置的密碼（進階）", // where.lan.action
   "An iPad or another device on the same Wi‑Fi opens this Mac's address in a browser and signs in with the password. Doesn't go through droppen.app, and works alongside either choice above.": "同一個 Wi‑Fi 下的 iPad 或其他裝置，用瀏覽器打開這台 Mac 的位址，輸入密碼進入。不經過 droppen.app，可以和上面任一選項同時使用。", // where.lan.body
-  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "這台裝置上的 Droppen 應用程式永遠不用密碼。這台裝置上的瀏覽器，在應用程式的選單列選單中選擇「在瀏覽器中打開」，打開時已經登入。替這台裝置設定密碼以後，瀏覽器會要這個密碼。", // where.browserNote
-  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.": "這台裝置上的 Droppen 應用程式永遠不用密碼。這台裝置上的瀏覽器，在系統匣的 Droppen 圖示選單中選擇「在瀏覽器中打開」，打開時已經登入。替這台裝置設定密碼以後，瀏覽器會要這個密碼。",
-  "The Droppen app on this device never asks for a password. Once this device has a password, a browser asks for it.": "這台裝置上的 Droppen 應用程式永遠不用密碼。替這台裝置設定密碼以後，瀏覽器會要這個密碼。", // where.browserNote, no tray host
+  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu or in Settings → Desktop app: it opens signed in. Once this device has a password, a browser asks for it.": "這台裝置上的 Droppen 應用程式永遠不用密碼。這台裝置上的瀏覽器，在應用程式的選單列選單或 設定 → 桌面應用程式 裡選擇「在瀏覽器中打開」，打開時已經登入。替這台裝置設定密碼以後，瀏覽器會要這個密碼。", // where.browserNote, Mac
+  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in Settings → Desktop app: it opens signed in. Once this device has a password, a browser asks for it.": "這台裝置上的 Droppen 應用程式永遠不用密碼。這台裝置上的瀏覽器，在 設定 → 桌面應用程式 裡選擇「在瀏覽器中打開」，打開時已經登入。替這台裝置設定密碼以後，瀏覽器會要這個密碼。", // where.browserNote, Linux
   "Sign in in the browser": "在瀏覽器中登入", // where.go.droppen
   "Set the password": "設定密碼", // where.go.lan
   "Change it later in Settings → Access.": "之後在 設定 → 存取 裡修改。", // where.changeLater
@@ -234,9 +233,9 @@ export const welcomeZhTW: Record<string, string> = {
   "This device stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "這台裝置仍在你的 Droppen 帳戶裡。要把它移出，請到 設定 → 存取 → Droppen。", // where.local.stays (as built)
   "This window cannot sign this device in. See Settings → Access → Droppen.": "這個視窗不能讓這台裝置登入。請看 設定 → 存取 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
-  "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "隨時可以在選單列的 Droppen 圖示裡開啟或關閉「登入時啟動」。", // wrap.login.menuBar
-  "Turn it on or off any time from the Droppen icon in the system tray: Start at Login.": "隨時可以在系統匣的 Droppen 圖示裡開啟或關閉「登入時啟動」。",
-  "Turn it on or off any time in your desktop's startup applications.": "隨時可以在桌面的啟動應用程式設定裡開啟或關閉。", // wrap.login, no tray host
+  "Turn it on or off any time from the Droppen icon in the menu bar or in Settings → Desktop app.": "隨時可以在選單列的 Droppen 圖示或 設定 → 桌面應用程式 裡開啟或關閉。", // wrap.login.menuBar
+  "Turn it on or off any time from the Droppen icon in the system tray or in Settings → Desktop app.": "隨時可以在系統匣的 Droppen 圖示或 設定 → 桌面應用程式 裡開啟或關閉。",
+  "Turn it on or off any time in Settings → Desktop app.": "隨時可以在 設定 → 桌面應用程式 裡開啟或關閉。", // wrap.login, no tray host
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "關閉",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS 已打開 Apple 的安裝程式。在那裡裝完，再回來檢查一次。",

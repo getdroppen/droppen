@@ -14,11 +14,38 @@
  * `host_present_at_start`), through its window's bridge
  * (`desktop/src-tauri/src/init.js`). A page without the bridge — a browser on
  * the device — takes both as yes, as before.
+ *
+ * The same bridge is what Settings → Desktop app talks through (part 9):
+ * `openInBrowser`, `setStartAtLogin`, `openLoginItems` and
+ * `refreshDesktopSettings` ask the app, and the state it pushes is what the
+ * section draws (`desktop_settings.rs` on the app side).
  */
 import { serverPlatform } from "./auth";
 
 /** The systems the app is built for. */
 export type DesktopSystem = "mac" | "linux";
+
+/** What the app's init script puts on the window; a browser's pages have none. */
+interface DesktopBridge {
+  startAtLogin?: unknown;
+  trayHost?: unknown;
+  settingsState?: () => unknown;
+  settings?: (bridge: string, state: unknown) => void;
+  openInBrowser?: () => void;
+  setStartAtLogin?: (on: boolean) => void;
+  openLoginItems?: () => void;
+  refreshDesktopSettings?: () => void;
+}
+
+function desktopBridge(): DesktopBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { __droppenDesktop?: DesktopBridge }).__droppenDesktop;
+}
+
+/** Whether this page is the desktop app's own window (its init script is there). */
+export function isDesktopWindow(): boolean {
+  return desktopBridge() !== undefined;
+}
 
 /**
  * A Node-style platform (`darwin`, `linux`) as one of the app's systems:
@@ -36,8 +63,7 @@ export function desktopSystem(): DesktopSystem {
 
 /** What the app's window says of Start at Login, if this page is in its window and it says. */
 function bridgeStartAtLogin(): boolean | undefined {
-  if (typeof window === "undefined") return undefined;
-  const said = (window as unknown as { __droppenDesktop?: { startAtLogin?: unknown } }).__droppenDesktop?.startAtLogin;
+  const said = desktopBridge()?.startAtLogin;
   return typeof said === "boolean" ? said : undefined;
 }
 
@@ -53,8 +79,7 @@ export function startAtLoginOffered(said: boolean | undefined = bridgeStartAtLog
 
 /** What the app's window says of a tray host, if this page is in its window and it says. */
 function bridgeTrayHost(): boolean | undefined {
-  if (typeof window === "undefined") return undefined;
-  const said = (window as unknown as { __droppenDesktop?: { trayHost?: unknown } }).__droppenDesktop?.trayHost;
+  const said = desktopBridge()?.trayHost;
   return typeof said === "boolean" ? said : undefined;
 }
 
@@ -66,4 +91,48 @@ function bridgeTrayHost(): boolean | undefined {
  */
 export function trayHostPresent(said: boolean | undefined = bridgeTrayHost()): boolean {
   return said ?? true;
+}
+
+/** The Start at Login state the app pushes to its Settings → Desktop app. */
+export interface DesktopSettingsState {
+  /** It is on: registered, approved or waiting for approval. */
+  checked: boolean;
+  /** The switch can change it: not from an App Translocation copy. */
+  enabled: boolean;
+  /** macOS needs the user in Login Items, or the last turn-on failed. */
+  note: "needsApproval" | "turnOnFailed" | null;
+}
+
+/** The pushed state, checked down to the shape the section draws. */
+export function parseDesktopSettings(raw: unknown): DesktopSettingsState | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const state = raw as Record<string, unknown>;
+  if (typeof state.checked !== "boolean" || typeof state.enabled !== "boolean") return null;
+  const note = state.note === "needsApproval" || state.note === "turnOnFailed" ? state.note : null;
+  return { checked: state.checked, enabled: state.enabled, note };
+}
+
+/** What the app last pushed, or null before it has (and in a browser). */
+export function desktopSettingsState(): DesktopSettingsState | null {
+  return parseDesktopSettings(desktopBridge()?.settingsState?.());
+}
+
+/** Tell the app the section is open: it reads the platform and pushes the state back. */
+export function refreshDesktopSettings(): void {
+  desktopBridge()?.refreshDesktopSettings?.();
+}
+
+/** Open this device's page in its browser, signed in — the tray item's action. */
+export function openInBrowser(): void {
+  desktopBridge()?.openInBrowser?.();
+}
+
+/** Turn Start at Login on or off; the app pushes the real state back. */
+export function setDesktopStartAtLogin(on: boolean): void {
+  desktopBridge()?.setStartAtLogin?.(on);
+}
+
+/** macOS's Login Items page, for an item waiting for approval. */
+export function openLoginItems(): void {
+  desktopBridge()?.openLoginItems?.();
 }

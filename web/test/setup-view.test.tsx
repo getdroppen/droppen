@@ -227,7 +227,7 @@ test("on the desktop app's server: Open in Browser, and no code or `open` to off
   }
 });
 
-test("Open in Browser is where the app keeps it: the menu bar on a Mac and before servers said, the system tray on Linux", async () => {
+test("Open in Browser is in Settings → Desktop app, and on a Mac the menu bar too", async () => {
   const said = async (platform: string | undefined) => {
     statusAnswer = { authRequired: true, setupRequired: true, authOff: false, user: null, desktopApp: true, droppenPath: "/opt/droppen/droppen", ...(platform ? { platform } : {}) };
     forgetAuthStatus();
@@ -239,13 +239,13 @@ test("Open in Browser is where the app keeps it: the menu bar on a Mac and befor
   try {
     for (const platform of ["darwin", undefined]) {
       const { en, zh } = await said(platform);
-      assert.match(en, /In the app&#x27;s menu-bar menu, choose Open in Browser/, `${platform}`);
-      assert.match(zh, /在 App 的菜单栏菜单里选「在浏览器中打开」：/, `${platform}`);
+      assert.match(en, /In the app&#x27;s menu-bar menu or in Settings → Desktop app, choose Open in Browser/, `${platform}`);
+      assert.match(zh, /在 App 的菜单栏菜单或 设置 → 桌面 App 里选「在浏览器中打开」：/, `${platform}`);
     }
     const { en, zh } = await said("linux");
-    assert.match(en, /From the Droppen icon in the system tray, choose Open in Browser: it opens this page signed in/);
+    assert.match(en, /In Settings → Desktop app, choose Open in Browser: it opens this page signed in/);
     assert.doesNotMatch(en, /menu-bar|menu bar|\bMac\b/);
-    assert.match(zh, /在系统托盘的 Droppen 图标菜单里选「在浏览器中打开」/);
+    assert.match(zh, /在 设置 → 桌面 App 里选「在浏览器中打开」/);
     assert.doesNotMatch(zh, /菜单栏/);
   } finally {
     forgetAuthStatus();
