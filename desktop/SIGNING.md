@@ -373,6 +373,26 @@ password goes to the signer through its environment only), and writes
 else falls back to the release page). The manifest itself is not signed, so the app trusts nothing in
 it but what the signature binds: the archive and its version.
 
+A release that ships the Linux app too also offers its two AppImages, each
+signed with the same key for its own file name
+(`droppen-update-signer sign Droppen-$VERSION-<arch>.AppImage --version $VERSION`):
+`droppen-update-manifest write … --linux aarch64=<AppImage>,<.sig> --linux
+x86_64=<AppImage>,<.sig>` adds
+
+```json
+    "linux-aarch64-appimage": { "signature": "<Droppen-0.2.125-aarch64.AppImage.sig>", "url": "https://github.com/getdroppen/droppen/releases/download/v0.2.125/Droppen-0.2.125-aarch64.AppImage" },
+    "linux-x86_64-appimage":  { "signature": "<Droppen-0.2.125-x86_64.AppImage.sig>",  "url": "https://github.com/getdroppen/droppen/releases/download/v0.2.125/Droppen-0.2.125-x86_64.AppImage" }
+```
+
+to `platforms`, the raw AppImage each time. It takes both architectures or
+neither, and an AppImage only under its release name with a signature for
+that name and version. The manifest never has a bare `linux-<arch>` key: the
+updater falls back to it from `linux-<arch>-deb`, so a .deb install would
+fetch an AppImage and hand it to `dpkg`. Nor a `-deb` key: a .deb is updated
+by its package manager. The Mac app ignores the keys it does not look up, and
+without `--linux` the manifest is the Mac's alone, byte for byte as before.
+`check … --linux …` verifies a manifest's AppImages the same way.
+
 ### Rules for a release
 
 - The app's version must be the release's: `desktop/build.sh --ref vX.Y.Z`
