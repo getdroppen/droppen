@@ -43,7 +43,6 @@
 //! quit, so the path its desktop and autostart entries name stays the app's.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -407,40 +406,6 @@ pub fn replaceable(image: &Path) -> bool {
     // SAFETY: getuid cannot fail.
     let uid = unsafe { libc::getuid() };
     folder.mode() & STICKY == 0 || image.uid() == uid || folder.uid() == uid
-}
-
-/// The environment to start an AppImage with from inside this one: this
-/// launch's `vars` without what the AppImage runtime and AppRun set for it —
-/// `$APPIMAGE`, `$APPDIR`, `$ARGV0`, `$OWD`, and every path under `appdir`
-/// (`$APPDIR`) in any variable, a variable left with none dropped. The mount
-/// goes when this launch does, and its folder in `/tmp` is a name any user
-/// may then make again: a library path into it would load whatever they put
-/// there. The next launch's runtime and AppRun set their own.
-pub fn outside_appimage(vars: impl IntoIterator<Item = (OsString, OsString)>, appdir: &Path) -> Vec<(OsString, OsString)> {
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
-    let appdir = appdir.as_os_str().as_bytes();
-    let inside = |part: &[u8]| {
-        !appdir.is_empty()
-            && part
-                .windows(appdir.len())
-                .enumerate()
-                .any(|(at, window)| window == appdir && matches!(part.get(at + appdir.len()), None | Some(b'/')))
-    };
-    vars.into_iter()
-        .filter(|(name, _)| !matches!(name.as_bytes(), b"APPIMAGE" | b"APPDIR" | b"ARGV0" | b"OWD"))
-        .filter_map(|(name, value)| {
-            let bytes = value.as_bytes();
-            if !inside(bytes) {
-                return Some((name, value));
-            }
-            let kept: Vec<&[u8]> = bytes.split(|byte| *byte == b':').filter(|part| !inside(part)).collect();
-            // Only empty entries left (the current folder, to a search path):
-            // nothing of what was there before the AppImage set it.
-            kept.iter()
-                .any(|part| !part.is_empty())
-                .then(|| (name, OsString::from_vec(kept.join(&b':'))))
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -2162,46 +2127,5 @@ mod tests {
             std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).expect("back");
         }
         assert!(!replaceable(Path::new("/")), "no folder");
-    }
-
-    #[test]
-    fn the_next_appimage_starts_without_this_ones_mount_in_its_environment() {
-        let var = |name: &str, value: &str| (OsString::from(name), OsString::from(value));
-        let mount = Path::new("/tmp/.mount_DroppeAb12Cd");
-        let mut kept = outside_appimage(
-            [
-                var("APPIMAGE", "/home/me/Apps/Droppen.AppImage"),
-                var("APPDIR", "/tmp/.mount_DroppeAb12Cd"),
-                var("ARGV0", "/home/me/Apps/Droppen.AppImage"),
-                var("OWD", "/home/me"),
-                var("HOME", "/home/me"),
-                var("PATH", "/tmp/.mount_DroppeAb12Cd/usr/bin:/usr/local/bin:/usr/bin"),
-                var(
-                    "LD_LIBRARY_PATH",
-                    "/tmp/.mount_DroppeAb12Cd/usr/lib:/tmp/.mount_DroppeAb12Cd/usr/lib/x86_64-linux-gnu",
-                ),
-                var("XDG_DATA_DIRS", "/tmp/.mount_DroppeAb12Cd/usr/share:/usr/share:/usr/local/share"),
-                var(
-                    "GDK_PIXBUF_MODULE_FILE",
-                    "/tmp/.mount_DroppeAb12Cd/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache",
-                ),
-                var("GDK_BACKEND", "x11"),
-                // Another mount whose name starts the same, and an empty entry left alone.
-                var("GTK_PATH", "/tmp/.mount_DroppeAb12CdX/usr/lib::/usr/lib/gtk-3.0"),
-                var("PYTHONPATH", "/tmp/.mount_DroppeAb12Cd/usr/share/pyshared:"),
-            ],
-            mount,
-        );
-        kept.sort();
-        assert_eq!(
-            kept,
-            vec![
-                var("GDK_BACKEND", "x11"),
-                var("GTK_PATH", "/tmp/.mount_DroppeAb12CdX/usr/lib::/usr/lib/gtk-3.0"),
-                var("HOME", "/home/me"),
-                var("PATH", "/usr/local/bin:/usr/bin"),
-                var("XDG_DATA_DIRS", "/usr/share:/usr/local/share"),
-            ]
-        );
     }
 }

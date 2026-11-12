@@ -37,10 +37,16 @@ pub use droppen_search_path::{base_dirs, build};
 /// shell misses the second. The value is fenced with markers so whatever the
 /// start-up files print does not end up in it. Standard input is closed and the
 /// shell is stopped (by pid) after `timeout`, so a start-up file that waits for
-/// something cannot hold the app up.
-pub fn login_shell_path(shell: &Path, home: &Path, timeout: Duration) -> Option<String> {
+/// something cannot hold the app up. The shell runs in the app's environment,
+/// or in `env` alone when given (an AppImage's, without what its AppRun set:
+/// `crate::appimage`).
+pub fn login_shell_path(shell: &Path, home: &Path, env: Option<&[(String, String)]>, timeout: Duration) -> Option<String> {
     const MARK: &str = "__DROPPEN_PATH__";
-    let mut child = Command::new(shell)
+    let mut command = Command::new(shell);
+    if let Some(env) = env {
+        command.env_clear().envs(env.iter().map(|(name, value)| (name, value)));
+    }
+    let mut child = command
         .args(["-ilc", &format!("printf '{MARK}%s{MARK}' \"$PATH\"")])
         .current_dir(home)
         .stdin(Stdio::null())
@@ -284,8 +290,20 @@ mod tests {
         )
         .expect("write");
         std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let path = login_shell_path(&shell, root.path(), Duration::from_secs(5));
+        let path = login_shell_path(&shell, root.path(), None, Duration::from_secs(5));
         assert_eq!(path.as_deref(), Some("/opt/fake/bin:/usr/bin"));
+    }
+
+    /// Given an environment, the shell has that one and nothing else of the app's.
+    #[test]
+    fn the_login_shell_runs_in_the_environment_it_is_given() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let shell = root.path().join("fake-shell");
+        std::fs::write(&shell, "#!/bin/sh\nPATH=\"$PATH:${HOME:-no-home}\"\neval \"$2\"\n").expect("write");
+        std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let env = vec![("PATH".to_string(), "/given/bin:/usr/bin:/bin".to_string())];
+        let path = login_shell_path(&shell, root.path(), Some(&env), Duration::from_secs(5));
+        assert_eq!(path.as_deref(), Some("/given/bin:/usr/bin:/bin:no-home"));
     }
 
     #[test]
@@ -295,7 +313,7 @@ mod tests {
         std::fs::write(&shell, "#!/bin/sh\nexec sleep 30\n").expect("write");
         std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let started = Instant::now();
-        assert_eq!(login_shell_path(&shell, root.path(), Duration::from_millis(300)), None);
+        assert_eq!(login_shell_path(&shell, root.path(), None, Duration::from_millis(300)), None);
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 }

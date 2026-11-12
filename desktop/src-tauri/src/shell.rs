@@ -161,7 +161,11 @@ pub struct Shell {
     sidecar: PathBuf,
     instance_dir: PathBuf,
     store: LayeredStore,
+    /// The environment what the app starts gets ([`inherited_env`]).
     inherited: Vec<(String, String)>,
+    /// Whether that is not the app's own: an AppImage's, without what its
+    /// runtime and AppRun set.
+    outside_appimage: bool,
     port: Arc<AtomicU16>,
     nonce: String,
     translocated: bool,
@@ -185,6 +189,38 @@ pub enum Opening {
     PlainPage(u16),
 }
 
+/// The environment what the app starts gets (the server, and through it its
+/// sessions and terminals), and whether it is not the app's own. In an
+/// AppImage, the one from before its runtime and AppRun
+/// (`droppen_desktop_core::appimage`): the mount they point into goes when the
+/// app quits, and terminals carry on. Anywhere else, the app's.
+fn inherited_env() -> (Vec<(String, String)>, bool) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        use droppen_desktop_core::appimage;
+        let appdir = std::env::var_os("APPDIR").map(std::path::PathBuf::from);
+        let exe = std::env::current_exe().ok();
+        if let Some(appdir) = appimage::own_appdir(appdir.as_deref(), exe.as_deref()) {
+            let env: Vec<(String, String)> = appimage::outside_appimage(std::env::vars_os(), &appdir)
+                .into_iter()
+                .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+                .collect();
+            let mut changed: Vec<String> = std::env::vars()
+                .filter(|(name, value)| !env.iter().any(|(kept, as_was)| kept == name && as_was == value))
+                .map(|(name, _)| name)
+                .collect();
+            changed.sort();
+            log::info!(
+                "the server gets the environment from before the AppImage's AppRun: {} restored or left out ({})",
+                changed.len(),
+                changed.join(" ")
+            );
+            return (env, true);
+        }
+    }
+    (std::env::vars().collect(), false)
+}
+
 /// The server's environment ([`sidecar::server_env`]). In an end-to-end test
 /// build, also the hub its sign-ins go to, from `DROPPEN_DESKTOP_TEST_HUB` (a
 /// local hub, the server's `DROPPEN_HUB_DEFAULT`, which the scrub would drop),
@@ -206,12 +242,14 @@ impl Shell {
     /// A shell for `sidecar` under `dirs`, keeping its credential in `store`.
     pub fn new(dirs: ShellDirs, sidecar: PathBuf, store: LayeredStore, translocated: bool, ui: Box<dyn Ui>) -> Arc<Self> {
         let instance_dir = instance::dir_under(&dirs.home, INSTANCE);
+        let (inherited, outside_appimage) = inherited_env();
         Arc::new_cyclic(|me| Self {
             dirs,
             sidecar,
             instance_dir,
             store,
-            inherited: std::env::vars().collect(),
+            inherited,
+            outside_appimage,
             port: Arc::new(AtomicU16::new(0)),
             nonce: web::new_nonce(),
             translocated,
@@ -390,7 +428,11 @@ impl Shell {
             .ok()
             .filter(|shell| shell.starts_with('/'))
             .unwrap_or_else(|| "/bin/zsh".into());
-        let login_path = env_path::login_shell_path(std::path::Path::new(&shell), &self.dirs.home, Duration::from_secs(5));
+        // In an AppImage, in the environment the server gets: the login
+        // shell's PATH starts from AppRun's otherwise, which puts the mount's
+        // folders first.
+        let login_env = self.outside_appimage.then_some(self.inherited.as_slice());
+        let login_path = env_path::login_shell_path(std::path::Path::new(&shell), &self.dirs.home, login_env, Duration::from_secs(5));
         if login_path.is_none() {
             log::warn!("could not read the login shell's PATH ({shell}); using the standard directories only");
         }
