@@ -55,7 +55,10 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    earlier notes) when the release has the desktop app: the workflow builds,
    signs and publishes the app exactly when the notes announce it. Without it,
    the release is server-only and carries the latest `latest.json` and DMG
-   forward (`scripts/publish-release.sh`). Merge it.
+   forward, with the Linux app's files and their sources once a release has
+   had them (`scripts/publish-release.sh`). Notes that name this version's
+   AppImage or `.deb` need the Linux app on the release, as the DMG's need
+   the Mac app. Merge it.
 
    **No CI skip marker in its title** (`[skip ci]`, `[ci skip]`, `[no ci]`,
    `[skip actions]`, `[actions skip]`, or a `skip-checks: true` trailer), nor

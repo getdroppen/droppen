@@ -3,15 +3,17 @@
 # releases; DROPPEN_RELEASE_REPO names another, as scripts/bridge-release.sh
 # does): the server scripts/release-public.sh staged and, with --desktop, the desktop
 # app desktop/SIGNING.md made (notarised DMG, updater archive, signature,
-# latest.json). Installed desktop apps read `latest.json` from the repository's
+# latest.json), and with --desktop-linux the Linux app beside it (AppImages
+# and their signatures, .debs, LIBRARIES files, the libraries' sources).
+# Installed desktop apps read `latest.json` from the repository's
 # *latest* release, so every release carries one, uploaded last, and a release
 # becomes the latest only once it has it:
 #
 #   1. checks everything first: the staged files against their SHA256SUMS; the
-#      desktop files, and their latest.json against the archive and
-#      tauri.conf.json's updater key; that no release (draft or not) is
-#      called <version> yet, and that <version> is newer than the latest
-#      release;
+#      desktop files, and their latest.json against the archive (and the
+#      AppImages) and tauri.conf.json's updater key; that no release (draft or
+#      not) is called <version> yet, and that <version> is newer than the
+#      latest release;
 #   2. picks the release's latest.json:
 #        --desktop: the one desktop/updater-artifacts.sh wrote for <version>;
 #        otherwise the one installed apps read today, carried forward
@@ -22,18 +24,20 @@
 #        release (also published, not a prerelease);
 #      and without --desktop, the app's DMG for the download page: the one on
 #      the release the manifest comes from (or the latest release), carried
-#      forward too;
+#      forward too, with the Linux app's files when its latest.json offers
+#      the AppImages (never an AppImage without its sources tar);
 #      and, when the release's install.sh pins a release key (SUMS_KEY,
 #      scripts/install-key.sh), that SHA256SUMS-server.sig in the server's
 #      directory is a good signature over its SHA256SUMS with that key;
 #   3. creates <version> as a DRAFT with the server's files (a draft is
 #      invisible, and GitHub's "latest" never points at one), uploads the
-#      desktop files (or the carried DMG), then latest.json LAST;
+#      desktop files (or the carried DMG), the Linux app's (or the carried
+#      ones), then latest.json LAST;
 #   4. checks that the draft holds exactly those files, sizes and all;
 #   5. publishes it and marks it latest, in one step;
 #   6. checks that .../releases/latest/download/latest.json is now this file.
 #
-#   scripts/publish-release.sh <version> --server <dir> [--desktop <dir>]
+#   scripts/publish-release.sh <version> --server <dir> [--desktop <dir> [--desktop-linux <dir>]]
 #                              [--manifest-from <tag> | --no-manifest]
 #                              [--verify-pubkey <file>] [--dry-run [--local-only]]
 #                              [--sums-out <file>] [--sums-expected <file>]
@@ -45,6 +49,14 @@
 #   --desktop        desktop/build.sh's --out directory once desktop/SIGNING.md
 #                    is done with it: the notarised Droppen-<x.y.z>.dmg, and
 #                    updater/ (desktop/updater-artifacts.sh --out <dir>/updater)
+#   --desktop-linux  with --desktop (the two apps ship together, under one
+#                    latest.json, which must offer the AppImages): the Linux
+#                    app's files, side by side: Droppen-<x.y.z>-<arch>.AppImage
+#                    and its .sig for x86_64 and aarch64, droppen_<x.y.z>_amd64.deb
+#                    and _arm64.deb, LIBRARIES-x86_64.txt and -aarch64.txt, and
+#                    Droppen-<x.y.z>-linux-sources.tar. Once a published
+#                    latest.json offers the AppImages, --desktop without it is
+#                    refused: AppImage installs would find no update again
 #   --manifest-from  without --desktop, when the latest release has no
 #                    latest.json: carry this release's
 #   --no-manifest    without --desktop: publish no latest.json; refused once
@@ -111,6 +123,7 @@ usage() { release_usage '/^# Needs:/'; }
 VERSION=""
 SERVER=""
 DESKTOP=""
+DESKTOP_LINUX=""
 MANIFEST_FROM=""
 NO_MANIFEST=0
 DRY_RUN=0
@@ -125,6 +138,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --server) SERVER=${2:?--server needs a directory}; shift 2 ;;
     --desktop) DESKTOP=${2:?--desktop needs a directory}; shift 2 ;;
+    --desktop-linux) DESKTOP_LINUX=${2:?--desktop-linux needs a directory}; shift 2 ;;
     --manifest-from) MANIFEST_FROM=${2:?--manifest-from needs a tag}; shift 2 ;;
     --no-manifest) NO_MANIFEST=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -149,6 +163,9 @@ if [ -n "$DESKTOP" ] && { [ -n "$MANIFEST_FROM" ] || [ "$NO_MANIFEST" = 1 ]; }; 
   die "--desktop brings its own latest.json; --manifest-from and --no-manifest are for a release without the desktop app"
 fi
 [ -z "$MANIFEST_FROM" ] || [ "$NO_MANIFEST" = 0 ] || die "--manifest-from and --no-manifest are exclusive"
+# One latest.json, in --desktop's updater/, serves both apps, for one version.
+[ -z "$DESKTOP_LINUX" ] || [ -n "$DESKTOP" ] \
+  || die "--desktop-linux needs --desktop: the Linux and macOS apps ship together, under one latest.json"
 [ "$LOCAL_ONLY" = 0 ] || [ "$DRY_RUN" = 1 ] || die "--local-only is for a --dry-run: a release is published only after every check"
 [ -z "$SUMS_EXPECTED" ] || [ -f "$SUMS_EXPECTED" ] || die "--sums-expected $SUMS_EXPECTED: no such file"
 [ "$SKIP_MANIFEST_CHECK" = 0 ] || [ -z "$VERIFY_PUBKEY" ] || die "--verify-pubkey is a manifest check; it does not go with --skip-manifest-check or --sums-only"
@@ -223,6 +240,31 @@ older() {
 
 size_of() { wc -c <"$1" | tr -d ' '; }
 
+# The Linux app's files of x.y.z $1, in the order they are uploaded and
+# summed: the AppImages, the .debs, the libraries each AppImage bundles, and
+# the corresponding source of the LGPL and GPL ones, which goes wherever an
+# AppImage goes. (The AppImages' .sig files are this release's only, as
+# Droppen.app.tar.gz.sig is: never carried forward.)
+LINUX_ARCHES="aarch64 x86_64"
+linux_files() {
+  printf '%s\n' "Droppen-$1-aarch64.AppImage" "Droppen-$1-x86_64.AppImage" "droppen_${1}_arm64.deb" "droppen_${1}_amd64.deb" \
+    LIBRARIES-aarch64.txt LIBRARIES-x86_64.txt "Droppen-$1-linux-sources.tar"
+}
+
+# The Linux keys of a latest.json's platforms (linux-<arch>-appimage), one a line.
+linux_keys() {
+  node -e '
+    const manifest = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    for (const key of Object.keys(manifest.platforms || {})) if (key.startsWith("linux-")) console.log(key);
+  ' "$1"
+}
+
+# Whether $1 is a tar archive that lists something.
+tar_lists() {
+  local listing
+  listing=$(tar -tf "$1" 2>/dev/null) && [ -n "$listing" ]
+}
+
 # Every release, drafts included (gh is logged in with write access), as
 # "tag<TAB>draft<TAB>prerelease<TAB>asset,asset,..." lines, newest first.
 releases() {
@@ -276,6 +318,15 @@ done
 # instead, and the notes would promise a file and an update nobody gets.
 if [ -z "$DESKTOP" ] && grep -qF "Droppen-$PLAIN.dmg" "$SERVER/NOTES.md"; then
   die "NOTES.md announces Droppen-$PLAIN.dmg, but there is no --desktop: publish with the desktop app, or take the app's paragraphs out of docs/releases/$VERSION.md and stage again"
+fi
+# The same for the Linux app: notes that name this version's AppImage, .deb
+# or sources need them on the release.
+if [ -z "$DESKTOP_LINUX" ]; then
+  for name in $(linux_files "$PLAIN" | grep -F "$PLAIN"); do
+    if grep -qF "$name" "$SERVER/NOTES.md"; then
+      die "NOTES.md announces $name, but there is no --desktop-linux: publish with the Linux app, or take its paragraphs out of docs/releases/$VERSION.md and stage again"
+    fi
+  done
 fi
 SERVER_ASSETS=()
 for tarball in "$SERVER"/droppen-"$VERSION"-*.tar.gz "$SERVER"/remote-hand-"$VERSION"-*.tar.gz; do
@@ -340,15 +391,59 @@ if [ -n "$DESKTOP" ]; then
   SIGNED=$(json_field "$UPDATER/latest.json" platforms.darwin-aarch64.signature)
   [ "$SIGNED" = "$(tr -d '\r\n' <"$UPDATER/Droppen.app.tar.gz.sig")" ] \
     || die "$UPDATER/latest.json names another signature than Droppen.app.tar.gz.sig"
-  manifest_check check "$UPDATER/latest.json" --pubkey "$PUBKEY_CONF" --archive "$UPDATER/Droppen.app.tar.gz" \
-    || die "$UPDATER/latest.json was refused"
+  # It offers the AppImages exactly when this release has them: otherwise
+  # AppImage installs would be sent to files it does not have.
+  if [ -z "$DESKTOP_LINUX" ] && [ -n "$(linux_keys "$UPDATER/latest.json")" ]; then
+    die "$UPDATER/latest.json offers the Linux app's AppImages ($(echo $(linux_keys "$UPDATER/latest.json"))), but there is no --desktop-linux: publish with the Linux app, or write latest.json without --linux"
+  fi
   DESKTOP_ASSETS=("$DMG" "$UPDATER/Droppen.app.tar.gz" "$UPDATER/Droppen.app.tar.gz.sig")
   MANIFEST=$UPDATER/latest.json
 fi
 
+LINUX_ASSETS=()
+LINUX_CHECK=()
+if [ -n "$DESKTOP_LINUX" ]; then
+  say "the Linux app: $DESKTOP_LINUX"
+  [ -d "$DESKTOP_LINUX" ] || die "$DESKTOP_LINUX is not a directory"
+  [ ! -e "$DESKTOP_LINUX/E2E-TEST-BUILD.txt" ] || die "$DESKTOP_LINUX is an end-to-end test build: never published"
+  for name in $(linux_files "$PLAIN"); do
+    [ -s "$DESKTOP_LINUX/$name" ] || die "no $DESKTOP_LINUX/$name: the Linux app is published with all its files, for $PLAIN"
+  done
+  # What an AppImage bundles from LGPL and GPL libraries is published with
+  # their corresponding source, every time the AppImage is.
+  SOURCES=$DESKTOP_LINUX/Droppen-$PLAIN-linux-sources.tar
+  tar_lists "$SOURCES" || die "$SOURCES is not a tar archive of the AppImages' library sources"
+  for name in $(linux_files "$PLAIN"); do
+    LINUX_ASSETS+=("$DESKTOP_LINUX/$name")
+    case "$name" in
+      *.AppImage)
+        arch=${name%.AppImage}
+        arch=${arch##*-}
+        # The updater signature release.yml's release job makes beside it.
+        [ -s "$DESKTOP_LINUX/$name.sig" ] \
+          || die "no $DESKTOP_LINUX/$name.sig (droppen-update-signer sign $name --version $PLAIN, with the updater key)"
+        [ "$(json_field "$MANIFEST" "platforms.linux-$arch-appimage.signature")" = "$(tr -d '\r\n' <"$DESKTOP_LINUX/$name.sig")" ] \
+          || die "$MANIFEST does not offer $name with $name.sig (droppen-update-manifest write --linux $arch=<AppImage>,<.sig>)"
+        LINUX_ASSETS+=("$DESKTOP_LINUX/$name.sig")
+        LINUX_CHECK+=(--linux "$arch=$DESKTOP_LINUX/$name,$DESKTOP_LINUX/$name.sig")
+        ;;
+    esac
+  done
+  echo "ok: $(for file in "${LINUX_ASSETS[@]}"; do basename "$file"; done | tr '\n' ' ')"
+fi
+
+if [ -n "$DESKTOP" ]; then
+  # One check of the one latest.json, the AppImages' signatures with the
+  # archive's when it offers them.
+  say "latest.json: $MANIFEST"
+  manifest_check check "$MANIFEST" --pubkey "$PUBKEY_CONF" --archive "$UPDATER/Droppen.app.tar.gz" ${LINUX_CHECK[@]+"${LINUX_CHECK[@]}"} \
+    || die "$MANIFEST was refused"
+fi
+
 # SHA256SUMS of the release: the server's tarballs, then the desktop app's
-# files (or the carried DMG) and latest.json, as $WORK/SHA256SUMS; written to
-# --sums-out, and held to --sums-expected.
+# files (or the carried DMG), the Linux app's (or the carried ones) and
+# latest.json, as $WORK/SHA256SUMS; written to --sums-out, and held to
+# --sums-expected.
 make_sums() { # the files after the server's tarballs
   local file
   cp "$SERVER/SHA256SUMS" "$WORK/SHA256SUMS"
@@ -369,7 +464,7 @@ make_sums() { # the files after the server's tarballs
 
 if [ "$LOCAL_ONLY" = 1 ]; then
   say "SHA256SUMS (--local-only: without carried files)"
-  make_sums ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"}
+  make_sums ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${LINUX_ASSETS[@]+"${LINUX_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"}
   printf '\nA dry run of the files only (--local-only): %s was not asked anything, and nothing was written.\n' "$REPO_PUBLIC"
   exit 0
 fi
@@ -394,8 +489,20 @@ if [ "$PRERELEASE" = 0 ] && [ -n "$LATEST" ]; then
   older "${LATEST#v}" "$PLAIN" || die "$VERSION is not newer than the latest release, $LATEST: publishing it would move \"latest\" backwards"
 fi
 echo "the latest release: ${LATEST:-none}"
+# Once a latest.json has offered the AppImages, every one after it must: a
+# release of the desktop app without the Linux app would leave every AppImage
+# install with no update to find, from then on. The newest published
+# latest.json says (each one since the first that offered them has, by this
+# rule and by being carried forward unchanged).
+if [ -n "$DESKTOP" ] && [ -z "$DESKTOP_LINUX" ] && [ -n "$CARRYING" ]; then
+  mkdir -p "$WORK/newest"
+  gh release download "$CARRYING" --repo "$REPO_PUBLIC" --pattern latest.json --dir "$WORK/newest" \
+    || die "cannot download latest.json from $CARRYING"
+  [ -z "$(linux_keys "$WORK/newest/latest.json")" ] \
+    || die "$CARRYING's latest.json offers the Linux app's AppImages: a release with the desktop app needs --desktop-linux too from now on, or AppImage installs would find no update again"
+fi
 
-CARRY_DMG_FROM=""
+CARRY_APPS_FROM=""
 if [ "$PRERELEASE" = 1 ]; then
   MANIFEST=""
   echo "a prerelease: no latest.json (installed apps never read one)"
@@ -405,7 +512,7 @@ elif [ "$NO_MANIFEST" = 1 ]; then
   [ -z "$CARRYING" ] \
     || die "--no-manifest, but $CARRYING has a latest.json: a release without one leaves every installed app's checks failing (and a failed check still installs a download). Carry it forward instead (a bad update is fixed forward: desktop/SIGNING.md, \"Rollback\")"
   MANIFEST=""
-  CARRY_DMG_FROM=$LATEST
+  CARRY_APPS_FROM=$LATEST
   echo "no latest.json: no published release has had one yet"
 else
   say "latest.json, carried forward"
@@ -450,42 +557,87 @@ else
   manifest_check check "$MANIFEST" --pubkey "$PUBKEY_CONF" --archive "$WORK/carried/Droppen.app.tar.gz" \
     || die "$FROM's latest.json was refused: it does not verify against v$ANNOUNCED's archive with $(basename "$PUBKEY_CONF")'s key (after a key rotation, see desktop/SIGNING.md, \"Rotating the key\")"
   echo "ok: $FROM's latest.json (Droppen $ANNOUNCED) goes on $VERSION unchanged"
-  CARRY_DMG_FROM=$FROM
+  CARRY_APPS_FROM=$FROM
 fi
 
-if [ -n "$CARRY_DMG_FROM" ]; then
+if [ -n "$CARRY_APPS_FROM" ]; then
   # The download page's button goes to the latest release for its DMG: a
   # release without the desktop app carries the one installed apps update to.
   say "the app's DMG, carried forward"
-  DMGS=$(assets_of "$CARRY_DMG_FROM" | tr ',' '\n' | grep -E '^Droppen-[0-9]+\.[0-9]+\.[0-9]+\.dmg$' || true)
+  DMGS=$(assets_of "$CARRY_APPS_FROM" | tr ',' '\n' | grep -E '^Droppen-[0-9]+\.[0-9]+\.[0-9]+\.dmg$' || true)
   case "$(printf '%s' "$DMGS" | grep -c .)" in
-    0) echo "WARNING: $CARRY_DMG_FROM has no Droppen-<version>.dmg, so $VERSION will have none for the download page" ;;
+    0) echo "WARNING: $CARRY_APPS_FROM has no Droppen-<version>.dmg, so $VERSION will have none for the download page" ;;
     1)
       if [ -n "$MANIFEST" ] && [ "$DMGS" != "Droppen-$ANNOUNCED.dmg" ]; then
-        die "$CARRY_DMG_FROM has $DMGS, but its latest.json announces $ANNOUNCED: the DMG and the update would differ"
+        die "$CARRY_APPS_FROM has $DMGS, but its latest.json announces $ANNOUNCED: the DMG and the update would differ"
       fi
       mkdir -p "$WORK/carried"
-      gh release download "$CARRY_DMG_FROM" --repo "$REPO_PUBLIC" --pattern "$DMGS" --dir "$WORK/carried" \
-        || die "cannot download $DMGS from $CARRY_DMG_FROM"
+      gh release download "$CARRY_APPS_FROM" --repo "$REPO_PUBLIC" --pattern "$DMGS" --dir "$WORK/carried" \
+        || die "cannot download $DMGS from $CARRY_APPS_FROM"
       if [ -n "$MANIFEST" ] && [ "$(uname -s)" = Darwin ]; then
         xcrun stapler validate "$WORK/carried/$DMGS" >/dev/null 2>&1 \
-          || die "$CARRY_DMG_FROM's $DMGS has no stapled notarisation ticket"
+          || die "$CARRY_APPS_FROM's $DMGS has no stapled notarisation ticket"
       elif [ -n "$MANIFEST" ]; then
-        echo "WARNING: not on a Mac, so $DMGS's notarisation ticket is not checked (it was when $CARRY_DMG_FROM was published)"
+        echo "WARNING: not on a Mac, so $DMGS's notarisation ticket is not checked (it was when $CARRY_APPS_FROM was published)"
       fi
       DESKTOP_ASSETS=("$WORK/carried/$DMGS")
-      echo "ok: $CARRY_DMG_FROM's $DMGS goes on $VERSION unchanged"
+      echo "ok: $CARRY_APPS_FROM's $DMGS goes on $VERSION unchanged"
       ;;
-    *) die "$CARRY_DMG_FROM has several DMGs ($(echo $DMGS)): which one to carry is for a person to say" ;;
+    *) die "$CARRY_APPS_FROM has several DMGs ($(echo $DMGS)): which one to carry is for a person to say" ;;
   esac
+
+  # The Linux app's files go with the latest.json that offers its AppImages,
+  # for the download page as the DMG does: all of them, of the version it
+  # announces, and an AppImage only ever with its sources tar.
+  LINUX_ON=$(assets_of "$CARRY_APPS_FROM" | tr ',' '\n' \
+    | grep -E '^(Droppen-.*\.AppImage|droppen_.*\.deb|LIBRARIES-.*\.txt|Droppen-.*-linux-sources\.tar)$' || true)
+  OFFERED=""
+  [ -z "$MANIFEST" ] || OFFERED=$(linux_keys "$MANIFEST")
+  if [ -n "$LINUX_ON" ] || [ -n "$OFFERED" ]; then
+    say "the Linux app's files, carried forward"
+    for name in $(printf '%s\n' "$LINUX_ON" | grep -E '\.AppImage$' || true); do
+      appimage_version=${name#Droppen-}
+      appimage_version=${appimage_version%-*}
+      printf '%s\n' "$LINUX_ON" | grep -qxF "Droppen-$appimage_version-linux-sources.tar" \
+        || die "$CARRY_APPS_FROM has $name but not Droppen-$appimage_version-linux-sources.tar, the corresponding source of the libraries it bundles: an AppImage is never published or carried forward without it"
+    done
+    [ -n "$MANIFEST" ] \
+      || die "$CARRY_APPS_FROM has the Linux app's files, but no latest.json goes on $VERSION: they are carried only with the latest.json that offers the AppImages"
+    [ -n "$OFFERED" ] \
+      || die "$CARRY_APPS_FROM has the Linux app's files ($(echo $LINUX_ON)), but its latest.json does not offer the AppImages: the download page and the update would differ"
+    [ -n "$LINUX_ON" ] \
+      || die "$FROM's latest.json offers the AppImages of $ANNOUNCED, but $CARRY_APPS_FROM has none of the Linux app's files: $VERSION would have none for the download page"
+    WANT=$(linux_files "$ANNOUNCED" | LC_ALL=C sort)
+    [ "$(printf '%s\n' "$LINUX_ON" | LC_ALL=C sort)" = "$WANT" ] \
+      || die "$CARRY_APPS_FROM has $(echo $LINUX_ON), not the Linux app's files of $ANNOUNCED, the version its latest.json announces: $(echo $WANT)"
+    mkdir -p "$WORK/carried" "$WORK/offered"
+    for name in $(linux_files "$ANNOUNCED"); do
+      gh release download "$CARRY_APPS_FROM" --repo "$REPO_PUBLIC" --pattern "$name" --dir "$WORK/carried" \
+        || die "cannot download $name from $CARRY_APPS_FROM"
+      LINUX_ASSETS+=("$WORK/carried/$name")
+    done
+    tar_lists "$WORK/carried/Droppen-$ANNOUNCED-linux-sources.tar" \
+      || die "$CARRY_APPS_FROM's Droppen-$ANNOUNCED-linux-sources.tar is not a tar archive of the AppImages' library sources"
+    # The AppImages the download page offers are the ones the update
+    # installs: each verified against the signature latest.json offers it with.
+    CARRY_CHECK=()
+    for arch in $LINUX_ARCHES; do
+      name=Droppen-$ANNOUNCED-$arch.AppImage
+      json_field "$MANIFEST" "platforms.linux-$arch-appimage.signature" >"$WORK/offered/$name.sig"
+      CARRY_CHECK+=(--linux "$arch=$WORK/carried/$name,$WORK/offered/$name.sig")
+    done
+    manifest_check check "$MANIFEST" --pubkey "$PUBKEY_CONF" --archive "$WORK/carried/Droppen.app.tar.gz" "${CARRY_CHECK[@]}" \
+      || die "$CARRY_APPS_FROM's AppImages were refused: they are not the ones $FROM's latest.json offers"
+    echo "ok: $CARRY_APPS_FROM's $(echo $(linux_files "$ANNOUNCED")) go on $VERSION unchanged"
+  fi
 fi
 
 say "SHA256SUMS"
-# The server's tarballs, then the desktop app's files and latest.json.
-make_sums ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"}
+# The server's tarballs, then the desktop apps' files and latest.json.
+make_sums ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${LINUX_ASSETS[@]+"${LINUX_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"}
 
 FIRST=("${SERVER_ASSETS[@]}" "$WORK/SHA256SUMS" "$SERVER/LICENSE" "$SERVER/THIRD_PARTY_NOTICES" "$SERVER/web-manifest.json" ${EXTRAS[@]+"${EXTRAS[@]}"})
-EXPECTED=("${FIRST[@]}" ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"})
+EXPECTED=("${FIRST[@]}" ${DESKTOP_ASSETS[@]+"${DESKTOP_ASSETS[@]}"} ${LINUX_ASSETS[@]+"${LINUX_ASSETS[@]}"} ${MANIFEST:+"$MANIFEST"})
 PRE_FLAG=()
 [ "$PRERELEASE" = 0 ] || PRE_FLAG=(--prerelease)
 [ "$VERIFY_TAG" = 0 ] || PRE_FLAG+=(--verify-tag)
@@ -499,11 +651,16 @@ say "1/4 a draft with the server's files"
 write gh release create "$VERSION" --repo "$REPO_PUBLIC" --draft ${PRE_FLAG[@]+"${PRE_FLAG[@]}"} \
   --title "Droppen $VERSION" --notes-file "$SERVER/NOTES.md" "${FIRST[@]}"
 
-say "2/4 the desktop app's files, then latest.json"
+say "2/4 the desktop apps' files, then latest.json"
 if [ "${#DESKTOP_ASSETS[@]}" -gt 0 ]; then
   write gh release upload "$VERSION" --repo "$REPO_PUBLIC" "${DESKTOP_ASSETS[@]}"
 else
   echo "(no desktop app)"
+fi
+# The sources tar in the same upload as the AppImages: the draft is checked
+# to hold both before anyone can see it.
+if [ "${#LINUX_ASSETS[@]}" -gt 0 ]; then
+  write gh release upload "$VERSION" --repo "$REPO_PUBLIC" "${LINUX_ASSETS[@]}"
 fi
 if [ -n "$MANIFEST" ]; then
   # Last, alone.
