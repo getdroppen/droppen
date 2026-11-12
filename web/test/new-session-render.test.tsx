@@ -751,6 +751,19 @@ test("the directories: one line each, six at first and then all of them, the pic
   assert.deepEqual(errors, []);
 });
 
+test("a directory the device says is gone is not offered: the list and the pick are the ones still there", async (t) => {
+  const sent: Sent[] = [];
+  // dir-0 (the newest) and dir-2 were removed since, a worktree and a temporary repository, say.
+  reset(sent, "start", NO_ACCOUNTS, undefined, { "/api/sessions/gone-cwds": { cwds: ["/home/demo/work/dir-0", "/home/demo/work/dir-2"] } });
+  machineFeedFor(LOCAL).store.publish({ sessions: inDirectories(4) });
+  const { root, errors } = await mount("/sessions/new");
+  t.after(() => root.unmount());
+  await until("the directories still there", () => rows().length === 2);
+  assert.deepEqual(rows().map((row) => row.getAttribute("data-directory")), ["/home/demo/work/dir-1", "/home/demo/work/dir-3"]);
+  assert.equal(picked(), "/home/demo/work/dir-1", "the newest one still there");
+  assert.deepEqual(errors, []);
+});
+
 test("↑/↓ move the pick: in the list, and from the composer while nothing is typed or with Alt — Enter stays send", async (t) => {
   const sent: Sent[] = [];
   reset(sent);

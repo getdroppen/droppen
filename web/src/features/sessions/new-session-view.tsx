@@ -22,6 +22,7 @@
  * — whose composer carries the message on as pending until the transcript has
  * it (`seedDeliveryPreview`).
  */
+import { useQuery } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { CaretDownIcon, CaretLeftIcon, FolderIcon } from "@phosphor-icons/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -48,7 +49,8 @@ import { errorText } from "@/api/errors";
 import { cn } from "@/lib/cn";
 import { basename, formatRelative } from "@/lib/format";
 import { isImeKeydown } from "@/lib/ime";
-import { useEnsureLive, useHomeMachine, useInfoOf, useMachine, useOpenMachines } from "@/lib/machines/context";
+import { useApi, useEnsureLive, useHomeMachine, useInfoOf, useMachine, useOpenMachines } from "@/lib/machines/context";
+import { mq } from "@/lib/machines/query";
 import { sessionKey, type MachineKey } from "@/lib/machines/key";
 import {
   attachmentPaths,
@@ -137,6 +139,7 @@ export function NewSessionView({
 }) {
   const { t } = useTranslation();
   const machine = useMachine();
+  const api = useApi();
   const info = useInfoOf(machine);
   const several = useOpenMachines().length > 1;
   // Starting a session is using the device itself, not reading its copy.
@@ -172,7 +175,17 @@ export function NewSessionView({
   const rowNodes = useRef(new Map<string, HTMLButtonElement>());
 
   const sessions = useFeedSessions();
-  const recent = useMemo(() => recentDirectories(sessions, Infinity), [sessions]);
+  // The directories no longer on the device: a worktree since removed, a
+  // temporary repository cleaned up. Their sessions stay in the list, but
+  // nothing can start there. Until the device answers, or when it cannot
+  // (an older server), every directory is offered.
+  const { data: goneList } = useQuery({
+    queryKey: mq(machine, "gone-cwds"),
+    queryFn: async () => (await api.GET("/api/sessions/gone-cwds")).data ?? { cwds: [] },
+    staleTime: 30_000,
+  });
+  const gone = useMemo(() => new Set(goneList?.cwds), [goneList]);
+  const recent = useMemo(() => recentDirectories(sessions, Infinity, gone), [sessions, gone]);
   const cwd = startingDirectory(cwdPick, recent);
   const homeDir = useFeedSettings()?.homeDir ?? "";
   const shown = directoryRows(recent, cwd, expanded);

@@ -30,13 +30,19 @@ export interface RecentDirectory {
  * The directories a device's sessions ran in, the one most recently *started
  * in* first — where work was begun rather than what is loudest, as the
  * server's own recent-directories list ranks them — with how many sessions
- * each holds and when one of them last did anything.
+ * each holds and when one of them last did anything. A directory in `gone`
+ * (`/api/sessions/gone-cwds`: no longer on the device) is left out, as
+ * nothing can be started there.
  */
-export function recentDirectories(sessions: readonly SessionSummary[] | null, limit = RECENT_DIRECTORIES): RecentDirectory[] {
+export function recentDirectories(
+  sessions: readonly SessionSummary[] | null,
+  limit = RECENT_DIRECTORIES,
+  gone: ReadonlySet<string> = new Set(),
+): RecentDirectory[] {
   const byCwd = new Map<string, RecentDirectory>();
   for (const session of sessions ?? []) {
     const cwd = session.cwd;
-    if (!cwd) continue;
+    if (!cwd || gone.has(cwd)) continue;
     const seen = byCwd.get(cwd);
     if (!seen) {
       byCwd.set(cwd, { cwd, sessions: 1, lastActivity: session.updatedAt, lastStarted: session.createdAt });

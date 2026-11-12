@@ -469,6 +469,7 @@ async fn a_page_is_sent_the_count_and_never_the_words() {
         quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
         composer: droppen_drive::composer_prefs::ComposerPrefsStore::new(paths.clone()),
         titles: droppen_sessions::titles::TitlesStore::new(paths.clone()),
+        gone_dirs: Default::default(),
         paths,
         transcripts: crate::app::transcript_sources(),
         providers: harness.providers(),

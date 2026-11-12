@@ -676,6 +676,41 @@ async fn recent_directories_rank_by_when_work_started_not_by_last_activity() {
 }
 
 #[tokio::test]
+async fn gone_directories_are_the_session_directories_no_longer_there() {
+    let probe = Probe::start().await;
+    let root = probe.local_root();
+    let disk = tempfile::tempdir().expect("a directory for the sessions to have run in");
+    let here = disk.path().join("repo");
+    std::fs::create_dir(&here).expect("a directory that stays");
+    let removed = disk.path().join("worktrees/t1");
+    let file = disk.path().join("notes.txt");
+    std::fs::write(&file, "not a directory").expect("a file where a directory was");
+    let path = |p: &std::path::Path| p.to_string_lossy().into_owned();
+    seed_dated_session(&root, &session_id(1), &path(&here), "2026-06-01T00:00:00.000Z", 1_000);
+    seed_dated_session(&root, &session_id(2), &path(&removed), "2026-06-02T00:00:00.000Z", 1_000);
+    seed_dated_session(&root, &session_id(3), &path(&removed), "2026-06-03T00:00:00.000Z", 1_000);
+    seed_dated_session(&root, &session_id(4), &path(&file), "2026-06-04T00:00:00.000Z", 1_000);
+
+    // One entry per directory, sorted; the directory that is still there is not one.
+    let mut expected = vec![path(&file), path(&removed)];
+    expected.sort();
+    assert_eq!(probe.get_json("/api/sessions/gone-cwds").await["cwds"], json!(expected));
+    // Their sessions are still listed: only the picker leaves the directory out.
+    assert_eq!(
+        probe.get_json("/api/sessions?scope=all").await["sessions"].as_array().map(Vec::len),
+        Some(4)
+    );
+
+    // Asked again within half a minute, it is the same answer: the disk is not
+    // looked at for every picker that opens (`droppen_sessions::gone`, which
+    // pins when it looks again).
+    std::fs::create_dir_all(&removed).expect("the worktree, added again");
+    assert_eq!(probe.get_json("/api/sessions/gone-cwds").await["cwds"], json!(expected));
+
+    probe.stop().await;
+}
+
+#[tokio::test]
 async fn recent_directories_stop_at_eight() {
     let probe = Probe::start().await;
     let root = probe.local_root();

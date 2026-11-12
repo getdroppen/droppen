@@ -21,6 +21,7 @@ pub mod chat_delivery;
 pub mod children;
 pub mod context;
 pub mod delivery;
+pub mod gone;
 pub mod index;
 pub mod loader;
 pub mod mentions;
@@ -1033,6 +1034,17 @@ impl TranscriptSources {
         // Newest first; ties broken by name so the answer is stable across calls.
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         ranked.into_iter().take(RECENT_CWDS_LIMIT).map(|(cwd, _)| cwd).collect()
+    }
+
+    /// Every working directory of the machine's sessions, once each: what
+    /// [`gone::GoneDirs`] looks at. Every scope counts, as in
+    /// [`Self::recent_cwds`].
+    pub async fn session_cwds(&self, paths: &Paths, bindings: &std::collections::BTreeMap<String, String>) -> std::collections::BTreeSet<String> {
+        self.list_and_filter(paths, bindings, &DriverStates::default(), None, None, ScopeFilter::All)
+            .await
+            .iter()
+            .filter_map(|session| session.cwd.as_ref().filter(|cwd| !cwd.is_empty()).cloned())
+            .collect()
     }
 }
 
