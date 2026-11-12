@@ -27,7 +27,7 @@ export const welcomeJa: Record<string, string> = {
   "Only on this device, or on your phone and other devices too.": "このデバイスだけで使うか、スマートフォンやほかのデバイスでも使うか。", // welcome.sum.where
   "Pick a folder and send a first message.": "フォルダを選んで、最初のメッセージを送ります。", // welcome.sum.first
   "Start at login, notifications, your phone.": "ログイン時の起動、通知、スマートフォン。", // welcome.sum.wrap
-  "Your phone, and what's set.": "スマートフォン、設定内容。",
+  "Your phone, and a last look at your settings.": "スマートフォンと、設定の最終確認。",
   "Already looking for Claude Code and Codex on this device…": "このデバイスで Claude Code と Codex を探しています…", // welcome.checking
   "Found: {{list}}": "見つかりました：{{list}}", // welcome.found
   "Get started": "始める", // welcome.start

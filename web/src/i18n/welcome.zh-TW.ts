@@ -27,7 +27,7 @@ export const welcomeZhTW: Record<string, string> = {
   "Only on this device, or on your phone and other devices too.": "只在這台裝置上用，還是手機和其他裝置也要用。", // welcome.sum.where
   "Pick a folder and send a first message.": "選一個資料夾，送出第一則訊息。", // welcome.sum.first
   "Start at login, notifications, your phone.": "登入時啟動、通知、手機。", // welcome.sum.wrap
-  "Your phone, and what's set.": "手機、設定結果。",
+  "Your phone, and a last look at your settings.": "手機，再確認一下設定。",
   "Already looking for Claude Code and Codex on this device…": "已經在這台裝置上尋找 Claude Code 和 Codex…", // welcome.checking
   "Found: {{list}}": "已找到：{{list}}", // welcome.found
   "Get started": "開始", // welcome.start

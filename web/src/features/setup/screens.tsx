@@ -39,7 +39,7 @@ export const STEP_SUMMARY: Record<(typeof STEPS)[number], string> = {
 
 /** A step's line on the welcome page: step 04 names Start at Login only where the app has it. */
 function stepSummary(step: (typeof STEPS)[number], startAtLogin: boolean, t: (key: string) => string): string {
-  return step === "wrap" && !startAtLogin ? t("Your phone, and what's set.") : t(STEP_SUMMARY[step]);
+  return step === "wrap" && !startAtLogin ? t("Your phone, and a last look at your settings.") : t(STEP_SUMMARY[step]);
 }
 
 /** A list in the reader's language: 「、」 in Chinese and Japanese, ", " otherwise. */
@@ -303,9 +303,8 @@ function toolSummary(tools: ToolsReport | null | undefined, id: "claude" | "code
  * app: start at login points at the app's own switch to turn it on or off,
  * in the menu bar or the system tray — whether it is on is the app's to say
  * (a new install's first launch turns it on), so the guide claims neither,
- * and an app without the switch (the Linux app's, for now) gets no row; no
- * notifications row until the app can ask for them, the phone row,
- * and what is set.
+ * and an app without the switch gets no row; no notifications row until the
+ * app can ask for them, the phone row, and what is set.
  */
 export function WrapStep({ progress, tools, signIn }: StepProps) {
   const { t } = useTranslation();

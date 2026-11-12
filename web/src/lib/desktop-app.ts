@@ -40,9 +40,9 @@ function bridgeStartAtLogin(): boolean | undefined {
 /**
  * Whether the app has Start at Login, for the words that point at it: what
  * its window's bridge says; where nothing says — a browser on the device —
- * the Mac app's, which has always had it, and not the Linux app's, which has
- * none yet.
+ * yes, as every app has it: the Mac app's login item, the Linux app's XDG
+ * autostart entry.
  */
-export function startAtLoginOffered(said: boolean | undefined = bridgeStartAtLogin(), system: DesktopSystem = desktopSystem()): boolean {
-  return said ?? system === "mac";
+export function startAtLoginOffered(said: boolean | undefined = bridgeStartAtLogin()): boolean {
+  return said ?? true;
 }

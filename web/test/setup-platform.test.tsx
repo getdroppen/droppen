@@ -2,11 +2,11 @@
 // (`lib/desktop-app.ts`): the server says which (`GET /api/auth/status`,
 // `platform`; the tools report's `os` for steps 01 and 03), and an older
 // server that says none is a Mac's. On Linux the guide names the app's
-// edition, says "this device", points at the system tray, leaves out what
-// only macOS does (the folder prompt, Apple's installer for git) and the
-// Start at Login the Linux app does not have yet; on a Mac it reads as it
-// did, "this device" for "this Mac". Whether the app has Start at Login is
-// its window's to say; a page without the window's word takes the Mac app's.
+// edition, says "this device", points at the system tray and leaves out what
+// only macOS does (the folder prompt, Apple's installer for git); on a Mac it
+// reads as it did, "this device" for "this Mac". Whether the app has Start at
+// Login is its window's to say; a page without the window's word takes yes,
+// as both apps have it.
 //
 // `import * as React` because the test directory is outside the tsconfig's
 // `include`, so tsx compiles JSX here with the classic runtime.
@@ -94,36 +94,54 @@ test("the app's system: Linux as itself, the Mac otherwise — and a server from
   }
 });
 
-test("Start at Login: what the app's window says; without its word, the Mac app has it and the Linux app not yet", () => {
-  assert.equal(startAtLoginOffered(true, "linux"), true, "a Linux app that has it says so");
-  assert.equal(startAtLoginOffered(false, "mac"), false);
-  assert.equal(startAtLoginOffered(undefined, "mac"), true);
-  assert.equal(startAtLoginOffered(undefined, "linux"), false);
+test("Start at Login: what the app's window says; without its word, yes — the Mac app and the Linux app both have it", () => {
+  assert.equal(startAtLoginOffered(true), true);
+  assert.equal(startAtLoginOffered(false), false);
+  assert.equal(startAtLoginOffered(undefined), true, "a browser on the device");
 });
 
-test("on Linux the guide never names the Mac: the edition, this device, the system tray, no Start at Login", async () => {
+/** Draw with the app's window saying `startAtLogin` (`undefined`: no window, a browser on the device). */
+function inWindow<T>(startAtLogin: boolean | undefined, fn: () => T): T {
+  const global = globalThis as unknown as { window?: unknown };
+  if (startAtLogin !== undefined) global.window = { __droppenDesktop: { startAtLogin } };
+  try {
+    return fn();
+  } finally {
+    delete global.window;
+  }
+}
+
+test("on Linux the guide never names the Mac: the edition, this device, the system tray", async () => {
   try {
     await onServer("linux");
-    for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
-      const welcome = draw(<GuideScreen screen="welcome" progress={emptyProgress()} tools={report(tool("claude", "ready"), tool("codex", "missing"), { os: linuxOs })} online onLater={noop} />, lang);
-      const where = draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />, lang);
-      const wrap = draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, lang);
-      for (const [name, html] of Object.entries({ welcome, where, wrap })) assert.doesNotMatch(html, MAC_ONLY, `${name} in ${lang}`);
-      assert.doesNotMatch(wrap, /data-testid="wrap-login"/, `no Start at Login row in ${lang}`);
+    for (const said of [true, undefined]) {
+      for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
+        const welcome = inWindow(said, () => draw(<GuideScreen screen="welcome" progress={emptyProgress()} tools={report(tool("claude", "ready"), tool("codex", "missing"), { os: linuxOs })} online onLater={noop} />, lang));
+        const where = inWindow(said, () => draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />, lang));
+        const wrap = inWindow(said, () => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, lang));
+        for (const [name, html] of Object.entries({ welcome, where, wrap })) assert.doesNotMatch(html, MAC_ONLY, `${name} in ${lang}, window says ${said}`);
+        assert.match(wrap, /data-testid="wrap-login"/, `Start at Login in ${lang}, window says ${said}`);
+      }
     }
     const welcome = draw(<GuideScreen screen="welcome" progress={emptyProgress()} tools={undefined} online onLater={noop} />);
     assert.match(welcome, /Droppen for Linux/);
     assert.match(welcome, /Droppen is running on this device\./);
     assert.match(welcome, /Only on this device, or on your phone and other devices too\./);
-    assert.match(welcome, /Your phone, and what&#x27;s set\./, "step 04's line names no Start at Login");
+    assert.match(welcome, /Start at login, notifications, your phone\./);
     assert.match(draw(<GuideScreen screen="welcome" progress={emptyProgress()} tools={undefined} online onLater={noop} />, "zh-CN"), /Droppen · Linux 版/);
     const where = draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />);
     assert.match(where, /choose Open in Browser from the Droppen icon in the system tray: it opens signed in\./);
     assert.match(where, /Choose “Only on this device” for now/);
     assert.match(draw(<WhereStep progress={started} tools={undefined} online onChange={noop} />, "zh-CN"), /在系统托盘的 Droppen 图标菜单里选「在浏览器中打开」/);
-    const wrap = draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />);
-    assert.match(wrap, /data-testid="wrap-phone"/);
-    assert.match(wrap, /Only on this device/);
+    // The Linux app's window, and a browser on the device: the row points at the system tray.
+    for (const said of [true, undefined]) {
+      const wrap = inWindow(said, () => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />));
+      assert.match(wrap, /Droppen lives in the system tray; closing the window doesn&#x27;t stop it\./, `window says ${said}`);
+      assert.match(wrap, /Turn it on or off any time from the Droppen icon in the system tray: Start at Login\./);
+      assert.match(wrap, /data-testid="wrap-phone"/);
+      assert.match(wrap, /Only on this device/);
+      assert.match(inWindow(said, () => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN")), /随时可以在系统托盘的 Droppen 图标里打开或关闭「登录时启动」/);
+    }
   } finally {
     forgetAuthStatus();
   }
@@ -149,18 +167,21 @@ test("on a Mac, and from a server too old to say, the guide reads as before, wit
   }
 });
 
-test("a Linux app that has Start at Login gets the row, pointing at the system tray", async () => {
-  const global = globalThis as unknown as { window?: unknown };
+test("an app that says it has no Start at Login gets no row, and the welcome line for step 04 names the phone and the settings", async () => {
   try {
-    await onServer("linux");
-    global.window = { __droppenDesktop: { startAtLogin: true } };
-    const wrap = draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />);
-    assert.match(wrap, /data-testid="wrap-login"/);
-    assert.match(wrap, /Droppen lives in the system tray; closing the window doesn&#x27;t stop it\./);
-    assert.match(wrap, /Turn it on or off any time from the Droppen icon in the system tray: Start at Login\./);
-    assert.doesNotMatch(wrap, MAC_ONLY);
+    for (const platform of ["linux", "darwin"]) {
+      await onServer(platform);
+      const wrap = inWindow(false, () => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />));
+      assert.doesNotMatch(wrap, /data-testid="wrap-login"|Start at Login/, platform);
+      assert.match(wrap, /data-testid="wrap-phone"/);
+      const welcome = (lang: string) => inWindow(false, () => draw(<GuideScreen screen="welcome" progress={emptyProgress()} tools={undefined} online onLater={noop} />, lang));
+      assert.match(welcome("en"), /Your phone, and a last look at your settings\./, platform);
+      assert.doesNotMatch(welcome("en"), /Start at login/);
+      assert.match(welcome("zh-CN"), /手机，再确认一下设置。/);
+      assert.match(welcome("zh-TW"), /手機，再確認一下設定。/);
+      assert.match(welcome("ja"), /スマートフォンと、設定の最終確認。/);
+    }
   } finally {
-    delete global.window;
     forgetAuthStatus();
   }
 });
