@@ -36,6 +36,21 @@
 //!   failing later ([`droppen_desktop_core::update::Place`]). The bundled
 //!   server is only ever updated with the app — never by its own self-upgrade,
 //!   which refuses under the app.
+//! * **On Linux** the AppImage updates itself the same way, from its own
+//!   AppImage on the release (`linux-<arch>-appimage`, [`update::update_file`]):
+//!   the one the AppImage runtime mounted and names in `$APPIMAGE`
+//!   ([`update::AppImageRun`]), which the install writes over in place (the
+//!   plugin moves the old one aside first and puts it back if the write
+//!   fails), so the path the desktop and autostart entries name stays the
+//!   app's. There is no password to ask for: an AppImage this user cannot
+//!   replace (in `/opt`, say) says *Move Droppen to a Folder You Can Write to
+//!   Update* from the start, and is never installed over, quit or restart. A
+//!   .deb says *Install a Newer Package to Update* and never checks; anything
+//!   else (a development build, an AppImage's files run without its mount)
+//!   never updates. *Restart to Update* starts the new AppImage at home,
+//!   without this one's mount in its environment ([`update::outside_appimage`]),
+//!   which goes with this launch. Downloads
+//!   wait while NetworkManager says the connection is metered ([`network`]).
 //!
 //! The web app learns the update's status through `init.js`'s small bridge:
 //! after every change and every page load the app calls
@@ -103,8 +118,12 @@ const READ_TIMEOUT: Duration = Duration::from_secs(60);
 const NOTES_TIMEOUT: Duration = Duration::from_secs(15);
 /// How often the schedule looks at the clock.
 const TICK: Duration = Duration::from_secs(5);
-/// The downloaded archive, in the support directory's `update/`.
+/// The downloaded archive (on Linux, the AppImage), in the support
+/// directory's `update/`.
+#[cfg(target_os = "macos")]
 const STAGED: &str = "Droppen.app.tar.gz";
+#[cfg(not(target_os = "macos"))]
+const STAGED: &str = "Droppen.AppImage";
 
 /// The test build's manifest address (feature `e2e` only).
 #[cfg(feature = "e2e")]
@@ -123,7 +142,8 @@ struct Updater<R: Runtime> {
     item: MenuItem<R>,
     notes: MenuItem<R>,
     words: &'static Words,
-    /// The app's executable, when it runs from an app bundle.
+    /// The app's executable, when it runs from an app bundle; on Linux the
+    /// AppImage, when it can be updated.
     executable: Option<PathBuf>,
     /// Where the verified download waits for the quit.
     staging: PathBuf,
@@ -157,21 +177,56 @@ pub fn relaunched() -> bool {
     std::env::args().any(|arg| arg == UPDATED_ARG)
 }
 
-/// Where the app runs from: its executable, if in a bundle, and whether it
-/// can be updated there. Never in one on Linux, so it never updates there
-/// (TODO(linux: L7): an AppImage's own updates).
+/// Where the app runs from: what an update replaces (its executable, if in a
+/// bundle; on Linux the AppImage, if it can be updated), and whether it can
+/// be updated there.
 fn place() -> (Option<PathBuf>, Place) {
+    let (executable, place) = place_here();
+    #[cfg(feature = "e2e")]
+    if place == Place::Updatable && std::env::var_os(ENDPOINT_ENV).is_none() {
+        // A test build without a test endpoint never checks the real one.
+        return (executable, Place::NotABundle);
+    }
+    (executable, place)
+}
+
+#[cfg(target_os = "macos")]
+fn place_here() -> (Option<PathBuf>, Place) {
     let Ok(exe) = std::env::current_exe() else {
         return (None, Place::NotABundle);
     };
     let canonical = exe.canonicalize().ok();
     let place = Place::of(&exe, canonical.as_deref(), read_only(&exe));
-    #[cfg(feature = "e2e")]
-    if place == Place::Updatable && std::env::var_os(ENDPOINT_ENV).is_none() {
-        // A test build without a test endpoint never checks the real one.
-        return (Some(exe), Place::NotABundle);
-    }
     ((place != Place::NotABundle).then_some(exe), place)
+}
+
+/// On Linux: the bundler's mark on this binary, and what the AppImage
+/// runtime says of the launch, each held to what it says.
+#[cfg(not(target_os = "macos"))]
+fn place_here() -> (Option<PathBuf>, Place) {
+    use droppen_desktop_core::update::{AppImageRun, LinuxBundle};
+    use tauri::utils::config::BundleType;
+    let bundle = match tauri::utils::platform::bundle_type() {
+        Some(BundleType::AppImage) => LinuxBundle::AppImage,
+        Some(BundleType::Deb | BundleType::Rpm) => LinuxBundle::Package,
+        _ => LinuxBundle::None,
+    };
+    let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
+    let exe = std::env::current_exe().ok();
+    let run = AppImageRun::read(var("APPIMAGE").as_deref(), var("APPDIR").as_deref(), exe.as_deref());
+    let place = Place::of_linux(bundle, &run);
+    if bundle == LinuxBundle::AppImage {
+        log::info!(
+            "updates: the AppImage {}, {}, {}",
+            run.image
+                .as_deref()
+                .map_or("named by no $APPIMAGE".to_string(), |image| image.display().to_string()),
+            if run.mounted { "mounted" } else { "not run from its mount" },
+            if run.replaceable { "replaceable here" } else { "not replaceable here" }
+        );
+    }
+    let image = run.image.filter(|_| place == Place::Updatable);
+    (image, place)
 }
 
 /// Whether `path` is on a volume mounted read-only (a disk image).
@@ -189,11 +244,6 @@ fn read_only(path: &Path) -> bool {
     // SAFETY: statfs succeeded, so the buffer is filled.
     let flags = unsafe { stat.assume_init() }.f_flags;
     flags & libc::MNT_RDONLY as u32 != 0
-}
-
-#[cfg(not(target_os = "macos"))]
-fn read_only(_path: &Path) -> bool {
-    false
 }
 
 /// Set up the updates: the two menu items (which `tray` puts in both menus)
@@ -315,6 +365,12 @@ fn updater<R: Runtime>(app: &AppHandle<R>) -> Result<tauri_plugin_updater::Updat
             builder = builder.pubkey(pubkey);
         }
     }
+    // The AppImage [`place`] found replaceable, and no other: the plugin
+    // would otherwise take `$APPIMAGE` as it is.
+    #[cfg(not(target_os = "macos"))]
+    if let Some(image) = app.try_state::<Updater<R>>().and_then(|me| me.executable.clone()) {
+        builder = builder.executable_path(image);
+    }
     builder.build()
 }
 
@@ -394,7 +450,13 @@ pub fn check<R: Runtime>(app: &AppHandle<R>, asked: bool) {
             // The manifest is not signed: its archive address must be the
             // release's own (or the end-to-end test's loopback server).
             Ok(Some(found))
-                if update::check_download_url(found.download_url.as_str(), &found.version, update::ARCHIVE, cfg!(feature = "e2e")).is_err() =>
+                if update::check_download_url(
+                    found.download_url.as_str(),
+                    &found.version,
+                    &update::update_file(&found.version),
+                    cfg!(feature = "e2e"),
+                )
+                .is_err() =>
             {
                 log::warn!(
                     "updates: the manifest names {} for Droppen {}, not its release's archive; not downloaded",
@@ -625,14 +687,17 @@ pub fn restart_asked_by_page<R: Runtime>(app: &AppHandle<R>, token: &str) {
 
 /// On the way out (`RunEvent::Exit`, once the server is stopped): install
 /// the downloaded update, if there is one and it can be done without asking
-/// (or *Restart to Update* was chosen); then, after a restart, start the app
-/// again — the new version, or the old one if the install failed.
+/// (or, on macOS, *Restart to Update* was chosen); then, after a restart,
+/// start the app again — the new version, or the old one if the install
+/// failed.
 pub fn at_exit<R: Runtime>(app: &AppHandle<R>) {
     let Some(me) = app.try_state::<Updater<R>>() else { return };
     let restart = me.restart.load(Ordering::SeqCst);
     let ready = lock(&me.updates).ready().cloned();
     if let (Some(release), Some(executable)) = (ready, me.executable.as_deref()) {
-        if restart || writable_without_asking(executable) {
+        // Only macOS has a password to ask for (the plugin's privileged
+        // install); on Linux a restart installs only where a quit would.
+        if (restart && cfg!(target_os = "macos")) || writable_without_asking(executable) {
             lock(&me.updates).begin_install();
             let started = Instant::now();
             match install_staged(app, &me, &release) {
@@ -649,9 +714,15 @@ pub fn at_exit<R: Runtime>(app: &AppHandle<R>) {
                     log::warn!("updates: not installed ({problem:?}), Droppen is as it was: {error}");
                 }
             }
-        } else {
+        } else if cfg!(target_os = "macos") {
             log::info!(
                 "updates: installing Droppen {} needs an admin password; it waits for Restart to Update",
+                release.version
+            );
+        } else {
+            log::warn!(
+                "updates: {} can no longer be replaced by this user; Droppen {} is not installed",
+                executable.display(),
                 release.version
             );
         }
@@ -678,10 +749,12 @@ fn writable_without_asking(executable: &Path) -> bool {
     swappable(bundle, folder)
 }
 
-/// Never asked on Linux, where the app is never in a bundle ([`place`]).
+/// On Linux: whether the AppImage can still be replaced, as [`place`] found
+/// it could at launch ([`update::replaceable`]); its folder may have changed
+/// since.
 #[cfg(not(target_os = "macos"))]
-fn writable_without_asking(_executable: &Path) -> bool {
-    false
+fn writable_without_asking(executable: &Path) -> bool {
+    update::replaceable(executable)
 }
 
 #[cfg(target_os = "macos")]
@@ -725,7 +798,20 @@ fn install_staged<R: Runtime>(app: &AppHandle<R>, me: &Updater<R>, release: &Rel
         .ok_or((Problem::Other, "the update is not the one downloaded".to_string()))?;
     let bytes = std::fs::read(me.staging.join(STAGED)).map_err(|error| (Problem::Install, format!("the download is gone: {error}")))?;
     let key = pubkey(app).ok_or((Problem::Other, "no updater key".to_string()))?;
-    update::check_signature(&found.signature, &key, &release.version, update::ARCHIVE, Some(&bytes)).map_err(|error| (Problem::Signature, error))?;
+    update::check_signature(
+        &found.signature,
+        &key,
+        &release.version,
+        &update::update_file(&release.version),
+        Some(&bytes),
+    )
+    .map_err(|error| (Problem::Signature, error))?;
+    // The plugin writes any ELF file over the AppImage: a signed one that is
+    // not an AppImage (the server, say) would leave nothing that starts.
+    #[cfg(not(target_os = "macos"))]
+    if !update::is_appimage(&bytes) {
+        return Err((Problem::Install, "the update is not an AppImage".to_string()));
+    }
     found.install(&bytes).map_err(|error| (problem(&error), error.to_string()))
 }
 
@@ -738,6 +824,18 @@ fn relaunch(executable: Option<&Path>, hidden: bool) {
     command.arg(UPDATED_ARG);
     if hidden {
         command.arg(crate::AUTOSTART_ARG);
+    }
+    // The new AppImage, without this one's mount in its environment, nor as
+    // its working folder: the mount goes with this launch. AppRun runs the
+    // app in it (`$APPDIR/usr`), and the new runtime would take the folder it
+    // is started in for the person's (`$OWD`); a launcher starts it at home.
+    #[cfg(not(target_os = "macos"))]
+    if let Some(appdir) = std::env::var_os("APPDIR") {
+        command
+            .env_clear()
+            .envs(update::outside_appimage(std::env::vars_os(), Path::new(&appdir)));
+        let home = std::env::var_os("HOME").map(PathBuf::from).filter(|home| home.is_absolute() && home.is_dir());
+        command.current_dir(home.unwrap_or_else(|| PathBuf::from("/")));
     }
     match command
         .stdin(Stdio::null())
@@ -860,6 +958,15 @@ pub mod testing {
 mod tests {
     use super::*;
     use tauri_plugin_updater::Error as E;
+
+    /// This test binary carries no bundler's mark: whatever the environment
+    /// says of an AppImage, it is not one, and nothing is installed over.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn a_linux_binary_outside_an_appimage_never_updates() {
+        assert_eq!(tauri::utils::platform::bundle_type(), None);
+        assert_eq!(place(), (None, Place::NotABundle));
+    }
 
     /// A manifest that offers the AppImages too, read by the plugin as an
     /// installed app reads it: a Mac finds its own archive and nothing else

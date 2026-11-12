@@ -23,11 +23,17 @@ pub struct Words {
     /// `{current}`
     pub up_to_date: &'static str,
     pub move_to_applications: &'static str,
+    /// Linux's: an AppImage in a folder this user cannot write.
+    pub move_to_writable_folder: &'static str,
+    /// Linux's: the .deb.
+    pub install_newer_package: &'static str,
     pub release_notes: &'static str,
     pub offline: &'static str,
     pub service: &'static str,
     pub signature: &'static str,
     pub location: &'static str,
+    /// Linux's [`Problem::Location`]: there are no Applications to move to.
+    pub location_writable_folder: &'static str,
     pub install: &'static str,
     pub other: &'static str,
 }
@@ -55,6 +61,8 @@ impl Words {
             Menu::Restarting => self.restarting.to_string(),
             Menu::UpToDate(current) => fill(self.up_to_date, &[("current", current)]),
             Menu::MoveToApplications => self.move_to_applications.to_string(),
+            Menu::MoveToWritableFolder => self.move_to_writable_folder.to_string(),
+            Menu::InstallNewerPackage => self.install_newer_package.to_string(),
             Menu::Failed(problem) => self.problem(*problem).to_string(),
         }
     }
@@ -65,7 +73,8 @@ impl Words {
             Problem::Offline => self.offline,
             Problem::Service => self.service,
             Problem::Signature => self.signature,
-            Problem::Location => self.location,
+            Problem::Location if cfg!(target_os = "macos") => self.location,
+            Problem::Location => self.location_writable_folder,
             Problem::Install => self.install,
             Problem::Other => self.other,
         }
@@ -89,11 +98,14 @@ const ZH_CN: Words = Words {
     restarting: "正在重启…",
     up_to_date: "已是最新版本 ({current})",
     move_to_applications: "移到「应用程序」文件夹后才能更新",
+    move_to_writable_folder: "移到你可写入的文件夹后才能更新",
+    install_newer_package: "安装新版软件包即可更新",
     release_notes: "更新说明",
     offline: "网络不可用，没能检查更新",
     service: "更新服务暂时不可用，稍后再试",
     signature: "更新未通过签名校验，已丢弃",
     location: "无法在这里更新：请把 Droppen 移到「应用程序」文件夹",
+    location_writable_folder: "无法在这里更新：请把 Droppen 移到你可写入的文件夹",
     install: "没能安装更新，Droppen 照常运行",
     other: "没能更新，稍后再试",
 };
@@ -108,11 +120,14 @@ const ZH_TW: Words = Words {
     restarting: "正在重新啟動…",
     up_to_date: "已是最新版本 ({current})",
     move_to_applications: "移到「應用程式」檔案夾後才能更新",
+    move_to_writable_folder: "移到你可寫入的檔案夾後才能更新",
+    install_newer_package: "安裝新版套件即可更新",
     release_notes: "更新說明",
     offline: "網路無法使用，沒能檢查更新",
     service: "更新服務暫時無法使用，稍後再試",
     signature: "更新未通過簽名驗證，已捨棄",
     location: "無法在這裡更新：請將 Droppen 移到「應用程式」檔案夾",
+    location_writable_folder: "無法在這裡更新：請將 Droppen 移到你可寫入的檔案夾",
     install: "沒能安裝更新，Droppen 照常執行",
     other: "沒能更新，稍後再試",
 };
@@ -127,11 +142,14 @@ const JA: Words = Words {
     restarting: "再起動中…",
     up_to_date: "最新バージョンです ({current})",
     move_to_applications: "「アプリケーション」フォルダに移動するとアップデートできます",
+    move_to_writable_folder: "書き込めるフォルダに移動するとアップデートできます",
+    install_newer_package: "新しいパッケージをインストールするとアップデートできます",
     release_notes: "リリースノート",
     offline: "ネットワークに接続できず、アップデートを確認できませんでした",
     service: "アップデートサーバーが一時的に利用できません",
     signature: "アップデートが署名の検証に失敗したため破棄しました",
     location: "ここではアップデートできません：Droppen を「アプリケーション」フォルダに移動してください",
+    location_writable_folder: "ここではアップデートできません：Droppen を書き込めるフォルダに移動してください",
     install: "アップデートをインストールできませんでした。Droppen はそのまま動いています",
     other: "アップデートできませんでした。あとでもう一度お試しください",
 };
@@ -146,11 +164,14 @@ const EN: Words = Words {
     restarting: "Restarting…",
     up_to_date: "Up to Date ({current})",
     move_to_applications: "Move Droppen to Applications to Update",
+    move_to_writable_folder: "Move Droppen to a Folder You Can Write to Update",
+    install_newer_package: "Install a Newer Package to Update",
     release_notes: "Release Notes",
     offline: "No Network — Couldn’t Check for Updates",
     service: "Update Service Unavailable — Try Again Later",
     signature: "Update Failed Its Signature Check and Was Discarded",
     location: "Can’t Update Here — Move Droppen to Applications",
+    location_writable_folder: "Can’t Update Here — Move Droppen to a Folder You Can Write",
     install: "Couldn’t Install the Update — Droppen Runs as Before",
     other: "Couldn’t Update — Try Again Later",
 };
@@ -180,7 +201,11 @@ mod tests {
             words.restarting,
             words.up_to_date,
             words.move_to_applications,
+            words.move_to_writable_folder,
+            words.install_newer_package,
             words.release_notes,
+            words.location,
+            words.location_writable_folder,
         ];
         all.extend(PROBLEMS.map(|problem| words.problem(problem)));
         all
@@ -259,5 +284,24 @@ mod tests {
         assert_eq!(en.menu(&Menu::Downloading(None)), "Downloading Update…");
         assert_eq!(en.menu(&Menu::MoveToApplications), "Move Droppen to Applications to Update");
         assert_eq!(en.menu(&Menu::Unavailable), "Check for Updates…");
+        assert_eq!(en.menu(&Menu::MoveToWritableFolder), "Move Droppen to a Folder You Can Write to Update");
+        assert_eq!(en.menu(&Menu::InstallNewerPackage), "Install a Newer Package to Update");
+        assert_eq!(zh.menu(&Menu::InstallNewerPackage), "安装新版软件包即可更新");
+    }
+
+    /// A Linux app has no Applications folder to be moved to.
+    #[test]
+    fn a_location_failure_names_the_way_out_of_this_platform() {
+        let en = Words::of(Lang::En);
+        let line = en.menu(&Menu::Failed(Problem::Location));
+        if cfg!(target_os = "macos") {
+            assert_eq!(line, "Can’t Update Here — Move Droppen to Applications");
+        } else {
+            assert_eq!(line, "Can’t Update Here — Move Droppen to a Folder You Can Write");
+        }
+        for lang in LANGS {
+            let words = Words::of(lang);
+            assert_ne!(words.location, words.location_writable_folder, "{lang:?}");
+        }
     }
 }

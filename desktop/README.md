@@ -266,6 +266,25 @@ The app updates itself without asking anything and without a window
 - **Not updatable where it runs** — App Translocation, a disk image, a path
   through a symbolic link — the item says *Move Droppen to Applications to
   Update*. A development build (not in a bundle) never updates.
+- **On Linux only the AppImage updates itself**, the same quiet way: from its
+  own architecture's `Droppen-<version>-<arch>.AppImage` on the release
+  (`linux-<arch>-appimage` in `latest.json`, signed for that name and
+  version), kept in `$XDG_DATA_HOME/app.droppen.desktop/update/`, and written
+  over the AppImage at the next quit, under its name, so the menu entry and
+  the autostart entry still start the app (the updater moves the old one
+  aside first and puts it back if the write fails). It must be the image the
+  AppImage runtime mounted: `$APPIMAGE` naming an AppImage by its real path,
+  and the app running from the mount at `$APPDIR`. An AppImage's files run
+  without the mount (extracted, `--appimage-extract-and-run`) never update.
+  An AppImage this user cannot replace — in `/opt` or another folder it
+  cannot write, on a read-only volume, another user's file in a sticky
+  folder — says *Move Droppen to a Folder You Can Write to Update* from the
+  launch and is never installed over: there is no password to ask for, as on
+  macOS. The .deb says *Install a Newer Package to Update* and never checks.
+  *Restart to Update* starts the new AppImage at home, without the old one's
+  mount (which goes with it) in its environment or as its folder. Downloads wait while NetworkManager says the connection is
+  metered. `e2e-updater-linux.sh` checks it with two end-to-end AppImages
+  (below).
 
 The bundled server is updated with the app and only with it: its own
 `self-upgrade` refuses under the app. The web app hears about the update
@@ -482,6 +501,14 @@ SIGTERM the app must stop it gracefully and exit 0.
 `.github/workflows/desktop-linux.yml` runs the build and the smoke tests on a
 runner of each architecture; CI calls it for the pull requests that touch the
 packaging (the `desktop_package` area). No release publishes them yet.
+
+The AppImage's updater has an end-to-end check of its own,
+`e2e-updater-linux.sh`, run on Linux (a desktop, or a container that can mount
+FUSE) with two end-to-end AppImages of different versions. `build-linux.sh`
+makes release builds only; an end-to-end AppImage is the same build in the
+same image with `cargo tauri build --bundles appimage --features e2e --config
+src-tauri/tauri.e2e.conf.json --config '{"version": "<v>"}'` (the script's
+header says what it proves).
 
 Run the unit tests with `cargo test --workspace` here (`core/` holds everything
 testable without a window: port, PATH, the sidecar's lifecycle, instance
