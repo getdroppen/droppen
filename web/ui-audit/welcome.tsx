@@ -5,7 +5,9 @@
  * `?fixture=welcome&screen=welcome|tools|where|first|wrap|setup`, with
  * `&platform=darwin|linux` (what `GET /api/auth/status` says the server runs
  * on), `&bridge=1|0` (`startAtLogin` in the app window's bridge, `init.js`;
- * left out, a browser on the device, with no bridge) and `&lang=`.
+ * left out, a browser on the device, with no bridge), `&tray=1|0` (`trayHost`
+ * on the same bridge; left out, yes, as a browser on the device takes it) and
+ * `&lang=`.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import i18next from "i18next";
@@ -105,7 +107,8 @@ export async function mountWelcome(query: URLSearchParams): Promise<void> {
   const screen = query.get("screen") ?? "welcome";
   const lang = (query.get("lang") as LanguagePref | null) ?? "en";
   const bridge = query.get("bridge");
-  if (bridge !== null) Object.defineProperty(window, "__droppenDesktop", { value: Object.freeze({ startAtLogin: bridge === "1" }) });
+  const tray = query.get("tray");
+  if (bridge !== null) Object.defineProperty(window, "__droppenDesktop", { value: Object.freeze({ startAtLogin: bridge === "1", trayHost: tray !== "0" }) });
 
   // The app's own server: the status the page asks before anything is drawn.
   const status = {

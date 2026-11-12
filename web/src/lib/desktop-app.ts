@@ -1,15 +1,19 @@
 /*
  * The Droppen desktop app as the web app's words about it need it: the system
  * it runs on, where the names differ (the Mac's menu bar, a Linux desktop's
- * system tray; the edition), and whether it has Start at Login.
+ * system tray; the edition), whether it has Start at Login, and whether a tray
+ * host shows its icon.
  *
  * The system is the server's (`GET /api/auth/status`, `platform`): the app runs
  * its server on its own device, and the words are about that device — on a
  * page opened from another device too, whose browser says nothing about it,
  * and on the setup page, before anyone is signed in. (The guide's steps 01
  * and 03 read the same from the tools report they draw, `os.platform`.)
- * Start at Login is the app's own to say (`desktop/src-tauri/src/login_item.rs`,
- * `OFFERED`), through its window's bridge (`desktop/src-tauri/src/init.js`).
+ * Start at Login and the tray host are the app's own to say
+ * (`desktop/src-tauri/src/login_item.rs`, `OFFERED`; `src/tray.rs`,
+ * `host_present_at_start`), through its window's bridge
+ * (`desktop/src-tauri/src/init.js`). A page without the bridge — a browser on
+ * the device — takes both as yes, as before.
  */
 import { serverPlatform } from "./auth";
 
@@ -44,5 +48,22 @@ function bridgeStartAtLogin(): boolean | undefined {
  * autostart entry.
  */
 export function startAtLoginOffered(said: boolean | undefined = bridgeStartAtLogin()): boolean {
+  return said ?? true;
+}
+
+/** What the app's window says of a tray host, if this page is in its window and it says. */
+function bridgeTrayHost(): boolean | undefined {
+  if (typeof window === "undefined") return undefined;
+  const said = (window as unknown as { __droppenDesktop?: { trayHost?: unknown } }).__droppenDesktop?.trayHost;
+  return typeof said === "boolean" ? said : undefined;
+}
+
+/**
+ * Whether a tray host shows the app's icon, for the words that point at it:
+ * what its window's bridge says; where nothing says — a browser on the device
+ * — yes, as before. Only the app can tell: a page outside it has no session
+ * bus to ask.
+ */
+export function trayHostPresent(said: boolean | undefined = bridgeTrayHost()): boolean {
   return said ?? true;
 }

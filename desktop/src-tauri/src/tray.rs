@@ -28,7 +28,7 @@
 //! and a launch at login shows the window instead of starting invisibly.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use droppen_desktop_core::login_item::{self, Note};
@@ -83,6 +83,17 @@ pub fn host_present() -> bool {
     {
         true
     }
+}
+
+/// The tray host as the app started: [`host_present`] asked once, before the
+/// first window (`lib.rs`), and kept for the words the app's pages show
+/// (`init.js`, `__DROPPEN_TRAY_HOST__`). Kept so making a window never waits
+/// on the bus: the probe can take up to a second, and a page's words are
+/// about how the run started anyway. A close still asks afresh, so a host
+/// started in the meantime brings the window back.
+pub fn host_present_at_start() -> bool {
+    static AT_START: OnceLock<bool> = OnceLock::new();
+    *AT_START.get_or_init(host_present)
 }
 
 /// How long a close may wait for the bus: the whole probe, connect and auth

@@ -40,10 +40,11 @@ class FakeRequest {
 
 const { default: i18n } = await import("./i18n-all.js");
 const { authStatus, forgetAuthStatus } = await import("../src/lib/auth.js");
-const { desktopSystem, desktopSystemOf, startAtLoginOffered } = await import("../src/lib/desktop-app.js");
+const { desktopSystem, desktopSystemOf, startAtLoginOffered, trayHostPresent } = await import("../src/lib/desktop-app.js");
 const { emptyProgress, complete, start } = await import("../src/features/setup/model.js");
 const { WhereStep, WrapStep } = await import("../src/features/setup/screens.js");
 const { GuideScreen } = await import("../src/features/setup/welcome-view.js");
+const { SetupPage } = await import("../src/features/auth/setup-view.js");
 const { GitRow } = await import("../src/features/setup/tools-advanced.js");
 const { FirstStepView } = await import("../src/features/setup/first-step.js");
 const { EMPTY_FIRST_UI } = await import("../src/features/setup/first-model.js");
@@ -100,16 +101,57 @@ test("Start at Login: what the app's window says; without its word, yes — the 
   assert.equal(startAtLoginOffered(undefined), true, "a browser on the device");
 });
 
-/** Draw with the app's window saying `startAtLogin` (`undefined`: no window, a browser on the device). */
-function inWindow<T>(startAtLogin: boolean | undefined, fn: () => T): T {
+test("the tray host: what the app's window says; without its word, yes — a browser on the device", () => {
+  assert.equal(trayHostPresent(true), true);
+  assert.equal(trayHostPresent(false), false);
+  assert.equal(trayHostPresent(undefined), true, "a browser on the device");
+  assert.equal(inWindow(false, () => trayHostPresent(), false), false, "the window's word, for a page the platform cannot tell");
+});
+
+/** Draw with the app's window saying `startAtLogin` and `trayHost` (`undefined`: no window, a browser on the device). */
+function inWindow<T>(startAtLogin: boolean | undefined, fn: () => T, trayHost?: boolean): T {
   const global = globalThis as unknown as { window?: unknown };
-  if (startAtLogin !== undefined) global.window = { __droppenDesktop: { startAtLogin } };
+  const bridge: Record<string, boolean> = {};
+  if (startAtLogin !== undefined) bridge.startAtLogin = startAtLogin;
+  if (trayHost !== undefined) bridge.trayHost = trayHost;
+  if (Object.keys(bridge).length) global.window = { __droppenDesktop: bridge };
   try {
     return fn();
   } finally {
     delete global.window;
   }
 }
+
+test("on Linux with no tray host, step 02 points at no tray icon and step 04 says closing quits", async () => {
+  try {
+    await onServer("linux");
+    // The Linux app's window: Start at Login, and no tray host.
+    const noTray = <T,>(fn: () => T): T => inWindow(true, fn, false);
+    const noTrayWords = /system tray|Open in Browser|系统托盘|在浏览器中打开|系統匣|在瀏覽器中打開|システムトレイ|ブラウザで開く|closing the window doesn.t stop it|关掉窗口不会停止它|關掉視窗不會停止它|ウインドウを閉じても止まりません/;
+    for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
+      const where = noTray(() => draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />, lang));
+      assert.doesNotMatch(where, noTrayWords, `step 02 in ${lang}`);
+      const wrap = noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, lang));
+      assert.match(wrap, /data-testid="wrap-login"/, `Start at Login stays offered in ${lang}`);
+      assert.doesNotMatch(wrap, noTrayWords, `step 04 in ${lang}`);
+      const setup = noTray(() => draw(<SetupPage owner={false} />, lang));
+      assert.doesNotMatch(setup, noTrayWords, `the setup page in ${lang}`);
+    }
+    const where = noTray(() => draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />));
+    assert.match(where, /The Droppen app on this device never asks for a password\. Once this device has a password, a browser asks for it\./);
+    const wrap = noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />));
+    assert.match(wrap, /Closing the window quits Droppen; start it again from the app launcher\./);
+    assert.match(wrap, /Turn it on or off any time in your desktop&#x27;s startup applications\./);
+    assert.match(noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-CN")), /关掉窗口会退出 Droppen/);
+    assert.match(noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "zh-TW")), /關掉視窗會結束 Droppen/);
+    assert.match(noTray(() => draw(<WrapStep progress={atWrap} tools={undefined} online onChange={noop} />, "ja")), /ウインドウを閉じると Droppen が終了します/);
+    assert.match(noTray(() => draw(<SetupPage owner={false} />)), /Create the first account on this device, without a code:/);
+    // A page without the window's word keeps the tray's copy, as before.
+    assert.match(draw(<WhereStep progress={started} tools={undefined} online={false} onChange={noop} />), /choose Open in Browser from the Droppen icon in the system tray/);
+  } finally {
+    forgetAuthStatus();
+  }
+});
 
 test("on Linux the guide never names the Mac: the edition, this device, the system tray", async () => {
   try {

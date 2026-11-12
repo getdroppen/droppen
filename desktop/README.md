@@ -122,9 +122,10 @@ app's first-run guide offers, does not run on anything older.
   at all. Linux has no Login Items settings page, so the menu shows no *Allow
   at Login* line.
   The window's init script tells the web app whether this build has *Start at
-  Login* (`init.js`, part 7; `login_item::OFFERED`), so the first-run guide
-  points at the switch only where there is one, in the menu bar or the
-  system tray.
+  Login* (`init.js`, part 7; `login_item::OFFERED`) and whether a tray host
+  shows the app's icon (`init.js`, part 8; `tray::host_present_at_start`), so
+  the first-run guide points at the switch only where there is one, and
+  promises the tray only where a host is there.
 - **Run from a quarantined download** (App Translocation): a notice says to
   move Droppen to Applications, and *Start at Login* stays off until it is. A
   launch agent made before the app was moved is pointed at where it is now

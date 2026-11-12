@@ -143,6 +143,7 @@ export const welcomeJa: Record<string, string> = {
   "An iPad or another device on the same Wi‑Fi opens this Mac's address in a browser and signs in with the password. Doesn't go through droppen.app, and works alongside either choice above.": "同じ Wi‑Fi の iPad やほかのデバイスのブラウザでこの Mac のアドレスを開き、パスワードで入ります。droppen.app は経由せず、上のどちらとも併用できます。", // where.lan.body
   "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "このデバイスの Droppen アプリはパスワードを求めません。このデバイスのブラウザでは、アプリのメニューバーのメニューで「ブラウザで開く」を選ぶと、ログインした状態で開きます。このデバイスにパスワードを設定したあとは、ブラウザでそのパスワードが必要になります。", // where.browserNote
   "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.": "このデバイスの Droppen アプリはパスワードを求めません。このデバイスのブラウザでは、システムトレイの Droppen アイコンのメニューで「ブラウザで開く」を選ぶと、ログインした状態で開きます。このデバイスにパスワードを設定したあとは、ブラウザでそのパスワードが必要になります。",
+  "The Droppen app on this device never asks for a password. Once this device has a password, a browser asks for it.": "このデバイスの Droppen アプリはパスワードを求めません。このデバイスにパスワードを設定したあとは、ブラウザでそのパスワードが必要になります。", // where.browserNote, no tray host
   "Sign in in the browser": "ブラウザでログイン", // where.go.droppen
   "Set the password": "パスワードを設定", // where.go.lan
   "Change it later in Settings → Access.": "あとから 設定 → アクセス で変更できます。", // where.changeLater
@@ -202,6 +203,7 @@ export const welcomeJa: Record<string, string> = {
   "Start Droppen at login": "ログイン時に Droppen を起動", // wrap.login
   "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.": "再起動後も、セッション・スマートフォン・定期タスクがこのデバイスに接続できます。Droppen はメニューバーに常駐し、ウインドウを閉じても止まりません。", // wrap.login.body
   "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the system tray; closing the window doesn't stop it.": "再起動後も、セッション・スマートフォン・定期タスクがこのデバイスに接続できます。Droppen はシステムトレイに常駐し、ウインドウを閉じても止まりません。",
+  "So sessions, your phone and scheduled tasks can reach this device after a restart. Closing the window quits Droppen; start it again from the app launcher.": "再起動後も、セッション・スマートフォン・定期タスクがこのデバイスに接続できます。ウインドウを閉じると Droppen が終了します。アプリケーションランチャーからもう一度起動してください。", // wrap.login.body, no tray host
   "Move Droppen to Applications first.": "先に Droppen を「アプリケーション」に移動してください。", // wrap.login.move
   "Notifications": "通知", // wrap.notif
   "A macOS notification when a session finishes or asks you something.": "セッションが終わったときや質問があるときに macOS の通知でお知らせします。", // wrap.notif.body
@@ -234,6 +236,7 @@ export const welcomeJa: Record<string, string> = {
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "メニューバーの Droppen アイコンの「ログイン時に起動」で、いつでもオン・オフを切り替えられます。", // wrap.login.menuBar
   "Turn it on or off any time from the Droppen icon in the system tray: Start at Login.": "システムトレイの Droppen アイコンの「ログイン時に起動」で、いつでもオン・オフを切り替えられます。",
+  "Turn it on or off any time in your desktop's startup applications.": "デスクトップのスタートアップアプリケーション設定で、いつでもオン・オフを切り替えられます。", // wrap.login, no tray host
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "閉じる",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS で Apple のインストーラーが開きました。そちらで完了してから、もう一度確認してください。",

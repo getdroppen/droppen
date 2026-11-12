@@ -143,6 +143,7 @@ export const welcomeZhCN: Record<string, string> = {
   "An iPad or another device on the same Wi‑Fi opens this Mac's address in a browser and signs in with the password. Doesn't go through droppen.app, and works alongside either choice above.": "同一个 Wi‑Fi 下的 iPad 或其它设备，用浏览器打开这台 Mac 的地址，输入密码进入。不经过 droppen.app，可以和上面任一选项同时用。", // where.lan.body
   "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "这台设备上的 Droppen 应用永远不用密码。这台设备上的浏览器，在应用的菜单栏菜单里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。", // where.browserNote
   "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.": "这台设备上的 Droppen 应用永远不用密码。这台设备上的浏览器，在系统托盘的 Droppen 图标菜单里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。",
+  "The Droppen app on this device never asks for a password. Once this device has a password, a browser asks for it.": "这台设备上的 Droppen 应用永远不用密码。给这台设备设了密码以后，浏览器会要这个密码。", // where.browserNote, no tray host
   "Sign in in the browser": "在浏览器中登录", // where.go.droppen
   "Set the password": "设置密码", // where.go.lan
   "Change it later in Settings → Access.": "之后在 设置 → 访问 里改。", // where.changeLater
@@ -202,6 +203,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Start Droppen at login": "登录时启动 Droppen", // wrap.login
   "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.": "这样重启之后，会话、手机和定时任务也能连到这台设备。Droppen 待在菜单栏里，关掉窗口不会停止它。", // wrap.login.body
   "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the system tray; closing the window doesn't stop it.": "这样重启之后，会话、手机和定时任务也能连到这台设备。Droppen 待在系统托盘里，关掉窗口不会停止它。",
+  "So sessions, your phone and scheduled tasks can reach this device after a restart. Closing the window quits Droppen; start it again from the app launcher.": "这样重启之后，会话、手机和定时任务也能连到这台设备。关掉窗口会退出 Droppen；需要时从应用启动器重新打开。", // wrap.login.body, no tray host
   "Move Droppen to Applications first.": "先把 Droppen 移到「应用程序」。", // wrap.login.move
   "Notifications": "通知", // wrap.notif
   "A macOS notification when a session finishes or asks you something.": "会话做完或在问你时，发一条 macOS 通知。", // wrap.notif.body
@@ -234,6 +236,7 @@ export const welcomeZhCN: Record<string, string> = {
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "随时可以在菜单栏的 Droppen 图标里打开或关闭「登录时启动」。", // wrap.login.menuBar
   "Turn it on or off any time from the Droppen icon in the system tray: Start at Login.": "随时可以在系统托盘的 Droppen 图标里打开或关闭「登录时启动」。",
+  "Turn it on or off any time in your desktop's startup applications.": "随时可以在桌面的启动应用程序设置里打开或关闭。", // wrap.login, no tray host
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "关闭",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS 已打开 Apple 的安装程序。在那里装完，再回来检查一次。",
