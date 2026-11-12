@@ -497,7 +497,14 @@ the licence texts they name, and `README.AppImage` (`linux/README.AppImage.in`:
 the AppImage runtime's and AppRun's notices, and where its source is). `linux/build-in-container.sh` checks both bundles as `build.sh` checks
 the Mac app (no test hooks, the updater key, the sidecar, the legal files), and
 that every file of the AppImage is the app's, a tool's or one installed
-package's.
+package's. Then, in the same image, against the apt lists its packages came
+from, it fetches the Ubuntu source package of every package
+`LIBRARIES-<arch>.txt` names, in the version named there, and fails if one is
+missing rather than take another (`sources-<arch>/`, with each package's
+copyright file and the licence texts; `--no-sources` skips it).
+`linux/sources-tar.sh` merges both architectures' with the AppImage runtime's
+source into `Droppen-<version>-linux-sources.tar`, which a release is to
+publish beside the AppImages.
 
 `.github/scripts/smoke-desktop-linux.sh <out dir> [--host]` then starts both
 as a user would: the `.deb` installed by apt and the AppImage run by its own

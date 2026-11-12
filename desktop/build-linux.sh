@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Build the Droppen desktop app for Linux, for one architecture: its AppImage
 # (the build that updates itself) and its .deb, with the Linux server inside
-# as the sidecar, and LIBRARIES-<arch>.txt, what the AppImage carries of
-# Ubuntu's packages. Unsigned: the release signs the AppImage's update
-# (.github/workflows/release.yml). Nothing is published.
+# as the sidecar, LIBRARIES-<arch>.txt, what the AppImage carries of Ubuntu's
+# packages, and sources-<arch>/, their source. Unsigned: the release signs the
+# AppImage's update (.github/workflows/release.yml). Nothing is published.
 #
 #   desktop/build-linux.sh --arch x86_64|aarch64 --sidecar <droppen-server>
 #                          [--ref <git-ref> | --worktree] [--notices <file>]
-#                          [--tools <dir>] [--out <dir>] [--keep-work] [--keep-image]
+#                          [--tools <dir>] [--out <dir>] [--no-sources]
+#                          [--keep-work] [--keep-image]
 #
 #   --arch      the architecture, which Docker runs the build on (the machine's
 #               own; the other one emulated, and slowly)
@@ -25,12 +26,13 @@
 #               appimage-runtime, instead of fetching them here
 #   --out       where the files go (default /tmp/droppen-desktop-linux-release);
 #               must be empty or absent
+#   --no-sources  no sources-<arch>/ (never for a release)
 #   --keep-work keep the build directory
 #   --keep-image  keep the build image (droppen-desktop-linux-build:<arch>-<rev>)
 #
 # How, in three runs of desktop/linux/Dockerfile's image (Ubuntu 22.04 by
 # digest, its WebKitGTK stack from the live jammy archive, and Rust), built
-# afresh every time, with no cache:
+# afresh every time, with no cache, and run by its ID:
 #   1. with the network: the locked crates, and the sidecar's and tauri-cli's
 #      versions (desktop/linux/build-in-container.sh prepare);
 #   2. without it (--network none): `cargo tauri build --bundles
@@ -38,6 +40,12 @@
 #      where the bundler looks for them, so nothing it runs or ships is
 #      downloaded; then every check, and LIBRARIES-<arch>.txt
 #      (build-in-container.sh build);
+#   3. with the network again: the Ubuntu source package of every package
+#      LIBRARIES-<arch>.txt names, in the version it names, from the image's
+#      own apt lists, the ones its packages were installed from; with each
+#      package's copyright file and the licence texts (build-in-container.sh
+#      sources). desktop/linux/sources-tar.sh merges both architectures'
+#      into the release's Droppen-<version>-linux-sources.tar;
 # all as the calling user, in a scratch directory under /tmp.
 #
 # What the bundles carry, and what is checked (build-in-container.sh):
@@ -83,6 +91,7 @@ TOOLS_FROM=""
 OUT=/tmp/droppen-desktop-linux-release
 KEEP_WORK=0
 KEEP_IMAGE=0
+SOURCES=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF=${2:?--ref needs a value}; shift 2 ;;
@@ -94,6 +103,7 @@ while [ $# -gt 0 ]; do
     --out) OUT=${2:?--out needs a value}; shift 2 ;;
     --keep-work) KEEP_WORK=1; shift ;;
     --keep-image) KEEP_IMAGE=1; shift ;;
+    --no-sources) SOURCES=0; shift ;;
     -h|--help) usage ;;
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
@@ -241,15 +251,20 @@ chmod 755 "$TAURI_DIR/binaries/droppen-server-$TARGET"
 if LC_ALL=C grep -aqF "$HOME/" "$TAURI_DIR/binaries/droppen-server-$TARGET"; then die "$SIDECAR names paths under $HOME"; fi
 
 say "image ($PLATFORM): desktop/linux/Dockerfile"
-docker build --pull --no-cache --platform "$PLATFORM" -t "$IMAGE" -f "$SRC/desktop/linux/Dockerfile" "$SRC/desktop/linux"
+docker build --pull --no-cache --platform "$PLATFORM" -t "$IMAGE" --iidfile "$WORK/image.id" -f "$SRC/desktop/linux/Dockerfile" "$SRC/desktop/linux"
 IMAGE_BUILT=1
+# Every run is of this very image, by its ID (not the tag, which another build
+# could move): the sources run sees the apt lists the build's packages came from.
+IMAGE_ID=$(cat "$WORK/image.id")
+[[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || die "docker build gave no image ID"
+echo "ok: image $IMAGE_ID"
 in_image() { # docker run options..., then build-in-container.sh's mode
   docker run --rm --platform "$PLATFORM" --user "$(id -u):$(id -g)" -e HOME=/work/home \
     -e VERSION="$VERSION" -e SOURCE_DATE_EPOCH="$COMMIT_TIME" -v "$WORK:/work" "$@"
 }
 
-say "1/2 with the network: the crates, and the versions"
-PREPARED=$(in_image "$IMAGE" bash /work/src/desktop/linux/build-in-container.sh prepare)
+say "1/3 with the network: the crates, and the versions"
+PREPARED=$(in_image "$IMAGE_ID" bash /work/src/desktop/linux/build-in-container.sh prepare)
 printf '%s\n' "$PREPARED"
 SIDE_VERSION=$(sed -n 's/^sidecar=//p' <<<"$PREPARED")
 SIDE_REV=${SIDE_VERSION##*+g}
@@ -263,10 +278,16 @@ TAURI_CLI_VERSION=$(sed -n 's/^TAURI_CLI_VERSION=//p' "$REPO/desktop/build.sh")
 [ "$(sed -n 's/^tauri_cli=//p' <<<"$PREPARED")" = "tauri-cli $TAURI_CLI_VERSION" ] || die "the tools' cargo-tauri is not tauri-cli $TAURI_CLI_VERSION"
 echo "ok: the sidecar is $SIDE_VERSION, this ref's server; tauri-cli $TAURI_CLI_VERSION"
 
-say "2/2 without the network: the app, its bundles, their checks"
-in_image --network none "$IMAGE" bash /work/src/desktop/linux/build-in-container.sh build
+say "2/3 without the network: the app, its bundles, their checks"
+in_image --network none "$IMAGE_ID" bash /work/src/desktop/linux/build-in-container.sh build
+
+if [ "$SOURCES" = 1 ]; then
+  say "3/3 with the network: the source of what the AppImage carries"
+  in_image "$IMAGE_ID" bash /work/src/desktop/linux/build-in-container.sh sources
+fi
 
 cp "$WORK/out"/* "$OUT/"
+[ "$SOURCES" = 0 ] || cp -R "$WORK/sources" "$OUT/sources-$ARCH"
 say "built in $OUT"
 ls -l "$OUT"
 cat <<EOF

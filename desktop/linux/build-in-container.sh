@@ -8,6 +8,9 @@
 #   build-in-container.sh build     without it (`docker run --network none`):
 #                                   the .deb and the AppImage, their checks,
 #                                   and LIBRARIES-<arch>.txt
+#   build-in-container.sh sources   with the network again, right after: the
+#                                   source of every package LIBRARIES-<arch>.txt
+#                                   names, into /work/sources
 #
 # /work/src    the ref's source, with the sidecar in
 #              desktop/src-tauri/binaries/droppen-server-<target> and the
@@ -18,11 +21,14 @@
 #              AppRun-<arch>, runtime-<arch>
 # /work/out    receives Droppen-<version>-<arch>.AppImage,
 #              droppen_<version>_<debarch>.deb and LIBRARIES-<arch>.txt
+# /work/sources  receives SOURCES (each source package and version),
+#              LIBRARIES-<arch>.txt, ubuntu/ (the source packages' files),
+#              copyright/<package> and common-licenses/
 #
 # Environment: VERSION (the app's), SOURCE_DATE_EPOCH (the commit's time).
 set -euo pipefail
 
-MODE=${1:?usage: build-in-container.sh prepare|build}
+MODE=${1:?usage: build-in-container.sh prepare|build|sources}
 : "${VERSION:?}" "${SOURCE_DATE_EPOCH:?}"
 die() { printf 'build-in-container: %s\n' "$*" >&2; exit 1; }
 say() { printf '\n== %s\n' "$*"; }
@@ -45,6 +51,69 @@ if [ "$MODE" = prepare ]; then
   printf 'sidecar=%s\n' "$("$SIDECAR" --version)"
   printf 'tauri_cli=%s\n' "$("$TOOLS/cargo-tauri" --version)"
   printf 'rustc=%s\n' "$(rustc --version)"
+  exit 0
+fi
+
+# The files of a source package (its .dsc's Checksums-Sha256), one
+# "<sha256>  <name>" line each.
+dsc_files() { # .dsc
+  awk '/^Checksums-Sha256:/ { f = 1; next } /^[^ ]/ { f = 0 } f && NF == 3 { print $1 "  " $3 }' "$1"
+}
+# Whether a source package has its debian/copyright: in its Debian tarball
+# or diff, or else (a native package, or a debian/ upstream) in a tarball.
+# (grep reads to the end: with -q, the writer's SIGPIPE would fail the pipe.)
+has_copyright() { # directory, .dsc
+  local file
+  for file in $(dsc_files "$1/$2" | cut -d' ' -f3); do
+    case "$file" in
+      *.debian.tar.*) tar -tf "$1/$file" | grep -E '^(\./)?debian/copyright$' >/dev/null && return 0 ;;
+      *.diff.gz) zcat "$1/$file" | grep -E '^\+\+\+ [^/]+/debian/copyright' >/dev/null && return 0 ;;
+    esac
+  done
+  for file in $(dsc_files "$1/$2" | cut -d' ' -f3); do
+    case "$file" in
+      *.debian.tar.* | *.asc) ;;
+      *.tar.*) tar -tf "$1/$file" | grep -E '^([^/]+/)?debian/copyright$' >/dev/null && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+if [ "$MODE" = sources ]; then
+  # The source of what the AppImage carries: the Ubuntu source package of
+  # every package LIBRARIES-<arch>.txt names, in the version it names, by apt
+  # from this image's own lists. desktop/linux/Dockerfile keeps them, with the
+  # deb-src lines of the same archive: the lists the packages were installed
+  # from, never updated since, so each source is of the very version built
+  # into the AppImage. apt checks every file against the signed index; one it
+  # cannot fetch fails the build, and no other version is ever taken.
+  LIBRARIES=/work/out/LIBRARIES-$ARCH.txt
+  OUT=/work/sources
+  [ -s "$LIBRARIES" ] || die "no $LIBRARIES: build first"
+  rm -rf "$OUT" && mkdir -p "$OUT/ubuntu" "$OUT/copyright"
+  grep -v '^#' "$LIBRARIES" | cut -f3,4 | LC_ALL=C sort -u >"$OUT/SOURCES"
+  [ -s "$OUT/SOURCES" ] || die "LIBRARIES-$ARCH.txt names no source package"
+  say "the source packages of LIBRARIES-$ARCH.txt: $(wc -l <"$OUT/SOURCES")"
+  NAMES=$(mktemp)
+  while IFS=$'\t' read -r src ver; do
+    (cd "$OUT/ubuntu" && apt-get source --download-only -qq "$src=$ver" >/dev/null) || die "apt cannot fetch the source of $src $ver"
+    dsc=${src}_${ver#*:}.dsc
+    [ -f "$OUT/ubuntu/$dsc" ] || die "apt fetched no $dsc for $src $ver"
+    [ "$(sed -n 's/^Source: //p' "$OUT/ubuntu/$dsc")" = "$src" ] && [ "$(sed -n 's/^Version: //p' "$OUT/ubuntu/$dsc")" = "$ver" ] \
+      || die "$dsc is not the source of $src $ver"
+    (cd "$OUT/ubuntu" && dsc_files "$dsc" | sha256sum -c --quiet -) || die "$dsc: its files are not the ones it names"
+    has_copyright "$OUT/ubuntu" "$dsc" || die "$src $ver has no debian/copyright"
+    { echo "$dsc"; dsc_files "$OUT/ubuntu/$dsc" | cut -d' ' -f3; } >>"$NAMES"
+  done <"$OUT/SOURCES"
+  STRAY=$(cd "$OUT/ubuntu" && ls | LC_ALL=C sort | comm -23 - <(LC_ALL=C sort -u "$NAMES"))
+  [ -z "$STRAY" ] || die "files of no source package of LIBRARIES-$ARCH.txt: $STRAY"
+  # The licence terms, as the AppImage carries them.
+  grep -v '^#' "$LIBRARIES" | cut -f1 | sed 's/:.*//' | LC_ALL=C sort -u | while IFS= read -r pkg; do
+    cp "/usr/share/doc/$pkg/copyright" "$OUT/copyright/$pkg" || die "no copyright file for $pkg"
+  done
+  cp -RL /usr/share/common-licenses "$OUT/common-licenses"
+  cp "$LIBRARIES" "$OUT/"
+  echo "ok: $(wc -l <"$OUT/SOURCES") source packages ($(ls "$OUT/ubuntu" | wc -l) files, $(du -sh "$OUT/ubuntu" | cut -f1)), each with its debian/copyright and every file its .dsc names; $(ls "$OUT/copyright" | wc -l) copyright files"
   exit 0
 fi
 [ "$MODE" = build ] || die "unknown mode $MODE"
