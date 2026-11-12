@@ -27,6 +27,15 @@
 //! address of the release notes: the app links to it. The text the app's
 //! update page shows comes from the release body instead — GitHub's API for
 //! the tag [`notes_api_url`], the same notes the release page carries.
+//!
+//! A release that ships the Linux app as well also offers its AppImages
+//! ([`appimage`], one per architecture of [`LINUX_ARCHES`]), each signed with
+//! the same key for its own file name, under `linux-<arch>-appimage`
+//! ([`appimage_target`]). Never under a bare `linux-<arch>`: the updater falls
+//! back to it from `linux-<arch>-deb`, so a .deb install would fetch an
+//! AppImage and hand it to dpkg. A .deb is updated by its package manager, so
+//! it gets no key at all. The Linux and macOS apps always ship together, so
+//! one `version` serves both.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime};
@@ -44,7 +53,7 @@ pub const RELEASES_REPO: &str = "getdroppen/droppen";
 /// `src-tauri/tauri.conf.json`, `plugins.updater.endpoints`).
 pub const ENDPOINT: &str = "https://github.com/getdroppen/droppen/releases/latest/download/latest.json";
 
-/// The update archive's file name on a release.
+/// The Mac app's update archive's file name on a release.
 pub const ARCHIVE: &str = "Droppen.app.tar.gz";
 
 /// The minisign key id of the updater key releases are signed with: the key
@@ -54,8 +63,14 @@ pub const ARCHIVE: &str = "Droppen.app.tar.gz";
 /// app trusts only this one.
 pub const RELEASE_KEY_ID: &str = "1CB79070988604BF";
 
-/// The updater targets a manifest names: one universal archive serves both.
+/// The updater targets a manifest names for the Mac app: one universal
+/// archive serves both.
 pub const TARGETS: [&str; 2] = ["darwin-aarch64", "darwin-x86_64"];
+
+/// The architectures a release builds the Linux app's AppImage for, as the
+/// updater names them. A manifest offers both or neither: a release that
+/// ships the Linux app ships it for both.
+pub const LINUX_ARCHES: [&str; 2] = ["aarch64", "x86_64"];
 
 /// How long after launch the first check waits, so it never slows the start.
 pub const FIRST_CHECK: Duration = Duration::from_secs(15);
@@ -71,9 +86,24 @@ pub fn release_page(version: &str) -> String {
     format!("https://github.com/{RELEASES_REPO}/releases/tag/v{version}")
 }
 
-/// Where the archive of `version` is published.
+/// Where the Mac archive of `version` is published.
 pub fn archive_url(version: &str) -> String {
-    format!("https://github.com/{RELEASES_REPO}/releases/download/v{version}/{ARCHIVE}")
+    asset_url(version, ARCHIVE)
+}
+
+/// Where `file` of release `version` is published.
+pub fn asset_url(version: &str, file: &str) -> String {
+    format!("https://github.com/{RELEASES_REPO}/releases/download/v{version}/{file}")
+}
+
+/// The file name of `version`'s AppImage for `arch` (one of [`LINUX_ARCHES`]).
+pub fn appimage(version: &str, arch: &str) -> String {
+    format!("Droppen-{version}-{arch}.AppImage")
+}
+
+/// The manifest key the updater looks up first in an AppImage for `arch`.
+pub fn appimage_target(arch: &str) -> String {
+    format!("linux-{arch}-appimage")
 }
 
 /// The release notes to link to for `version`: the manifest's `notes` when it
@@ -736,7 +766,8 @@ pub struct Manifest {
     pub notes: String,
     /// When it was published (RFC 3339, UTC).
     pub pub_date: String,
-    /// The archive per updater target ([`TARGETS`]).
+    /// The archive per updater target: [`TARGETS`], and the AppImages' when
+    /// the release ships the Linux app ([`appimage_target`]).
     pub platforms: BTreeMap<String, Platform>,
 }
 
@@ -754,9 +785,13 @@ pub struct Platform {
 pub struct Rules<'a> {
     /// The updater public key (base64, as in `tauri.conf.json`).
     pub pubkey: &'a str,
-    /// The archive, to verify the signature against; without it only the
+    /// The Mac archive, to verify the signature against; without it only the
     /// signature's form and fields are checked.
     pub archive: Option<&'a [u8]>,
+    /// The AppImages, by architecture, to verify theirs against; an
+    /// architecture without one has only its signature's form and fields
+    /// checked.
+    pub appimages: &'a [(String, Vec<u8>)],
     /// Allow `http://127.0.0.1` / `http://localhost` archive addresses — for
     /// the updater's end-to-end test only, never a release.
     pub loopback_http: bool,
@@ -776,6 +811,21 @@ impl Manifest {
             pub_date: crate::logging::timestamp(published),
             platforms: TARGETS.iter().map(|target| (target.to_string(), platform.clone())).collect(),
         }
+    }
+
+    /// Offer the AppImage for `arch` at `url`, signed by `signature` (its
+    /// `.sig` file's contents), under the one key only AppImage installs read.
+    pub fn add_appimage(&mut self, arch: &str, url: &str, signature: &str) {
+        let platform = Platform {
+            signature: signature.trim().to_string(),
+            url: url.to_string(),
+        };
+        self.platforms.insert(appimage_target(arch), platform);
+    }
+
+    /// Whether it offers the Linux app's AppImages.
+    pub fn has_appimages(&self) -> bool {
+        LINUX_ARCHES.iter().any(|arch| self.platforms.contains_key(&appimage_target(arch)))
     }
 
     /// Parse `latest.json`.
@@ -806,45 +856,91 @@ impl Manifest {
             ));
         }
         let targets: Vec<&str> = self.platforms.keys().map(String::as_str).collect();
-        if targets != TARGETS {
-            problems.push(format!("platforms are {targets:?}, not {TARGETS:?}"));
+        let appimage_targets = LINUX_ARCHES.map(appimage_target);
+        let with_linux: Vec<&str> = TARGETS.into_iter().chain(appimage_targets.iter().map(String::as_str)).collect();
+        if targets != TARGETS && targets != with_linux {
+            problems.push(format!("platforms are {targets:?}, not {TARGETS:?}, nor those and {appimage_targets:?}"));
         }
-        let mut distinct: Vec<&Platform> = self.platforms.values().collect();
+        for target in &targets {
+            if let Some(why) = wrong_install(target) {
+                problems.push(why);
+            }
+        }
+        let mut distinct: Vec<&Platform> = TARGETS.iter().filter_map(|target| self.platforms.get(*target)).collect();
         distinct.dedup();
         if distinct.len() > 1 {
-            problems.push("the platforms name different archives; a release has one universal archive".to_string());
+            problems.push("the darwin platforms name different archives; a release has one universal archive".to_string());
         }
         if let Some(platform) = distinct.first() {
-            if let Err(why) = check_url(&platform.url, &self.version, rules.loopback_http) {
+            if let Err(why) = check_url(&platform.url, &self.version, ARCHIVE, rules.loopback_http) {
                 problems.push(why);
             }
-            if let Err(why) = check_signature(&platform.signature, rules.pubkey, &self.version, rules.archive) {
+            if let Err(why) = check_signature(&platform.signature, rules.pubkey, &self.version, ARCHIVE, rules.archive) {
                 problems.push(why);
             }
+        }
+        for (arch, _) in rules.appimages {
+            if !LINUX_ARCHES.contains(&arch.as_str()) {
+                problems.push(format!("an AppImage for {arch} was given; a release has them for {LINUX_ARCHES:?} only"));
+            }
+        }
+        for arch in LINUX_ARCHES {
+            let target = appimage_target(arch);
+            let given = rules.appimages.iter().find(|(given, _)| given == arch).map(|(_, bytes)| bytes.as_slice());
+            let Some(platform) = self.platforms.get(&target) else {
+                if given.is_some() {
+                    problems.push(format!("an AppImage for {arch} was given, but the manifest offers none ({target})"));
+                }
+                continue;
+            };
+            // Each AppImage is its own file, signed for its own name: the
+            // signature of one architecture's cannot stand for the other's.
+            let file = appimage(&self.version, arch);
+            let checks = [
+                check_url(&platform.url, &self.version, &file, rules.loopback_http),
+                check_signature(&platform.signature, rules.pubkey, &self.version, &file, given),
+            ];
+            problems.extend(checks.into_iter().filter_map(Result::err).map(|why| format!("{target}: {why}")));
         }
         problems
     }
 }
 
-/// Whether the app may download `version`'s archive from `url`, which the
-/// unsigned manifest named: only from that version's release (or, in the
-/// updater's end-to-end test, a loopback `http` server). The signature still
-/// decides what is installed; this keeps the download itself where releases
-/// are, so a changed manifest cannot send every app to another host.
-pub fn check_download_url(url: &str, version: &str, loopback_http: bool) -> Result<(), String> {
-    check_url(url, version, loopback_http)
+/// Why a Linux key is never in a manifest, beyond not being one a release
+/// names: the updater would offer its file to installs it would break.
+fn wrong_install(target: &str) -> Option<String> {
+    let rest = target.strip_prefix("linux-")?;
+    if !rest.contains('-') {
+        Some(format!(
+            "{target:?} would reach .deb installs too (the updater falls back to it from linux-<arch>-deb) and have dpkg install an AppImage; an AppImage's key is linux-<arch>-appimage"
+        ))
+    } else if rest.ends_with("-deb") || rest.ends_with("-rpm") {
+        Some(format!("{target:?}: a package is updated by its package manager, never by the app"))
+    } else {
+        None
+    }
 }
 
-fn check_url(url: &str, version: &str, loopback_http: bool) -> Result<(), String> {
+/// Whether the app may download `version`'s update `file` (its [`ARCHIVE`],
+/// or its [`appimage`]) from `url`, which the unsigned manifest named: only
+/// from that version's release (or, in the updater's end-to-end test, a
+/// loopback `http` server). The signature still decides what is installed;
+/// this keeps the download itself where releases are, so a changed manifest
+/// cannot send every app to another host.
+pub fn check_download_url(url: &str, version: &str, file: &str, loopback_http: bool) -> Result<(), String> {
+    check_url(url, version, file, loopback_http)
+}
+
+fn check_url(url: &str, version: &str, file: &str, loopback_http: bool) -> Result<(), String> {
     let parsed = Url::parse(url).map_err(|error| format!("url {url:?}: {error}"))?;
-    if !parsed.path().ends_with(&format!("/{ARCHIVE}")) {
-        return Err(format!("url {url:?} does not end in /{ARCHIVE}"));
+    if !parsed.path().ends_with(&format!("/{file}")) {
+        return Err(format!("url {url:?} does not end in /{file}"));
     }
     match parsed.scheme() {
-        "https" if url == archive_url(version) => Ok(()),
+        "https" if url == asset_url(version, file) => Ok(()),
         "https" => Err(format!(
             "url {url:?} is not this version's archive on the release, {}",
-            archive_url(version)
+            asset_url(version, file)
         )),
         "http" if loopback_http && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost")) => Ok(()),
         _ => Err(format!("url {url:?} is not https")),
@@ -882,9 +978,9 @@ fn decode_text(base64: &str, what: &str) -> Result<String, String> {
 
 /// Check `signature` (a `.sig` file's contents) against `pubkey` (base64, as
 /// in `tauri.conf.json`): made by that key over `archive` (when given), for
-/// `version` and for a file named [`ARCHIVE`] — what the app itself checks,
-/// plus the file name.
-pub fn check_signature(signature: &str, pubkey: &str, version: &str, archive: Option<&[u8]>) -> Result<(), String> {
+/// `version` and for a file named `file` ([`ARCHIVE`], or an [`appimage`]) —
+/// what the app itself checks, plus the file name.
+pub fn check_signature(signature: &str, pubkey: &str, version: &str, file: &str, archive: Option<&[u8]>) -> Result<(), String> {
     let key_text = decode_text(pubkey, "public key")?;
     let key = minisign_verify::PublicKey::decode(&key_text).map_err(|error| format!("the public key is not a minisign key: {error}"))?;
     let signature_text = decode_text(signature, "signature")?;
@@ -910,8 +1006,8 @@ pub fn check_signature(signature: &str, pubkey: &str, version: &str, archive: Op
         None => return Err("the signature names no version (sign with --app-version)".to_string()),
     }
     match field("file:") {
-        Some(file) if file == ARCHIVE => Ok(()),
-        other => Err(format!("the signature was made for {other:?}, not {ARCHIVE}")),
+        Some(signed) if signed == file => Ok(()),
+        other => Err(format!("the signature was made for {other:?}, not {file}")),
     }
 }
 
@@ -1307,10 +1403,28 @@ mod tests {
         pub const VERSION: &str = "0.0.2-test";
     }
 
+    /// A release with the Linux app: the archive above and two stand-in
+    /// AppImages, each signed for VERSION by desktop/update-signer with one
+    /// throwaway key of its own (not kept anywhere else); and two signatures
+    /// of the x86_64 one that are not its release's: one for 0.0.3-test, one
+    /// for the name Tauri's bundler gives it.
+    mod with_linux {
+        pub const PUBKEY: &str = include_str!("../testdata/update/with-linux/test.key.pub");
+        pub const ARCHIVE_SIGNATURE: &str = include_str!("../testdata/update/with-linux/Droppen.app.tar.gz.sig");
+        pub const X86_64: &[u8] = include_bytes!("../testdata/update/with-linux/Droppen-0.0.2-test-x86_64.AppImage");
+        pub const X86_64_SIGNATURE: &str = include_str!("../testdata/update/with-linux/Droppen-0.0.2-test-x86_64.AppImage.sig");
+        pub const AARCH64: &[u8] = include_bytes!("../testdata/update/with-linux/Droppen-0.0.2-test-aarch64.AppImage");
+        pub const AARCH64_SIGNATURE: &str = include_str!("../testdata/update/with-linux/Droppen-0.0.2-test-aarch64.AppImage.sig");
+        pub const WRONG_VERSION: &str = include_str!("../testdata/update/with-linux/wrong-version.sig");
+        /// For `Droppen_0.0.2-test_amd64.AppImage`.
+        pub const RENAMED: &str = include_str!("../testdata/update/with-linux/renamed.sig");
+    }
+
     fn rules(archive: Option<&'static [u8]>) -> Rules<'static> {
         Rules {
             pubkey: fixture::PUBKEY,
             archive,
+            appimages: &[],
             loopback_http: false,
         }
     }
@@ -1366,7 +1480,7 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("does not verify")), "{problems:?}");
 
         // Signed for another file name: verifies, but is not this archive's.
-        assert!(check_signature(fixture::OTHER_FILE_SIGNATURE, fixture::PUBKEY, fixture::VERSION, None)
+        assert!(check_signature(fixture::OTHER_FILE_SIGNATURE, fixture::PUBKEY, fixture::VERSION, ARCHIVE, None)
             .unwrap_err()
             .contains("not Droppen.app.tar.gz"));
     }
@@ -1376,16 +1490,29 @@ mod tests {
     #[test]
     fn the_release_signer_signs_what_the_app_checks() {
         assert_eq!(
-            check_signature(fixture::IN_REPO_SIGNATURE, fixture::IN_REPO_PUBKEY, fixture::VERSION, Some(fixture::ARCHIVE)),
+            check_signature(
+                fixture::IN_REPO_SIGNATURE,
+                fixture::IN_REPO_PUBKEY,
+                fixture::VERSION,
+                ARCHIVE,
+                Some(fixture::ARCHIVE)
+            ),
             Ok(())
         );
-        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::IN_REPO_PUBKEY, "0.0.3-test", Some(fixture::ARCHIVE))
+        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::IN_REPO_PUBKEY, "0.0.3-test", ARCHIVE, Some(fixture::ARCHIVE))
             .unwrap_err()
             .contains("made for version 0.0.2-test"));
-        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::PUBKEY, fixture::VERSION, Some(fixture::ARCHIVE)).is_err());
+        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::PUBKEY, fixture::VERSION, ARCHIVE, Some(fixture::ARCHIVE)).is_err());
         let mut tampered = fixture::ARCHIVE.to_vec();
         tampered[100] ^= 1;
-        assert!(check_signature(fixture::IN_REPO_SIGNATURE, fixture::IN_REPO_PUBKEY, fixture::VERSION, Some(&tampered)).is_err());
+        assert!(check_signature(
+            fixture::IN_REPO_SIGNATURE,
+            fixture::IN_REPO_PUBKEY,
+            fixture::VERSION,
+            ARCHIVE,
+            Some(&tampered)
+        )
+        .is_err());
     }
 
     #[test]
@@ -1438,7 +1565,7 @@ mod tests {
 
     #[test]
     fn the_app_downloads_only_from_the_versions_release() {
-        assert_eq!(check_download_url(&archive_url("0.2.125"), "0.2.125", false), Ok(()));
+        assert_eq!(check_download_url(&archive_url("0.2.125"), "0.2.125", ARCHIVE, false), Ok(()));
         for wrong in [
             archive_url("0.2.124"),
             "https://example.com/v0.2.125/Droppen.app.tar.gz".to_string(),
@@ -1447,10 +1574,10 @@ mod tests {
             "https://github.com/getdroppen/releases/releases/download/v0.2.125/Droppen.app.tar.gz".to_string(),
             "http://127.0.0.1:8123/v0.2.125/Droppen.app.tar.gz".to_string(),
         ] {
-            assert!(check_download_url(&wrong, "0.2.125", false).is_err(), "{wrong}");
+            assert!(check_download_url(&wrong, "0.2.125", ARCHIVE, false).is_err(), "{wrong}");
         }
         assert_eq!(
-            check_download_url("http://127.0.0.1:8123/v0.2.125/Droppen.app.tar.gz", "0.2.125", true),
+            check_download_url("http://127.0.0.1:8123/v0.2.125/Droppen.app.tar.gz", "0.2.125", ARCHIVE, true),
             Ok(()),
             "the end-to-end test's local server"
         );
@@ -1482,5 +1609,245 @@ mod tests {
         assert!(problems.iter().any(|p| p.contains("pub_date")), "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("notes")), "{problems:?}");
         assert!(Manifest::parse("{\"version\": 1}").is_err());
+    }
+
+    /// A release without the Linux app writes, byte for byte, what every
+    /// release wrote before AppImages were offered (the file was made by the
+    /// code of that time): installed Macs read nothing new.
+    #[test]
+    fn a_macos_only_manifest_is_what_it_always_was() {
+        assert_eq!(manifest().to_json(), include_str!("../testdata/update/latest-macos.json"));
+        assert!(!manifest().has_appimages());
+    }
+
+    fn release_rules<'a>(archive: Option<&'a [u8]>, appimages: &'a [(String, Vec<u8>)]) -> Rules<'a> {
+        Rules {
+            pubkey: with_linux::PUBKEY,
+            archive,
+            appimages,
+            loopback_http: false,
+        }
+    }
+
+    fn both_appimages() -> Vec<(String, Vec<u8>)> {
+        vec![
+            ("aarch64".to_string(), with_linux::AARCH64.to_vec()),
+            ("x86_64".to_string(), with_linux::X86_64.to_vec()),
+        ]
+    }
+
+    fn with_linux_release() -> Manifest {
+        let version = fixture::VERSION;
+        let mut manifest = Manifest::new(
+            version,
+            &release_page(version),
+            &archive_url(version),
+            with_linux::ARCHIVE_SIGNATURE,
+            at(1_792_396_800),
+        );
+        manifest.add_appimage("x86_64", &asset_url(version, &appimage(version, "x86_64")), with_linux::X86_64_SIGNATURE);
+        manifest.add_appimage(
+            "aarch64",
+            &asset_url(version, &appimage(version, "aarch64")),
+            with_linux::AARCH64_SIGNATURE,
+        );
+        manifest
+    }
+
+    #[test]
+    fn a_release_with_the_linux_app_offers_each_appimage_under_its_own_key() {
+        let manifest = with_linux_release();
+        assert!(manifest.has_appimages());
+        let appimages = both_appimages();
+        assert_eq!(manifest.check(&release_rules(Some(fixture::ARCHIVE), &appimages)), Vec::<String>::new());
+        assert_eq!(
+            manifest.check(&release_rules(None, &[])),
+            Vec::<String>::new(),
+            "the signatures' fields alone"
+        );
+
+        let json: serde_json::Value = serde_json::from_str(&manifest.to_json()).expect("json");
+        let keys: Vec<&str> = json["platforms"].as_object().expect("platforms").keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            ["darwin-aarch64", "darwin-x86_64", "linux-aarch64-appimage", "linux-x86_64-appimage"]
+        );
+        let base = "https://github.com/getdroppen/droppen/releases/download/v0.0.2-test";
+        for (arch, signature) in [("aarch64", with_linux::AARCH64_SIGNATURE), ("x86_64", with_linux::X86_64_SIGNATURE)] {
+            let platform = &json["platforms"][format!("linux-{arch}-appimage")];
+            assert_eq!(platform["url"], format!("{base}/Droppen-0.0.2-test-{arch}.AppImage"), "the raw AppImage");
+            assert_eq!(platform["signature"], signature.trim());
+        }
+        // The Mac's entries are what a release without the Linux app has.
+        let mut mac_only = manifest.clone();
+        mac_only.platforms.retain(|target, _| target.starts_with("darwin-"));
+        let mac = Manifest::new(
+            fixture::VERSION,
+            &release_page(fixture::VERSION),
+            &archive_url(fixture::VERSION),
+            with_linux::ARCHIVE_SIGNATURE,
+            at(1_792_396_800),
+        );
+        assert_eq!(mac_only, mac);
+        assert_eq!(Manifest::parse(&manifest.to_json()), Ok(manifest));
+    }
+
+    /// The updater falls back from `linux-<arch>-deb` to `linux-<arch>`; a
+    /// .deb install must find neither.
+    #[test]
+    fn a_manifest_never_offers_a_bare_or_a_package_linux_key() {
+        for arch in LINUX_ARCHES {
+            assert_eq!(appimage_target(arch), format!("linux-{arch}-appimage"));
+            let json = with_linux_release().to_json();
+            assert!(!json.contains(&format!("\"linux-{arch}\"")), "{json}");
+            assert!(!json.contains("-deb\""), "{json}");
+        }
+        for (target, why) in [
+            ("linux-x86_64", "would reach .deb installs"),
+            ("linux-aarch64", "would reach .deb installs"),
+            ("linux-x86_64-deb", "package manager"),
+            ("linux-aarch64-rpm", "package manager"),
+        ] {
+            for mut manifest in [with_linux_release(), manifest()] {
+                let platform = manifest.platforms["darwin-x86_64"].clone();
+                manifest.platforms.insert(target.to_string(), platform);
+                let problems = manifest.check(&release_rules(None, &[]));
+                assert!(problems.iter().any(|p| p.contains("platforms are")), "{target}: {problems:?}");
+                assert!(
+                    problems.iter().any(|p| p.starts_with(&format!("{target:?}")) && p.contains(why)),
+                    "{target}: {problems:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_manifest_offers_both_appimages_or_neither() {
+        for arch in LINUX_ARCHES {
+            let mut one = with_linux_release();
+            one.platforms.remove(&appimage_target(arch));
+            let problems = one.check(&release_rules(None, &[]));
+            assert!(problems.iter().any(|p| p.contains("platforms are")), "{problems:?}");
+
+            // An AppImage to verify that the manifest does not offer.
+            let appimages = both_appimages();
+            let problems = one.check(&release_rules(None, &appimages));
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| p.contains(&format!("an AppImage for {arch} was given, but the manifest offers none"))),
+                "{problems:?}"
+            );
+        }
+        let armv7 = vec![("armv7".to_string(), with_linux::X86_64.to_vec())];
+        let problems = with_linux_release().check(&release_rules(None, &armv7));
+        assert!(problems.iter().any(|p| p.contains("an AppImage for armv7 was given")), "{problems:?}");
+    }
+
+    #[test]
+    fn a_linux_signature_for_another_file_or_version_is_refused() {
+        let appimages = both_appimages();
+        let with_x86_64_signature = |signature: &str| {
+            let mut manifest = with_linux_release();
+            manifest.platforms.get_mut("linux-x86_64-appimage").expect("x86_64").signature = signature.trim().to_string();
+            manifest
+        };
+
+        // Another version: the app would refuse it (requireSignedVersion).
+        for appimages in [&appimages[..], &[]] {
+            assert_eq!(
+                with_x86_64_signature(with_linux::WRONG_VERSION).check(&release_rules(Some(fixture::ARCHIVE), appimages)),
+                vec!["linux-x86_64-appimage: the signature was made for version 0.0.3-test, not 0.0.2-test".to_string()]
+            );
+        }
+        // The same bytes, signed under the bundler's name rather than the
+        // release's: verifies, but is not this file's.
+        assert_eq!(
+            with_x86_64_signature(with_linux::RENAMED).check(&release_rules(None, &appimages)),
+            vec![
+                "linux-x86_64-appimage: the signature was made for Some(\"Droppen_0.0.2-test_amd64.AppImage\"), not Droppen-0.0.2-test-x86_64.AppImage"
+                    .to_string()
+            ]
+        );
+        // The other architecture's signature, with or without the bytes.
+        let swapped = with_x86_64_signature(with_linux::AARCH64_SIGNATURE);
+        let problems = swapped.check(&release_rules(None, &[]));
+        assert_eq!(
+            problems,
+            vec![
+                "linux-x86_64-appimage: the signature was made for Some(\"Droppen-0.0.2-test-aarch64.AppImage\"), not Droppen-0.0.2-test-x86_64.AppImage"
+                    .to_string()
+            ]
+        );
+        let problems = swapped.check(&release_rules(None, &appimages));
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.starts_with("linux-x86_64-appimage: ") && p.contains("does not verify")),
+            "{problems:?}"
+        );
+
+        // Bytes that are not the AppImage signed: the other one, or tampered.
+        let mut tampered = both_appimages();
+        tampered[1].1[3] ^= 1;
+        let crossed = vec![
+            ("aarch64".to_string(), with_linux::X86_64.to_vec()),
+            ("x86_64".to_string(), with_linux::AARCH64.to_vec()),
+        ];
+        for appimages in [tampered, crossed] {
+            let problems = with_linux_release().check(&release_rules(None, &appimages));
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| p.starts_with("linux-x86_64-appimage: ") && p.contains("does not verify")),
+                "{problems:?}"
+            );
+        }
+
+        // Another key's.
+        let problems = with_linux_release().check(&Rules {
+            pubkey: fixture::PUBKEY,
+            ..release_rules(None, &[])
+        });
+        assert_eq!(problems.len(), 3, "the Mac's and both AppImages': {problems:?}");
+        assert!(problems.iter().all(|p| p.contains("is by key")), "{problems:?}");
+    }
+
+    #[test]
+    fn an_appimage_is_downloaded_from_its_own_release_only() {
+        let version = fixture::VERSION;
+        let x86_64 = appimage(version, "x86_64");
+        assert_eq!(x86_64, "Droppen-0.0.2-test-x86_64.AppImage");
+        assert_eq!(check_download_url(&asset_url(version, &x86_64), version, &x86_64, false), Ok(()));
+        for wrong in [
+            asset_url("0.0.1-test", &appimage("0.0.1-test", "x86_64")),
+            asset_url(version, &appimage(version, "aarch64")),
+            archive_url(version),
+            // The AppImage packed as Tauri's bundler would, which the release does not publish.
+            format!("{}.tar.gz", asset_url(version, &x86_64)),
+            format!("http://127.0.0.1:8123/v{version}/{x86_64}"),
+        ] {
+            assert!(check_download_url(&wrong, version, &x86_64, false).is_err(), "{wrong}");
+            let mut manifest = with_linux_release();
+            manifest.platforms.get_mut("linux-x86_64-appimage").expect("x86_64").url = wrong.clone();
+            let problems = manifest.check(&release_rules(None, &[]));
+            assert_eq!(problems.len(), 1, "{wrong}: {problems:?}");
+            assert!(problems[0].starts_with("linux-x86_64-appimage: url "), "{problems:?}");
+        }
+        let mut local = with_linux_release();
+        for arch in LINUX_ARCHES {
+            local.platforms.get_mut(&appimage_target(arch)).expect("an AppImage").url =
+                format!("http://127.0.0.1:8123/v{version}/{}", appimage(version, arch));
+        }
+        local.platforms.get_mut("darwin-aarch64").expect("mac").url = format!("http://127.0.0.1:8123/v{version}/{ARCHIVE}");
+        local.platforms.get_mut("darwin-x86_64").expect("mac").url = format!("http://127.0.0.1:8123/v{version}/{ARCHIVE}");
+        assert_eq!(
+            local.check(&Rules {
+                loopback_http: true,
+                ..release_rules(None, &[])
+            }),
+            Vec::<String>::new(),
+            "the end-to-end test's local server"
+        );
     }
 }

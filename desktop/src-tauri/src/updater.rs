@@ -393,7 +393,9 @@ pub fn check<R: Runtime>(app: &AppHandle<R>, asked: bool) {
         let checked = match found {
             // The manifest is not signed: its archive address must be the
             // release's own (or the end-to-end test's loopback server).
-            Ok(Some(found)) if update::check_download_url(found.download_url.as_str(), &found.version, cfg!(feature = "e2e")).is_err() => {
+            Ok(Some(found))
+                if update::check_download_url(found.download_url.as_str(), &found.version, update::ARCHIVE, cfg!(feature = "e2e")).is_err() =>
+            {
                 log::warn!(
                     "updates: the manifest names {} for Droppen {}, not its release's archive; not downloaded",
                     found.download_url,
@@ -723,7 +725,7 @@ fn install_staged<R: Runtime>(app: &AppHandle<R>, me: &Updater<R>, release: &Rel
         .ok_or((Problem::Other, "the update is not the one downloaded".to_string()))?;
     let bytes = std::fs::read(me.staging.join(STAGED)).map_err(|error| (Problem::Install, format!("the download is gone: {error}")))?;
     let key = pubkey(app).ok_or((Problem::Other, "no updater key".to_string()))?;
-    update::check_signature(&found.signature, &key, &release.version, Some(&bytes)).map_err(|error| (Problem::Signature, error))?;
+    update::check_signature(&found.signature, &key, &release.version, update::ARCHIVE, Some(&bytes)).map_err(|error| (Problem::Signature, error))?;
     found.install(&bytes).map_err(|error| (problem(&error), error.to_string()))
 }
 
@@ -858,6 +860,52 @@ pub mod testing {
 mod tests {
     use super::*;
     use tauri_plugin_updater::Error as E;
+
+    /// A manifest that offers the AppImages too, read by the plugin as an
+    /// installed app reads it: a Mac finds its own archive and nothing else
+    /// changes; an AppImage finds its own file; a .deb, which looks up
+    /// `linux-<arch>-deb` and then `linux-<arch>`, finds nothing.
+    #[test]
+    fn each_install_finds_only_its_own_file_in_a_manifest_with_the_appimages() {
+        let version = "0.2.140";
+        let mut manifest = update::Manifest::new(
+            version,
+            &update::release_page(version),
+            &update::archive_url(version),
+            "the archive's signature",
+            SystemTime::UNIX_EPOCH,
+        );
+        for arch in update::LINUX_ARCHES {
+            manifest.add_appimage(
+                arch,
+                &update::asset_url(version, &update::appimage(version, arch)),
+                &format!("{arch}'s signature"),
+            );
+        }
+        let release: tauri_plugin_updater::RemoteRelease = serde_json::from_str(&manifest.to_json()).expect("the plugin reads it");
+        for target in ["darwin-aarch64", "darwin-x86_64", "darwin-aarch64-app", "darwin-x86_64-app"] {
+            let Ok(url) = release.download_url(target) else {
+                assert!(target.ends_with("-app"), "{target}");
+                continue;
+            };
+            assert_eq!(url.as_str(), update::archive_url(version), "{target}");
+            assert_eq!(release.signature(target).expect("a signature"), "the archive's signature");
+        }
+        for arch in update::LINUX_ARCHES {
+            let url = release.download_url(&format!("linux-{arch}-appimage")).expect("an AppImage");
+            assert_eq!(
+                url.path_segments().and_then(|mut segments| segments.next_back()),
+                Some(update::appimage(version, arch).as_str())
+            );
+            assert_eq!(
+                release.signature(&format!("linux-{arch}-appimage")).expect("a signature"),
+                &format!("{arch}'s signature")
+            );
+            for deb in [format!("linux-{arch}-deb"), format!("linux-{arch}")] {
+                assert!(matches!(release.download_url(&deb), Err(E::TargetNotFound(_))), "{deb}");
+            }
+        }
+    }
 
     #[test]
     fn the_bridge_call_runs_only_on_the_servers_origin_and_carries_no_login_nonce() {

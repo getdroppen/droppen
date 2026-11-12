@@ -1,0 +1,15 @@
+{
+  "version": "0.0.2-test",
+  "notes": "https://github.com/getdroppen/droppen/releases/tag/v0.0.2-test",
+  "pub_date": "2026-10-19T08:00:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQkV4ekNNNFZqdklhVUpwQkVVbVpDdU5sL2txdDMvYm5ETWVmcDRNSnhQaHdCZTFxYWorckV0NEYrK29uK1JtVFduLzVxQmo2bnZidUZYSERsWFhYVHV3WFdIbjUwN0FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzkxNTM1CWZpbGU6RHJvcHBlbi5hcHAudGFyLmd6CXZlcnNpb246MC4wLjItdGVzdApJNXlnb0hjRUI1SmNwYkYyMDMzT3lTL3RkM1JlQmJFYnlkcjJKV1JBZWFhNk9tcnhHVmRTNW5TcVU2MmQya1JSbTZDc1hhVWM5WFJ6V1lRQnoxVVNDdz09Cg==",
+      "url": "https://github.com/getdroppen/droppen/releases/download/v0.0.2-test/Droppen.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRQkV4ekNNNFZqdklhVUpwQkVVbVpDdU5sL2txdDMvYm5ETWVmcDRNSnhQaHdCZTFxYWorckV0NEYrK29uK1JtVFduLzVxQmo2bnZidUZYSERsWFhYVHV3WFdIbjUwN0FNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMzkxNTM1CWZpbGU6RHJvcHBlbi5hcHAudGFyLmd6CXZlcnNpb246MC4wLjItdGVzdApJNXlnb0hjRUI1SmNwYkYyMDMzT3lTL3RkM1JlQmJFYnlkcjJKV1JBZWFhNk9tcnhHVmRTNW5TcVU2MmQya1JSbTZDc1hhVWM5WFJ6V1lRQnoxVVNDdz09Cg==",
+      "url": "https://github.com/getdroppen/droppen/releases/download/v0.0.2-test/Droppen.app.tar.gz"
+    }
+  }
+}
