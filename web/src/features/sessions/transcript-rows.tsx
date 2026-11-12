@@ -462,7 +462,7 @@ const ItemRow = memo(function ItemRow({
       ) : (
         <MessageHead role={role} model={model} timestamp={item.timestamp} />
       )}
-      <Markdown text={item.text} className={inBubble ? undefined : "max-w-[48em]"} />
+      <Markdown text={item.text} className={inBubble ? undefined : "max-w-[48em]"} lineBreaks={item.role === "user"} />
       {item.images && item.images.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {item.images.map((p) => (
