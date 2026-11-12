@@ -3259,6 +3259,16 @@ export interface components {
              */
             droppenPath: string;
             /**
+             * @description The system this server runs on, spelled as `GET /api/settings` spells
+             *     it (`darwin`, `linux`): the desktop app's words for the device — the
+             *     menu bar or the system tray — depend on it, and the setup page needs
+             *     them before anyone is signed in. Nothing new to a caller:
+             *     `droppenPath` already reads as one system's or the other's. Servers
+             *     older than this field send none; the web app then takes the Mac's, the
+             *     one system the app was built for until then.
+             */
+            platform: string;
+            /**
              * @description Whether this device has no user account yet (the desktop app's own
              *     account does not count). A caller with no session then gets the setup
              *     page: open the page from the device (`remote-hand-server open`, or the

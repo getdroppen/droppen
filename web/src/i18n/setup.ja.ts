@@ -36,6 +36,8 @@ export const setupJa: Record<string, string> = {
   "This device has no account yet.": "このデバイスにはまだアカウントがありません。",
   "This is the Droppen app's own server. In the app's menu-bar menu, choose Open in Browser: it opens this page signed in, and the first account is made there.":
     "これは Droppen アプリ自身のサーバーです。アプリのメニューバーのメニューで「ブラウザで開く」を選ぶと、ログインした状態でこのページが開きます。最初のアカウントはそこで作成します。",
+  "This is the Droppen app's own server. From the Droppen icon in the system tray, choose Open in Browser: it opens this page signed in, and the first account is made there.":
+    "これは Droppen アプリ自身のサーバーです。システムトレイの Droppen アイコンのメニューで「ブラウザで開く」を選ぶと、ログインした状態でこのページが開きます。最初のアカウントはそこで作成します。",
   "On this device: open Droppen from the app, or run `{{command}} open` in a terminal — it opens this page signed in.":
     "このデバイスで、アプリから Droppen を開くか、ターミナルで `{{command}} open` を実行してください。ログインした状態でこのページが開きます。",
   "Or create the first account with the one-time setup code this device's server keeps (`{{command}} setup-code` on this device shows it)":

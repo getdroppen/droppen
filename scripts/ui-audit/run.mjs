@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | welcome | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -72,6 +72,7 @@ const runCloudBar = which === "both" || which === "cloud-bar";
 const runSessionOpening = which === "both" || which === "session-opening";
 const runNoCopy = which === "both" || which === "no-copy";
 const runSessionFromCopy = which === "both" || which === "session-from-copy";
+const runWelcome = which === "both" || which === "welcome";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -1520,6 +1521,65 @@ async function auditSessionFromCopyState(page, theme, view, lang, variant, fail)
   return state;
 }
 
+/** The desktop app's guide screens and its server's setup page (`?fixture=welcome&screen=`). */
+const WELCOME_SCREENS = ["welcome", "tools", "where", "first", "wrap", "setup"];
+/**
+ * Each system the app is built for, with what its window's bridge says of
+ * Start at Login (both apps have it), and an app that says it has none, on the
+ * two screens that change for that.
+ */
+const WELCOME_SYSTEMS = [
+  { name: "darwin", platform: "darwin", bridge: "1", screens: WELCOME_SCREENS, edition: { en: "Droppen for Mac", "zh-CN": "Droppen · Mac 版" } },
+  { name: "linux", platform: "linux", bridge: "1", screens: WELCOME_SCREENS, edition: { en: "Droppen for Linux", "zh-CN": "Droppen · Linux 版" } },
+  { name: "linux-no-login", platform: "linux", bridge: "0", screens: ["welcome", "wrap"], edition: { en: "Droppen for Linux", "zh-CN": "Droppen · Linux 版" } },
+];
+/** Start at Login named on the welcome page's line for step 04, in the languages captured. */
+const START_AT_LOGIN_WORDS = /Start at login|登录时启动/;
+/** What only a Mac has, in the languages captured: never on the Linux app's pages. */
+const MAC_ONLY = /\bMacs?\b|macOS|menu.bar|Apple|xcode-select|菜单栏|访达/;
+
+/**
+ * The desktop app's first-run guide and its server's setup page
+ * (`?fixture=welcome`), as the app on each system shows them, from the
+ * platform the server reports and the window's bridge: the welcome page names
+ * the app's edition; the Linux app's pages never say Mac, macOS, the menu bar
+ * or Apple's installer; and step 04, and the welcome page's line for it,
+ * name Start at Login only where the app offers it. Captured: every screen
+ * on each system, in English and Chinese.
+ */
+async function auditWelcome(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "welcome", id, actual, expected });
+  for (const system of WELCOME_SYSTEMS) {
+    for (const lang of ["en", "zh-CN"]) {
+      for (const screen of system.screens) {
+        await page.goto(`${base}ui-audit/index.html?fixture=welcome&screen=${screen}&platform=${system.platform}&bridge=${system.bridge}&lang=${lang}&theme=${theme}`);
+        await page.evaluate(() => document.fonts.ready);
+        await page.waitForSelector("[data-fixture-root] > *");
+        const seen = await page.evaluate(() => ({
+          text: document.querySelector("[data-fixture-root]")?.innerText ?? "",
+          kicker: document.querySelector("[data-testid='welcome'] [data-label]")?.textContent ?? null,
+          startAtLogin: document.querySelector("[data-testid='wrap-login']") !== null,
+        }));
+        const tag = lang === "en" ? "" : `-${lang}`;
+        await page.screenshot({ path: `${out}/welcome-${screen}-${system.name}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+        results.push({ mode: "welcome", screen, system: system.name, lang, theme, viewport: view.name, kicker: seen.kicker, startAtLogin: seen.startAtLogin });
+        const where = { screen, system: system.name, lang };
+        if (system.platform === "linux" && MAC_ONLY.test(seen.text)) fail("welcome.mac-words", { ...where, said: seen.text.match(MAC_ONLY)[0] }, "no Mac, macOS, menu bar or Apple on the Linux app's pages");
+        if (screen === "welcome" && seen.kicker?.trim() !== system.edition[lang]) fail("welcome.edition", { ...where, kicker: seen.kicker }, system.edition[lang]);
+        if (screen === "welcome" && START_AT_LOGIN_WORDS.test(seen.text) !== (system.bridge === "1")) fail("welcome.summary-start-at-login", { ...where, text: seen.text.match(START_AT_LOGIN_WORDS)?.[0] ?? null }, system.bridge === "1" ? "step 04's line names Start at Login" : "step 04's line does not name Start at Login");
+        if (screen === "wrap" && seen.startAtLogin !== (system.bridge === "1")) fail("welcome.start-at-login", { ...where, shown: seen.startAtLogin }, system.bridge === "1" ? "Start at Login, which the app offers" : "no Start at Login, which the app does not offer");
+      }
+    }
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -1535,6 +1595,7 @@ try {
         if (runSessionOpening) await auditSessionOpening(theme, view);
         if (runNoCopy) await auditNoCopy(theme, view);
         if (runSessionFromCopy) await auditSessionFromCopy(theme, view);
+        if (runWelcome) await auditWelcome(theme, view);
       }
     }
   }

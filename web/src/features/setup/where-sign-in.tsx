@@ -1,12 +1,12 @@
 /*
  * Step 02's "On my phone and other devices too → Sign in to Droppen": this
- * Mac signs in to Droppen through the system browser
+ * device signs in to Droppen through the system browser
  * (`features/link/browser-sign-in.tsx`, the same sign-in
  * as Settings → Access → Droppen and the first-run card: one per page, so leaving the
  * step keeps it going), and the step shows how it stands — continue in the
  * browser, in the account, or what went wrong. The guide does not wait for
  * it: "Keep going; I'll finish in the browser" goes on, and the guide says
- * so once this Mac is in the account.
+ * so once this device is in the account.
  */
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
@@ -21,7 +21,7 @@ import type { OpenerState } from "@/features/link/opener";
 
 type CloudStatus = components["schemas"]["CloudStatus"];
 
-/** Why the guide cannot sign this Mac in from here. */
+/** Why the guide cannot sign this device in from here. */
 export type Unavailable =
   /** `GET /api/cloud` has not answered yet: nothing to say. */
   | "loading"
@@ -36,12 +36,12 @@ export type Unavailable =
 export type Failure =
   /** The link ran out before droppen.app answered. */
   | "expired"
-  /** The hub could not be reached: try again online, or this Mac only for now. */
+  /** The hub could not be reached: try again online, or this device only for now. */
   | "unreachable"
   /** The hub or the local server refused, and said why: its words, nothing else. */
   | "refused";
 
-/** How this Mac's sign-in to Droppen stands, as step 02 shows it. */
+/** How this device's sign-in to Droppen stands, as step 02 shows it. */
 export type WhereSignIn =
   /** Not signed in, nothing under way: the step's primary starts it. */
   | { kind: "none" }
@@ -114,7 +114,7 @@ const box = "mt-4 max-w-[720px] border border-border p-4";
 /**
  * Under step 02's choices, read out politely as it changes: with
  * "Sign in to Droppen" chosen, how the sign-in stands, or why it cannot be
- * had from here; with "Only on this Mac" chosen while this Mac is in an
+ * had from here; with "Only on this device" chosen while this device is in an
  * account, that it stays there.
  */
 export function WhereSignInPanel({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" | "local" }) {
@@ -132,7 +132,7 @@ function PanelBody({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" 
     if (state.kind !== "linked") return null;
     return (
       <p data-testid="where-stays-linked" className="mt-4 max-w-[720px] text-xs leading-[19px] text-muted">
-        {t("This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.")}
+        {t("This device stays in your Droppen account. To take it out, use Settings → Access → Droppen.")}
       </p>
     );
   }
@@ -166,7 +166,7 @@ function PanelBody({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" 
         <div className="flex flex-col gap-2">
           <p className="flex items-center gap-2 text-[13px] leading-[18px] font-semibold" data-testid="where-linked">
             <CheckIcon className="size-3.5" aria-hidden="true" />
-            {t("This Mac is in your Droppen account")}
+            {t("This device is in your Droppen account")}
           </p>
           {state.email && state.device && (
             <p className="text-xs leading-[19px] text-muted">{t("Open droppen.app on your phone and sign in as {{email}}. “{{device}}” is there.", { email: state.email, device: state.device })}</p>
@@ -196,7 +196,7 @@ function PanelBody({ signIn, chosen }: { signIn: GuideSignIn; chosen: "droppen" 
         <p className="text-[13px] leading-[18px] font-semibold">{heading}</p>
         {state.failure === "unreachable" && (
           <>
-            <p className="text-xs leading-[19px] text-muted">{t("Use Droppen on this Mac for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.")}</p>
+            <p className="text-xs leading-[19px] text-muted">{t("Use Droppen on this device for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.")}</p>
             {state.message && (
               <p data-signal="failed" className="font-mono text-2xs break-words text-danger">
                 {state.message}

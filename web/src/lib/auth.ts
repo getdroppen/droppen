@@ -62,7 +62,8 @@ export function holdsPageLogin(machine: MachineKey): boolean {
  * `GET /api/auth/status`'s answer. `authRequired` is true unless
  * authentication is switched off (`authOff`); `setupRequired` says the device
  * has no account yet. Those two are optional here because a page on
- * droppen.app asks devices running older servers too, whose answers lack them.
+ * droppen.app asks devices running older servers too, whose answers lack them;
+ * so is `platform`, which servers before it did not send.
  * Only the fields read here are named, so the shape holds whatever else the
  * generated schema carries.
  */
@@ -70,6 +71,7 @@ type WireAuthStatus = components["schemas"]["AuthStatus"];
 export type AuthStatus = Pick<WireAuthStatus, "authRequired" | "user" | "desktopApp"> & {
   setupRequired?: boolean;
   authOff?: boolean;
+  platform?: string | null;
   droppenPath?: string | null;
   droppenEnv?: CommandEnv[] | null;
 };
@@ -271,6 +273,16 @@ export function isDesktopApp(): boolean {
 }
 
 /**
+ * The system this page's server runs on, as Node names it (`darwin`,
+ * `linux`), or `null` from a server older than the field. What the desktop
+ * app's words for its device follow (`lib/desktop-app.ts`). Synchronous for
+ * the reason {@link authRequired} is.
+ */
+export function serverPlatform(): string | null {
+  return status?.platform ?? null;
+}
+
+/**
  * The command a person types on this page's device to run its server
  * (`lib/droppen-command.ts`), from the cached status. Synchronous for the
  * reason {@link authRequired} is.
@@ -329,6 +341,7 @@ function signedIn(result: LoginResult): void {
     user: result.username,
     desktopApp: status?.desktopApp ?? false,
     authOff: false,
+    platform: status?.platform ?? null,
     droppenPath: status?.droppenPath ?? "",
     droppenEnv: status?.droppenEnv ?? [],
   };

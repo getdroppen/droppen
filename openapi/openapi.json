@@ -1194,6 +1194,10 @@
             "description": "How a person on this device runs this server's binary, for the commands\nthe web app asks them to type (`<droppenPath> user add <name>`): the\n`droppen` link beside the running binary if there is one, else the\nbinary itself, with the home directory as `~` (`droppen_base::program`). A\npath, not yet quoted for a shell. Servers older than this field send\nnone; the web app then says `remote-hand-server`.",
             "type": "string"
           },
+          "platform": {
+            "description": "The system this server runs on, spelled as `GET /api/settings` spells\nit (`darwin`, `linux`): the desktop app's words for the device — the\nmenu bar or the system tray — depend on it, and the setup page needs\nthem before anyone is signed in. Nothing new to a caller:\n`droppenPath` already reads as one system's or the other's. Servers\nolder than this field send none; the web app then takes the Mac's, the\none system the app was built for until then.",
+            "type": "string"
+          },
           "setupRequired": {
             "description": "Whether this device has no user account yet (the desktop app's own\naccount does not count). A caller with no session then gets the setup\npage: open the page from the device (`remote-hand-server open`, or the\napp), or make the first account with the one-time setup code.",
             "type": "boolean"
@@ -1210,6 +1214,7 @@
           "authOff",
           "user",
           "desktopApp",
+          "platform",
           "droppenPath",
           "droppenEnv"
         ],

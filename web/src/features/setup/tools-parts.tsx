@@ -241,7 +241,7 @@ export function Actions({ children, className }: { children: ReactNode; classNam
 /** Why a button is grey (this page not the app's). */
 export function Blocked({ online, canInstall }: { online: boolean; canInstall: boolean }) {
   const { t } = useTranslation();
-  if (!canInstall) return <p className="mt-2 text-2xs leading-4 text-muted">{t("These run from the Droppen app on this Mac. Copy the command and run it in your own Terminal.")}</p>;
+  if (!canInstall) return <p className="mt-2 text-2xs leading-4 text-muted">{t("These run from the Droppen app on this device. Copy the command and run it in your own Terminal.")}</p>;
   if (!online) return <p className="mt-2 text-2xs leading-4 text-danger">{t("Offline. Installing, signing in and Droppen need the internet; everything else works.")}</p>;
   return null;
 }

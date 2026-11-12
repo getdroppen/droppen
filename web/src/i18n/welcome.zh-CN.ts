@@ -20,12 +20,14 @@ export const welcomeZhCN: Record<string, string> = {
   "Language": "语言", // shell.language
   // Welcome (A.2)
   "Droppen for Mac": "Droppen · Mac 版", // welcome.kicker
-  "Droppen is running on this Mac.": "Droppen 已经在这台 Mac 上运行了。", // welcome.title
+  "Droppen for Linux": "Droppen · Linux 版",
+  "Droppen is running on this device.": "Droppen 已经在这台设备上运行了。", // welcome.title
   "About three minutes to put it to work: get Claude Code or Codex ready, decide where you'll use it, then start your first session. Skip anything you like; all of it can be changed later in Settings.": "花 3 分钟左右把它用起来：准备好 Claude Code 或 Codex，决定在哪里用，然后开始第一个会话。哪一步都可以跳过，之后都能在「设置」里改。", // welcome.body
   "Find Claude Code and Codex; install and sign in where needed.": "找到 Claude Code 和 Codex，需要时安装、登录。", // welcome.sum.tools
-  "Only on this Mac, or on your phone and other devices too.": "只在这台 Mac 上用，还是手机和其它设备也要用。", // welcome.sum.where
+  "Only on this device, or on your phone and other devices too.": "只在这台设备上用，还是手机和其它设备也要用。", // welcome.sum.where
   "Pick a folder and send a first message.": "选一个文件夹，发出第一条消息。", // welcome.sum.first
   "Start at login, notifications, your phone.": "登录时启动、通知、手机。", // welcome.sum.wrap
+  "Your phone, and a last look at your settings.": "手机，再确认一下设置。",
   "Already looking for Claude Code and Codex on this device…": "已经在这台设备上查找 Claude Code 和 Codex…", // welcome.checking
   "Found: {{list}}": "已找到：{{list}}", // welcome.found
   "Get started": "开始", // welcome.start
@@ -64,6 +66,7 @@ export const welcomeZhCN: Record<string, string> = {
   "From OpenAI (chatgpt.com): the command in Codex's own README.": "来自 OpenAI（chatgpt.com），就是 Codex 官方说明里的命令。", // tools.fact.codex.1
   "Installs into ~/.local/bin/codex and checks every download's SHA-256. No administrator password, no Node.js.": "装到 ~/.local/bin/codex，并核对每个下载文件的 SHA-256。不需要管理员密码，也不需要 Node.js。", // tools.fact.codex.2
   "Adds ~/.local/bin to PATH in ~/.zprofile so your own Terminal finds codex too. That is what the official installer does anyway.": "会在 ~/.zprofile 里把 ~/.local/bin 加进 PATH，让你自己的终端也能找到 codex——官方安装程序本来就这么做。", // tools.fact.codex.3
+  "Adds ~/.local/bin to PATH in your shell's startup file so your own terminal finds codex too. That is what the official installer does anyway.": "会在你的 shell 启动文件里把 ~/.local/bin 加进 PATH，让你自己的终端也能找到 codex——官方安装程序本来就这么做。",
   "Uses your Homebrew. Homebrew copies don't update themselves; Droppen offers the update when one is out.": "用你已有的 Homebrew 安装。Homebrew 装的不会自己更新，有新版本时 Droppen 会提示。", // tools.fact.brew
   "Uses your Node.js ({{node}}). Only if you already manage tools with npm.": "用你已有的 Node.js（{{node}}）。只建议已经用 npm 管理工具的人选。", // tools.fact.npm
   "Run it here": "在这里运行", // tools.runHere
@@ -107,6 +110,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Ready through the Droppen account “{{label}}”": "通过 Droppen 账号「{{label}}」就绪", // tools.viaAccount
   "Developer tools (git)": "开发者工具（git）", // tools.git
   "Claude Code and Codex use git in code projects. Without it, macOS interrupts the first session to install Apple's Command Line Tools; you can get that done now.": "Claude Code 和 Codex 在代码项目里会用 git。没装的话，macOS 会在第一个会话里弹窗要你安装 Apple 的命令行工具；可以现在先装好。", // tools.git.body
+  "Claude Code and Codex use git in code projects. Install it with your system's package manager.": "Claude Code 和 Codex 在代码项目里会用 git。请用系统的包管理器安装。",
   "Install (Apple)": "安装（Apple 官方）", // tools.git.install
   "optional": "可选", // tools.optional
   "Add accounts to Droppen (advanced)": "把账号加到 Droppen（高级）", // tools.adv
@@ -125,23 +129,24 @@ export const welcomeZhCN: Record<string, string> = {
   // Step 02 · Where to use it (A.4)
   "02 · Where to use it": "02 · 在哪里用", // where.kicker
   "Where will you use Droppen?": "你会在哪里用 Droppen？", // where.title
-  "Droppen runs on this Mac either way. This only decides what else can reach it, and you can change it any time in Settings.": "不管选哪个，Droppen 都在这台 Mac 上运行；这里只决定还有什么能连到它，随时可以在「设置」里改。", // where.body
+  "Droppen runs on this device either way. This only decides what else can reach it, and you can change it any time in Settings.": "不管选哪个，Droppen 都在这台设备上运行；这里只决定还有什么能连到它，随时可以在「设置」里改。", // where.body
   "On my phone and other devices too": "在手机和其它设备上也能用", // where.droppen.title
   "Sign in to Droppen": "登录 Droppen", // where.droppen.action
-  "Open droppen.app on your phone or any other device and carry on with this Mac's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.": "在手机或其它设备上打开 droppen.app，接着用这台 Mac 上的会话。内容端到端加密，droppen.app 看不到。会打开浏览器登录或注册。", // where.droppen.body
+  "Open droppen.app on your phone or any other device and carry on with this device's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.": "在手机或其它设备上打开 droppen.app，接着用这台设备上的会话。内容端到端加密，droppen.app 看不到。会打开浏览器登录或注册。", // where.droppen.body
   "Recommended": "推荐", // where.recommended
-  "Only on this Mac": "只在这台 Mac 上用", // where.local.title
+  "Only on this device": "只在这台设备上用", // where.local.title
   "Skip": "跳过", // where.local.action
-  "Everything works without an account. Nothing leaves this Mac except what Claude Code and Codex send to their own services.": "不需要账号，一切照常。除了 Claude Code 和 Codex 发给它们自己服务的内容，什么都不离开这台 Mac。", // where.local.body
+  "Everything works without an account. Nothing leaves this device except what Claude Code and Codex send to their own services.": "不需要账号，一切照常。除了 Claude Code 和 Codex 发给它们自己服务的内容，什么都不离开这台设备。", // where.local.body
   "Also": "另外", // where.also
   "Let browsers on my local network in too": "让局域网里的浏览器也能访问", // where.lan.title
   "Set a password for this device (advanced)": "设置这台设备的密码（高级）", // where.lan.action
   "An iPad or another device on the same Wi‑Fi opens this Mac's address in a browser and signs in with the password. Doesn't go through droppen.app, and works alongside either choice above.": "同一个 Wi‑Fi 下的 iPad 或其它设备，用浏览器打开这台 Mac 的地址，输入密码进入。不经过 droppen.app，可以和上面任一选项同时用。", // where.lan.body
-  "The Droppen app on this Mac never asks for a password. For a browser on this Mac, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "这台 Mac 上的 Droppen 应用永远不用密码。这台 Mac 上的浏览器，在应用的菜单栏菜单里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。", // where.browserNote
+  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.": "这台设备上的 Droppen 应用永远不用密码。这台设备上的浏览器，在应用的菜单栏菜单里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。", // where.browserNote
+  "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.": "这台设备上的 Droppen 应用永远不用密码。这台设备上的浏览器，在系统托盘的 Droppen 图标菜单里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。",
   "Sign in in the browser": "在浏览器中登录", // where.go.droppen
   "Set the password": "设置密码", // where.go.lan
   "Change it later in Settings → Access.": "之后在 设置 → 访问 里改。", // where.changeLater
-  "droppen.app needs the internet. Choose “Only on this Mac” for now; sign in later from Settings → Access → Droppen.": "登录 droppen.app 需要联网。先选「只在这台 Mac 上用」，之后在 设置 → 访问 → Droppen 里登录。", // where.offline
+  "droppen.app needs the internet. Choose “Only on this device” for now; sign in later from Settings → Access → Droppen.": "登录 droppen.app 需要联网。先选「只在这台设备上用」，之后在 设置 → 访问 → Droppen 里登录。", // where.offline
   "Continue in your browser": "在浏览器里继续", // where.wait.title
   "Sign in to droppen.app, or create an account.": "登录 droppen.app，或者注册一个账户。", // where.wait.1
   "Check that the fingerprint there matches this one, then choose Allow.": "核对那边显示的指纹和这里一致，然后点「同意」。", // where.wait.2
@@ -152,14 +157,14 @@ export const welcomeZhCN: Record<string, string> = {
   "The link works for 10 minutes ({{left}} left).": "链接 10 分钟内有效（还剩 {{left}}）。", // where.expires
   "Waiting for droppen.app…": "等待 droppen.app…", // where.waiting
   "Keep going; I'll finish in the browser": "先继续，浏览器里登录好了会提示我", // where.keepGoing
-  "This Mac is in your Droppen account": "这台 Mac 已加入你的 Droppen 账户", // where.linked.title
+  "This device is in your Droppen account": "这台设备已加入你的 Droppen 账户", // where.linked.title
   "Open droppen.app on your phone and sign in as {{email}}. “{{device}}” is there.": "在手机上打开 droppen.app，用 {{email}} 登录，就能看到「{{device}}」。", // where.linked.body
   "Device name": "设备名称", // where.deviceName
   "Scan with your phone": "用手机扫一扫", // where.scan
   "Can't reach droppen.app": "连不上 droppen.app", // where.err.title
-  "Use Droppen on this Mac for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.": "先只在这台 Mac 上用。联网后在 设置 → 访问 → Droppen 里登录，这里做的都不会丢。", // where.err.body
+  "Use Droppen on this device for now. When you're online, sign in from Settings → Access → Droppen; nothing done here is lost.": "先只在这台设备上用。联网后在 设置 → 访问 → Droppen 里登录，这里做的都不会丢。", // where.err.body
   "Your plan's devices that run AI are all in use. Remove one at droppen.app or change plan; until then this Mac works on its own.": "你的套餐里可运行 AI 的设备已经用满。到 droppen.app 移除一台或换套餐；在那之前这台 Mac 照常单独使用。", // where.err.limit
-  "Only on this Mac for now": "先只在这台 Mac 上用", // where.localNow
+  "Only on this device for now": "先只在这台设备上用", // where.localNow
   "A password for browsers on your network": "给局域网里的浏览器设一个密码", // where.lan.formTitle
   "Browsers on other devices sign in with this name and password. The Droppen app on this Mac doesn't need it.": "其它设备上的浏览器用这个名字和密码登录。这台 Mac 上的 Droppen 应用不需要它。", // where.lan.formBody
   "Password": "密码", // where.lan.pw
@@ -195,7 +200,8 @@ export const welcomeZhCN: Record<string, string> = {
   "04 · Finishing up": "04 · 收尾", // wrap.kicker
   "A few last things": "最后几件小事", // wrap.title
   "Start Droppen at login": "登录时启动 Droppen", // wrap.login
-  "So sessions, your phone and scheduled tasks can reach this Mac after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.": "这样重启之后，会话、手机和定时任务也能连到这台 Mac。Droppen 待在菜单栏里，关掉窗口不会停止它。", // wrap.login.body
+  "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the menu bar; closing the window doesn't stop it.": "这样重启之后，会话、手机和定时任务也能连到这台设备。Droppen 待在菜单栏里，关掉窗口不会停止它。", // wrap.login.body
+  "So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the system tray; closing the window doesn't stop it.": "这样重启之后，会话、手机和定时任务也能连到这台设备。Droppen 待在系统托盘里，关掉窗口不会停止它。",
   "Move Droppen to Applications first.": "先把 Droppen 移到「应用程序」。", // wrap.login.move
   "Notifications": "通知", // wrap.notif
   "A macOS notification when a session finishes or asks you something.": "会话做完或在问你时，发一条 macOS 通知。", // wrap.notif.body
@@ -223,16 +229,17 @@ export const welcomeZhCN: Record<string, string> = {
   "Run setup again": "重新运行", // after.settings.rerun
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code 已登录，可以回到 Droppen 了。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
-  "This Mac stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "这台 Mac 仍在你的 Droppen 账户里。要把它移出，请到 设置 → 访问 → Droppen。", // where.local.stays (as built)
+  "This device stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "这台设备仍在你的 Droppen 账户里。要把它移出，请到 设置 → 访问 → Droppen。", // where.local.stays (as built)
   "This window cannot sign this device in. See Settings → Access → Droppen.": "这个窗口不能让这台设备登录。请看 设置 → 访问 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar: Start at Login.": "随时可以在菜单栏的 Droppen 图标里打开或关闭「登录时启动」。", // wrap.login.menuBar
+  "Turn it on or off any time from the Droppen icon in the system tray: Start at Login.": "随时可以在系统托盘的 Droppen 图标里打开或关闭「登录时启动」。",
   // Step 01 · AI tools, as built: the states, forms and failures the copy table leaves to the implementation
   "Close": "关闭",
   "macOS opened Apple's installer. Finish it there, then check again.": "macOS 已打开 Apple 的安装程序。在那里装完，再回来检查一次。",
   "Check again": "再检查一次",
   "Added to Droppen as “{{label}}”.": "已作为「{{label}}」加到 Droppen。",
-  "These run from the Droppen app on this Mac. Copy the command and run it in your own Terminal.": "这些操作只能在这台 Mac 上的 Droppen 应用里运行。复制命令，在你自己的终端里运行。",
+  "These run from the Droppen app on this device. Copy the command and run it in your own Terminal.": "这些操作只能在这台设备上的 Droppen 应用里运行。复制命令，在你自己的终端里运行。",
   "OpenAI API key": "OpenAI API key",
   "Droppen hands the key to codex login --with-api-key once, through its input. Codex keeps it; Droppen doesn't.": "Droppen 只通过输入把 key 交给 codex login --with-api-key 一次。由 Codex 保存，Droppen 不保存。",
   "Where is it?": "它在哪里？",
@@ -263,13 +270,13 @@ export const welcomeZhCN: Record<string, string> = {
   "The installer finished, but the tool still isn't on this device.": "安装程序结束了，但这台设备上还是找不到这个工具。",
   "The update finished, but the version is still too old.": "更新结束了，但版本还是太旧。",
   "Couldn't reach the download server. Check the connection and try again, or run the command in your own Terminal.": "连不上下载服务器。检查网络后重试，或者在你自己的终端里运行这条命令。",
-  "Permission denied. Homebrew on this Mac may belong to another user; the official installer installs into your home folder instead.": "没有权限。这台 Mac 上的 Homebrew 可能属于另一个用户；官方安装程序会装到你的个人文件夹，不受影响。",
+  "Permission denied. Homebrew on this device may belong to another user; the official installer installs into your home folder instead.": "没有权限。这台设备上的 Homebrew 可能属于另一个用户；官方安装程序会装到你的个人文件夹，不受影响。",
   "Permission denied: it couldn't write where it installs. Try the official installer, which installs into your home folder, or run the command in your own Terminal.": "没有权限：没法写入安装位置。试试官方安装程序（装到你的个人文件夹），或者在你自己的终端里运行这条命令。",
   "The disk is full. Free some space, then try again.": "磁盘满了。清出一些空间后重试。",
   "The last lines are below. Try again, or run the command in your own Terminal.": "下面是最后几行输出。重试，或者在你自己的终端里运行这条命令。",
   "The official installer needs macOS 13 or later.": "官方安装程序需要 macOS 13 或更新的版本。",
-  "Homebrew isn't on this Mac.": "这台 Mac 上没有 Homebrew。",
-  "npm needs Node.js, which isn't on this Mac.": "npm 需要 Node.js，这台 Mac 上没有。",
+  "Homebrew isn't on this device.": "这台设备上没有 Homebrew。",
+  "npm needs Node.js, which isn't on this device.": "npm 需要 Node.js，这台设备上没有。",
   "Not available on this device.": "这台设备上用不了。",
   "Something is already running for this tool. Wait for it, or stop it.": "这个工具已经有任务在运行。等它结束，或者先停止它。",
   "That isn't a copy Droppen can use. Pick the program itself, named claude or codex.": "这不是 Droppen 能用的程序。请选程序本身，名字是 claude 或 codex。",

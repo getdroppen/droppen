@@ -12,6 +12,7 @@ import { LiveDot } from "@/components/live-dot";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Quota, QuotaWindow } from "@/features/accounts/use-accounts";
+import { type DesktopSystem, desktopSystemOf } from "@/lib/desktop-app";
 import { shortenHome } from "@/lib/format";
 import { SetupActionError } from "./api";
 import { TOOL_NAME } from "./model";
@@ -111,8 +112,13 @@ export const SIGNED_IN_TOAST: Record<ToolId, string> = {
   claude: "Claude Code is signed in. You can go back to Droppen.",
   codex: "Codex is signed in. You can go back to Droppen.",
 };
-/** The facts under an install command: from where, into where, needing what. */
-function factsOf(command: SetupCommand, node: string | null): { key: string; vars?: Record<string, string> }[] {
+/**
+ * The facts under an install command: from where, into where, needing what.
+ * Codex's installer adds to PATH in the startup file of the user's shell
+ * (`pick_profile` in its install.sh): on a Mac, whose shell is zsh unless
+ * changed, `~/.zprofile`; on Linux, one of several, so the fact names none.
+ */
+function factsOf(command: SetupCommand, node: string | null, system: DesktopSystem): { key: string; vars?: Record<string, string> }[] {
   if (command.method === "brew") return [{ key: "Uses your Homebrew. Homebrew copies don't update themselves; Droppen offers the update when one is out." }];
   if (command.method === "npm") return [{ key: "Uses your Node.js ({{node}}). Only if you already manage tools with npm.", vars: { node: node ?? "Node.js" } }];
   return command.tool === "claude"
@@ -124,14 +130,23 @@ function factsOf(command: SetupCommand, node: string | null): { key: string; var
     : [
         { key: "From OpenAI (chatgpt.com): the command in Codex's own README." },
         { key: "Installs into ~/.local/bin/codex and checks every download's SHA-256. No administrator password, no Node.js." },
-        { key: "Adds ~/.local/bin to PATH in ~/.zprofile so your own Terminal finds codex too. That is what the official installer does anyway." },
+        system === "linux"
+          ? { key: "Adds ~/.local/bin to PATH in your shell's startup file so your own terminal finds codex too. That is what the official installer does anyway." }
+          : { key: "Adds ~/.local/bin to PATH in ~/.zprofile so your own Terminal finds codex too. That is what the official installer does anyway." },
       ];
 }
 
 const METHOD_LABEL: Record<string, string> = { native: "Official installer", brew: "Homebrew", npm: "npm" };
 
-/** The official installer's own advice after it ran: Droppen finds claude itself; the user's own Terminal may not. */
-const PATH_HINT = `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`;
+/**
+ * The official installer's own advice after it ran: Droppen finds claude
+ * itself; the user's own Terminal may not. For the shell each system starts
+ * people in: zsh on a Mac, bash on most Linux desktops.
+ */
+const PATH_HINT: Record<DesktopSystem, string> = {
+  mac: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`,
+  linux: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`,
+};
 
 /** What the step's actions are, for the cards to call. */
 export interface ToolActs {
@@ -171,7 +186,7 @@ function quotaOf(quota: Quota | null | undefined, id: ToolId): { plan: string | 
 /** A refused action in words (i18n keys). */
 export const REFUSALS = {
   busy: "Something is already running for this tool. Wait for it, or stop it.",
-  appOnly: "These run from the Droppen app on this Mac. Copy the command and run it in your own Terminal.",
+  appOnly: "These run from the Droppen app on this device. Copy the command and run it in your own Terminal.",
   path: "That isn't a copy Droppen can use. Pick the program itself, named claude or codex.",
   other: "That didn't work. Try again.",
 } as const;
@@ -187,7 +202,9 @@ export const STEP01_STRINGS: string[] = [
   ...Object.values(UNAVAILABLE_WORDS),
   ...Object.values(ADVANCED_LABELS),
   ...(["claude", "codex"] as const).flatMap((tool) =>
-    (["native", "brew", "npm"] as const).flatMap((method) => factsOf({ tool, method } as SetupCommand, null).map((f) => f.key)),
+    (["native", "brew", "npm"] as const).flatMap((method) =>
+      (["mac", "linux"] as const).flatMap((system) => factsOf({ tool, method } as SetupCommand, null, system).map((f) => f.key)),
+    ),
   ),
   "5 hours",
   "this week",
@@ -331,7 +348,7 @@ function ConfirmBox({
           <CommandWell command={chosen.command} testId="confirm-command" />
           {ui.kind === "install" && (
             <ul className="mt-2.5 flex flex-col gap-1">
-              {factsOf(chosen, report.helpers.node).map((fact) => (
+              {factsOf(chosen, report.helpers.node, desktopSystemOf(report.os.platform)).map((fact) => (
                 <li key={fact.key} className="grid grid-cols-[14px_minmax(0,1fr)] gap-2 text-xs leading-[18px] text-muted">
                   <span aria-hidden="true" className="text-fg">
                     ✓
@@ -434,7 +451,7 @@ function CardBody({
     id === "claude" && task && !task.running && task.kind === "install" && task.method === "native" && task.exitCode === 0 ? (
       <div data-testid="path-hint" className="mt-3 border-t border-border pt-3">
         <p className="mb-1.5 text-2xs leading-4 text-muted">{t("Want claude in your own Terminal too? The installer leaves that to you; this line adds ~/.local/bin to your PATH:")}</p>
-        <CommandWell command={PATH_HINT} />
+        <CommandWell command={PATH_HINT[desktopSystemOf(report.os.platform)]} />
       </div>
     ) : null;
 

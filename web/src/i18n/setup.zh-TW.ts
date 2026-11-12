@@ -35,7 +35,9 @@ export const setupZhTW: Record<string, string> = {
   /* the setup page: nobody signed in, no account yet */
   "This device has no account yet.": "這台裝置還沒有帳號。",
   "This is the Droppen app's own server. In the app's menu-bar menu, choose Open in Browser: it opens this page signed in, and the first account is made there.":
-    "這是 Droppen App 自己的伺服器。在 App 的選單列選單中選擇「在瀏覽器中打開」:它會以已登入的狀態開啟這個頁面,第一個帳號就在那裡建立。",
+    "這是 Droppen App 自己的伺服器。在 App 的選單列選單中選擇「在瀏覽器中打開」：它會以已登入的狀態開啟這個頁面，第一個帳號就在那裡建立。",
+  "This is the Droppen app's own server. From the Droppen icon in the system tray, choose Open in Browser: it opens this page signed in, and the first account is made there.":
+    "這是 Droppen App 自己的伺服器。在系統匣的 Droppen 圖示選單中選擇「在瀏覽器中打開」：它會以已登入的狀態開啟這個頁面，第一個帳號就在那裡建立。",
   "On this device: open Droppen from the app, or run `{{command}} open` in a terminal — it opens this page signed in.":
     "在這台裝置上：從 App 開啟 Droppen，或在終端機執行 `{{command}} open`，它會以已登入的狀態開啟這個頁面。",
   "Or create the first account with the one-time setup code this device's server keeps (`{{command}} setup-code` on this device shows it)":

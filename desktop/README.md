@@ -121,6 +121,10 @@ app's first-run guide offers, does not run on anything older.
   temporary AppImage mount, and an end-to-end build keeps no login item there
   at all. Linux has no Login Items settings page, so the menu shows no *Allow
   at Login* line.
+  The window's init script tells the web app whether this build has *Start at
+  Login* (`init.js`, part 7; `login_item::OFFERED`), so the first-run guide
+  points at the switch only where there is one, in the menu bar or the
+  system tray.
 - **Run from a quarantined download** (App Translocation): a notice says to
   move Droppen to Applications, and *Start at Login* stays off until it is. A
   launch agent made before the app was moved is pointed at where it is now

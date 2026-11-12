@@ -27,6 +27,7 @@ import {
   SettingsTable,
   SettingsTableRow,
 } from "@/features/settings/layout";
+import { IS_MAC } from "@/features/sessions/new-session-open";
 import { SetupSection } from "@/features/setup/settings-section";
 import { AgentsSection } from "@/features/settings/agents/agents-section";
 import { cn } from "@/lib/cn";
@@ -230,7 +231,8 @@ export function PreferencesSection() {
           >
             <TabsList className="w-full">
               <TabsTab value="enter">{t("enter")}</TabsTab>
-              <TabsTab value="modifier">⌘+enter</TabsTab>
+              {/* The keyboard is this browser's: ⌘ on a Mac, Ctrl elsewhere (the Linux app's window included). */}
+              <TabsTab value="modifier">{IS_MAC ? "⌘+enter" : "ctrl+enter"}</TabsTab>
             </TabsList>
           </Tabs>
         ) : (

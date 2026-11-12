@@ -44,7 +44,7 @@ export const STEP_HEADERS: Record<StepId, { kicker: string; title: string; body?
   where: {
     kicker: "02 · Where to use it",
     title: "Where will you use Droppen?",
-    body: "Droppen runs on this Mac either way. This only decides what else can reach it, and you can change it any time in Settings.",
+    body: "Droppen runs on this device either way. This only decides what else can reach it, and you can change it any time in Settings.",
   },
   first: {
     kicker: "03 · First session",
@@ -91,9 +91,9 @@ export function WelcomeView() {
   const [firstUi, setFirstUi] = useState<FirstUi>(EMPTY_FIRST_UI);
   const firstOpened = useRef(false);
   const openFirstSession = useOpenFirstSession();
-  // This Mac's sign-in to Droppen (step 02): the page's one, so it goes on while the guide does.
+  // This device's sign-in to Droppen (step 02): the page's one, so it goes on while the guide does.
   const signIn = useGuideSignIn();
-  // Kept going while it was under way: say so once this Mac is in the account.
+  // Kept going while it was under way: say so once this device is in the account.
   const signingIn = useRef(false);
   useEffect(() => {
     const next = linkedToast(signingIn.current, signIn.state.kind, screen);
@@ -218,7 +218,7 @@ export function WelcomeView() {
         {
           next: () => forward(complete(start(settle(step, progress, { online, tools, firstUi, t }), now()), step)),
           finish: () => leave(finish(progress, now())),
-          // Step 02's sign-in stopped: this Mac only, for now.
+          // Step 02's sign-in stopped: this device only, for now.
           local: () => {
             signIn.cancel();
             forward(complete(start({ ...progress, where: { ...progress.where, choice: "local" } }, now()), step));
@@ -274,7 +274,7 @@ export function GuideScreen({
   /** Step 03's picks (the guide's state). */
   firstUi?: FirstUi;
   onFirstUi?: (next: FirstUi) => void;
-  /** This Mac's sign-in to Droppen (steps 02 and 04). */
+  /** This device's sign-in to Droppen (steps 02 and 04). */
   signIn?: GuideSignIn;
 }) {
   const { t } = useTranslation();
@@ -318,11 +318,11 @@ export function GuideScreen({
 
 const noop = () => undefined;
 
-/** The guide's line once this Mac is in the account while the guide went on. */
-export const LINKED_TOAST = "This Mac is in your Droppen account";
+/** The guide's line once this device is in the account while the guide went on. */
+export const LINKED_TOAST = "This device is in your Droppen account";
 
 /**
- * Whether this Mac joining its Droppen account is the guide's toast to show,
+ * Whether this device joining its Droppen account is the guide's toast to show,
  * given whether the sign-in was under way when the guide last looked
  * (`wasPending`), how it stands now and the screen on show. Only a sign-in
  * seen under way and now in the account, and not on step 02, which says so
@@ -358,8 +358,8 @@ export function settle(
  * "Finish", or "Finish and open my first session" once step 03 saved a folder.
  * Step 02 with "Sign in to Droppen" chosen follows the sign-in: "Sign
  * in in the browser" until it starts, "Keep going; I'll finish in the
- * browser" while it is under way, "Continue" once this Mac is in the account,
- * and "Only on this Mac for now" (`go.local`) when it stopped.
+ * browser" while it is under way, "Continue" once this device is in the account,
+ * and "Only on this device for now" (`go.local`) when it stopped.
  */
 export function stepAction(
   step: StepId,
@@ -387,7 +387,7 @@ export function stepAction(
         case "pending":
           return { label: t("Keep going; I'll finish in the browser"), onClick: go.next, primary: true };
         case "failed":
-          return { label: t("Only on this Mac for now"), onClick: go.local ?? go.next, primary: true };
+          return { label: t("Only on this device for now"), onClick: go.local ?? go.next, primary: true };
         default:
           return { label: t("Continue"), onClick: go.next, primary: true };
       }
