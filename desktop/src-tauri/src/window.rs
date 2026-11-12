@@ -61,7 +61,9 @@ const START_PAGE: &str = "tauri://localhost/index.html";
 /// `__DROPPEN_RELOAD_KEYS__` with whether Ctrl+R/F5 reload the page — on
 /// Linux, where there is no app menu to reload from — and
 /// `__DROPPEN_START_AT_LOGIN__` with whether this build has Start at Login
-/// (`login_item::OFFERED`), for the web app's guide to point at it or not.
+/// (`login_item::OFFERED`) and `__DROPPEN_TRAY_HOST__` with whether a tray
+/// host shows the app's icon (`tray::host_present_at_start`), for the web
+/// app's guide to point at them only where they are.
 const INIT_JS: &str = include_str!("init.js");
 
 static WINDOWS: AtomicU32 = AtomicU32::new(1);
@@ -74,6 +76,7 @@ fn init_script<R: Runtime>(app: &AppHandle<R>) -> String {
         .replace("__DROPPEN_LANGUAGES__", &Lang::script_list(Lang::system_tags()))
         .replace("__DROPPEN_RELOAD_KEYS__", if cfg!(target_os = "linux") { "true" } else { "false" })
         .replace("__DROPPEN_START_AT_LOGIN__", if crate::login_item::OFFERED { "1" } else { "0" })
+        .replace("__DROPPEN_TRAY_HOST__", if crate::tray::host_present_at_start() { "1" } else { "0" })
 }
 
 /// Create the main window on the start-up page.

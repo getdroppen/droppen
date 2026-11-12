@@ -253,7 +253,10 @@ pub fn run() {
             // With no tray host nothing would bring the window back: a
             // windowless launch at login would be invisible (a second launch
             // can focus it, but nothing says it is there). Show the window.
-            let tray_host = tray::host_present();
+            // Asked once here and kept: the first window's init script reads
+            // the same answer (`host_present_at_start`), so a slow bus delays
+            // start-up once, not a window too.
+            let tray_host = tray::host_present_at_start();
             let hidden = opened_at_login && tray_host;
             if opened_at_login {
                 if hidden {

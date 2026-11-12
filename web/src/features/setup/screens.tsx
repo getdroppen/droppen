@@ -11,7 +11,7 @@ import { LiveDot } from "@/components/live-dot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { desktopSystem, startAtLoginOffered } from "@/lib/desktop-app";
+import { desktopSystem, startAtLoginOffered, trayHostPresent } from "@/lib/desktop-app";
 import { FootNote, onceClicked } from "./frame";
 import { foundTools, STEP_LABEL, STEPS, TOOL_STATUS_LABEL, toolStatus } from "./model";
 import type { SetupProgress, ToolsReport } from "./types";
@@ -211,10 +211,14 @@ function WhereCard({
  * how that stands under the choices (`where-sign-in.tsx`). The local-network
  * option ("Also") waits for the local-access change and the app ↔ server
  * channel. The note under them points at the app's Open in Browser where the
- * app keeps it: the menu bar on a Mac, the system tray on Linux.
+ * app keeps it: the menu bar on a Mac, the system tray on Linux; with no tray
+ * host to show the app's icon, it says only that a browser asks for the
+ * password.
  */
 export function WhereStep({ progress, online, onChange, signIn }: StepProps) {
   const { t } = useTranslation();
+  const linux = desktopSystem() === "linux";
+  const tray = trayHostPresent();
   const chosen = whereChoice(progress, online);
   const droppenOff = !online;
   const group = useRef<HTMLDivElement>(null);
@@ -260,9 +264,15 @@ export function WhereStep({ progress, online, onChange, signIn }: StepProps) {
       </div>
       {signIn && <WhereSignInPanel signIn={signIn} chosen={chosen} />}
       <FootNote>
-        {desktopSystem() === "linux"
-          ? t("The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.")
-          : t("The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.")}{" "}
+        {linux ? (
+          tray ? (
+            t("The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser from the Droppen icon in the system tray: it opens signed in. Once this device has a password, a browser asks for it.")
+          ) : (
+            t("The Droppen app on this device never asks for a password. Once this device has a password, a browser asks for it.")
+          )
+        ) : (
+          t("The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu: it opens signed in. Once this device has a password, a browser asks for it.")
+        )}{" "}
         {t("Change it later in Settings → Access.")}
       </FootNote>
     </>
@@ -303,12 +313,16 @@ function toolSummary(tools: ToolsReport | null | undefined, id: "claude" | "code
  * app: start at login points at the app's own switch to turn it on or off,
  * in the menu bar or the system tray — whether it is on is the app's to say
  * (a new install's first launch turns it on), so the guide claims neither,
- * and an app without the switch gets no row; no notifications row until the
- * app can ask for them, the phone row, and what is set.
+ * and an app without the switch gets no row. With no tray host, closing the
+ * window quits, so the row says that and where to start it again, and names
+ * the desktop's own startup applications as where to turn it off; no
+ * notifications row until the app can ask for them, the phone row, and what is
+ * set.
  */
 export function WrapStep({ progress, tools, signIn }: StepProps) {
   const { t } = useTranslation();
   const linux = desktopSystem() === "linux";
+  const tray = trayHostPresent();
   const skipped = <span className="font-mono text-2xs text-faint">{t("skipped")}</span>;
   // What this device's sign-in came to, when the guide follows it: in the account, under way, or not (yet).
   const linked = signIn?.state.kind === "linked" ? signIn.state : null;
@@ -339,7 +353,12 @@ export function WrapStep({ progress, tools, signIn }: StepProps) {
             testId="wrap-login"
             title={t("Start Droppen at login")}
             body={
-              linux ? (
+              linux && !tray ? (
+                <>
+                  {t("So sessions, your phone and scheduled tasks can reach this device after a restart. Closing the window quits Droppen; start it again from the app launcher.")}
+                  <span className="mt-1 block text-fg">{t("Turn it on or off any time in your desktop's startup applications.")}</span>
+                </>
+              ) : linux ? (
                 <>
                   {t("So sessions, your phone and scheduled tasks can reach this device after a restart. Droppen lives in the system tray; closing the window doesn't stop it.")}
                   <span className="mt-1 block text-fg">{t("Turn it on or off any time from the Droppen icon in the system tray: Start at Login.")}</span>

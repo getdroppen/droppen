@@ -30,13 +30,18 @@
 //      pages, as View > Reload does on macOS (src-tauri/src/window.rs);
 //   7. says, on the same bridge as part 4, whether the app has Start at Login
 //      (src-tauri/src/login_item.rs, OFFERED): the web app's first-run guide
-//      points at the app's own switch only where there is one.
+//      points at the app's own switch only where there is one;
+//   8. says, on the same bridge, whether a tray host shows the app's icon
+//      (src-tauri/src/tray.rs, host_present_at_start): without one, closing
+//      the window quits, and the guide says that instead of pointing at a
+//      tray icon.
 //
 // __DROPPEN_NONCE__ is replaced with this launch's nonce when the window is made,
 // __DROPPEN_BRIDGE__ with the update bridge's own token (part 4),
 // __DROPPEN_LANGUAGES__ with the system's languages, comma-separated (part 5),
 // __DROPPEN_RELOAD_KEYS__ with true on Linux, false elsewhere (part 6),
-// __DROPPEN_START_AT_LOGIN__ with 1 when the app has Start at Login (part 7).
+// __DROPPEN_START_AT_LOGIN__ with 1 when the app has Start at Login (part 7),
+// __DROPPEN_TRAY_HOST__ with 1 when a tray host is there (part 8).
 //
 // It runs on any http://127.0.0.1 page, whatever its port: the server's port
 // can change while the window lives, and this script is fixed when the window
@@ -339,12 +344,15 @@
   var BRIDGE = "__DROPPEN_BRIDGE__";
   // 7. Whether the app has Start at Login (web/src/lib/desktop-app.ts).
   var START_AT_LOGIN = "__DROPPEN_START_AT_LOGIN__" === "1";
+  // 8. Whether a tray host shows the app's icon (web/src/lib/desktop-app.ts).
+  var TRAY_HOST = "__DROPPEN_TRAY_HOST__" === "1";
   var updateStatus = null;
   var restartToken = null;
   try {
     Object.defineProperty(window, "__droppenDesktop", {
       value: Object.freeze({
         startAtLogin: START_AT_LOGIN,
+        trayHost: TRAY_HOST,
         update: function (bridge, status, restart) {
           if (bridge !== BRIDGE) return;
           updateStatus = status && typeof status === "object" ? JSON.stringify(status) : null;

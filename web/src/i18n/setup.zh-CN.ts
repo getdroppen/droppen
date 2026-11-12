@@ -38,6 +38,8 @@ export const setupZhCN: Record<string, string> = {
     "这是 Droppen App 自己的服务端。在 App 的菜单栏菜单里选「在浏览器中打开」：它会以已登录的状态打开这个页面，第一个账号就在那里创建。",
   "This is the Droppen app's own server. From the Droppen icon in the system tray, choose Open in Browser: it opens this page signed in, and the first account is made there.":
     "这是 Droppen App 自己的服务端。在系统托盘的 Droppen 图标菜单里选「在浏览器中打开」：它会以已登录的状态打开这个页面，第一个账号就在那里创建。",
+  "This is the Droppen app's own server. Create the first account on this device, without a code:":
+    "这是 Droppen App 自己的服务端。不用设置码，直接在这台设备上创建第一个账号：", // no tray host
   "On this device: open Droppen from the app, or run `{{command}} open` in a terminal — it opens this page signed in.":
     "在这台设备上：从 App 打开 Droppen，或在终端里运行 `{{command}} open`，它会以已登录的状态打开这个页面。",
   "Or create the first account with the one-time setup code this device's server keeps (`{{command}} setup-code` on this device shows it)":

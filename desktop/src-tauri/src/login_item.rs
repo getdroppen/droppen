@@ -25,9 +25,11 @@ use droppen_desktop_core::login_item::{self as core, Backend, Before, FirstLaunc
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_autostart::ManagerExt;
 
-/// Whether this platform has *Start at Login*: macOS's login item, Linux's
-/// XDG autostart entry.
-pub const OFFERED: bool = true;
+/// Whether this build has *Start at Login*: macOS's login item, Linux's XDG
+/// autostart entry — except an end-to-end build on Linux, which has no
+/// backend and writes no entry (`Backend::None`), so the app's window says it
+/// has none.
+pub const OFFERED: bool = !cfg!(all(feature = "e2e", target_os = "linux"));
 
 /// The app's login item: the backend chosen at start, the old launch agent,
 /// `state.json`, where the default is recorded, where an earlier install
