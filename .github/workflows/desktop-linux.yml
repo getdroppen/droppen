@@ -4,7 +4,8 @@ name: desktop-linux
 # architecture: desktop/build-linux.sh (in desktop/linux/Dockerfile's image,
 # bundling without the network), then .github/scripts/smoke-desktop-linux.sh
 # on the artifact that made. ci.yml calls it for the pull requests that touch
-# the Linux app's packaging, and release.yml is to call it the same way. No
+# the Linux app's packaging, and release.yml for a release with the Linux app
+# (its desktop-linux job; the release job signs, publish publishes). No
 # secret, no environment, read access only: nothing here signs or publishes.
 #
 # The caller hands it, as artifacts of its own run, each checked by the sha256

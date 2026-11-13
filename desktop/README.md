@@ -514,7 +514,10 @@ must log in to its server, the server must answer as the desktop app's, and on
 SIGTERM the app must stop it gracefully and exit 0.
 `.github/workflows/desktop-linux.yml` runs the build and the smoke tests on a
 runner of each architecture; CI calls it for the pull requests that touch the
-packaging (the `desktop_package` area). No release publishes them yet.
+packaging (the `desktop_package` area), and `release.yml` for a release whose
+notes name the Linux app's files; its `release` job signs the AppImages'
+updates, and the release publishes them with the `.deb`s, the `LIBRARIES` files
+and the sources tar (`docs/releasing.md`).
 
 The AppImage's updater has an end-to-end check of its own,
 `e2e-updater-linux.sh`, run on Linux (a desktop, or a container that can mount

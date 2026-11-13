@@ -41,5 +41,46 @@ mk abs; echo a > "$TMP/src/abs/file"
 COPYFILE_DISABLE=1 tar -cPf "$TMP/abs.tar" "$TMP/src/abs/file"
 expect refused "an absolute path" "$TMP/abs.tar" "" '.*'
 
+# Only a plain tar is read, and no decompressor ever runs on it: tar would
+# pick one by the first bytes, whatever its options, and run it from PATH.
+# Logging stand-ins for every one of them go first on PATH for these cases.
+mkdir -p "$TMP/shims"
+for prog in zstd unzstd lz4 lzop lrzip grzip xz unxz lzma bzip2 gzip lzip compress; do
+  printf '#!/bin/sh\necho "%s $*" >>"%s/decompressor.log"\ncat\n' "$prog" "$TMP" >"$TMP/shims/$prog"
+  chmod +x "$TMP/shims/$prog"
+done
+refused_unread() { # description, tar
+  local sum
+  sum=$(sha "$2")
+  rm -f "$TMP/decompressor.log"
+  if PATH="$TMP/shims:$PATH" "$UNPACK" "$2" "$sum" "$TMP/out-$PASSED-$FAILED" '.*' >"$TMP/refusal.log" 2>&1; then
+    FAILED=$((FAILED + 1)); echo "FAIL: $1: want refused, got ok" >&2
+  elif [ -e "$TMP/decompressor.log" ]; then
+    FAILED=$((FAILED + 1)); echo "FAIL: $1: a decompressor ran: $(cat "$TMP/decompressor.log")" >&2
+  else
+    PASSED=$((PASSED + 1))
+  fi
+}
+mk packed; mkdir bin; echo a > bin/cargo-about
+COPYFILE_DISABLE=1 tar -czf "$TMP/gzip.tar" bin
+refused_unread "a gzip-compressed tar" "$TMP/gzip.tar"
+# A real tar, \"ustar\" at 257 and all, whose first bytes are zstd's magic: the
+# bytes bsdtar and GNU tar both take as zstd, and hand to the zstd on PATH.
+cp "$TMP/good.tar" "$TMP/zstd-magic.tar"
+printf '\050\265\057\375' | dd of="$TMP/zstd-magic.tar" bs=1 seek=0 count=4 conv=notrunc 2>/dev/null
+refused_unread "a tar that starts with zstd's magic" "$TMP/zstd-magic.tar"
+grep -q "compressed (its first bytes are 28b52ffd)" "$TMP/refusal.log" && PASSED=$((PASSED + 1)) \
+  || { FAILED=$((FAILED + 1)); echo "FAIL: the zstd tar was not refused as compressed: $(cat "$TMP/refusal.log")" >&2; }
+if command -v zstd >/dev/null 2>&1; then
+  zstd -q -c "$TMP/good.tar" >"$TMP/zstd.tar"
+  refused_unread "a zstd-compressed tar" "$TMP/zstd.tar"
+fi
+printf '\004\042\115\030' | cat - "$TMP/good.tar" >"$TMP/lz4-magic.tar"
+refused_unread "a tar after lz4's magic" "$TMP/lz4-magic.tar"
+head -c 2048 /dev/zero | tr '\0' 'x' >"$TMP/text.tar"
+refused_unread "no tar at all" "$TMP/text.tar"
+printf 'short' >"$TMP/short.tar"
+refused_unread "shorter than a header" "$TMP/short.tar"
+
 echo "unpack-artifact: $PASSED passed, $FAILED failed"
 [ "$FAILED" = 0 ]

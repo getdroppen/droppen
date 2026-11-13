@@ -32,7 +32,11 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
   once `install.sh` pins the release key, `SHA256SUMS-server` and
   `SHA256SUMS-server.sig` ([The release key](#the-release-key)); and with the
   desktop app `Droppen-X.Y.Z.dmg`, `Droppen.app.tar.gz`, its `.sig` and
-  `latest.json`. An attestation is a statement signed through
+  `latest.json`; and with the Linux app `Droppen-X.Y.Z-x86_64.AppImage`,
+  `Droppen-X.Y.Z-aarch64.AppImage` and their `.sig` files,
+  `droppen_X.Y.Z_amd64.deb`, `droppen_X.Y.Z_arm64.deb`, `LIBRARIES-x86_64.txt`,
+  `LIBRARIES-aarch64.txt` and `Droppen-X.Y.Z-linux-sources.tar`. An
+  attestation is a statement signed through
   Sigstore and recorded by GitHub: this repository's release workflow, run
   for `refs/tags/vX.Y.Z` at commit C, made a file with exactly this sha256.
   The bundles are on the release too (`droppen-vX.Y.Z.sigstore.json` for
@@ -41,8 +45,9 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
 - **How to check** ([Verifying a download](#verifying-a-download)):
   `gh attestation verify <file> --repo getdroppen/droppen --signer-workflow getdroppen/droppen/.github/workflows/release.yml --source-ref refs/tags/vX.Y.Z`.
   On top of that the desktop app is signed with the Developer ID and
-  notarised by Apple, and installed apps take only an update whose minisign
-  signature the updater key made for that version; and once `install.sh`
+  notarised by Apple, and installed apps (the Mac app and the AppImage) take
+  only an update whose minisign signature the updater key made for that
+  version and file; and once `install.sh`
   pins the release key, it installs only from checksums that key signed
   ([The release key](#the-release-key)).
 
@@ -56,9 +61,26 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    signs and publishes the app exactly when the notes announce it. Without it,
    the release is server-only and carries the latest `latest.json` and DMG
    forward, with the Linux app's files and their sources once a release has
-   had them (`scripts/publish-release.sh`). Notes that name this version's
-   AppImage or `.deb` need the Linux app on the release, as the DMG's need
-   the Mac app. Merge it.
+   had them (`scripts/publish-release.sh`).
+
+   **The Linux app** ships when the notes name its four files:
+   `Droppen-X.Y.Z-x86_64.AppImage`, `Droppen-X.Y.Z-aarch64.AppImage`,
+   `droppen_X.Y.Z_amd64.deb` and `droppen_X.Y.Z_arm64.deb`. Then the
+   workflow builds, signs and publishes it beside the Mac app, with
+   `LIBRARIES-<arch>.txt` and `Droppen-X.Y.Z-linux-sources.tar`. It always
+   ships with the Mac app, since the two share one `latest.json`, and all
+   four files or none. The workflow stops a run whose notes name only some
+   of them, or that names them without `Droppen-X.Y.Z.dmg`. It also stops a
+   release whose `.deb`s would still name the placeholder maintainer
+   `droppen`: the `release` job reads the `Maintainer` of the built `.deb`s,
+   which must be `Name <local@domain>`, as Debian's policy has it (`meta`
+   stops it earlier when the source already says so). Set `bundle.publisher`
+   in `desktop/src-tauri/tauri.linux.conf.json` (or the app crate's
+   `authors`, which Tauri takes first); it must pass the release text check.
+   **Once a release has had the Linux app, every release with the Mac app
+   needs it too**, or AppImage installs would find no update. `meta` stops
+   such a run when it can read the latest release, and
+   `publish-release.sh` always does. Merge it.
 
    **No CI skip marker in its title** (`[skip ci]`, `[ci skip]`, `[no ci]`,
    `[skip actions]`, `[actions skip]`, or a `skip-checks: true` trailer), nor
@@ -77,7 +99,12 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    --dry-run`); the files it made stay on the run for two days as the
    artifact `dry-run-vX.Y.Z`. A run on any other branch builds and checks
    but never reaches the `release` job (the environment allows `v*` tags and
-   main only).
+   main only). `-f desktop_linux=true` (the `desktop_linux` box) adds the
+   Linux app to a dry run whose notes do not name it: the build, the smoke
+   tests and the sources tar, the AppImages' update signatures, `latest.json`
+   with the AppImages, and `publish-release.sh --dry-run --desktop-linux`.
+   The placeholder maintainer is a warning there, not a stop. The box is
+   refused on a run that publishes: a release's notes decide.
 3. **Tag** the merged commit and push the tag:
 
    ```sh
@@ -123,27 +150,29 @@ the fallback whenever GitHub Actions cannot be used.
 
 | job | runner | holds | what |
 |---|---|---|---|
-| `meta` | Linux | nothing | the version (the tag, or the source's for a dry run), whether it publishes (a `v*` tag of a commit on main), whether it has the app |
+| `meta` | Linux | nothing | the version (the tag, or the source's for a dry run), whether it publishes (a `v*` tag of a commit on main), whether it has the app and the Linux app (the notes' four Linux files, beside the DMG; the `.deb`'s maintainer no placeholder for a release; the Linux image's Rust this workflow's) |
 | `web` | Linux | nothing | the public web build, once, for every binary to embed |
 | `tools` | Linux | nothing | cargo-about and tauri-cli for the build jobs: upstream's release files, each checked against `.github/release-tools.lock` (nothing built) |
 | `signer` | macOS | nothing | `droppen-update-signer` (`desktop/update-signer`, with its format tests) and `droppen-update-manifest`, built from this repository's locked sources, for the `release` job |
 | `server-macos` | macOS ×2 | nothing | the server for aarch64 and x86_64, as `scripts/release-public.sh` builds it |
 | `server-linux` | Linux ×2 | nothing | the server for x86_64 and aarch64 (glibc 2.28): `scripts/build-linux-in-container.sh` in the image `scripts/build-linux.sh` pins |
-| `notices` | macOS | nothing | `THIRD_PARTY_NOTICES` of the server's files (`scripts/third-party-notices.sh`) and of the app (`desktop/third-party-notices.sh`), beside the builds: cargo-about reads the locked dependency graph, not the binaries; then the web app built once more, on macOS, which must be `web`'s build byte for byte |
+| `notices` | macOS | nothing | `THIRD_PARTY_NOTICES` of the server's files (`scripts/third-party-notices.sh`) and of the app (`desktop/third-party-notices.sh`, and `--platform linux` for the Linux app), beside the builds: cargo-about reads the locked dependency graph, not the binaries; then the web app built once more, on macOS, which must be `web`'s build byte for byte |
 | `stage` | macOS | nothing | `scripts/release-public.sh --prebuilt --web-dist --notices` with `web`'s build (not built again here: CI's `web-reproducible` checks that the build is reproducible, and `notices` that a macOS build gives the same bytes) and `notices`' file: macOS smoke tests (Apple silicon and Intel, under Rosetta), the universal binary, the tarballs and their checks (the binary checks on the programs in them, the tarballs in parallel), `SHA256SUMS`, `install.sh`, the INSTALL texts, `NOTES.md`, `web-manifest.json` (checked against the web build the binaries embed) |
 | `smoke-linux` | Linux x86_64, Linux arm64 | nothing | both Linux tarballs, unpacked, on Debian 10 |
 | `desktop-arch` | macOS ×2 | nothing | `desktop/build.sh --arch aarch64` and `--arch x86_64`, each with that architecture's server from `server-macos` and the app's notices from `notices`, beside `stage` (unsigned, no DMG) |
 | `desktop` | macOS | nothing | `desktop/build.sh --from-apps`: the two apps' main programs fused with `lipo`, the staged universal server put in, sealed ad hoc and checked as a build (unsigned; nothing compiled) |
-| `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature); once `install.sh` pins the release key, the signature over the server's `SHA256SUMS` ([The release key](#the-release-key)) |
-| `verify` | macOS | nothing | `latest.json` by `droppen-update-manifest write` (which verifies the signature with `tauri.conf.json`'s key); `scripts/publish-release.sh --dry-run`, every check (`latest.json` against its archive and the key included) against this repository's releases, read-only; its `SHA256SUMS` |
-| `publish` | macOS | `contents: write`, the OIDC token; only when publishing a `v*` tag | the attestations of every file and `scripts/publish-release.sh --verify-tag --skip-manifest-check --sums-expected`: the release of the tag, made once |
+| `desktop-linux` | Linux x86_64, Linux arm64, Linux | nothing | only with the Linux app: `.github/workflows/desktop-linux.yml`, which CI runs on the pull requests that touch the packaging. `desktop/build-linux.sh` for each architecture, with that architecture's server from `server-linux` and the Linux notices from `notices`: Ubuntu 22.04 by digest, the bundling without the network with the AppImage tools of `.github/release-tools.lock`, every check, `LIBRARIES-<arch>.txt`, then the Ubuntu source of every package the AppImage carries, from the same image's apt lists. The smoke tests: each `.deb` and AppImage on Ubuntu 22.04, Debian 12 and Ubuntu 24.04, and the AppImage through FUSE. `Droppen-X.Y.Z-linux-sources.tar` (`desktop/linux/sources-tar.sh`) |
+| `release` | macOS | every secret (no write token, no OIDC token); approved once per run | the text check with the names; `install.sh`, `LICENSE`, the INSTALL texts and `NOTES.md` compared with the source; with the app, `desktop/notarise.sh` (Developer ID, notarised, stapled, the DMG) and the keychain deleted, then `desktop/updater-artifacts.sh --no-manifest` with `droppen-update-signer` (the archive and its signature); with the Linux app, its text checked with the names (`.github/scripts/release-text-check-linux.sh`: the `LIBRARIES` files, the `.deb`s' control file, licence and notices read out by name, `README.AppImage`; for a release, the `.deb`s' `Maintainer` a contact), then each AppImage's update signature (`droppen-update-signer sign`, which reads its bytes); once `install.sh` pins the release key, the signature over the server's `SHA256SUMS` ([The release key](#the-release-key)) |
+| `verify` | macOS | nothing | `latest.json` by `droppen-update-manifest write` (which verifies the signature with `tauri.conf.json`'s key; with the Linux app, `--linux` for both AppImages); `scripts/publish-release.sh --dry-run` (with the Linux app `--desktop-linux`), every check (`latest.json` against its archive, its AppImages and the key included) against this repository's releases, read-only; its `SHA256SUMS` |
+| `publish` | macOS | `contents: write`, the OIDC token; only when publishing a `v*` tag | the attestations of every file (the Linux app's nine with it) and `scripts/publish-release.sh --verify-tag --skip-manifest-check --sums-expected` (with the Linux app `--desktop-linux`): the release of the tag, made once |
 
 The trust boundaries:
 
 - **The build jobs run dependency code and hold nothing.** `web`, `tools`,
-  `notices`, the server builds, `stage`, `smoke-linux`, `desktop-arch` and
-  `desktop` run npm install scripts, Rust build scripts and the programs
-  they build, so they have no secret, no write token and no OIDC token.
+  `notices`, the server builds, `stage`, `smoke-linux`, `desktop-arch`,
+  `desktop` and `desktop-linux` run npm install scripts, Rust build scripts
+  and the programs they build, so they have no secret, no write token and no
+  OIDC token.
   Whatever they make is untrusted data from then on.
 - **Artifacts are pinned and fenced.** Each artifact is a tar whose sha256
   its job puts out as a job output, which no other job can change. A job
@@ -151,7 +180,11 @@ The trust boundaries:
   replaced while the run waits for an approval is refused, and unpacks it
   into an empty directory of its own, only if every member is a plain file or
   directory on the expected paths (`.github/scripts/unpack-artifact.sh`).
-  Two artifacts never share a directory.
+  Two artifacts never share a directory. An artifact is a plain tar, read by
+  the system's `tar` with the system's `PATH`: tar picks a decompressor by an
+  archive's first bytes, whatever its options say, and runs it from `PATH`,
+  so a compressed one is refused before tar sees it
+  (`.github/scripts/tar-guard.sh`).
 - **One job holds the secrets, approved once per run.** `release` is the
   only job in the `release` environment, so GitHub itself makes it wait for
   the owner's approval, every run, whatever the workflow says. A job gets
@@ -168,9 +201,11 @@ The trust boundaries:
 
   No third-party build tool (tauri-cli, cargo, npm) runs there, nor the
   manifest tool (its 80 crates run in `verify`, which holds nothing), and
-  nothing from an artifact is run: the app, the DMG and the tarballs are only
-  read, signed and handed on; the staged tarballs are read member by member,
-  never unpacked by their own paths. The job has no write token and no OIDC
+  nothing from an artifact is run: the app, the DMG, the AppImages, the
+  `.deb`s and the tarballs are only read, signed and handed on; the staged
+  tarballs and the `.deb`s are read member by member, never unpacked by their
+  own paths, each a gzip of a plain tar that the system's `gzip` and `tar`
+  read with the system's `PATH` (`.github/scripts/tar-guard.sh`). The job has no write token and no OIDC
   token (`contents: read`), so a dry run never holds one. Each step gets only
   the secrets it uses in its own `env:`: the Developer ID and the notary's
   password the keychain and notarisation steps (the keychain is deleted right
@@ -211,22 +246,33 @@ The trust boundaries:
   (`--sums-expected`).
 - **No caches.** Every dependency is fetched and built afresh, so no earlier
   run can leave anything for a release to pick up.
-- **Two prebuilt tools, pinned.** cargo-about (the notices) and tauri-cli
-  (the app's build) are not built here: they are upstream's release files
-  (EmbarkStudios/cargo-about, tauri-apps/tauri) for the versions the source
-  pins, each downloaded from the one URL `.github/scripts/fetch-release-tool.sh`
-  makes from the tool, the version and the platform (the lock's url must be
-  exactly it) and checked against the sha256 in `.github/release-tools.lock`;
-  any difference fails the run, and nothing falls back to building. The trust is
-  upstream's release plus our pinned hash (neither publishes an attestation
-  for them; cargo-about publishes a `.sha256`, which
-  `scripts/update-release-tool-pins.sh` checks, with the sha256 GitHub
-  records, when a person makes new pins for a version bump). The workflow
-  never fetches a hash, and the tools run in build jobs only.
+- **Prebuilt tools, pinned.** cargo-about (the notices) and tauri-cli (the
+  app's build, for macOS and Linux) are not built here, nor the AppImage
+  tools tauri-cli's bundler runs for the Linux app (linuxdeploy, AppRun and
+  the type2 AppImage runtime, a tagged release of each, never `continuous`).
+  They are upstream's release files (EmbarkStudios/cargo-about,
+  tauri-apps/tauri, tauri-apps/binary-releases, AppImage/type2-runtime), for
+  the versions the source or the lock pins, each downloaded from the one URL
+  `.github/scripts/fetch-release-tool.sh` makes from the tool, the version
+  and the platform (the lock's url must be exactly it) and checked against
+  the sha256 in `.github/release-tools.lock`; any difference fails the run,
+  and nothing falls back to building. The trust is upstream's release plus
+  our pinned hash. None of them publishes an attestation for these files.
+  When a person makes new pins for a version bump,
+  `scripts/update-release-tool-pins.sh` checks them against the sha256
+  GitHub records, cargo-about's `.sha256` and the runtime's upstream GPG
+  signature. The workflow never fetches a hash, and the tools run in build
+  jobs only; the Linux app's build runs the AppImage tools without the
+  network.
 - **Pinned inputs.** Every action by commit; Rust 1.98.1 (rustup checks its
-  downloads); Node as in `.nvmrc`; pnpm as in `package.json`; the Linux image
-  by digest, zig by sha256; crates and npm packages by their lockfiles;
-  Apple's Developer ID G2 intermediate certificate by sha256.
+  downloads; the Linux app's image takes rustup-init by sha256); Node as in
+  `.nvmrc`; pnpm as in `package.json`; the Linux images by digest (the
+  server's and the Linux app's Ubuntu 22.04), zig by sha256; crates and npm
+  packages by their lockfiles; Apple's Developer ID G2 intermediate
+  certificate by sha256. The Linux app takes its Ubuntu libraries from the
+  live jammy archive, in the versions `LIBRARIES-<arch>.txt` records, and
+  their sources from the same image's apt lists, those very versions or
+  nothing.
 - **Names stay out of the log.** The release text check's list of personal
   names (`RELEASE_FORBIDDEN_ENV`) reaches only the `release` job's text checks; the
   build jobs check for "Kilerd" only (`DROPPEN_RELEASE_NAMES_DEFERRED`). A hit
@@ -251,7 +297,10 @@ attested too, so checking it once and then the files against it
 (`shasum -a 256 -c --ignore-missing SHA256SUMS`) is the same. The desktop app
 is also signed with the Developer ID and notarised by Apple
 (`spctl --assess -vv /Applications/Droppen.app`), and installed apps check each
-update's minisign signature (`desktop/SIGNING.md`, "The updater"). The web
+update's minisign signature (`desktop/SIGNING.md`, "The updater"); the
+AppImages' are on the release beside them (`Droppen-X.Y.Z-<arch>.AppImage.sig`),
+and `Droppen-X.Y.Z-linux-sources.tar` holds the source of what they carry
+besides Droppen. The web
 app's build can be rebuilt byte for byte from the source
 ([web-integrity.md](web-integrity.md)); the binaries are not reproducible yet,
 so for them the attestation is what ties a file to its source.
@@ -276,8 +325,9 @@ downloaded from:
   server's tarballs, nothing else), published as `SHA256SUMS-server`, and
   `SHA256SUMS-server.sig`: an ECDSA P-256 signature over it with SHA-256, in
   the DER form `openssl dgst -sha256 -sign` writes. The release's own
-  `SHA256SUMS` also lists the desktop app's files and `latest.json`, which
-  `verify` writes after the approval; its attestation covers it.
+  `SHA256SUMS` also lists the desktop app's files (the Linux app's too) and
+  `latest.json`, which `verify` writes after the approval; its attestation
+  covers it.
 - **Who signs.** The `release` job alone, after the approval, with the
   environment secret `INSTALL_SIGNING_KEY`; it checks the signature against
   the key `install.sh` pins before handing it on. `verify` and `publish`
@@ -362,7 +412,7 @@ first tag:
    | `KEYCHAIN_PASSWORD` | any random string (the run's throwaway keychain) |
    | `APPLE_ID` | the Apple ID that notarises |
    | `APPLE_PASSWORD` | an app-specific password of it (appleid.apple.com) |
-   | `TAURI_SIGNING_PRIVATE_KEY` | `< ~/.config/droppen/tauri-updater.key` |
+   | `TAURI_SIGNING_PRIVATE_KEY` | `< ~/.config/droppen/tauri-updater.key` (it signs the Mac app's updates and the AppImages') |
    | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | `< ~/.config/droppen/tauri-updater.key.password` |
    | `RELEASE_FORBIDDEN_ENV` | `< ~/.config/droppen/release-forbidden.env` (the whole file; its names must hash to `RELEASE_TEXT_NAMES_SHA256` in `scripts/release-text-check.sh`) |
    | `INSTALL_SIGNING_KEY` | `< ~/.config/droppen/install-signing.pem` ([The release key](#the-release-key); needed once `install.sh` pins it) |

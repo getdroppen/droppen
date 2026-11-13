@@ -101,7 +101,7 @@ them):
 | `KEYCHAIN_PASSWORD` | a password for the throwaway keychain the workflow imports the certificate into |
 | `APPLE_ID` | the Apple ID notarisation submits as |
 | `APPLE_PASSWORD` | an app-specific password of that Apple ID (not its own password) |
-| `TAURI_SIGNING_PRIVATE_KEY` | the updater key, the contents of `tauri-updater.key` ([The key](#the-key)) |
+| `TAURI_SIGNING_PRIVATE_KEY` | the updater key, the contents of `tauri-updater.key` ([The key](#the-key)); it signs the AppImages' updates too |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password |
 | `RELEASE_FORBIDDEN_ENV` | the release text check's lists: the contents of `~/.config/droppen/release-forbidden.env` |
 
@@ -145,6 +145,41 @@ openssl dgst -sha256 -sign ~/.config/droppen/install-signing.pem \
 # 6. Published: a draft, latest.json uploaded last, then the latest release.
 scripts/publish-release.sh v$VERSION --server /tmp/droppen-public-release --desktop /tmp/droppen-desktop-release --dry-run
 scripts/publish-release.sh v$VERSION --server /tmp/droppen-public-release --desktop /tmp/droppen-desktop-release
+```
+
+A release with the Linux app (its notes name its four files) adds, between
+steps 4 and 5, the Linux app around the Linux server of step 1, its sources,
+and the AppImages' update signatures, and rewrites `latest.json` to offer
+them. `desktop/build-linux.sh` runs in Docker, and the other architecture
+runs emulated, slowly. `desktop/linux/sources-tar.sh` needs GNU tar
+(`brew install gnu-tar`):
+
+```sh
+# 4a. Each architecture's AppImage, .deb, LIBRARIES file and sources, then the sources tar.
+L=/tmp/droppen-desktop-linux; mkdir -p $L
+for arch in x86_64 aarch64; do
+  mkdir -p /tmp/droppen-linux-sidecar/$arch
+  tar -xzf /tmp/droppen-public-release/droppen-v$VERSION-linux-$arch.tar.gz -C /tmp/droppen-linux-sidecar/$arch droppen
+  desktop/build-linux.sh --ref v$VERSION --arch $arch --sidecar /tmp/droppen-linux-sidecar/$arch/droppen --out /tmp/droppen-linux-$arch
+  cp /tmp/droppen-linux-$arch/Droppen-$VERSION-$arch.AppImage /tmp/droppen-linux-$arch/droppen_${VERSION}_*.deb /tmp/droppen-linux-$arch/LIBRARIES-$arch.txt $L/
+done
+TAR=gtar desktop/linux/sources-tar.sh $VERSION $L /tmp/droppen-linux-x86_64/sources-x86_64 /tmp/droppen-linux-aarch64/sources-aarch64
+# 4b. Each AppImage's update signature (the password from the environment, never the command line),
+#     then latest.json written again, offering the AppImages beside the archive.
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.config/droppen/tauri-updater.key.password)"
+for arch in x86_64 aarch64; do
+  cargo run --quiet --release --locked --manifest-path desktop/update-signer/Cargo.toml -- \
+    sign $L/Droppen-$VERSION-$arch.AppImage --version $VERSION --key-file ~/.config/droppen/tauri-updater.key
+done
+unset TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+U=/tmp/droppen-desktop-release/updater
+cargo run --quiet --release --locked --manifest-path desktop/Cargo.toml -p droppen-desktop-core --bin droppen-update-manifest -- \
+  write --version $VERSION --archive $U/Droppen.app.tar.gz --signature $U/Droppen.app.tar.gz.sig \
+  --pubkey desktop/src-tauri/tauri.conf.json --out $U/latest-linux.json \
+  --linux aarch64=$L/Droppen-$VERSION-aarch64.AppImage,$L/Droppen-$VERSION-aarch64.AppImage.sig \
+  --linux x86_64=$L/Droppen-$VERSION-x86_64.AppImage,$L/Droppen-$VERSION-x86_64.AppImage.sig
+mv $U/latest-linux.json $U/latest.json
+# 6. as above, with --desktop-linux $L beside --desktop.
 ```
 
 A release without a new desktop app (a server-only fix) is steps 1, 5 and 6,
@@ -438,6 +473,21 @@ without `--linux` the manifest is the Mac's alone, byte for byte as before.
     files beside a `latest.json` that does not offer them.
   - **A prerelease** (`v1.2.3-rc.1`) never becomes the latest release: it is
     published as a GitHub prerelease, with no `latest.json`.
+- **The Linux app ships with the Mac app, whole, and with a real
+  maintainer.** A release has it when its notes name its four files (both
+  AppImages, both `.deb`s), beside `Droppen-X.Y.Z.dmg`: `release.yml`'s `meta`
+  refuses notes that name only some of them, or name them without the DMG.
+  The `release` job refuses to publish `.deb`s whose `Maintainer` is not a
+  contact, `Name <local@domain>` as Debian's policy wants, the placeholder
+  `droppen` included; it reads the built packages' control files (`meta`
+  stops earlier when `bundle.publisher` in
+  `desktop/src-tauri/tauri.linux.conf.json` already says so, and the app
+  crate sets no authors). A dry run builds it with the placeholder, and says
+  so.
+  The `release` job signs each AppImage's update
+  (`droppen-update-signer sign Droppen-X.Y.Z-<arch>.AppImage --version X.Y.Z`),
+  `verify` writes `latest.json` with `--linux` for both, and both
+  `publish-release.sh` runs get `--desktop-linux`.
 - **"Latest" only moves forward:** `scripts/publish-release.sh` refuses a
   version that is not newer than the latest release. It goes on without a
   latest release only when GitHub says there is none (404); any other failure

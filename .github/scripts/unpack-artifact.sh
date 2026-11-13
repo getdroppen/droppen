@@ -13,6 +13,10 @@
 #              trailing slash) must match as a whole; members are regular
 #              files and directories only (no links, devices or FIFOs), and
 #              no path is absolute or has a `.` or `..` component
+#
+# A plain tar only, and read by the system's tar with the system's PATH, so no
+# decompressor runs on an artifact's bytes (tar-guard.sh): every artifact is
+# made by `tar -cf`.
 set -euo pipefail
 
 TARBALL=${1:?usage: unpack-artifact.sh <tar> <sha256> <dest> <allowed ERE>}
@@ -21,6 +25,8 @@ DEST=${3:?usage: unpack-artifact.sh <tar> <sha256> <dest> <allowed ERE>}
 ALLOWED=${4:?usage: unpack-artifact.sh <tar> <sha256> <dest> <allowed ERE>}
 NAME=$(basename "$TARBALL")
 die() { printf 'unpack-artifact: %s: %s\n' "$NAME" "$*" >&2; exit 1; }
+# shellcheck source=tar-guard.sh
+. "$(cd "$(dirname "$0")" && pwd -P)/tar-guard.sh"
 
 [[ "$WANT" =~ ^[0-9a-f]{64}$ ]] || die "no sha256 to check it against (the job that made it put out none)"
 [ -f "$TARBALL" ] || die "no such file"
@@ -28,10 +34,11 @@ if command -v sha256sum >/dev/null 2>&1; then GOT=$(sha256sum "$TARBALL"); else 
 GOT=${GOT%% *}
 [ "$GOT" = "$WANT" ] || die "its sha256 is $GOT, not $WANT: not the file its job made"
 if [ -e "$DEST" ] && [ -n "$(ls -A "$DEST")" ]; then die "$DEST is not empty"; fi
+WHY=$(tar_guard_plain "$TARBALL" 2>&1) || die "${WHY#"$TARBALL" }"
 
 # Types first: the first character of each `tar -tv` line (GNU tar and bsdtar
 # alike) is `-` for a file and `d` for a directory.
-LC_ALL=C tar -tvf "$TARBALL" | while IFS= read -r line; do
+LC_ALL=C tar_guard_tar -tvf "$TARBALL" | while IFS= read -r line; do
   case "${line:0:1}" in
     - | d) ;;
     *) die "a member that is neither a file nor a directory: $line" ;;
@@ -46,9 +53,9 @@ while IFS= read -r member; do
   esac
   [[ "$path" =~ $ALLOWED ]] || die "a member it should not have: $member"
   COUNT=$((COUNT + 1))
-done < <(LC_ALL=C tar -tf "$TARBALL")
+done < <(LC_ALL=C tar_guard_tar -tf "$TARBALL")
 [ "$COUNT" -gt 0 ] || die "empty"
 
 mkdir -p "$DEST"
-tar -xf "$TARBALL" -C "$DEST"
+tar_guard_tar -xf "$TARBALL" -C "$DEST"
 echo "ok: $NAME ($GOT, $COUNT members) in $DEST"
