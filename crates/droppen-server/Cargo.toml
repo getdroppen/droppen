@@ -162,7 +162,8 @@ droppen-aggregator = { path = "../droppen-aggregator", features = ["test-support
 # transcripts made the way the loader makes them (`streams::test_transcripts`).
 droppen-agent = { path = "../droppen-agent", features = ["test-support"] }
 # A link whose frames are all queued at once, for the terminal tests
-# (`droppen_pty::client::Link::preloaded`).
+# (`droppen_pty::client::Link::preloaded`), and the server binary their
+# shims are spawned from (`droppen_pty::testing::shims_run_from`).
 droppen-pty = { path = "../droppen-pty", features = ["test-support"] }
 # The live setup code and a hold on the account store's writes, for the tests
 # of the guard and the `/api/auth/*` routes (`api::auth_routes`).

@@ -1453,6 +1453,25 @@ mod tests {
         assert_eq!(claude.found.0.as_ref().map(|found| found.via), Some(super::super::FoundVia::Picked));
     }
 
+    /// The server binary a build of the workspace left for these tests to run
+    /// the pty shim from, if there is one.
+    ///
+    /// A guess at cargo's layout, which only a test may make: a unit test is
+    /// not given another package's binary (`CARGO_BIN_EXE_*` is for a package's
+    /// own integration tests). The server is in the profile directory
+    /// (`target/debug/`) and this test binary is somewhere under it, in `deps/`
+    /// before cargo 1.100 and `build/<package>/<hash>/out/` since, so the
+    /// nearest folder up that holds a `droppen-server` file is that directory.
+    /// A `build/droppen-server` on the way is the server's build folder, not a
+    /// file, and is passed over.
+    fn built_server() -> Option<std::path::PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        exe.ancestors()
+            .skip(1)
+            .map(|dir| dir.join(droppen_base::program::DROPPEN_SERVER))
+            .find(|candidate| candidate.is_file())
+    }
+
     /// The request that started an install goes away while its terminal is
     /// being opened: the terminal opens all the same, its exit is settled,
     /// and the tool is free after. A real terminal (the server's own pty shim)
@@ -1460,11 +1479,11 @@ mod tests {
     /// once: nothing is installed, nothing is downloaded.
     #[tokio::test]
     async fn an_install_whose_request_went_away_while_its_terminal_opened_still_ends() {
-        let exe = std::env::current_exe().unwrap_or_default();
-        if droppen_pty::shim_program() == exe {
-            eprintln!("no server binary beside the tests to run the pty shim (a `cargo test --lib` on its own): not run");
+        let Some(server) = built_server() else {
+            eprintln!("no server binary built with the tests to run the pty shim (a `cargo test --lib` on its own): not run");
             return;
-        }
+        };
+        droppen_pty::testing::shims_run_from(server);
         use std::os::unix::fs::PermissionsExt;
         let home = tempfile::tempdir().expect("tempdir");
         let shell = home.path().join("stand-in-shell");

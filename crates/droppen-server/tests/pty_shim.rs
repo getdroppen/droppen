@@ -69,6 +69,7 @@ impl Boot {
     /// Start a server on `home`, owning `instance`.
     async fn start(home: &Path, instance: &str) -> Boot {
         common::test_home(home);
+        common::terminals_run_the_server_binary();
         let app = RemoteHandApp {
             home_override: Some(home.to_path_buf()),
             port_override: Some(0),

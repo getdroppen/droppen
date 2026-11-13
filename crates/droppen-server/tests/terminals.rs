@@ -176,6 +176,7 @@ fn bare_home() -> (tempfile::TempDir, common::Reaper) {
 /// which a [`Probe`] cannot give: it owns its tempdir, and the whole point of a
 /// surviving terminal is that it outlives whatever started it.
 fn registry_at(home: &Path) -> Arc<Registry> {
+    common::terminals_run_the_server_binary();
     let dirs = instance_of(home);
     dirs.create().expect("create the instance directory");
     Registry::new(Arc::new(Paths::new(home.to_path_buf())), Arc::new(dirs))

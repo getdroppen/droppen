@@ -124,6 +124,7 @@ impl TestServer {
     async fn boot_with(home: &Path, instance: Option<&str>, auth_enabled: Option<bool>, desktop_app: Option<bool>) -> TestServer {
         test_home(home);
         shims_end_with_this_process();
+        terminals_run_the_server_binary();
         let app = || RemoteHandApp {
             home_override: Some(home.to_path_buf()),
             port_override: Some(0),
@@ -753,6 +754,17 @@ fn dechunk(body: &str) -> String {
 /// that started it, and its CLI reads end of file and goes too.
 pub fn shims_end_with_this_process() {
     droppen_provider::testing::shims_run_as(module_path!());
+}
+
+/// Spawn every terminal's pty shim a server or registry in this process
+/// starts from the server binary cargo built for these tests.
+///
+/// The shim is the server's own executable, and in here that is this test
+/// binary, which has no `pty-shim` ([`droppen_pty::testing::shims_run_from`]).
+/// The guards here find a terminal's shim as a process of the server binary
+/// ([`server_processes_under`]), so that is what it is run as.
+pub fn terminals_run_the_server_binary() {
+    droppen_pty::testing::shims_run_from(env!("CARGO_BIN_EXE_droppen-server"));
 }
 
 /// Not a test: what this binary runs as when a test starts it as one of its

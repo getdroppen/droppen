@@ -30,7 +30,8 @@ tracing = "0.1"
 vt100 = "0.16.2"
 
 # `client::Link::preloaded`, a link whose frames are all queued at once, for the
-# server's terminal tests. Only the server's [dev-dependencies] turn it on.
+# server's terminal tests, and `testing::shims_run_from`, the server binary a
+# test's shims are spawned from. Only [dev-dependencies] turn it on.
 [features]
 test-support = []
 

@@ -37,7 +37,9 @@ test-support = []
 [dev-dependencies]
 # The child-`PATH` guard the tests that set the override take.
 droppen-base = { path = "../droppen-base", features = ["test-support"] }
-droppen-pty = { path = "../droppen-pty" }
+# The server binary the install test's terminal is spawned from
+# (`droppen_pty::testing::shims_run_from`).
+droppen-pty = { path = "../droppen-pty", features = ["test-support"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
 
