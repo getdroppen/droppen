@@ -71,8 +71,8 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    ships with the Mac app, since the two share one `latest.json`, and all
    four files or none. The workflow stops a run whose notes name only some
    of them, or that names them without `Droppen-X.Y.Z.dmg`. It also stops a
-   release whose `.deb`s would still name the placeholder maintainer
-   `droppen`: the `release` job reads the `Maintainer` of the built `.deb`s,
+   release whose `.deb`s would name a maintainer that is not a contact
+   (such as the old placeholder `droppen`): the `release` job reads the `Maintainer` of the built `.deb`s,
    which must be `Name <local@domain>`, as Debian's policy has it (`meta`
    stops it earlier when the source already says so). Set `bundle.publisher`
    in `desktop/src-tauri/tauri.linux.conf.json` (or the app crate's
@@ -103,7 +103,7 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
    Linux app to a dry run whose notes do not name it: the build, the smoke
    tests and the sources tar, the AppImages' update signatures, `latest.json`
    with the AppImages, and `publish-release.sh --dry-run --desktop-linux`.
-   The placeholder maintainer is a warning there, not a stop. The box is
+   A maintainer that is not a contact is a warning there, not a stop. The box is
    refused on a run that publishes: a release's notes decide.
 3. **Tag** the merged commit and push the tag:
 

@@ -467,7 +467,8 @@ of that commit.
 On Linux, Tauri merges `src-tauri/tauri.linux.conf.json` over
 `tauri.conf.json` (each platform's own file; `src-tauri/build.rs` reads the
 same one for its identity check): a `.deb` and an AppImage instead of the app
-and the DMG, `droppen` as the publisher (the `.deb`'s maintainer) for now, the
+and the DMG, `Droppen <support@droppen.app>` as the publisher (the `.deb`'s
+maintainer), the
 `devel` section, no GStreamer plugins in the AppImage (the web app plays no
 media), and the icons without the `@2x` one, which Tauri would install as the
 scale-2 icon of its size (`hicolor/256x256@2`, where a 512-pixel image

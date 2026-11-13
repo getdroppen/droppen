@@ -194,12 +194,13 @@ jobs:
               exit 1
             fi
             # The .deb's Maintainer, early: tauri-bundler writes the app
-            # crate's authors, or else the bundle's publisher, still the
-            # placeholder "droppen" until a contact is chosen. A release names
-            # one, "Name <local@domain>" as Debian's policy has it; a dry run
-            # may build with the placeholder. This reads the source, so it
-            # stops only what is sure to stop: the release job checks the
-            # Maintainer the built .debs carry, which is what counts
+            # crate's authors, or else the bundle's publisher ("Droppen
+            # <support@droppen.app>"). A release names a contact, "Name
+            # <local@domain>" as Debian's policy has it, never the old
+            # placeholder "droppen"; a dry run may build without one. This
+            # reads the source, so it stops only what is sure to stop: the
+            # release job checks the Maintainer the built .debs carry,
+            # which is what counts
             # (release-text-check-linux.sh --publish).
             if grep -qE '^authors([[:space:]]|[.=])' desktop/src-tauri/Cargo.toml; then
               echo "::notice::desktop/src-tauri/Cargo.toml sets the app's authors: the release job checks the Maintainer of the built .debs"
