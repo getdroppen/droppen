@@ -482,8 +482,9 @@ without `--linux` the manifest is the Mac's alone, byte for byte as before.
   `droppen` included; it reads the built packages' control files (`meta`
   stops earlier when `bundle.publisher` in
   `desktop/src-tauri/tauri.linux.conf.json` already says so, and the app
-  crate sets no authors). A dry run builds it with the placeholder, and says
-  so.
+  crate sets no authors). The maintainer is `Droppen <support@droppen.app>`;
+  a dry run builds with whatever is set and only warns when it is not a
+  contact.
   The `release` job signs each AppImage's update
   (`droppen-update-signer sign Droppen-X.Y.Z-<arch>.AppImage --version X.Y.Z`),
   `verify` writes `latest.json` with `--linux` for both, and both
