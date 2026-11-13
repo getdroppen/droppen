@@ -14,7 +14,7 @@
 //! | `rh/v1 hub-login` | a machine or a device | [`HubLogin`] |
 //! | `rh/v1 push` | a machine | reserved for Web Push payloads (M3) |
 //! | `rh/v1 recovery-proof` | the recovery key `RSK` | [`crate::chain::recovery_proof_body`] |
-//! | `rh/v1 stream-draft` | a machine | [`crate::stream::seal_ephemeral`]'s `stream | payload` |
+//! | `rh/v1 stream-draft` | a machine | [`crate::stream::seal_ephemeral`]'s `stream \| payload` |
 //! | `rh/v1 relay-ticket` | the Hub's ticket key | [`crate::ticket::RelayTicket::encode`] |
 //! | `rh/v1 relay-origin` | a relay | [`crate::ticket::origin_proof_body`] |
 //! | `rh/v1 passkey-proof` | a passkey slot's `PAK` | [`crate::chain::passkey_proof_body`] |

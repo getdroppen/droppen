@@ -202,12 +202,10 @@ static SHIM_MODULE: OnceLock<&'static str> = OnceLock::new();
 /// body is [`session_shim`].
 ///
 /// [`droppen_pty::shim_program`] cannot serve a test. From a test binary it
-/// falls back to the server binary beside it in `target/debug`, which
-/// `cargo test --lib` does not build and which another run may have left
-/// there from older source. Where there is none, the test binary itself is
-/// run as `session-shim --socket …`: libtest refuses the option and exits
-/// 101, and every respawn waits out a socket nobody binds. Where there is
-/// one, the shim under test is whatever that binary is. The test binary is
+/// is the test binary itself, run as `session-shim --socket …`: libtest
+/// refuses the option and exits 101, and every respawn waits out a socket
+/// nobody binds. Only the server's own integration tests are handed the server
+/// binary to name instead (`CARGO_BIN_EXE_droppen-server`); the test binary is
 /// always there, and always this source. This crate's own tests run theirs
 /// without asking.
 pub fn shims_run_as(module: &'static str) {

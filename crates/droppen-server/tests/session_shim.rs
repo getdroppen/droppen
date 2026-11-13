@@ -18,14 +18,8 @@ use droppen_provider::shim::{self, LinkError, Output, Sidecars, Spawn};
 mod common;
 
 /// Point `shim_program` at the binary cargo just built for this test.
-///
-/// Set once for the whole process rather than per test: it is a process-global,
-/// and every test in this file wants the same value.
 fn use_the_real_binary() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        std::env::set_var("DROPPEN_SHIM_BIN", env!("CARGO_BIN_EXE_droppen-server"));
-    });
+    droppen_pty::testing::shims_run_from(env!("CARGO_BIN_EXE_droppen-server"));
 }
 
 /// Enough environment for `/bin/cat` to run.

@@ -34,6 +34,8 @@ pub mod client;
 pub mod proto;
 pub mod ring;
 pub mod sidecar;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 use std::path::PathBuf;
 
@@ -60,40 +62,23 @@ pub fn gap_note(lost: u64) -> String {
 
 /// The binary to spawn a shim from.
 ///
-/// Normally this process's own executable: the shim is a subcommand of the
-/// server, so there is nothing else to find. Two escapes exist for tests, which
-/// run inside a test harness rather than inside the server:
+/// This process's own executable: the shim is a subcommand of the server, so
+/// there is nothing else to find. A test, which runs inside a test harness
+/// rather than inside the server, names the server binary instead
+/// (`testing::shims_run_from`, with `test-support`).
 ///
-/// * `DROPPEN_SHIM_BIN` names the binary outright, which is what the
-///   cross-process survival test uses;
-/// * failing that, a `current_exe` inside cargo's `deps/` directory is a test
-///   binary, and the server it links sits one level up under its own name.
-///
-/// Neither path is reachable from a real deployment, where `current_exe` is the
-/// server itself.
+/// Never worked out from where the executable is. A test binary in cargo's
+/// `deps/` used to be taken to have the server one level up, and cargo 1.100
+/// moved test binaries to `build/<package>/<hash>/out/`: the guess fell
+/// through to the test binary, every shim a test started was libtest refusing
+/// `--socket`, and no terminal in any test could open. Where cargo keeps its
+/// intermediate files is not something it promises to keep.
 pub fn shim_program() -> PathBuf {
-    let override_path = droppen_base::env::var("DROPPEN_SHIM_BIN").map(PathBuf::from);
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(droppen_base::program::DROPPEN_SERVER));
-    resolve_shim_program(override_path, exe, |path| path.is_file())
-}
-
-/// The decision [`shim_program`] makes, with the environment supplied.
-///
-/// Split out so it can be asserted on without writing to a process-global
-/// variable that every other test in this binary also reads.
-fn resolve_shim_program(override_path: Option<PathBuf>, exe: PathBuf, exists: impl Fn(&std::path::Path) -> bool) -> PathBuf {
-    if let Some(path) = override_path {
-        return path;
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(program) = testing::shim_program() {
+        return program;
     }
-    if exe.parent().and_then(|dir| dir.file_name()) == Some(std::ffi::OsStr::new("deps")) {
-        if let Some(target) = exe.parent().and_then(|deps| deps.parent()) {
-            let candidate = target.join(droppen_base::program::DROPPEN_SERVER);
-            if exists(&candidate) {
-                return candidate;
-            }
-        }
-    }
-    exe
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from(droppen_base::program::DROPPEN_SERVER))
 }
 
 #[cfg(test)]
@@ -110,30 +95,11 @@ mod tests {
         );
     }
 
+    /// Nothing is read off where the executable is: this test binary is in
+    /// cargo's build directory, with a server built near it or not, and until
+    /// a test names another program the shim is this executable.
     #[test]
-    fn an_explicit_shim_binary_wins_and_a_test_binary_falls_back_to_the_server() {
-        let named = Some(PathBuf::from("/opt/remote-hand/bin/server"));
-        assert_eq!(
-            resolve_shim_program(named.clone(), PathBuf::from("/anything"), |_| true),
-            PathBuf::from("/opt/remote-hand/bin/server")
-        );
-
-        // A cargo integration-test binary: the server sits one level above it.
-        let test_binary = PathBuf::from("/w/target/debug/deps/pty_shim-1a2b3c");
-        assert_eq!(
-            resolve_shim_program(None, test_binary.clone(), |_| true),
-            PathBuf::from("/w/target/debug/droppen-server")
-        );
-        assert_eq!(
-            resolve_shim_program(None, test_binary, |_| false),
-            PathBuf::from("/w/target/debug/deps/pty_shim-1a2b3c"),
-            "with nothing to fall back to, the running executable stands"
-        );
-
-        // A real deployment: `current_exe` is the server, and is used as it is.
-        assert_eq!(
-            resolve_shim_program(None, PathBuf::from("/usr/local/bin/remote-hand-server"), |_| true),
-            PathBuf::from("/usr/local/bin/remote-hand-server")
-        );
+    fn with_no_program_named_the_shim_is_this_executable() {
+        assert_eq!(shim_program(), std::env::current_exe().expect("this test binary"));
     }
 }
