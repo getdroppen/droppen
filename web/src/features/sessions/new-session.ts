@@ -30,19 +30,20 @@ export interface RecentDirectory {
  * The directories a device's sessions ran in, the one most recently *started
  * in* first — where work was begun rather than what is loudest, as the
  * server's own recent-directories list ranks them — with how many sessions
- * each holds and when one of them last did anything. A directory in `gone`
- * (`/api/sessions/gone-cwds`: no longer on the device) is left out, as
- * nothing can be started there.
+ * each holds and when one of them last did anything. A directory `leftOut`
+ * says no to is not offered: one no longer on the device
+ * (`/api/sessions/gone-cwds`), or scratch space under a temporary directory
+ * ({@link inTempDir}).
  */
 export function recentDirectories(
   sessions: readonly SessionSummary[] | null,
   limit = RECENT_DIRECTORIES,
-  gone: ReadonlySet<string> = new Set(),
+  leftOut: (cwd: string) => boolean = () => false,
 ): RecentDirectory[] {
   const byCwd = new Map<string, RecentDirectory>();
   for (const session of sessions ?? []) {
     const cwd = session.cwd;
-    if (!cwd || gone.has(cwd)) continue;
+    if (!cwd || leftOut(cwd)) continue;
     const seen = byCwd.get(cwd);
     if (!seen) {
       byCwd.set(cwd, { cwd, sessions: 1, lastActivity: session.updatedAt, lastStarted: session.createdAt });
@@ -55,6 +56,15 @@ export function recentDirectories(
   return [...byCwd.values()]
     .sort((a, b) => (a.lastStarted === b.lastStarted ? a.cwd.localeCompare(b.cwd) : a.lastStarted < b.lastStarted ? 1 : -1))
     .slice(0, limit);
+}
+
+/**
+ * Whether `cwd` is one of the device's temporary directories (`tempDirs` in
+ * its settings) or inside one: where a harness makes a repository or a
+ * worktree for one task and removes it after, not a place to start work in.
+ */
+export function inTempDir(cwd: string, tempDirs: readonly string[]): boolean {
+  return tempDirs.some((dir) => cwd === dir || cwd.startsWith(`${dir}/`));
 }
 
 /** How many recent directories the empty view lists before 「显示全部（N）」. */

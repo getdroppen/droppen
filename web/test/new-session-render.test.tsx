@@ -764,6 +764,23 @@ test("a directory the device says is gone is not offered: the list and the pick 
   assert.deepEqual(errors, []);
 });
 
+test("a directory under the device's temporary directories is not offered either, though it is still there", async (t) => {
+  const sent: Sent[] = [];
+  reset(sent);
+  const scratch = summary({ id: "tmp-1", cwd: "/private/var/folders/51/x/T/pilot-sim/worktrees/t1", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  machineFeedFor(LOCAL).store.publish({
+    settings: { hostname: "studio", platform: "darwin", nodeVersion: "1", homeDir: "", claudeDir: "", codexDir: "", serverStartedAt: "", tempDirs: ["/var/folders/51/x/T", "/private/var/folders/51/x/T"] },
+    sessions: [scratch, ...inDirectories(2)],
+  });
+  t.after(() => machineFeedFor(LOCAL).store.publish({ settings: null }));
+  const { root, errors } = await mount("/sessions/new");
+  t.after(() => root.unmount());
+  await until("the directories", () => rows().length === 2);
+  assert.deepEqual(rows().map((row) => row.getAttribute("data-directory")), ["/home/demo/work/dir-0", "/home/demo/work/dir-1"]);
+  assert.equal(picked(), "/home/demo/work/dir-0", "the newest one that is not scratch space");
+  assert.deepEqual(errors, []);
+});
+
 test("↑/↓ move the pick: in the list, and from the composer while nothing is typed or with Alt — Enter stays send", async (t) => {
   const sent: Sent[] = [];
   reset(sent);

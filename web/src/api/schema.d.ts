@@ -5891,6 +5891,12 @@ export interface components {
              *     talking to has been replaced under it — see `droppen_supervisor::selfupdate`.
              */
             serverVersion: string;
+            /**
+             * @description The system's temporary directories (`droppen_http::temp_dirs`): a
+             *     session directory under one is scratch space, not offered to start a
+             *     new session in.
+             */
+            tempDirs: string[];
         };
         /** @description One whitelisted command, as the guide shows it. */
         SetupCommand: {

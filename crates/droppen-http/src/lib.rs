@@ -225,6 +225,57 @@ pub fn hostname() -> String {
     String::from_utf8_lossy(&buffer[..end]).into_owned()
 }
 
+/// The system's temporary directories, each as named and as it resolves: the
+/// one this process was given (`TMPDIR`), `/tmp` and `/var/tmp`, and on macOS
+/// `/var/folders`, under which the system gives every user one of their own.
+/// A session directory under one is scratch space a harness made and removes
+/// again, which the new-session picker does not offer.
+///
+/// None is `home` or above it: a `TMPDIR` set to the home directory would
+/// otherwise take every project out of the picker.
+pub fn temp_dirs(home: &std::path::Path) -> Vec<String> {
+    // Each directory with what it resolves to, kept together: a home under
+    // one names it one way or the other, and both go.
+    static ROOTS: std::sync::LazyLock<Vec<Vec<std::path::PathBuf>>> = std::sync::LazyLock::new(|| {
+        let mut named = vec![std::env::temp_dir()];
+        if cfg!(unix) {
+            named.extend(["/tmp", "/var/tmp"].map(std::path::PathBuf::from));
+        }
+        if cfg!(target_os = "macos") {
+            named.push("/var/folders".into());
+        }
+        named
+            .into_iter()
+            .map(|dir| {
+                // Resolved once, at the first ask: local directories that do
+                // not move while the server runs. Collected from its
+                // components to drop a trailing `/`, which `TMPDIR` has.
+                let real = std::fs::canonicalize(&dir).ok();
+                let mut both: Vec<std::path::PathBuf> = Vec::new();
+                for root in std::iter::once(dir)
+                    .chain(real)
+                    .map(|root| root.components().collect::<std::path::PathBuf>())
+                {
+                    if root.parent().is_some() && !both.contains(&root) {
+                        both.push(root);
+                    }
+                }
+                both
+            })
+            .collect()
+    });
+    let mut dirs: Vec<String> = Vec::new();
+    for both in ROOTS.iter().filter(|both| !both.iter().any(|root| home.starts_with(root))) {
+        for root in both {
+            let root = root.to_string_lossy().into_owned();
+            if !dirs.contains(&root) {
+                dirs.push(root);
+            }
+        }
+    }
+    dirs
+}
+
 /// Makes a subsystem's sub-state extractable as `State<XState>`, invoked next
 /// to the sub-state's definition: `substate!(XState)`.
 ///
@@ -256,6 +307,30 @@ mod tests {
 
     fn heartbeat() -> Heartbeat {
         Heartbeat::new(Duration::from_secs(30), Duration::from_secs(90))
+    }
+
+    #[test]
+    fn the_temp_dirs_are_the_systems_as_named_and_resolved_and_never_hold_the_home() {
+        let tmp: std::path::PathBuf = std::env::temp_dir().components().collect();
+        let real = std::fs::canonicalize(&tmp).expect("the temp dir resolves");
+        let named = |path: &std::path::Path| path.to_string_lossy().into_owned();
+
+        let dirs = temp_dirs(std::path::Path::new("/nowhere/home/someone"));
+        assert!(dirs.contains(&named(&tmp)), "{dirs:?} names {tmp:?}");
+        assert!(dirs.contains(&named(&real)), "{dirs:?} names what it resolves to");
+        if cfg!(unix) {
+            assert!(dirs.contains(&"/tmp".to_string()));
+        }
+        assert!(
+            dirs.iter().all(|dir| dir != "/" && !dir.ends_with('/')),
+            "no root, no trailing slash: {dirs:?}"
+        );
+
+        // A home in the temp dir, however it is named: that temp dir is not one.
+        for home in [tmp.join("home"), real.join("home"), tmp.clone()] {
+            let dirs = temp_dirs(&home);
+            assert!(!dirs.contains(&named(&tmp)) && !dirs.contains(&named(&real)), "{home:?}: {dirs:?}");
+        }
     }
 
     /// The first tick is a real delay: pinging the instant a socket opens would

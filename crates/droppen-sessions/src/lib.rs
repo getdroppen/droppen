@@ -887,6 +887,10 @@ pub struct Settings {
     pub server_version: String,
     /// The home directory sessions are discovered under.
     pub home_dir: String,
+    /// The system's temporary directories (`droppen_http::temp_dirs`): a
+    /// session directory under one is scratch space, not offered to start a
+    /// new session in.
+    pub temp_dirs: Vec<String>,
     /// Where Claude Code keeps its transcripts.
     pub claude_dir: String,
     /// Where *this instance* keeps the transcripts of the sessions it owns.

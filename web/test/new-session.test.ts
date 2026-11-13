@@ -10,6 +10,7 @@ import {
   directoryLabel,
   directoryRows,
   EMPTY_NEW_SESSION_DRAFT,
+  inTempDir,
   isNewSessionChord,
   newSessionShortcut,
   prefillFromSearch,
@@ -49,10 +50,23 @@ test("a directory no longer on the device is not offered, and the newest one sti
     row("/w/repo", "2026-10-10T00:00:00Z", "2026-10-11T00:00:00Z"),
     row("/tmp/pilot-sim/worktrees/t1", "2026-10-11T00:00:00Z", "2026-10-11T00:00:00Z"),
   ];
-  const dirs = recentDirectories(sessions, Infinity, new Set(["/tmp/pilot-sim/worktrees/t1"]));
+  const gone = new Set(["/tmp/pilot-sim/worktrees/t1"]);
+  const dirs = recentDirectories(sessions, Infinity, (cwd) => gone.has(cwd));
   assert.deepEqual(dirs.map((d) => d.cwd), ["/w/repo"]);
   assert.equal(startingDirectory(null, dirs), "/w/repo", "a new session does not start where it cannot");
   assert.equal(recentDirectories(sessions, Infinity)[0]?.cwd, "/tmp/pilot-sim/worktrees/t1", "nothing said gone: every directory is offered");
+});
+
+test("a directory under one of the device's temporary directories is scratch space, the directory itself too", () => {
+  const temp = ["/var/folders/51/x/T", "/private/var/folders/51/x/T", "/tmp", "/private/tmp"];
+  for (const cwd of ["/private/var/folders/51/x/T/pilot-sim-att/agent/worktrees/t261110-01", "/var/folders/51/x/T/pilot-exp3/repo", "/tmp", "/private/tmp/scratch"]) {
+    assert.ok(inTempDir(cwd, temp), cwd);
+  }
+  for (const cwd of ["/tmpfiles/app", "/Users/demo/tmp", "/private/var/folders-not/app", "/w/repo"]) assert.ok(!inTempDir(cwd, temp), cwd);
+  assert.ok(!inTempDir("/tmp/scratch", []), "an older server names none: nothing is scratch space");
+
+  const sessions = [row("/private/tmp/scratch", "2026-10-12T00:00:00Z", "2026-10-12T00:00:00Z"), row("/w/repo", "2026-10-10T00:00:00Z", "2026-10-11T00:00:00Z")];
+  assert.deepEqual(recentDirectories(sessions, Infinity, (cwd) => inTempDir(cwd, temp)).map((d) => d.cwd), ["/w/repo"]);
 });
 
 test("a new session starts in the directory picked, else the one last started in", () => {

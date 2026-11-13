@@ -73,6 +73,7 @@ import {
   clearNewSessionDraft,
   directoryLabel,
   directoryRows,
+  inTempDir,
   prefillFromSearch,
   readNewSessionDraft,
   recentDirectories,
@@ -185,9 +186,15 @@ export function NewSessionView({
     staleTime: 30_000,
   });
   const gone = useMemo(() => new Set(goneList?.cwds), [goneList]);
-  const recent = useMemo(() => recentDirectories(sessions, Infinity, gone), [sessions, gone]);
+  const settings = useFeedSettings();
+  const homeDir = settings?.homeDir ?? "";
+  // Nor scratch space under the device's temporary directories, gone or not.
+  const tempDirs = settings?.tempDirs;
+  const recent = useMemo(
+    () => recentDirectories(sessions, Infinity, (dir) => gone.has(dir) || inTempDir(dir, tempDirs ?? [])),
+    [sessions, gone, tempDirs],
+  );
   const cwd = startingDirectory(cwdPick, recent);
-  const homeDir = useFeedSettings()?.homeDir ?? "";
   const shown = directoryRows(recent, cwd, expanded);
   const onScreen = [...shown.rows.map((dir) => dir.cwd), ...(shown.other ? [shown.other] : [])];
   // The one row Tab lands on, as in any radio group: the pick, else the first.
