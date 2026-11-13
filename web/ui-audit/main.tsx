@@ -19,9 +19,11 @@
  * session while the machine is asked for it; `&state=live`, once it has
  * answered; `&state=offline`, the page on the copy while the machine is
  * away), `?fixture=desktop-app` (Settings → Desktop app, on each system and in
- * each Start at Login state: `desktop-app.tsx`) or `?fixture=welcome` (the
+ * each Start at Login state: `desktop-app.tsx`), `?fixture=welcome` (the
  * desktop app's first-run guide and its server's setup page, on each system
- * the app runs on: `welcome.tsx`), plus `?theme=dark`.
+ * the app runs on: `welcome.tsx`) or `?fixture=updates` (the desktop app's
+ * update page where it cannot update itself, `&place=`: `updates.tsx`), plus
+ * `?theme=dark`.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -77,6 +79,7 @@ import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/
 import { SettingRow, SettingsSection } from "@/features/settings/layout";
 import { applyLanguage, type LanguagePref } from "@/i18n";
 import { mountDesktopApp } from "./desktop-app";
+import { mountUpdates } from "./updates";
 import { mountWelcome } from "./welcome";
 
 const query = new URLSearchParams(location.search);
@@ -1135,6 +1138,8 @@ if (fixture === "new-chat") {
   await mountWelcome(query);
 } else if (fixture === "desktop-app") {
   await mountDesktopApp(query);
+} else if (fixture === "updates") {
+  await mountUpdates(query);
 } else {
   if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening" || fixture === "landing")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");

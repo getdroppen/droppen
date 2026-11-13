@@ -38,6 +38,8 @@ export const updatesZhTW: Record<string, string> = {
   "The update check failed.": "檢查更新失敗。",
   "Move Droppen to Applications to update.": "把 Droppen 移到「應用程式」才能更新。",
   "This copy of Droppen cannot update itself.": "Droppen 的這個副本不能自己更新。",
+  "Move Droppen to a folder you can write to, so it can update.": "把 Droppen 移到你可寫入的檔案夾才能更新。",
+  "This copy of Droppen was installed from a package: install a newer package to update.": "Droppen 的這個副本是用套件安裝的：安裝新版套件即可更新。",
   "Updates are handled by the Droppen app.": "更新由 Droppen App 負責。",
   "Installing…": "正在安裝…",
   "Restarting…": "正在重新啟動…",

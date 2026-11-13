@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | welcome | desktop-app | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -74,6 +74,7 @@ const runNoCopy = which === "both" || which === "no-copy";
 const runSessionFromCopy = which === "both" || which === "session-from-copy";
 const runWelcome = which === "both" || which === "welcome";
 const runDesktopApp = which === "both" || which === "desktop-app";
+const runUpdates = which === "both" || which === "updates";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -1667,6 +1668,56 @@ async function auditDesktopApp(theme, view) {
   await page.close();
 }
 
+/** The places where the app cannot update itself, as its update page says them (`?fixture=updates`). */
+const UPDATE_PLACES = [
+  { place: "translocated", linux: false },
+  { place: "notABundle", linux: false },
+  { place: "notWritable", linux: true },
+  { place: "package", linux: true },
+];
+/** The Mac's way out of a place, in the app's languages: never on a Linux place's line. */
+const MOVE_TO_APPLICATIONS = /Applications|应用程序|應用程式|アプリケーション/;
+
+/**
+ * The desktop app's update page where the app cannot update itself
+ * (`?fixture=updates`): each place has its line, in each of the app's
+ * languages, and no check to offer; Linux's places (an AppImage in a folder
+ * this user cannot write, and the .deb) never point at Applications, and
+ * each has a line of its own, not the Mac's or the generic one.
+ */
+async function auditUpdates(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "updates", id, actual, expected });
+  for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
+    const lines = new Map();
+    for (const { place, linux } of UPDATE_PLACES) {
+      await page.goto(`${base}ui-audit/index.html?fixture=updates&place=${place}&lang=${lang}&theme=${theme}`);
+      await page.evaluate(() => document.fonts.ready);
+      await page.waitForSelector("[data-fixture-root] > *");
+      const seen = await page.evaluate(() => ({
+        line: document.querySelector("[data-testid='updates-place']")?.textContent ?? null,
+        check: document.querySelector("[data-testid='updates-check']") !== null,
+      }));
+      const tag = lang === "en" ? "" : `-${lang}`;
+      await page.screenshot({ path: `${out}/updates-${place}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+      results.push({ mode: "updates", place, lang, theme, viewport: view.name, line: seen.line });
+      const where = { place, lang };
+      if (!seen.line) fail("updates.place-line", where, "a line saying why it cannot update here");
+      if (seen.check) fail("updates.no-check", where, "no check offered where the app cannot update");
+      if (linux && MOVE_TO_APPLICATIONS.test(seen.line ?? "")) fail("updates.linux-words", { ...where, line: seen.line }, "no Applications folder on Linux");
+      lines.set(place, seen.line);
+    }
+    if (lines.get("notWritable") === lines.get("translocated") || lines.get("package") === lines.get("notABundle"))
+      fail("updates.own-lines", { lang, lines: Object.fromEntries(lines) }, "Linux's places say their own lines");
+  }
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -1684,6 +1735,7 @@ try {
         if (runSessionFromCopy) await auditSessionFromCopy(theme, view);
         if (runWelcome) await auditWelcome(theme, view);
         if (runDesktopApp) await auditDesktopApp(theme, view);
+        if (runUpdates) await auditUpdates(theme, view);
       }
     }
   }
