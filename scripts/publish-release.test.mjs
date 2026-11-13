@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
 const SCRIPT = process.env.PUBLISH_RELEASE_SCRIPT ?? fileURLToPath(new URL("./publish-release.sh", import.meta.url));
 const REPO = "droppen-test/no-such-releases";
@@ -1094,6 +1095,36 @@ describe("the Linux app", () => {
     await refused(both, /linux-0\.2\.126 is an end-to-end test build: never published/);
     rmSync(join(linux, "E2E-TEST-BUILD.txt"));
 
+    const r = await run(both);
+    assert.equal(r.code, 0, r.stderr);
+  });
+
+  test("a sources tar that is not a plain tar is refused before tar reads it: no decompressor on PATH ever runs", async () => {
+    const server = serverDir("v0.2.126");
+    const [desktop, linux] = bothApps("0.2.126");
+    const both = ["v0.2.126", "--server", server, "--desktop", desktop, "--desktop-linux", linux];
+    const sources = join(linux, "Droppen-0.2.126-linux-sources.tar");
+    // The programs tar would hand a compressed archive to, first on PATH:
+    // each says it ran.
+    const ran = join(root, "decompressors.log");
+    for (const name of ["zstd", "unzstd", "lz4", "lzop", "lrzip", "grzip", "xz", "bzip2", "gzip"]) {
+      writeFileSync(join(fakes, name), `#!/bin/sh\necho "${name} $*" >>'${ran}'\nexit 1\n`);
+      chmodSync(join(fakes, name), 0o755);
+    }
+    const plain = sourcesTar();
+    const notATar = /Droppen-0\.2\.126-linux-sources\.tar is not a tar archive of the AppImages' library sources/;
+
+    writeFileSync(sources, Buffer.concat([Buffer.from([0x28, 0xb5, 0x2f, 0xfd]), plain]));
+    const zstd = await refused(both, notATar);
+    assert.match(zstd.stderr, /is compressed \(its first bytes are 28b52ffd\)/);
+    writeFileSync(sources, gzipSync(plain));
+    await refused(both, notATar);
+    writeFileSync(sources, Buffer.alloc(1024));
+    const blank = await refused(both, notATar);
+    assert.match(blank.stderr, /no ustar header/);
+    assert.equal(existsSync(ran), false, existsSync(ran) ? readFileSync(ran, "utf8") : "");
+
+    writeFileSync(sources, plain);
     const r = await run(both);
     assert.equal(r.code, 0, r.stderr);
   });

@@ -180,6 +180,8 @@ fi
 
 REPO_PUBLIC=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
+# shellcheck source=../.github/scripts/tar-guard.sh
+. "$ROOT/.github/scripts/tar-guard.sh"
 PUBKEY_CONF=$ROOT/desktop/src-tauri/tauri.conf.json
 [ -z "$VERIFY_PUBKEY" ] || [ -f "$VERIFY_PUBKEY" ] || die "--verify-pubkey $VERIFY_PUBKEY: no such file"
 for tool in gh node shasum curl; do
@@ -259,10 +261,14 @@ linux_keys() {
   ' "$1"
 }
 
-# Whether $1 is a tar archive that lists something.
+# Whether $1 is a plain tar archive that lists something. Read the way
+# tar-guard.sh has every archive another job made read: a plain tar only, and
+# tar with the system's PATH, so no decompressor found on PATH ever parses its
+# bytes here (the publish job holds a write token).
 tar_lists() {
   local listing
-  listing=$(tar -tf "$1" 2>/dev/null) && [ -n "$listing" ]
+  tar_guard_plain "$1" || return 1
+  listing=$(tar_guard_tar -tf "$1" 2>/dev/null) && [ -n "$listing" ]
 }
 
 # Every release, drafts included (gh is logged in with write access), as
