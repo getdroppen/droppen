@@ -6,7 +6,7 @@
 //! | variable | meaning |
 //! |---|---|
 //! | `DROPPEN_RELAY_HUB` | the Hub, e.g. `https://api.droppen.app` (unset: no control link — tickets still verify under `DROPPEN_RELAY_TICKET_KEYS`) |
-//! | `DROPPEN_RELAY_ORIGIN` | this relay's public origin as clients dial it, e.g. `wss://sin-1.relay.droppen.app` (required); every sign-in here names it |
+//! | `DROPPEN_RELAY_ORIGIN` | this relay's public origin as clients dial it, e.g. `wss://sin-1.relay.droppen.app` (required); every sign-in here names it, and the relay tells the Hub it each time it signs in there; to change it, follow the order in [`uplink`](crate::uplink) |
 //! | `DROPPEN_RELAY_KEY` | the relay's Ed25519 seed (64 hex, a secret; `droppen-relay keygen` makes one). Unset: `DROPPEN_RELAY_STATE_DIR/relay.key`, made on first start (that needs a persistent volume) |
 //! | `DROPPEN_RELAY_STATE_DIR` | where the key (and the Hub's ticket keys, for a restart while the Hub is down) are kept when `DROPPEN_RELAY_KEY` is not set |
 //! | `DROPPEN_RELAY_REGISTRATION_TOKEN` | the operator's one-time token, needed for the first start only; it also names the relay id |

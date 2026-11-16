@@ -141,7 +141,7 @@ Hub 的管理员为一个预定的中继 id（例如 `sin-1`）签发一次性�
 | env | 含义 |
 |---|---|
 | `DROPPEN_RELAY_HUB` | Hub 的源，例如 `https://droppen.app` |
-| `DROPPEN_RELAY_ORIGIN` | 本中继对外的源，例如 `wss://sin-1.relay.droppen.app` |
+| `DROPPEN_RELAY_ORIGIN` | 本中继对外的源，例如 `wss://sin-1.relay.droppen.app`。改它要按下面「换源」的顺序 |
 | `DROPPEN_RELAY_KEY` | Ed25519 种子（hex，secret）。`droppen-relay keygen` 生成种子并打印公钥；没设时从 `DROPPEN_RELAY_STATE_DIR/relay.key`（0600）读，没有就生成，这需要持久卷 |
 | `DROPPEN_RELAY_REGISTRATION_TOKEN` | 只在第一次需要；注册成功后再设也只是被忽略 |
 | `PORT`、`DROPPEN_RELAY_TRUST_PROXY`、`DROPPEN_RELAY_MAX_CONNS`、`DROPPEN_RELAY_DRAIN_SECS` | 见 §2.11、§2.13 |
@@ -162,13 +162,21 @@ Hub 的管理员为一个预定的中继 id（例如 `sin-1`）签发一次性�
 - Hub 另外每 60 s 从外面打一次 `GET <origin>/v1/ping`，用来发现「控制链路通、对外的入口却坏了」。
 - 60 s 没有心跳，或外部探测连续 3 次失败，Hub 把中继标为 `down`：不再为它签新票，已有连接不受影响。恢复后自动回到 `up`。
 - `load = max(连接数 / 上限, cpu)` 写进目录，客户端排序时加惩罚。
-- 中继还可以发 `meta {city?, version}` 更新显示信息。要换 `origin`，中继发 `meta {origin}`，Hub 重新做域名归属证明，通过后才改。
+- 中继每次签入之后（`welcome` 和 `registered` 都算）立刻发 `meta {origin, version}`，不等回答：`origin` 是 `DROPPEN_RELAY_ORIGIN`，`version` 是发布版本（`droppen-server --version` 报的那个版本号，不是 `droppen-relay-core` 自己的 `0.1.0`），目录里显示的版本就是它。`city` 中继没有，不发，Hub 保留原值。`origin` 与 Hub 记着的相同，什么也不变；不同，就是换源：Hub 在新的源上重做域名归属证明（同上第 4 步，用已钉住的钥），通过才改目录；不通过就回 `error {code: "origin_proof"}`，保留旧的 `origin`，链路不断，中继打一条 WARN（「the Hub kept this relay's old origin」）。不认识 `meta` 的旧 Hub 忽略它，也不影响中继。
 
 **注销**
 
 - 运营者执行 `droppen-relay deregister`（用中继钥签名的 `deregister {reason}`）。中继先 `goaway`、排空 `DROPPEN_RELAY_DRAIN_SECS`，Hub 把它标为 `retired`：从目录和所有设备的选择里移除（设备下次打开时选择器说明原因），钉住的钥作废。
 - Hub 的管理员也可以从 Hub 一侧注销、隐藏（`hidden`）、公开（`public`）中继，或列出各中继的状态、版本、心跳、负载与在用账户数。
 - 同一个 id 想重新注册，要签发一张新的令牌。
+
+**换源**：顺序不能反，因为中继拒绝一切指名别的源的签入（4401）。
+
+1. 先让**新**的源能到这个中继（DNS 和 TLS），旧的源仍然可用：Hub 要先在新的源上做证明，客户端此时还在用旧的。
+2. 再把 `DROPPEN_RELAY_ORIGIN` 改成新的源并重启。中继签入后发 `meta {origin}`，Hub 证明通过就在目录里改成新的；设备和 agent 下次取目录时拿到新的源。
+3. 没有人再连旧的源之后，再撤掉它。
+
+第 2 步之后有一小段空窗：中继拒绝指名旧源的签入，仍拿着旧源的客户端要等重新取到目录才能连上。若 Hub 证明不了新的源（上面的 WARN），空窗不会自己结束：让新的源能到中继并重启，或者把 `DROPPEN_RELAY_ORIGIN` 改回去。
 
 **换钥**：`droppen-relay rotate-key` 发 `rotate {new_key, sig_old, sig_new}`，新旧两把钥各签一次，Hub 换上新钥。
 
@@ -308,7 +316,7 @@ Hub 的管理员为一个预定的中继 id（例如 `sin-1`）签发一次性�
 |---|---|
 | 中继 → Hub | `health {…}`，每 20 s（§2.5） |
 | 中继 → Hub | `usage {boot, seq, from_ms, to_ms, accounts: [{account, bytes}]}`，每 60 s（§3.6） |
-| 中继 → Hub | `meta {…}`、`draining {until_ms}`、`deregister {reason}`、`rotate {…}` |
+| 中继 → Hub | `meta {origin?, version?, city?}`（每次签入后发，§2.5）、`draining {until_ms}`、`deregister {reason}`、`rotate {…}` |
 | Hub → 中继 | `keys {ticket_keys}`、`revoke {account, id?}`、`throttle {account, limits}`、`drain` |
 
 中继离开控制链路照样能工作：验票是离线的，链路只用来加快吊销、上报计量和心跳。链路断开期间的 `usage` 留在内存里（有界，最多 2 小时），恢复后补发，原来的时间窗不变。

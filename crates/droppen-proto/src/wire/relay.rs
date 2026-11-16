@@ -31,6 +31,21 @@ pub enum RelayToHub {
     },
     /// Per-account transfer, sent until the Hub acknowledges it.
     Usage(UsageReport),
+    /// What the directory shows of the relay, and where it is: the fields
+    /// the relay names are updated, the ones it leaves out stay. An `origin`
+    /// other than the Hub's is a move: the Hub fetches the relay's proof of
+    /// origin there ([`RelayIdAnswer`]) as it does at registration, and only
+    /// a relay that proves it is moved; otherwise it answers
+    /// `error {code: "origin_proof"}` and keeps the old origin, the link
+    /// staying up.
+    Meta {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        city: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        origin: Option<String>,
+    },
     /// The relay stops taking sign-ins and goes away at `until_ms`.
     Draining { until_ms: u64 },
     /// Retire this relay.
@@ -68,6 +83,7 @@ impl std::fmt::Debug for RelayToHub {
                 .field("version", version)
                 .finish(),
             Self::Usage(report) => f.debug_tuple("Usage").field(report).finish(),
+            Self::Meta { city, version, origin } => f.debug_struct("Meta").field("city", city).field("version", version).field("origin", origin).finish(),
             Self::Draining { until_ms } => f.debug_struct("Draining").field("until_ms", until_ms).finish(),
             Self::Deregister { reason } => f.debug_struct("Deregister").field("reason", reason).finish(),
             Self::Rotate { new_key, time_ms, .. } => f.debug_struct("Rotate").field("new_key", new_key).field("time_ms", time_ms).finish_non_exhaustive(),
@@ -146,6 +162,10 @@ mod tests {
                 }),
                 json!({"t": "usage", "boot": "b0", "seq": 2, "from_ms": 1, "to_ms": 5, "accounts": [{"account": "a-1", "bytes": 64}]}),
             ),
+            (
+                RelayToHub::Meta { city: Some("Singapore".into()), version: Some("0.2.138".into()), origin: Some("wss://r".into()) },
+                json!({"t": "meta", "city": "Singapore", "version": "0.2.138", "origin": "wss://r"}),
+            ),
             (RelayToHub::Draining { until_ms: 9 }, json!({"t": "draining", "until_ms": 9})),
             (RelayToHub::Deregister { reason: "moved".into() }, json!({"t": "deregister", "reason": "moved"})),
             (
@@ -179,6 +199,32 @@ mod tests {
             assert!(!text.contains("secret"), "{text}");
             assert!(text.ends_with(", .. }"), "{text}");
         }
+    }
+
+    /// A field a relay leaves out is left out of the JSON (the Hub keeps what
+    /// it has), not written as `null`.
+    #[test]
+    fn meta_leaves_out_what_it_does_not_name() {
+        let meta = |city: Option<&str>, version: Option<&str>, origin: Option<&str>| RelayToHub::Meta {
+            city: city.map(Into::into),
+            version: version.map(Into::into),
+            origin: origin.map(Into::into),
+        };
+        let cases = [
+            (meta(None, Some("0.2.138"), Some("wss://r")), r#"{"t":"meta","version":"0.2.138","origin":"wss://r"}"#),
+            (meta(Some("Singapore"), None, None), r#"{"t":"meta","city":"Singapore"}"#),
+            (meta(None, None, Some("wss://r")), r#"{"t":"meta","origin":"wss://r"}"#),
+            (meta(None, None, None), r#"{"t":"meta"}"#),
+        ];
+        for (message, want) in cases {
+            assert_eq!(serde_json::to_string(&message).unwrap(), want);
+        }
+    }
+
+    #[test]
+    fn meta_debug_names_its_fields() {
+        let meta = RelayToHub::Meta { city: None, version: Some("0.2.138".into()), origin: Some("wss://r".into()) };
+        assert_eq!(format!("{meta:?}"), r#"Meta { city: None, version: Some("0.2.138"), origin: Some("wss://r") }"#);
     }
 
     #[test]

@@ -295,6 +295,7 @@ hub   → welcome {id, ticket_keys: [{kid, key}]}
 relay → register {token, sign_key, origin, version, time_ms, sig, features?}
 hub   → registered {id, ticket_keys}            (its key is pinned from now on)
 hub   → revoke × n, replayed {revocations}, throttle × n, throttles {accounts}
+relay → meta {origin, version}                  right after either sign-in, answered only to refuse it
 ```
 
 `features` names what the relay takes beyond this link's first version:
@@ -305,10 +306,18 @@ relays are released with `revoke-role/1` before a hub that scopes
 revocations.
 
 At registration the hub fetches `GET <origin>/v1/relay-id?nonce=…` to see
-that the relay answers at the origin it claims. A sign-in under a key that is
-not the pinned one is refused for good (`key_mismatch`, 4401): a relay never
-quietly becomes another. A relay signing in again closes its previous link
-(4001).
+that the relay answers at the origin it claims. `droppen-relay` sends `meta`
+with its `origin` (`DROPPEN_RELAY_ORIGIN`) and its release `version` right
+after every sign-in, `welcome` and `registered` alike, and does not wait for
+an answer. An `origin` the hub already has changes nothing. A different one
+is a move: the hub fetches the proof at the new origin with the pinned key,
+and on success updates its directory (devices and agents are given the new
+origin from it); on failure it answers `error {code: "origin_proof"}`, keeps
+the old origin, and the link stays up. (The operator's side of a move, and
+its order, is in [relay.md](../relay.md#moving-a-relay-to-a-new-origin).) A
+sign-in under a key that is not the pinned one is refused for good
+(`key_mismatch`, 4401): a relay never quietly becomes another. A relay signing
+in again closes its previous link (4001).
 
 **Relay → hub**
 
@@ -318,7 +327,7 @@ quietly becomes another. A relay signing in again closes its previous link
 | `register` | `token` (`RHR1-…`; `DRR1-…` with the same body is the same token), `sign_key`, `origin`, `version?`, `time_ms`, `sig` | a first sign-in with a registration token (`sig` under `sign_key`) |
 | `health` | `conns`, `channels`, `bytes_in_per_s`, `bytes_out_per_s`, `load` (0–1), `version` | every 20 s |
 | `usage` | `boot`, `seq`, `from_ms`, `to_ms`, `accounts: [{account, bytes}]` | relayed `DATA` bytes per account in a window, every minute until acknowledged (`(boot, seq)` makes it idempotent; ≤ 500 accounts a report) |
-| `meta` | `city?`, `version?`, `origin?` | update the directory (a new origin is proved like a registration) |
+| `meta` | `city?`, `version?`, `origin?` | update the directory: the fields named replace the stored ones, the ones left out stay. A new origin is proved like a registration, or kept as it was with `error {code: "origin_proof"}` |
 | `draining` | `until_ms` | it is shutting down: no new tickets for it |
 | `deregister` | `reason?` | retire it (answered `deregistered`, then closed 1000) |
 | `rotate` | `new_key`, `time_ms`, `sig_new` | pin a new key (`sig_new`: the same challenge signed with the new key) |
@@ -329,7 +338,7 @@ quietly becomes another. A relay signing in again closes its previous link
 |---|---|---|
 | `challenge` | `nonce`, `hub`, `version` | |
 | `welcome`, `registered` | `id`, `ticket_keys: [{kid, key}]` | the keys tickets are signed with |
-| `error` | `code`, `message` | `unknown_relay` (register next), `key_mismatch`, `denied`, `bad_token`, `bad_key`, `bad_origin`, `origin_proof` (the relay retries later), `origin_taken`, `refused`, `retired`, `too_many_attempts`, `bad_message`, `sign_in_first`, `unexpected`, `unavailable` |
+| `error` | `code`, `message` | `unknown_relay` (register next), `key_mismatch`, `denied`, `bad_token`, `bad_key`, `bad_origin`, `origin_proof` (at sign-in: the relay retries later; after `meta`: the old origin is kept and the link stays up), `origin_taken`, `refused`, `retired`, `too_many_attempts`, `bad_message`, `sign_in_first`, `unexpected`, `unavailable` |
 | `usage_ok` | `boot`, `seq` | a usage report is recorded |
 | `revoke` | `account`, `id` (`null`: the whole account, e.g. a deleted one), `at_ms`, `role?` (`"device"` or `"agent"`: only the tickets of that role — a host's device-role and agent tickets carry the same id; absent: both) | close those connections and refuse tickets issued at or before `at_ms`; replayed at every sign-in while in force. `role` only to a relay that named `revoke-role/1`; a relay ignores a role it does not know |
 | `replayed` | `revocations` | the replay is complete (a relay that just started waits for this before taking sign-ins) |
