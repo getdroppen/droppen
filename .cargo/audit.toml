@@ -8,11 +8,6 @@
 # fixed version is in the lock.
 [advisories]
 ignore = [
-    # quinn-proto 0.11.17: in the lock through reqwest's optional `http3`
-    # feature (quinn), which nothing turns on. Not built.
-    "RUSTSEC-2026-0338",
-    "RUSTSEC-2026-0340",
-    "RUSTSEC-2026-0343",
     # rkyv 0.7.46: in the lock through rust_decimal's optional `rkyv` feature,
     # which nothing turns on. Not built.
     "RUSTSEC-2026-0235",
