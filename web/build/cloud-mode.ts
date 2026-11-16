@@ -73,21 +73,16 @@ const DEFAULTS: CloudConfig = {
   appOrigin: "https://my.droppen.app",
   siteOrigin: "https://www.droppen.app",
   turnstileOrigin: "https://verify.droppen.app",
-  // The relays as droppen.app runs them today (Railway hosts), and the
-  // relay.droppen.app names they are moving to. Drop the Railway hosts once
-  // every relay's DROPPEN_RELAY_ORIGIN is a relay.droppen.app name: until then
-  // a page without them cannot dial a relay at all. The relays in mainland
-  // China are under a domain of their own (`*.relay.xinsoftware.top`):
-  // a server there serves a name with a local ICP filing.
+  // The relays droppen.app runs: every one is a relay.droppen.app name (the
+  // Railway hosts they had went once each relay announced its new origin to
+  // the Hub). The relays in mainland China are under a domain of their own
+  // (`*.relay.xinsoftware.top`): a server there serves a name with a local
+  // ICP filing.
   relays: [
     "https://*.relay.droppen.app",
     "wss://*.relay.droppen.app",
     "https://*.relay.xinsoftware.top",
     "wss://*.relay.xinsoftware.top",
-    "https://sin-1-production.up.railway.app",
-    "wss://sin-1-production.up.railway.app",
-    "https://sin-2-production.up.railway.app",
-    "wss://sin-2-production.up.railway.app",
   ],
   role: "app",
 };

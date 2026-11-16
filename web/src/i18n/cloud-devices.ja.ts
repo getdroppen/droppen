@@ -440,6 +440,7 @@ export const cloudDevicesJa: Record<string, string> = {
   "reconnect now": "今すぐ再接続",
   "Singapore": "シンガポール",
   "Tokyo": "東京",
+  "Guangzhou": "広州",
   "Frankfurt": "フランクフルト",
   "US East": "米国東部",
   "London": "ロンドン",

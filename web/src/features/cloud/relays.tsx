@@ -22,6 +22,7 @@ import { knownText } from "./ui";
 const CITY_NAMES: Record<string, string> = {
   singapore: "Singapore",
   tokyo: "Tokyo",
+  guangzhou: "Guangzhou",
   frankfurt: "Frankfurt",
   "us-east": "US East",
   london: "London",
