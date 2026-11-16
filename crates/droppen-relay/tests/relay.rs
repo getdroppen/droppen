@@ -319,6 +319,10 @@ struct HubSeen {
     closes: Vec<Option<u16>>,
     /// Answer a `login` with `unknown_relay` until the relay registers.
     unknown: bool,
+    /// What to answer each `meta` with: a Hub that refuses the new origin says
+    /// `error {code: "origin_proof"}`. `None`: nothing, as a Hub from before
+    /// `meta` (which ignores it) and one that took it both do.
+    meta_answer: Option<Value>,
 }
 
 struct FakeHub {
@@ -372,6 +376,12 @@ async fn hub_conn(socket: WebSocket, seen: Arc<Mutex<HubSeen>>, origin: String, 
                         seen.lock().unwrap().unknown = false;
                         let _ = tx.send(json!({"t": "registered", "id": v["id"], "ticket_keys": [{"kid": 1, "key": hex(&hub_public())}]}).to_string());
                         let _ = tx.send(json!({"t": "replayed", "revocations": 0}).to_string());
+                    }
+                    Some("meta") => {
+                        let answer = seen.lock().unwrap().meta_answer.clone();
+                        if let Some(answer) = answer {
+                            let _ = tx.send(answer.to_string());
+                        }
                     }
                     Some("deregister") => {
                         let _ = tx.send(json!({"t": "deregistered"}).to_string());
@@ -1003,6 +1013,102 @@ async fn a_stopping_relay_tells_the_hub_it_is_draining_before_its_link_closes() 
     hub.stop.cancel();
 }
 
+/// The message kinds the relay has sent the Hub so far, in order.
+fn kinds(seen: &Mutex<HubSeen>) -> Vec<String> {
+    seen.lock().unwrap().messages.iter().map(|v| v["t"].as_str().unwrap_or_default().to_string()).collect()
+}
+
+/// Right after a sign-in, `welcome` or `registered`, a relay tells the Hub its
+/// origin (`DROPPEN_RELAY_ORIGIN`) and its release, so that a changed origin
+/// reaches the Hub's directory; and it does so again on every sign-in. The
+/// Hub's silence, as a Hub from before `meta` keeps it, leaves the link as it
+/// was.
+#[tokio::test]
+async fn a_relay_names_its_origin_and_version_to_the_hub_after_every_sign_in() {
+    let version = droppen_relay_core::uplink::VERSION;
+    let timing = Timing {
+        health_every: Duration::from_millis(100),
+        uplink_backoff_max: Duration::from_millis(300),
+        ..Timing::default()
+    };
+
+    // `welcome`: the Hub knows the relay. `meta` is the first thing after the
+    // `login`, ahead of the first `health`, and has no `city`.
+    let seen = Arc::new(Mutex::new(HubSeen::default()));
+    let hub = FakeHub::start_on(None, seen.clone()).await;
+    let r = relay("sin-1", Some(&hub.origin), timing, |_| {}).await;
+    let meta = json!({"t": "meta", "version": version, "origin": r.origin});
+    assert!(eventually(SECS, || kinds(&seen).len() >= 4).await, "the link is up");
+    assert_eq!(kinds(&seen)[..3], ["login", "meta", "health"]);
+    assert_eq!(seen.lock().unwrap().messages[1], meta);
+    assert_eq!(seen.lock().unwrap().logins, 1, "the Hub's silence leaves the link alone");
+
+    // Again on the next sign-in: the Hub goes away and comes back.
+    let addr = hub.addr();
+    hub.stop.cancel();
+    let back = FakeHub::start_on(Some(addr), seen.clone()).await;
+    assert!(eventually(Duration::from_secs(10), || seen.lock().unwrap().logins == 2).await, "signed in again");
+    assert!(eventually(SECS, || kinds(&seen).iter().filter(|t| *t == "meta").count() == 2).await, "meta again");
+    let messages = seen.lock().unwrap().messages.clone();
+    for message in messages.iter().filter(|v| v["t"] == "meta") {
+        assert_eq!(message, &meta);
+    }
+    back.stop.cancel();
+
+    // `registered`: a first sign-in with a token, the register first.
+    let seen = Arc::new(Mutex::new(HubSeen {
+        unknown: true,
+        ..HubSeen::default()
+    }));
+    let hub = FakeHub::start_on(None, seen.clone()).await;
+    let r = relay("sin-2", Some(&hub.origin), timing, |c| c.registration_token = Some("tok-2".into())).await;
+    assert!(eventually(SECS, || kinds(&seen).len() >= 4).await, "the link is up");
+    assert_eq!(kinds(&seen)[..4], ["login", "register", "meta", "health"]);
+    assert_eq!(seen.lock().unwrap().messages[2], json!({"t": "meta", "version": version, "origin": r.origin}));
+    hub.stop.cancel();
+}
+
+/// A Hub that could not prove the new origin answers the `meta` with
+/// `error {code: "origin_proof"}` and keeps the old one. That is not the end
+/// of the link: the relay goes on sending health, takes the Hub's
+/// revocations, and does not sign in again. Nor does a Hub from before `meta`
+/// that answers it with an error of its own end it.
+#[tokio::test]
+async fn an_error_after_meta_does_not_end_the_link() {
+    let timing = Timing {
+        health_every: Duration::from_millis(100),
+        ..Timing::default()
+    };
+    for (code, message) in [("origin_proof", "wss://new.example did not answer /v1/relay-id"), ("bad_message", "unknown message")] {
+        let seen = Arc::new(Mutex::new(HubSeen {
+            meta_answer: Some(json!({"t": "error", "code": code, "message": message})),
+            ..HubSeen::default()
+        }));
+        let hub = FakeHub::start_on(None, seen.clone()).await;
+        let r = relay("sin-1", Some(&hub.origin), timing, |_| {}).await;
+        let health = |seen: &Mutex<HubSeen>| kinds(seen).iter().filter(|t| *t == "health").count();
+        assert!(eventually(SECS, || kinds(&seen).iter().any(|t| t == "meta")).await, "{code}: meta");
+        // The Hub's error has been read by the time two more healths are out.
+        let before = health(&seen);
+        assert!(eventually(SECS, || health(&seen) >= before + 2).await, "{code}: the relay goes on");
+        assert!(r.server.has_keys(), "{code}: its keys are still the Hub's");
+
+        // Still reading the Hub: a revocation closes a connection.
+        let dev_h = Holder::new("sin-1", "a-1", TicketRole::Device, "d-1", 31, &["m-1"]);
+        let mut dev = Client::login(&r.origin, &dev_h).await;
+        hub.tell(json!({"t": "revoke", "account": "a-1", "id": "d-1", "at_ms": now_ms()}));
+        assert_eq!(dev.closed_within(Duration::from_secs(1)).await, Some(4403), "{code}: a revoke still takes");
+
+        let (logins, closes) = {
+            let s = seen.lock().unwrap();
+            (s.logins, s.closes.clone())
+        };
+        assert_eq!(logins, 1, "{code}: it did not sign in again");
+        assert!(closes.is_empty(), "{code}: it did not close the link: {closes:?}");
+        hub.stop.cancel();
+    }
+}
+
 // ---------------------------------------------------------------- review regressions
 
 /// One throttled account's connections share its rate: two devices sending
@@ -1355,8 +1461,8 @@ async fn the_relays_messages_to_agents_and_devices_keep_their_shape() {
 }
 
 /// Every message a relay sends the Hub, compared whole: the sign-in after a
-/// registration, health idle and busy, usage, and the operator's deregister
-/// and rotate-key.
+/// registration, its `meta`, health idle and busy, usage, and the operator's
+/// deregister and rotate-key.
 #[tokio::test]
 async fn the_relays_messages_to_the_hub_keep_their_shape() {
     let seen = Arc::new(Mutex::new(HubSeen {
@@ -1406,9 +1512,11 @@ async fn the_relays_messages_to_the_hub_keep_their_shape() {
             "features": ["revoke-role/1"],
         })
     );
+    // Signed in, the relay names its origin and release (no city: it has none).
+    assert_eq!(messages[2], json!({"t": "meta", "version": version, "origin": o}));
     // The first health goes out at once, before any connection.
     assert_eq!(
-        messages[2],
+        messages[3],
         json!({"t": "health", "conns": 0, "channels": 0, "bytes_in_per_s": 0, "bytes_out_per_s": 0, "load": 0.0, "version": version})
     );
     // The load is the relay's f32, as the f64 it widens to.

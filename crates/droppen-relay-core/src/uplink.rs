@@ -7,7 +7,8 @@
 //! no token to register with — stops the relay with the reason: it never
 //! quietly becomes another relay.
 //!
-//! Signed in, the relay sends `health` every 20 s and its usage reports
+//! Signed in, the relay first tells the Hub where it is and which release it
+//! is (`meta`, below), then sends `health` every 20 s and its usage reports
 //! ([`crate::meter`]) until each is acknowledged, and takes the Hub's
 //! `keys`, `revoke` (scoped to one ticket role when the Hub says so: the
 //! relay names `revoke-role/1` in its sign-in), `throttle` and `drain`; on
@@ -17,6 +18,44 @@
 //! jittered backoff; while it is down the relay keeps working — tickets
 //! verify offline — and established connections outlive their tickets for up
 //! to two hours ([`crate::server::Server::in_outage`]).
+//!
+//! # `meta`: the origin and the version
+//!
+//! `register` is the one place a relay names its origin to the Hub, and after
+//! it the Hub's directory is what tells devices and agents where to dial. So
+//! on every sign-in, `welcome` and `registered` alike, the relay sends
+//! `meta {origin: DROPPEN_RELAY_ORIGIN, version}`. An origin the Hub already
+//! has changes nothing. A different one is a move: the Hub fetches
+//! `GET <origin>/v1/relay-id` there, checks the proof against the key it
+//! pinned, and only then updates the directory. If the proof fails it answers
+//! `error {code: "origin_proof"}` and keeps the old origin; the link stays up
+//! (`on_message` warns and goes on). The relay does not wait for an answer,
+//! so a Hub from before `meta`, one that ignores it or answers it with an
+//! `error`, costs nothing.
+//!
+//! The `version` is [`VERSION`]: the release, which the Hub shows next to the
+//! relay.
+//!
+//! ## Moving a relay to a new origin
+//!
+//! The order matters, because a relay refuses a sign-in that names any origin
+//! but its own (4401):
+//!
+//! 1. Make the **new** origin reach the relay (DNS and TLS) while the old one
+//!    still does. The Hub proves the new origin before it moves, and clients
+//!    are still on the old one.
+//! 2. Set `DROPPEN_RELAY_ORIGIN` to the new origin and restart the relay. On
+//!    its sign-in it sends `meta`; the Hub proves the origin and moves the
+//!    relay in its directory, and devices and agents get the new origin from
+//!    the directory the next time they fetch it.
+//! 3. Once nothing dials the old origin any more, drop it.
+//!
+//! There is a blip between 2 and the clients' refetch: the relay refuses
+//! sign-ins that name the old origin, so a client still holding it is refused
+//! until it fetches the directory again. If the Hub could not prove the new
+//! origin (the warning "the Hub kept this relay's old origin"), the blip does
+//! not end: fix the new origin's route, or set the old origin back, and
+//! restart.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -51,7 +90,11 @@ const BACKOFF_MIN: Duration = Duration::from_millis(500);
 /// How long a stopping relay's control link waits to send what is queued
 /// for the Hub and for the Hub's close.
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The release this relay is, as the Hub's directory shows it: the server
+/// package's version, which `droppen-server --version` reports. Not this
+/// crate's own `CARGO_PKG_VERSION`, which is its `0.1.0` whatever the release
+/// (`build.rs`). Named in `login`, `register`, `health` and `meta`.
+pub const VERSION: &str = env!("DROPPEN_RELAY_RELEASE_VERSION");
 
 /// Why the link ended.
 #[derive(Debug)]
@@ -238,6 +281,18 @@ pub async fn sign_in(config: &Config, sink: &mut Sink, source: &mut Source, nonc
     }
 }
 
+/// What a relay tells the Hub about itself on every sign-in: its origin
+/// (`DROPPEN_RELAY_ORIGIN`, which moves the relay in the Hub's directory when
+/// it was changed) and its release. No `city`: the relay has none to name,
+/// and leaving it out leaves the Hub's.
+fn announce(config: &Config) -> RelayToHub {
+    RelayToHub::Meta {
+        city: None,
+        version: Some(VERSION.into()),
+        origin: Some(config.origin.clone()),
+    }
+}
+
 fn keys_of(v: &Value) -> Vec<(u8, [u8; 32])> {
     v.as_array()
         .into_iter()
@@ -254,6 +309,9 @@ async fn session(server: &Arc<Server>) -> Ended {
     let signed_in = async {
         let (mut sink, mut source, nonce) = dial(&server.config).await?;
         let keys = sign_in(&server.config, &mut sink, &mut source, nonce).await?;
+        // Not waited for: the Hub answers only when it refuses (`origin_proof`,
+        // read by `on_message`), and a Hub from before `meta` says nothing.
+        sink.send_message(&announce(&server.config)).await?;
         Ok((sink, source, keys))
     };
     let (mut sink, mut source, keys) = tokio::select! {
@@ -393,9 +451,24 @@ fn on_message(server: &Server, v: &Value) -> Option<Ended> {
         }
         Some("error") => {
             let code = v["code"].as_str().unwrap_or_default();
-            tracing::warn!(code, message = %v["message"], "the Hub reported an error");
-            if code == "retired" {
-                return Some(Ended::Fatal("the Hub retired this relay".into()));
+            match code {
+                "retired" => {
+                    tracing::warn!(code, message = %v["message"], "the Hub reported an error");
+                    return Some(Ended::Fatal("the Hub retired this relay".into()));
+                }
+                // Signed in, the only thing the Hub proves is the origin the
+                // relay named in `meta`, and it has kept the old one. Not a
+                // reason to drop the link (the relay still serves, meters and
+                // takes revocations); but until it is fixed, clients are told
+                // the old origin and the relay refuses sign-ins that name it.
+                "origin_proof" => tracing::warn!(
+                    origin = %server.config.origin,
+                    message = %v["message"],
+                    "the Hub kept this relay's old origin: it could not check the proof at the new one, DROPPEN_RELAY_ORIGIN; \
+                     until it can, clients are still sent to the old origin, and this relay refuses their sign-ins (4401). \
+                     Make the new origin reach this relay (DNS and TLS), then restart it, or set the old origin back"
+                ),
+                _ => tracing::warn!(code, message = %v["message"], "the Hub reported an error"),
             }
         }
         _ => {}
@@ -443,5 +516,27 @@ pub async fn rotate(config: &Config, new: &ed25519_dalek::SigningKey) -> Result<
 fn describe(e: Ended) -> String {
     match e {
         Ended::Retry(s) | Ended::Fatal(s) => s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the Hub is told as the relay's version is the release, the one
+    /// `droppen-server --version` reports, and not this crate's `0.1.0`.
+    #[test]
+    fn the_version_is_the_servers_release_not_this_crates() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../droppen-server/Cargo.toml");
+        // Built without the rest of the workspace (see `build.rs`): nothing to compare with.
+        let Ok(text) = std::fs::read_to_string(manifest) else { return };
+        let release = text
+            .lines()
+            .skip_while(|line| line.trim() != "[package]")
+            .skip(1)
+            .take_while(|line| !line.starts_with('['))
+            .find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"'))
+            .expect("the server's [package] version");
+        assert_eq!(VERSION, release);
     }
 }
