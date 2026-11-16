@@ -440,6 +440,7 @@ export const cloudDevicesZhTW: Record<string, string> = {
   "reconnect now": "立即重新連線",
   "Singapore": "新加坡",
   "Tokyo": "東京",
+  "Guangzhou": "廣州",
   "Frankfurt": "法蘭克福",
   "US East": "美東",
   "London": "倫敦",
