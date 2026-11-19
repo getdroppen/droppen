@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use droppen_http::openapi_ext::Nullable;
 use droppen_base::text::is_image_ext;
 
-use crate::compressed::{self, Opened};
+use crate::compressed;
 
 /// Body text must never be cut in practice — there is no way to read the rest.
 /// These are emergency backstops for pathological items, not display budgets.
@@ -463,19 +463,20 @@ pub fn parse_attachment_suffix(raw_text: &str) -> AttachmentSplit {
 
 /// Read at most `max_bytes` from the tail of a file and return complete JSONL lines.
 ///
-/// A compressed transcript ([`crate::compressed`]) is decoded from its start to
-/// reach its tail, and the tail kept for the next reader.
+/// The transcript in the form it is on disk ([`crate::compressed`]): a
+/// compressed one is decoded from its start to reach its tail, and the tail
+/// kept for the next ask.
 pub async fn read_tail_lines(path: &Path, max_bytes: u64) -> std::io::Result<Vec<String>> {
-    let (buf, cut) = match compressed::open(path).await? {
-        Opened::Plain(mut file) => {
-            let size = file.metadata().await?.len();
-            let start = size.saturating_sub(max_bytes);
-            file.seek(std::io::SeekFrom::Start(start)).await?;
-            let mut buf = Vec::with_capacity((size - start) as usize);
-            file.read_to_end(&mut buf).await?;
-            (buf, start > 0)
-        }
-        Opened::Compressed(file) => file.tail(max_bytes).await?,
+    let (found, mut file) = compressed::open(path).await?;
+    let (buf, cut) = if compressed::is_compressed(&found) {
+        compressed::tail(&found, file, max_bytes).await?
+    } else {
+        let size = file.metadata().await?.len();
+        let start = size.saturating_sub(max_bytes);
+        file.seek(std::io::SeekFrom::Start(start)).await?;
+        let mut buf = Vec::with_capacity((size - start) as usize);
+        file.read_to_end(&mut buf).await?;
+        (buf, start > 0)
     };
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<&str> = text.split('\n').collect();
@@ -608,32 +609,11 @@ impl BackwardLines {
 
 /// Read at most `max_bytes` from the head of a file and return complete JSONL lines.
 ///
-/// A compressed transcript ([`crate::compressed`]) is decoded only as far as
-/// that.
+/// The transcript in the form it is on disk ([`crate::compressed`]): a
+/// compressed one is decoded only as far as that.
 pub async fn read_head_lines(path: &Path, max_bytes: usize) -> std::io::Result<Vec<String>> {
-    let buf = match compressed::open(path).await? {
-        Opened::Plain(mut file) => {
-            let mut buf = vec![0u8; max_bytes];
-            let mut read = 0usize;
-            while read < max_bytes {
-                let n = file.read(&mut buf[read..]).await?;
-                if n == 0 {
-                    break;
-                }
-                read += n;
-            }
-            buf.truncate(read);
-            buf
-        }
-        Opened::Compressed(file) => {
-            file.with_text(move |text| {
-                let mut buf = Vec::new();
-                std::io::Read::read_to_end(&mut std::io::Read::take(text, max_bytes as u64), &mut buf)?;
-                Ok(buf)
-            })
-            .await?
-        }
-    };
+    let mut buf = Vec::new();
+    compressed::open_text(path).await?.take(max_bytes as u64).read_to_end(&mut buf).await?;
     let read = buf.len();
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<&str> = text.split('\n').collect();
@@ -661,8 +641,9 @@ pub struct LossyLines<R> {
 }
 
 impl LossyLines<Box<dyn tokio::io::AsyncBufRead + Send + Unpin>> {
-    /// Open `path` for line-by-line lossy reading: a compressed transcript
-    /// ([`crate::compressed`]) as the text it decodes to.
+    /// Open `path` for line-by-line lossy reading, in the form it is on disk:
+    /// a compressed transcript ([`crate::compressed`]) as the text it decodes
+    /// to.
     pub async fn open(path: &Path) -> std::io::Result<Self> {
         Ok(Self {
             reader: compressed::open_text(path).await?,
@@ -972,18 +953,20 @@ mod tests {
         );
     }
 
-    /// The head, the tail and the whole of a compressed transcript are the
-    /// lines its plain form gives, cut where the plain form's are cut.
+    /// The head, the tail and the whole of a compressed transcript, read by its
+    /// plain name, are the lines its plain form gives, cut where the plain
+    /// form's are cut.
     #[tokio::test]
     async fn a_compressed_transcript_reads_as_its_plain_form() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let plain = dir.path().join("rollout-1-a.jsonl");
+        let plain = dir.path().join("plain.jsonl");
         let body: String = (0..3_000)
             .map(|n| format!("{{\"n\":{n},\"pad\":\"{}\"}}\n", "z".repeat(n % 50)))
             .collect();
         std::fs::write(&plain, &body).expect("plain");
-        let compressed = compressed::compressed_path(&plain);
-        std::fs::write(&compressed, compressed::compress(body.as_bytes())).expect("zst");
+        // Only the compressed form is on disk; it is named as the plain one.
+        let compressed = dir.path().join("rollout-1-a.jsonl");
+        std::fs::write(compressed::compressed_path(&compressed), compressed::compress(body.as_bytes())).expect("zst");
 
         // In an order that has the kept tail answer some asks and not others.
         for budget in [1_000u64, 64 * 1024, 1_000, 10 * 1024 * 1024, 64 * 1024] {

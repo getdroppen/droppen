@@ -225,8 +225,9 @@ async fn the_state_database_wins_and_hides_archived_and_subagent_threads() {
 
 /// What Codex's desktop app does to a thread idle for a week: the rollout is
 /// compressed to `.jsonl.zst`, the plain file deleted, and the state database
-/// left naming the plain one. The thread is still listed, its detail reads as
-/// it did, and its feed streams it.
+/// left naming the plain one. The thread is still listed under that name, its
+/// detail reads as it did, it can be searched and counted, and its feed
+/// streams it.
 #[tokio::test]
 async fn a_rollout_codex_compressed_is_listed_opened_and_streamed() {
     let server = common::TestServer::start_with(|home| {
@@ -244,7 +245,10 @@ async fn a_rollout_codex_compressed_is_listed_opened_and_streamed() {
     let session = &body["sessions"][0];
     assert_eq!(session["id"], SESSION_ID);
     assert_eq!(session["title"], "indexed title");
-    assert!(session["filePath"].as_str().is_some_and(|path| path.ends_with(".jsonl.zst")), "{session}");
+    assert!(
+        session["filePath"].as_str().is_some_and(|path| path.ends_with(".jsonl")),
+        "named by its plain path, as the database names it: {session}"
+    );
     assert_eq!(session["status"], "waiting", "its tail is read through the decoder");
 
     let detail = server.get_json(&format!("/api/sessions/codex/{SESSION_ID}")).await;
@@ -253,6 +257,10 @@ async fn a_rollout_codex_compressed_is_listed_opened_and_streamed() {
     assert_eq!(detail["items"][1]["text"], "cargo test");
     assert_eq!(detail["items"][3]["text"], "done");
     assert_eq!(detail["cliChoice"]["model"], "gpt-5.5");
+    let search = server.get_json(&format!("/api/sessions/codex/{SESSION_ID}/search?q=codex")).await;
+    assert_eq!(search["total"], 1, "{search}");
+    let unread = server.get_json(&format!("/api/sessions/codex/{SESSION_ID}/first-unread")).await;
+    assert_eq!(unread["count"], 1, "{unread}");
 
     let url = server.ws_url(&format!("/api/sessions/codex/{SESSION_ID}/ws"));
     let (socket, _) = tokio_tungstenite::connect_async(&url).await.expect("websocket connect");

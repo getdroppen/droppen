@@ -15,9 +15,10 @@
 //!
 //! Either way a rollout may be compressed. Codex compresses one idle for a week
 //! to `rollout-*.jsonl.zst` and deletes the plain file, its database still
-//! naming that, and decompresses it again before it next appends: the form on
-//! disk is found by Codex's rule ([`droppen_sessions::compressed::existing`]),
-//! a row names that file, and every reader of it reads either form.
+//! naming that, and decompresses it again before it next appends. A thread's
+//! row names the plain file whichever form is on disk, so a change of form
+//! changes nothing above the readers, which find the form that is there
+//! ([`droppen_sessions::compressed`]).
 //!
 //! Neither path can report a live process: Codex has no pid registry, so
 //! "running" is inferred from how recently the transcript was written and what
@@ -44,7 +45,8 @@ use droppen_sessions::context::ContextUsage;
 use droppen_sessions::mentions::FileCitation;
 use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
 use droppen_sessions::util::{
-    date_of, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, LossyLines, Role, TranscriptItem,
+    date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, LossyLines, Role,
+    TranscriptItem,
 };
 use droppen_sessions::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use droppen_http::openapi_ext::Nullable;
@@ -175,17 +177,16 @@ fn id_from_file_name(name: &str) -> Option<String> {
 }
 
 /// Every `*.jsonl` under `dir`, however deeply nested, and every `*.jsonl.zst`
-/// Codex compressed one to.
+/// Codex compressed one to: each rollout once, by its file name and its plain
+/// path, whichever form is on disk (both are, for a moment, while one replaces
+/// the other).
 ///
 /// Codex files rollouts under `sessions/YYYY/MM/DD`, and the depth is its
 /// business, not ours. Iterative rather than recursive: an `async fn` that calls
 /// itself needs boxing, and a worklist says the same thing with less ceremony.
-///
-/// One file per rollout, by Codex's own rule (`RolloutFile::from_path`): a
-/// compressed one whose plain file is there too is one form replacing the
-/// other, and the plain one is the rollout.
 async fn collect_session_files(dir: &Path) -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut pending: Vec<PathBuf> = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {
         let Ok(mut entries) = tokio::fs::read_dir(&current).await else {
@@ -197,16 +198,13 @@ async fn collect_session_files(dir: &Path) -> Vec<(String, PathBuf)> {
             if kind.is_dir() {
                 pending.push(entry.path());
             } else if kind.is_file() && (name.ends_with(".jsonl") || compressed::is_compressed(Path::new(&name))) {
-                out.push((name, entry.path()));
+                let plain = compressed::plain_path(&entry.path());
+                if seen.insert(plain.clone()) {
+                    out.push((name, plain));
+                }
             }
         }
     }
-    let plain: HashSet<PathBuf> = out
-        .iter()
-        .filter(|(_, path)| !compressed::is_compressed(path))
-        .map(|(_, path)| path.clone())
-        .collect();
-    out.retain(|(_, path)| !compressed::is_compressed(path) || !plain.contains(&compressed::plain_path(path)));
     out
 }
 
@@ -228,13 +226,18 @@ pub(crate) fn is_wrapper_text(text: &str) -> bool {
 
 /// Read a rollout file's head for its working directory and a fallback title.
 ///
-/// `file_path` is the file on disk, in either form: a compressed rollout's head
-/// is decoded, and its size is that of its text.
+/// `file_path` is the rollout's plain path, in whichever form it is on disk: a
+/// compressed one's head is decoded. Both tiers key it by that path, the length
+/// of its text and its mtime, which a change of form leaves as they were.
 async fn file_meta(file_path: &Path, id: &str) -> std::io::Result<FileMeta> {
-    let metadata = tokio::fs::metadata(file_path).await?;
+    let (found, metadata) = compressed::locate(file_path).await?;
     let mtime = mtime_ms(&metadata);
-    let size = compressed::content_len(file_path, &metadata).await;
-    let mark = droppen_sessions::index::Watermark::of(file_path, &metadata);
+    let size = compressed::content_len(&found, &metadata).await;
+    let mark = droppen_sessions::index::Watermark {
+        path: file_path,
+        size_bytes: size,
+        mtime_ms: mtime,
+    };
     if let Some(meta) = META_CACHE.get(file_path, mtime, size) {
         // Size too, so this tier and the durable one agree on what "unchanged"
         // means.
@@ -454,11 +457,40 @@ async fn spawned_threads(paths: &Paths) -> Vec<SpawnedThread> {
     CodexHome::of(paths).on_state_db(spawned_threads_from_state_db).await.flatten().unwrap_or_default()
 }
 
+/// Whether each subagent rollout's last turn failed, by the file and its
+/// mtime and size: the list asks of every subagent thread on every pass, and a
+/// rollout Codex compressed would otherwise be decoded whole each time to
+/// answer what a file that does not change says.
+static FAILED: LazyLock<FileCache<bool>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
+
 /// How a subagent thread is doing: whether it is still working, and whether
 /// its last turn ended in an error or was aborted.
 async fn spawned_thread_state(thread: &SpawnedThread) -> (bool, bool) {
     let path = Path::new(&thread.rollout_path);
-    let failed = match read_tail_lines(path, TAIL_BYTES).await {
+    let failed = match compressed::locate(path).await {
+        Ok((found, metadata)) => {
+            let (mtime, len) = (mtime_ms(&metadata), metadata.len());
+            match FAILED.get(&found, mtime, len) {
+                Some(failed) => failed,
+                None => {
+                    let failed = last_turn_failed(path).await;
+                    FAILED.put(&found, mtime, len, failed);
+                    failed
+                }
+            }
+        }
+        Err(_) => false,
+    };
+    // `codex_status` reads past an `error` to the message before it, which
+    // says a turn is in flight; the error is what ended that turn.
+    let working = !failed && codex_status(path, thread.updated_ms).await == SessionStatus::Running;
+    (working, failed)
+}
+
+/// Whether the last turn in the rollout at `path` ended in an error or was
+/// aborted, read off its tail.
+async fn last_turn_failed(path: &Path) -> bool {
+    match read_tail_lines(path, TAIL_BYTES).await {
         Ok(lines) => lines
             .iter()
             .rev()
@@ -473,11 +505,7 @@ async fn spawned_thread_state(thread: &SpawnedThread) -> (bool, bool) {
             )
             .unwrap_or(false),
         Err(_) => false,
-    };
-    // `codex_status` reads past an `error` to the message before it, which
-    // says a turn is in flight; the error is what ended that turn.
-    let working = !failed && codex_status(path, thread.updated_ms).await == SessionStatus::Running;
-    (working, failed)
+    }
 }
 
 /// Codex children of `parent`, nested; `depth` guards against a cycle in a
@@ -549,10 +577,10 @@ impl CodexHome {
     }
 }
 
-/// Build a list row from a thread row and its rollout file as found on disk
-/// ([`rollout_of`]), returning the update instant separately so status
+/// Build a list row from a thread row and the length of its rollout's text
+/// ([`rollout_len`]), returning the update instant separately so status
 /// inference does not have to parse the timestamp back.
-fn row_to_summary(row: &ThreadRow, (file, size_bytes): (PathBuf, u64)) -> (SessionSummary, i64) {
+fn row_to_summary(row: &ThreadRow, size_bytes: u64) -> (SessionSummary, i64) {
     let updated_ms = row.updated_at_ms.unwrap_or(row.updated_at * 1000);
     // A row with no start recorded is dated by its last activity rather than by
     // the epoch, which would sort it below every real session forever.
@@ -581,7 +609,9 @@ fn row_to_summary(row: &ThreadRow, (file, size_bytes): (PathBuf, u64)) -> (Sessi
         updated_at: iso8601(std::time::UNIX_EPOCH + std::time::Duration::from_millis(updated_ms.max(0) as u64)),
         created_at: iso8601(std::time::UNIX_EPOCH + std::time::Duration::from_millis(created_ms.max(0) as u64)),
         size_bytes,
-        file_path: file.to_string_lossy().into_owned(),
+        // The plain file the row names, in whichever form it is on disk: the
+        // readers find the form, and a change of form is not a new file.
+        file_path: row.rollout_path.clone(),
         status: SessionStatus::Idle,
         activity: SessionActivity::Idle,
         resident: Nullable(None),
@@ -639,18 +669,16 @@ fn meta_to_summary(meta: &FileMeta, names: &HashMap<String, String>) -> SessionS
     }
 }
 
-/// The rollout file a thread row names, as it is on disk now, and the length
-/// of its text.
+/// The length of the text of the rollout a thread row names, or `None` when
+/// it is gone in both its forms.
 ///
 /// The row names the plain `.jsonl` for good: Codex updates it neither when it
 /// compresses the file nor when it decompresses it again. So the file is found
-/// by Codex's own rule ([`compressed::existing`]) — the compressed form when
-/// that is the only one — and the summary names the file found: what the
-/// readers open, and what the next listing finds anew once it changes form.
-async fn rollout_of(row: &ThreadRow) -> Option<(PathBuf, u64)> {
-    let (file, metadata) = compressed::existing(Path::new(&row.rollout_path)).await?;
-    let size = compressed::content_len(&file, &metadata).await;
-    Some((file, size))
+/// by Codex's own rule ([`compressed::locate`]), and its size is its text's,
+/// the same in either form.
+async fn rollout_len(row: &ThreadRow) -> Option<u64> {
+    let (file, metadata) = compressed::locate(Path::new(&row.rollout_path)).await.ok()?;
+    Some(compressed::content_len(&file, &metadata).await)
 }
 
 /// Every visible Codex session, preferring the state database.
@@ -665,10 +693,10 @@ pub async fn list_codex_sessions(paths: &Paths) -> Vec<SessionSummary> {
             for row in rows {
                 // The rollout file is gone, in both its forms: there is
                 // nothing to open, so the thread is not offered.
-                let Some(rollout) = rollout_of(&row).await else {
+                let Some(size) = rollout_len(&row).await else {
                     continue;
                 };
-                let (summary, updated_ms) = row_to_summary(&row, rollout);
+                let (summary, updated_ms) = row_to_summary(&row, size);
                 out.push(with_codex_status(summary, updated_ms).await);
             }
             out
@@ -911,15 +939,33 @@ impl droppen_sessions::Transcripts for CodexSessions {
             .unwrap_or_default()
     }
 
-    // Codex nests rollouts under `sessions/YYYY/MM/DD`, so the tree is walked,
-    // as the scan walks it: a rollout compressed after a week of quiet still
-    // counts, and Codex keeps its mtime, so it counts for the days it ran.
+    // Codex nests rollouts under `sessions/YYYY/MM/DD`, so the tree is walked.
+    // A rollout compressed after a week of quiet still counts, once, by its
+    // plain path, and Codex keeps its mtime, so it counts for the days it ran.
+    //
+    // An explicit stack rather than recursion: a recursive `async fn` needs its
+    // future boxed at every level, which buys nothing here.
     fn usage_files<'a>(&'a self, paths: &'a Paths, cutoff_ms: f64) -> BoxFuture<'a, Vec<UsageFile>> {
         Box::pin(async move {
             let mut out = Vec::new();
-            for (_, path) in collect_session_files(&paths.codex_sessions()).await {
-                if let Some(reference) = UsageFile::stat(path, cutoff_ms).await {
-                    out.push(reference);
+            let mut seen = HashSet::new();
+            let mut pending = vec![paths.codex_sessions()];
+            while let Some(dir) = pending.pop() {
+                let Ok(mut entries) = tokio::fs::read_dir(&dir).await else { continue };
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    let Ok(file_type) = entry.file_type().await else { continue };
+                    if file_type.is_dir() {
+                        pending.push(path);
+                    } else if is_jsonl(&path) || compressed::is_compressed(&path) {
+                        let plain = compressed::plain_path(&path);
+                        if !seen.insert(plain.clone()) {
+                            continue;
+                        }
+                        if let Some(reference) = UsageFile::stat(plain, cutoff_ms).await {
+                            out.push(reference);
+                        }
+                    }
                 }
             }
             out
@@ -1047,14 +1093,14 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
             })
             .await
             .flatten()?;
-            let rollout = rollout_of(&row).await?;
-            let (mut summary, updated_ms) = row_to_summary(&row, rollout);
+            let size = rollout_len(&row).await?;
+            let (mut summary, updated_ms) = row_to_summary(&row, size);
             summary.parent_id = Nullable(Some(parent_id));
             with_codex_status(summary, updated_ms).await
         }
         Some(Some(row)) => {
-            let rollout = rollout_of(&row).await?;
-            let (summary, updated_ms) = row_to_summary(&row, rollout);
+            let size = rollout_len(&row).await?;
+            let (summary, updated_ms) = row_to_summary(&row, size);
             with_codex_status(summary, updated_ms).await
         }
         // The database is unavailable: fall back to scanning rollout files.
@@ -1699,123 +1745,201 @@ mod tests {
             day.join(format!("rollout-2026-05-09T16-39-49-{id}.jsonl"))
         }
 
-        /// What Codex compresses `text` to.
-        fn zstd(text: &str) -> Vec<u8> {
-            compressed::compress(text.as_bytes())
-        }
-
         /// Compress `plain` as Codex does: `<name>.zst` beside it, with its
         /// mtime, and the plain file deleted.
         fn compress_as_codex(plain: &Path) -> PathBuf {
-            let text = std::fs::read_to_string(plain).expect("read");
+            let text = std::fs::read(plain).expect("read");
             let mtime = std::fs::metadata(plain).and_then(|metadata| metadata.modified()).expect("mtime");
             let zst = compressed::compressed_path(plain);
-            std::fs::write(&zst, zstd(&text)).expect("zst");
-            std::fs::File::options()
-                .write(true)
-                .open(&zst)
-                .and_then(|file| file.set_modified(mtime))
-                .expect("mtime");
+            std::fs::write(&zst, compressed::compress(&text)).expect("zst");
+            set_mtime(&zst, mtime);
             std::fs::remove_file(plain).expect("rm");
             zst
         }
 
-        /// Codex's thread index, with the one visible thread `id`, whose row
-        /// names the plain rollout and goes on naming it.
-        fn state_db(paths: &Paths, id: &str, rollout: &Path) {
+        /// And back, as Codex does before it appends: the plain file, with the
+        /// compressed one's mtime, and the compressed one deleted.
+        fn decompress_as_codex(plain: &Path, text: &str) {
+            let zst = compressed::compressed_path(plain);
+            let mtime = std::fs::metadata(&zst).and_then(|metadata| metadata.modified()).expect("mtime");
+            std::fs::write(plain, text).expect("plain");
+            set_mtime(plain, mtime);
+            std::fs::remove_file(zst).expect("rm");
+        }
+
+        fn set_mtime(path: &Path, mtime: std::time::SystemTime) {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .and_then(|file| file.set_modified(mtime))
+                .expect("mtime");
+        }
+
+        /// Codex's thread index, with its spawn edges, and the threads `rows`
+        /// (`id`, `source`, nickname, parent): each row names the plain
+        /// rollout and goes on naming it.
+        fn state_db(paths: &Paths, rows: &[(&str, &str, Option<&str>, Option<&str>)]) {
             let connection = rusqlite::Connection::open(CodexHome::of(paths).state_db()).expect("state db");
             connection
                 .execute_batch(
                     "CREATE TABLE threads (
                         id TEXT PRIMARY KEY, title TEXT, first_user_message TEXT, cwd TEXT,
                         git_branch TEXT, updated_at INTEGER, updated_at_ms INTEGER,
-                        rollout_path TEXT, archived INTEGER, source TEXT, created_at INTEGER
-                     );",
+                        rollout_path TEXT, archived INTEGER, source TEXT, created_at INTEGER,
+                        agent_nickname TEXT, agent_role TEXT
+                     );
+                     CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL);",
                 )
-                .expect("threads");
-            connection
-                .execute(
-                    "INSERT INTO threads VALUES (?1, 'a quiet week', 'a week ago', '/w', 'main', 1778344793, 1778344793000, ?2, 0, 'cli', 1778344789)",
-                    rusqlite::params![id, rollout.to_string_lossy()],
-                )
-                .expect("thread");
+                .expect("schema");
+            for (id, source, nickname, parent) in rows {
+                connection
+                    .execute(
+                        "INSERT INTO threads VALUES (?1, 'a quiet week', 'a week ago', '/w', 'main', 1778344793, 1778344793000, ?2, 0, ?3, 1778344789, ?4, NULL)",
+                        rusqlite::params![id, rollout_in(paths, id).to_string_lossy(), source, nickname],
+                    )
+                    .expect("thread");
+                if let Some(parent) = parent {
+                    connection
+                        .execute("INSERT INTO thread_spawn_edges VALUES (?1, ?2, 'open')", [parent, id])
+                        .expect("edge");
+                }
+            }
         }
 
         async fn listed(paths: &Paths, id: &str) -> Option<SessionSummary> {
             list_codex_sessions(paths).await.into_iter().find(|row| row.id == id)
         }
 
-        async fn items(paths: &Paths, row: &SessionSummary) -> Value {
-            let items = droppen_sessions::Transcripts::parse(&CodexSessions, paths, Path::new(&row.file_path))
-                .await
-                .expect("parse");
-            serde_json::to_value(items).expect("json")
+        fn sources() -> droppen_sessions::TranscriptSources {
+            let mut sources = droppen_sessions::TranscriptSources::default();
+            sources.register(std::sync::Arc::new(CodexSessions));
+            sources
+        }
+
+        /// The row's transcript as the feed, the history and the cloud copy
+        /// read it: its signature, its items and its fingerprint chain, read
+        /// anew rather than out of the parse cache.
+        async fn read(paths: &Paths, row: &SessionSummary) -> (String, Value, Vec<droppen_sessions::loader::Fp>) {
+            let path = Path::new(&row.file_path);
+            let sig = droppen_sessions::file_signature(path).await.expect("a signature");
+            droppen_sessions::loader::forget_transcript(path);
+            let transcript = sources().load(paths, Source::Codex, path, &sig).await;
+            let items = serde_json::to_value(transcript.items.as_ref()).expect("json");
+            (sig, items, transcript.chain().to_vec())
         }
 
         /// What the Codex desktop app does to a thread idle for a week: the
         /// rollout becomes `.jsonl.zst`, the plain file is deleted, and the
-        /// state database goes on naming the plain one. The thread is listed,
-        /// opens by its id and reads as it did; when Codex decompresses it to
-        /// append, the next listing names the plain file again; and while both
-        /// are on disk, the plain one is the rollout, as it is to Codex.
+        /// state database goes on naming the plain one. The thread is still
+        /// the same session: the same row (its plain path, the size of its
+        /// text), the same signature, the same items and the same fingerprint
+        /// chain, so nothing above the readers sees a change, the cloud copy
+        /// included. Decompressed and appended to, it reads on; while both
+        /// forms are on disk the plain one is read, as Codex reads it.
         #[tokio::test]
-        async fn a_rollout_codex_compressed_is_listed_opened_and_read_as_it_was() {
+        async fn a_rollout_codex_compressed_is_the_same_session() {
             let _guard = droppen_sessions::index::exclusive().await;
             let home = tempfile::tempdir().expect("tempdir");
             let paths = Paths::new(home.path().to_path_buf());
             let plain = rollout_in(&paths, ID);
             std::fs::write(&plain, text()).expect("rollout");
-            state_db(&paths, ID, &plain);
+            state_db(&paths, &[(ID, "cli", None, None)]);
 
             let before = listed(&paths, ID).await.expect("listed");
-            let read_before = items(&paths, &before).await;
-            assert_eq!(read_before.as_array().map(Vec::len), Some(3), "{read_before}");
+            let read_before = read(&paths, &before).await;
+            assert_eq!(read_before.1.as_array().map(Vec::len), Some(3), "{}", read_before.1);
 
-            let zst = compress_as_codex(&plain);
+            compress_as_codex(&plain);
             let row = listed(&paths, ID).await.expect("a compressed thread is still listed");
-            assert_eq!(row.file_path, zst.to_string_lossy(), "the row names the file that is there");
+            assert_eq!(
+                row.file_path,
+                plain.to_string_lossy(),
+                "the row names the plain file, as the database does"
+            );
             assert_eq!(row.size_bytes, text().len() as u64, "the size of the text, not of its compressed form");
             assert_eq!(
-                (&row.title, &row.cwd.0, &row.updated_at),
-                (&before.title, &before.cwd.0, &before.updated_at)
+                serde_json::to_value(&row).expect("json"),
+                serde_json::to_value(&before).expect("json"),
+                "the same row"
             );
+            assert_eq!(read(&paths, &row).await, read_before, "the same signature, items and chain");
             let found = find_codex_session(&paths, ID).await.expect("and it opens by its id");
             assert_eq!(found.file_path, row.file_path);
-            assert_eq!(
-                droppen_sessions::Transcripts::find_file(&CodexSessions, &paths, ID).await,
-                Some(zst.clone())
-            );
-            assert_eq!(items(&paths, &found).await, read_before, "the transcript reads as it did");
-            let choice = read_codex_cli_choice(&zst).await.expect("a choice");
+            let choice = read_codex_cli_choice(&plain).await.expect("a choice");
             assert_eq!(choice.model.0.as_deref(), Some("gpt-5.5"), "the tail is decoded too");
 
-            // Codex decompresses before it appends, and appends.
+            // Codex decompresses before it appends: still the same session.
+            decompress_as_codex(&plain, &text());
+            assert_eq!(read(&paths, &listed(&paths, ID).await.expect("listed")).await, read_before);
             let appended = r#"{"type":"response_item","timestamp":"2026-05-17T09:00:00.000Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"back again"}]}}"#;
-            std::fs::write(&plain, format!("{}{appended}\n", text())).expect("decompressed");
-            std::fs::remove_file(&zst).expect("rm");
-            let row = listed(&paths, ID).await.expect("listed");
-            assert_eq!(row.file_path, plain.to_string_lossy(), "the next listing names the plain file again");
-            let read = items(&paths, &row).await;
+            std::fs::write(&plain, format!("{}{appended}\n", text())).expect("appended");
+            let (_, items, chain) = read(&paths, &listed(&paths, ID).await.expect("listed")).await;
             assert_eq!(
-                read.as_array().and_then(|items| items.last()).map(|item| &item["text"]),
+                items.as_array().and_then(|items| items.last()).map(|item| &item["text"]),
                 Some(&Value::from("back again"))
             );
+            assert_eq!(chain[..read_before.2.len()], read_before.2[..], "the chain grows from where it was");
 
-            // Mid-way through either, both forms are on disk.
-            std::fs::write(&zst, zstd(&text())).expect("zst");
-            assert_eq!(
-                listed(&paths, ID).await.map(|row| row.file_path),
-                Some(plain.to_string_lossy().into_owned())
-            );
+            // Mid-way through either, both forms are on disk: the plain one is read.
+            std::fs::write(compressed::compressed_path(&plain), compressed::compress(text().as_bytes())).expect("zst");
+            let (_, items, _) = read(&paths, &listed(&paths, ID).await.expect("listed")).await;
+            assert_eq!(items.as_array().map(Vec::len), Some(4));
             std::fs::remove_file(&plain).expect("rm");
-            std::fs::remove_file(&zst).expect("rm");
+            std::fs::remove_file(compressed::compressed_path(&plain)).expect("rm");
             assert!(listed(&paths, ID).await.is_none(), "with neither, the thread is not offered");
             assert!(find_codex_session(&paths, ID).await.is_none());
         }
 
+        /// Subagent threads Codex compressed are still in their parent's tree,
+        /// still say how their last turn ended, and still open by their id.
+        /// How it ended is read once per file: more of them than the decoded
+        /// tails kept, made unreadable at the same length and mtime between
+        /// two passes, still answer from what the first pass read.
+        #[tokio::test]
+        async fn compressed_subagents_stay_in_the_tree_and_open() {
+            let _guard = droppen_sessions::index::exclusive().await;
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::new(home.path().to_path_buf());
+            let failed = r#"{"type":"event_msg","timestamp":"2026-05-09T16:40:00.000Z","payload":{"type":"error","message":"boom"}}"#;
+            let children: Vec<String> = (0..6).map(|n| format!("cccccccc-1111-4111-8111-cccccccccc{n:02}")).collect();
+            std::fs::write(rollout_in(&paths, ID), text()).expect("parent");
+            let spawned = format!(r#"{{"subagent":{{"thread_spawn":{{"parent_thread_id":"{ID}","depth":1}}}}}}"#);
+            let mut rows = vec![(ID, "cli", None, None)];
+            for child in &children {
+                std::fs::write(rollout_in(&paths, child), format!("{}{failed}\n", text())).expect("child");
+                compress_as_codex(&rollout_in(&paths, child));
+                rows.push((child.as_str(), spawned.as_str(), Some("Turing"), Some(ID)));
+            }
+            state_db(&paths, &rows);
+
+            async fn tree(paths: &Paths) -> Vec<(String, SessionChildStatus)> {
+                let mut parent = listed(paths, ID).await.expect("the parent");
+                droppen_sessions::Transcripts::children(&CodexSessions, paths, vec![&mut parent], &BTreeMap::new()).await;
+                let mut tree: Vec<_> = parent.children.into_iter().map(|child| (child.id, child.status)).collect();
+                tree.sort_by(|a, b| a.0.cmp(&b.0));
+                tree
+            }
+            let expected: Vec<_> = children.iter().map(|child| (child.clone(), SessionChildStatus::Failed)).collect();
+            assert_eq!(tree(&paths).await, expected, "each compressed subagent, and how it ended");
+
+            let child = find_codex_session(&paths, &children[0])
+                .await
+                .expect("a compressed subagent opens by its id");
+            assert_eq!(child.parent_id.0.as_deref(), Some(ID));
+            assert_eq!(child.file_path, rollout_in(&paths, &children[0]).to_string_lossy());
+
+            for child in &children {
+                let zst = compressed::compressed_path(&rollout_in(&paths, child));
+                let metadata = std::fs::metadata(&zst).expect("stat");
+                std::fs::write(&zst, vec![0u8; metadata.len() as usize]).expect("unreadable");
+                set_mtime(&zst, metadata.modified().expect("mtime"));
+            }
+            assert_eq!(tree(&paths).await, expected, "not read again");
+        }
+
         /// Without the database the rollouts are walked: a compressed one is a
-        /// thread like any other, and one whose plain file is there too is the
-        /// one thread, read from the plain file.
+        /// thread like any other, named by its plain path; one whose plain file
+        /// is there too is one thread; and each counts once in the usage.
         #[tokio::test]
         async fn the_scan_finds_a_compressed_rollout_once() {
             let _guard = droppen_sessions::index::exclusive().await;
@@ -1823,11 +1947,11 @@ mod tests {
             let paths = Paths::new(home.path().to_path_buf());
             let only_compressed = rollout_in(&paths, ID);
             std::fs::write(&only_compressed, text()).expect("rollout");
-            let only_compressed = compress_as_codex(&only_compressed);
+            compress_as_codex(&only_compressed);
             let both = "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb";
             let both = (rollout_in(&paths, both), both);
             std::fs::write(&both.0, text()).expect("rollout");
-            std::fs::write(compressed::compressed_path(&both.0), zstd(&text())).expect("zst");
+            std::fs::write(compressed::compressed_path(&both.0), compressed::compress(text().as_bytes())).expect("zst");
 
             let rows = list_codex_sessions(&paths).await;
             assert_eq!(rows.len(), 2, "one row per thread: {rows:?}");
@@ -1838,7 +1962,7 @@ mod tests {
             let found = find_codex_session(&paths, ID).await.expect("found by id");
             assert_eq!(found.file_path, row.file_path);
             let row = rows.iter().find(|row| row.id == both.1).expect("the other");
-            assert_eq!(row.file_path, both.0.to_string_lossy(), "the plain form wins");
+            assert_eq!(row.file_path, both.0.to_string_lossy());
 
             let ids = rollout_ids(&paths).await.expect("a corpus");
             assert_eq!(ids, HashSet::from([ID.to_string(), both.1.to_string()]));
@@ -1847,7 +1971,21 @@ mod tests {
             usage.sort();
             let mut expected = vec![only_compressed, both.0];
             expected.sort();
-            assert_eq!(usage, expected, "each rollout's usage counted once");
+            assert_eq!(usage, expected, "each rollout's usage counted once, by its plain path");
+        }
+
+        /// A symlinked rollout counts toward the usage, as it always has.
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn a_symlinked_rollout_still_counts_toward_the_usage() {
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::new(home.path().to_path_buf());
+            let elsewhere = home.path().join("kept-elsewhere.jsonl");
+            std::fs::write(&elsewhere, text()).expect("rollout");
+            let link = rollout_in(&paths, ID);
+            std::os::unix::fs::symlink(&elsewhere, &link).expect("symlink");
+            let usage = droppen_sessions::Transcripts::usage_files(&CodexSessions, &paths, 0.0).await;
+            assert_eq!(usage.into_iter().map(|file| file.path).collect::<Vec<_>>(), vec![link]);
         }
     }
 

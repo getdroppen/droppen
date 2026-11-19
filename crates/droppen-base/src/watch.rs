@@ -60,18 +60,40 @@ pub fn never() -> FileEvents {
 }
 
 /// Watch `path`, coalescing bursts into one signal per `debounce` window.
+///
+/// A file that is not there is watched through its directory, for the events
+/// that name it: a transcript can be named before it is on disk by that name.
+/// Codex compresses a rollout it has not written to for a week to another
+/// name, and decompresses it back to this one when it next writes, which is
+/// when a view of it wants every change at once rather than at the next poll.
 pub fn watch_file(path: &Path, debounce: Duration) -> FileEvents {
     let (raw_tx, raw_rx) = mpsc::channel::<()>(64);
+    let watched = match path.parent() {
+        Some(dir) if !path.exists() => Watched::Dir(dir.to_path_buf(), path.file_name().map(ToOwned::to_owned)),
+        _ => Watched::File,
+    };
+    let only = match &watched {
+        Watched::Dir(_, name) => Some(name.clone()),
+        Watched::File => None,
+    };
 
     let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if event.is_ok() {
-            // A full queue already means "a change is pending", so a drop here
-            // loses nothing.
-            let _ = raw_tx.try_send(());
+        let Ok(event) = event else { return };
+        // A directory watch hears of every file in it; only this one counts.
+        if let Some(name) = &only {
+            if !event.paths.iter().any(|changed| changed.file_name() == name.as_deref()) {
+                return;
+            }
         }
+        // A full queue already means "a change is pending", so a drop here
+        // loses nothing.
+        let _ = raw_tx.try_send(());
     })
     .and_then(|mut watcher| {
-        watcher.watch(path, RecursiveMode::NonRecursive)?;
+        match &watched {
+            Watched::Dir(dir, _) => watcher.watch(dir, RecursiveMode::NonRecursive)?,
+            Watched::File => watcher.watch(path, RecursiveMode::NonRecursive)?,
+        }
         Ok(watcher)
     });
 
@@ -86,6 +108,14 @@ pub fn watch_file(path: &Path, debounce: Duration) -> FileEvents {
             never()
         }
     }
+}
+
+/// What [`watch_file`] watches.
+enum Watched {
+    /// The file itself.
+    File,
+    /// The directory of a file that is not there, and the file's name in it.
+    Dir(std::path::PathBuf, Option<std::ffi::OsString>),
 }
 
 /// Watch every directory in `dirs` recursively, coalescing bursts into one
@@ -193,13 +223,46 @@ mod tests {
         assert!(result.is_err(), "a silent watcher must never resolve, got {result:?}");
     }
 
-    /// Watching a path that does not exist degrades instead of failing.
+    /// Watching a path that does not exist degrades instead of failing: in a
+    /// directory that is not there either, to polling; in one that is, to its
+    /// directory, quiet while nothing there names it.
     #[tokio::test]
     async fn an_unwatchable_path_degrades_to_polling() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut events = watch_file(&dir.path().join("does-not-exist.jsonl"), Duration::from_millis(50));
+        std::fs::write(dir.path().join("another.jsonl"), "a\n").expect("another file");
+        let result = tokio::time::timeout(Duration::from_millis(300), events.recv()).await;
+        assert!(result.is_err(), "a missing path must be quiet, not closed, got {result:?}");
+
+        let mut events = watch_file(&dir.path().join("gone").join("does-not-exist.jsonl"), Duration::from_millis(50));
         let result = tokio::time::timeout(Duration::from_millis(150), events.recv()).await;
         assert!(result.is_err(), "an unwatchable path must be quiet, not closed, got {result:?}");
+    }
+
+    /// A file that appears after the watch began (Codex decompressing a
+    /// rollout back to the name its view is watching) is heard of, when the
+    /// platform delivers events at all; see the test below for why that is
+    /// not asserted.
+    #[tokio::test]
+    async fn a_file_that_appears_later_reaches_the_channel_when_the_platform_allows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("t.jsonl");
+        let mut events = watch_file(&path, Duration::from_millis(50));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path).expect("create");
+        loop {
+            writeln!(file, "line").expect("write");
+            file.flush().expect("flush");
+            match tokio::time::timeout(Duration::from_millis(250), events.recv()).await {
+                Ok(Some(())) => return,
+                Ok(None) => panic!("the watcher channel closed; `never()` must keep it pending"),
+                Err(_) if std::time::Instant::now() < deadline => continue,
+                Err(_) => {
+                    eprintln!("note: no filesystem events in this environment; the 2s poll backstop is carrying the feed");
+                    return;
+                }
+            }
+        }
     }
 
     /// End-to-end through the real platform watcher, when the platform will

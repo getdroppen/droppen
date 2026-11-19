@@ -32,6 +32,9 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 thiserror = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+# The decoded text of a compressed rollout, handed over from its decoding
+# thread, read as a stream (`compressed`).
+tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 
 # `index::exclusive` (the lock the tests that install the process-wide index

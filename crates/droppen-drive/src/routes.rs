@@ -1560,9 +1560,10 @@ async fn whole_transcript(drive: &crate::Drive, source: Source, id: &str) -> Res
     let not_found = || ApiError::not_found("session not found");
     let file_path = drive.transcripts.find_file(&drive.paths, source, id).await.ok_or_else(not_found)?;
     let sig = file_signature(&file_path).await.ok_or_else(not_found)?;
-    let mtime = tokio::fs::metadata(&file_path)
+    // In the form it is on disk: a codex rollout may be compressed.
+    let mtime = droppen_sessions::compressed::locate(&file_path)
         .await
-        .and_then(|metadata| metadata.modified())
+        .and_then(|(_, metadata)| metadata.modified())
         .map(droppen_base::time::iso8601)
         .map_err(|_| not_found())?;
     Ok((drive.transcripts.load(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))

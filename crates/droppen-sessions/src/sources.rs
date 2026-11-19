@@ -172,9 +172,11 @@ pub struct UsageFile {
 }
 
 impl UsageFile {
-    /// `path`, when it was written at or after `cutoff_ms`.
+    /// `path`, when it was written at or after `cutoff_ms`: the transcript in
+    /// the form it is on disk ([`crate::compressed`]), whose mtime Codex keeps
+    /// through a change of form.
     pub async fn stat(path: PathBuf, cutoff_ms: f64) -> Option<Self> {
-        let metadata = tokio::fs::metadata(&path).await.ok()?;
+        let (_, metadata) = crate::compressed::locate(&path).await.ok()?;
         let mtime = mtime_ms(&metadata);
         (mtime >= cutoff_ms).then_some(Self { path, mtime })
     }
