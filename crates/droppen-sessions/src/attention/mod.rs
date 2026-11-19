@@ -583,6 +583,57 @@ mod tests {
         );
     }
 
+    /// A transcript Codex compressed where it lies is counted through [`apply`]
+    /// like any other. Its row keeps its identity through a change of form —
+    /// the plain path, the length of the text, Codex's mtime — so the ledger
+    /// stands when it is decompressed again, and resumes once it is appended
+    /// to: read whole once, and never scanned.
+    #[tokio::test]
+    async fn a_compressed_transcript_is_counted_once_through_its_changes_of_form() {
+        let _guard = crate::index::exclusive().await;
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        crate::index::install(&paths);
+        let file = home.path().join("flip.jsonl");
+        let text = format!("{}\n{}\n{}\n", said(1), said(2), said(3));
+        std::fs::write(&file, &text).expect("write");
+        let mtime = std::fs::metadata(&file).and_then(|metadata| metadata.modified()).expect("mtime");
+        let compressed = crate::compressed::compressed_path(&file);
+        std::fs::write(&compressed, crate::compressed::compress(text.as_bytes())).expect("zst");
+        std::fs::remove_file(&file).expect("rm");
+        let compressed_row = |updated_at: &str, size: usize| SessionSummary {
+            size_bytes: size as u64,
+            ..row(&file, updated_at, SessionStatus::Idle)
+        };
+
+        let mut rows = [compressed_row(&stamp(3), text.len())];
+        apply(&paths, &TestReader::sources(), &mut rows).await;
+        assert_eq!((rows[0].unread_count, rows[0].attention_at.0.clone()), (3, Some(stamp(3))));
+
+        // Decompressed, as Codex does before it appends: the same row.
+        std::fs::write(&file, &text).expect("plain");
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .and_then(|plain| plain.set_modified(mtime))
+            .expect("mtime");
+        std::fs::remove_file(&compressed).expect("rm");
+        let mut rows = [compressed_row(&stamp(3), text.len())];
+        apply(&paths, &TestReader::sources(), &mut rows).await;
+        assert_eq!(rows[0].unread_count, 3);
+
+        let grown = format!("{text}{}\n", said(4));
+        std::fs::write(&file, &grown).expect("append");
+        let mut rows = [compressed_row(&stamp(4), grown.len())];
+        apply(&paths, &TestReader::sources(), &mut rows).await;
+        assert_eq!((rows[0].unread_count, rows[0].attention_at.0.clone()), (4, Some(stamp(4))));
+        assert_eq!(
+            unread::COLD_SCANS.lock().expect("scan counter").get(&file).copied(),
+            None,
+            "never scanned"
+        );
+    }
+
     /// The push gate and the badge read one ledger: a turn that ended on a
     /// rate-limit notice is unread to both, at the same instant.
     #[tokio::test]

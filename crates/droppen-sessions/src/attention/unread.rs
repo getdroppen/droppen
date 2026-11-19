@@ -146,6 +146,9 @@ impl Ledger {
 /// entry with no timestamp of its own — the row's mtime, the same stand-in the
 /// attention clock has always used.
 ///
+/// A transcript on disk compressed ([`crate::compressed`]) is read whole
+/// instead ([`read_whole`]).
+///
 /// `None` only for an unreadable file.
 pub async fn refresh(
     reader: &dyn Transcripts,
@@ -155,6 +158,11 @@ pub async fn refresh(
     read_at: Option<&str>,
     fallback_at: &str,
 ) -> Option<Ledger> {
+    let (found, _) = crate::compressed::locate(path).await.ok()?;
+    if crate::compressed::is_compressed(&found) {
+        return read_whole(reader, &found, fallback_at).await.ok();
+    }
+    let path = found.as_path();
     if let Some(mut ledger) = known {
         let usable = ledger.count(read_at).is_some();
         // A transcript only grows. One that is shorter than what was read, or
@@ -206,7 +214,13 @@ pub(super) async fn head_of_file(path: &Path) -> std::io::Result<Option<Head>> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut prefix = Vec::with_capacity(HEAD_MAX);
     (&mut file).take(HEAD_MAX as u64).read_to_end(&mut prefix).await?;
-    Ok(match memchr::memchr(b'\n', &prefix) {
+    Ok(head_of(&prefix))
+}
+
+/// The fingerprint of the first line in `prefix`, the first [`HEAD_MAX`] bytes
+/// of a text (or all of a shorter one).
+fn head_of(prefix: &[u8]) -> Option<Head> {
+    match memchr::memchr(b'\n', prefix) {
         Some(at) => Some(Head {
             len: at as u64 + 1,
             hash: fnv1a(&prefix[..=at]),
@@ -215,10 +229,10 @@ pub(super) async fn head_of_file(path: &Path) -> std::io::Result<Option<Head>> {
         // anything follows it, and the caller only asks when something does.
         None if prefix.len() == HEAD_MAX => Some(Head {
             len: HEAD_MAX as u64,
-            hash: fnv1a(&prefix),
+            hash: fnv1a(prefix),
         }),
         None => None,
-    })
+    }
 }
 
 /// 64-bit FNV-1a: a fingerprint, not a defence — nobody is forging transcripts
@@ -246,6 +260,48 @@ async fn read_forward(reader: &dyn Transcripts, path: &Path, from: u64, fallback
         stamps.extend(messages_on(reader, line, fallback_at));
     }
     Ok((stamps, from + last_newline as u64 + 1))
+}
+
+/// The ledger of a transcript on disk compressed ([`crate::compressed`]),
+/// read from its first line to its last.
+///
+/// Nothing is resumed and nothing is walked backwards: a zstd frame can only
+/// be read from its start, and a compressed transcript does not grow. So the
+/// one pass is complete and the ledger has no floor. Its [`Ledger::end`] and
+/// [`Ledger::head`] are the text's, which are the plain file's: once Codex
+/// decompresses the transcript to append to it, the ledger resumes from
+/// there, as from any ledger of the plain file.
+async fn read_whole(reader: &dyn Transcripts, path: &Path, fallback_at: &str) -> std::io::Result<Ledger> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut text = crate::compressed::open_text(path).await?;
+    let mut stamps = std::collections::VecDeque::new();
+    let mut line = Vec::new();
+    let mut end = 0u64;
+    let mut head = None;
+    loop {
+        line.clear();
+        let read = text.read_until(b'\n', &mut line).await?;
+        if read == 0 {
+            break;
+        }
+        if end == 0 {
+            head = head_of(&line[..line.len().min(HEAD_MAX)]);
+        }
+        end += read as u64;
+        for stamp in messages_on(reader, line.strip_suffix(b"\n").unwrap_or(&line), fallback_at) {
+            if stamps.len() == CAP {
+                stamps.pop_front();
+            }
+            stamps.push_back(stamp);
+        }
+    }
+    Ok(Ledger {
+        stamps: stamps.into(),
+        floor: None,
+        end,
+        head,
+    })
 }
 
 /// How many cold scans each path has had, so a test can prove one was avoided.
@@ -511,6 +567,51 @@ mod tests {
             .expect("a ledger");
         assert_eq!(grown.stamps, vec![at(1), at(4)]);
         assert_eq!(grown.head, original.head, "the fingerprint carries over");
+    }
+
+    /// A transcript Codex compressed counts what it counted plain: read whole,
+    /// forwards, keeping the newest [`CAP`], and complete for any read marker.
+    #[tokio::test]
+    async fn a_compressed_transcript_counts_as_the_plain_one_did() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lines: Vec<String> = std::iter::once(user(0)).chain((1..=CAP as u32 + 5).map(|n| assistant(n, "a"))).collect();
+        let plain = write(dir.path(), &lines);
+        let text = std::fs::read(&plain).expect("read");
+        let from_plain = ledger(&READER, &plain, None).await;
+
+        // Compressed where it lies, and still named by its plain path.
+        std::fs::write(crate::compressed::compressed_path(&plain), crate::compressed::compress(&text)).expect("zst");
+        std::fs::remove_file(&plain).expect("rm");
+        let read_at = at(CAP as u32);
+        let from_compressed = refresh(&READER, &plain, None, text.len() as u64, Some(&read_at), FALLBACK)
+            .await
+            .expect("a ledger");
+        assert_eq!(from_compressed.stamps, from_plain.stamps, "the newest {CAP} messages either way");
+        assert_eq!(from_compressed.count(Some(&read_at)), Some(5));
+        assert_eq!(from_compressed.floor, None, "read to its start, so any read marker counts");
+        assert_eq!(from_compressed.count(None), Some(CAP as u32));
+        assert_eq!(
+            (from_compressed.end, from_compressed.head),
+            (from_plain.end, from_plain.head),
+            "the end and the first line of the text, which are the plain file's"
+        );
+
+        // Decompressed to be appended to: the ledger resumes past the text it
+        // already read, as from the plain file's own.
+        let mut grown = text.clone();
+        grown.extend_from_slice(format!("{}\n", assistant(CAP as u32 + 6, "b")).as_bytes());
+        std::fs::write(&plain, &grown).expect("decompressed and appended");
+        std::fs::remove_file(crate::compressed::compressed_path(&plain)).expect("rm");
+        let resumed = refresh(&READER, &plain, Some(from_compressed), grown.len() as u64, None, FALLBACK)
+            .await
+            .expect("a ledger");
+        assert_eq!(resumed.stamps.last(), Some(&at(CAP as u32 + 6)));
+        assert_eq!(resumed.end, grown.len() as u64);
+        assert_eq!(
+            COLD_SCANS.lock().expect("scan counter").get(&plain).copied(),
+            Some(1),
+            "only the first plain read scanned"
+        );
     }
 
     #[tokio::test]

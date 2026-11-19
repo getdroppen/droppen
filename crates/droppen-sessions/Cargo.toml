@@ -23,17 +23,25 @@ gotcha = { workspace = true }
 memchr = "2"
 regex = "1"
 rusqlite = { version = "0.41", features = ["bundled"] }
+# Codex's compressed rollouts (`compressed`), decoded in pure Rust: the `zstd`
+# crate would link a C library. Without `hash`, which only checks a frame's
+# checksum, and Codex writes none.
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = "0.10"
 thiserror = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
+# The decoded text of a compressed rollout, handed over from its decoding
+# thread, read as a stream (`compressed`).
+tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 
 # `index::exclusive` (the lock the tests that install the process-wide index
-# take) and `loader::forget_transcript` (a parse forgotten, as a restart does),
-# for the server's tests of the readers, the feed and the routes. Only the
-# server's [dev-dependencies] turn it on.
+# take), `loader::forget_transcript` (a parse forgotten, as a restart does) and
+# `compressed::compress` (a rollout compressed as Codex compresses one), for
+# the tests of the readers, the feed and the routes above this crate. Only
+# [dev-dependencies] turn it on.
 [features]
 test-support = []
 

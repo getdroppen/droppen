@@ -19,6 +19,7 @@ pub mod archive;
 pub mod attention;
 pub mod chat_delivery;
 pub mod children;
+pub mod compressed;
 pub mod context;
 pub mod delivery;
 pub mod gone;
@@ -1118,9 +1119,13 @@ pub async fn custom_titles(paths: &Paths, source: Source) -> HashMap<String, Str
 }
 
 /// The mtime+size signature the transcript cache and the `?sig=` poll share.
+///
+/// Of the transcript in the form it is on disk ([`compressed`]), by the length
+/// of its text: Codex keeps the mtime when it compresses or decompresses one,
+/// so the signature does not move when the form does.
 pub async fn file_signature(path: &Path) -> Option<String> {
-    let metadata = tokio::fs::metadata(path).await.ok()?;
-    Some(format!("{}:{}", metadata.len(), mtime_ms(&metadata)))
+    let (found, metadata) = compressed::locate(path).await.ok()?;
+    Some(format!("{}:{}", compressed::content_len(&found, &metadata).await, mtime_ms(&metadata)))
 }
 
 #[cfg(test)]

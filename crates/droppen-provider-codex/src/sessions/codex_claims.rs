@@ -323,8 +323,9 @@ pub async fn migrate(paths: &Paths) -> usize {
 /// subagent threads from every cheap lookup, which is why
 /// `claude_code::sessions::claude::ClaudeCodeSessions::prune_owned` leaves codex registry entries alone, but an
 /// archived thread still has its file. No file is the one form of "gone" that is
-/// not a lie. A missing sessions directory says nothing at all, so nothing is
-/// dropped.
+/// not a lie — no file in either form: Codex compresses a rollout idle for a
+/// week to `.jsonl.zst` and deletes the plain one. A missing sessions directory
+/// says nothing at all, so nothing is dropped.
 ///
 /// Returns how many claims were removed. **Boot only, under the instance lock.**
 pub async fn prune(paths: &Paths) -> usize {
@@ -543,6 +544,28 @@ mod tests {
             "a sibling's stale claim is the sibling's to retire"
         );
         assert_eq!(prune(&a).await, 0, "and pruning again finds nothing");
+    }
+
+    /// Codex compresses a rollout idle for a week to `.jsonl.zst` and deletes
+    /// the plain file. The thread is not gone, and neither is this instance's
+    /// claim on it: pruning it un-hid the thread from every sibling.
+    #[tokio::test]
+    async fn pruning_keeps_the_claim_of_a_thread_codex_compressed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (a, _b) = instances(&dir);
+        let day = a.codex_sessions().join("2026").join("05").join("09");
+        std::fs::create_dir_all(&day).expect("sessions dir");
+        let compressed = "44444444-2222-3333-4444-555555555555";
+        let rollout = droppen_sessions::compressed::compress(b"{}\n");
+        std::fs::write(day.join(format!("rollout-2026-05-09T16-39-49-{compressed}.jsonl.zst")), rollout).expect("rollout");
+        let gone = "55555555-2222-3333-4444-555555555555";
+
+        claim(&a, compressed).await;
+        claim(&a, gone).await;
+        assert_eq!(prune(&a).await, 1, "only the thread with no rollout in either form");
+        let claims = Claims::all(&a).await;
+        assert_eq!(claims.owner(compressed), Some("a"), "a compressed thread keeps its claim");
+        assert_eq!(claims.owner(gone), None);
     }
 
     /// No `~/.codex/sessions` is "no answer", not "nothing exists": a fresh

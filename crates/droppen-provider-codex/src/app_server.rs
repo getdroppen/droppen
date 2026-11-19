@@ -652,7 +652,11 @@ impl ProviderRuns for CodexRuns {
     fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<Instant>> {
         Box::pin(async move {
             let session = crate::sessions::codex::find_codex_session(&self.host.paths, id).await?;
-            std::path::PathBuf::from(session.file_path).written_at().await
+            // The row names the plain rollout; on disk it may be compressed.
+            let (file, _) = droppen_sessions::compressed::locate(std::path::Path::new(&session.file_path))
+                .await
+                .ok()?;
+            file.written_at().await
         })
     }
 }
