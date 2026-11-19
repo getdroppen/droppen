@@ -19,6 +19,7 @@ pub mod archive;
 pub mod attention;
 pub mod chat_delivery;
 pub mod children;
+pub mod compressed;
 pub mod context;
 pub mod delivery;
 pub mod gone;

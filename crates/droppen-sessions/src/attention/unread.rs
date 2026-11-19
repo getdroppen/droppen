@@ -146,6 +146,8 @@ impl Ledger {
 /// entry with no timestamp of its own — the row's mtime, the same stand-in the
 /// attention clock has always used.
 ///
+/// A compressed transcript is read whole instead ([`read_whole`]).
+///
 /// `None` only for an unreadable file.
 pub async fn refresh(
     reader: &dyn Transcripts,
@@ -155,6 +157,9 @@ pub async fn refresh(
     read_at: Option<&str>,
     fallback_at: &str,
 ) -> Option<Ledger> {
+    if crate::compressed::is_compressed(path) {
+        return read_whole(reader, path, fallback_at).await.ok();
+    }
     if let Some(mut ledger) = known {
         let usable = ledger.count(read_at).is_some();
         // A transcript only grows. One that is shorter than what was read, or
@@ -246,6 +251,44 @@ async fn read_forward(reader: &dyn Transcripts, path: &Path, from: u64, fallback
         stamps.extend(messages_on(reader, line, fallback_at));
     }
     Ok((stamps, from + last_newline as u64 + 1))
+}
+
+/// The ledger of a compressed transcript ([`crate::compressed`]), read from
+/// its first line to its last.
+///
+/// Nothing is resumed and nothing is walked backwards: a zstd frame can only
+/// be read from its start, and a compressed transcript does not grow — Codex
+/// decompresses one before it writes to it again, and the plain file is
+/// another path with a ledger of its own. So the one pass is complete, and
+/// the ledger has no floor; [`Ledger::end`] is where the text ended, and there
+/// is no [`Ledger::head`], which only a resumed read checks.
+async fn read_whole(reader: &dyn Transcripts, path: &Path, fallback_at: &str) -> std::io::Result<Ledger> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut text = crate::compressed::open_text(path).await?;
+    let mut stamps = std::collections::VecDeque::new();
+    let mut line = Vec::new();
+    let mut end = 0u64;
+    loop {
+        line.clear();
+        let read = text.read_until(b'\n', &mut line).await?;
+        if read == 0 {
+            break;
+        }
+        end += read as u64;
+        for stamp in messages_on(reader, line.strip_suffix(b"\n").unwrap_or(&line), fallback_at) {
+            if stamps.len() == CAP {
+                stamps.pop_front();
+            }
+            stamps.push_back(stamp);
+        }
+    }
+    Ok(Ledger {
+        stamps: stamps.into(),
+        floor: None,
+        end,
+        head: None,
+    })
 }
 
 /// How many cold scans each path has had, so a test can prove one was avoided.
@@ -511,6 +554,26 @@ mod tests {
             .expect("a ledger");
         assert_eq!(grown.stamps, vec![at(1), at(4)]);
         assert_eq!(grown.head, original.head, "the fingerprint carries over");
+    }
+
+    /// A transcript Codex compressed counts what it counted plain: read whole,
+    /// forwards, keeping the newest [`CAP`], and complete for any read marker.
+    #[tokio::test]
+    async fn a_compressed_transcript_counts_as_the_plain_one_did() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lines: Vec<String> = std::iter::once(user(0)).chain((1..=CAP as u32 + 5).map(|n| assistant(n, "a"))).collect();
+        let plain = write(dir.path(), &lines);
+        let compressed = crate::compressed::compressed_path(&plain);
+        std::fs::write(&compressed, crate::compressed::compress(&std::fs::read(&plain).expect("read"))).expect("zst");
+
+        let read_at = at(CAP as u32);
+        let from_plain = ledger(&READER, &plain, None).await;
+        let from_compressed = ledger(&READER, &compressed, Some(&read_at)).await;
+        assert_eq!(from_compressed.stamps, from_plain.stamps, "the newest {CAP} messages either way");
+        assert_eq!(from_compressed.count(Some(&read_at)), Some(5));
+        assert_eq!(from_compressed.floor, None, "read to its start, so any read marker counts");
+        assert_eq!(from_compressed.count(None), Some(CAP as u32));
+        assert_eq!(from_compressed.end, size(&plain), "the end of the text, not of the compressed file");
     }
 
     #[tokio::test]

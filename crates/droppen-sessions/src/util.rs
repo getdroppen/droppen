@@ -14,6 +14,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use droppen_http::openapi_ext::Nullable;
 use droppen_base::text::is_image_ext;
 
+use crate::compressed::{self, Opened};
+
 /// Body text must never be cut in practice — there is no way to read the rest.
 /// These are emergency backstops for pathological items, not display budgets.
 pub const TEXT_LIMIT: usize = 60_000;
@@ -460,17 +462,25 @@ pub fn parse_attachment_suffix(raw_text: &str) -> AttachmentSplit {
 }
 
 /// Read at most `max_bytes` from the tail of a file and return complete JSONL lines.
+///
+/// A compressed transcript ([`crate::compressed`]) is decoded from its start to
+/// reach its tail, and the tail kept for the next reader.
 pub async fn read_tail_lines(path: &Path, max_bytes: u64) -> std::io::Result<Vec<String>> {
-    let mut file = tokio::fs::File::open(path).await?;
-    let size = file.metadata().await?.len();
-    let start = size.saturating_sub(max_bytes);
-    file.seek(std::io::SeekFrom::Start(start)).await?;
-    let mut buf = Vec::with_capacity((size - start) as usize);
-    file.read_to_end(&mut buf).await?;
+    let (buf, cut) = match compressed::open(path).await? {
+        Opened::Plain(mut file) => {
+            let size = file.metadata().await?.len();
+            let start = size.saturating_sub(max_bytes);
+            file.seek(std::io::SeekFrom::Start(start)).await?;
+            let mut buf = Vec::with_capacity((size - start) as usize);
+            file.read_to_end(&mut buf).await?;
+            (buf, start > 0)
+        }
+        Opened::Compressed(file) => file.tail(max_bytes).await?,
+    };
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<&str> = text.split('\n').collect();
     // The first line is almost certainly cut in half unless we read from 0.
-    if start > 0 && !lines.is_empty() {
+    if cut && !lines.is_empty() {
         lines.remove(0);
     }
     Ok(lines.into_iter().filter(|l| !l.trim().is_empty()).map(str::to_owned).collect())
@@ -597,18 +607,34 @@ impl BackwardLines {
 }
 
 /// Read at most `max_bytes` from the head of a file and return complete JSONL lines.
+///
+/// A compressed transcript ([`crate::compressed`]) is decoded only as far as
+/// that.
 pub async fn read_head_lines(path: &Path, max_bytes: usize) -> std::io::Result<Vec<String>> {
-    let mut file = tokio::fs::File::open(path).await?;
-    let mut buf = vec![0u8; max_bytes];
-    let mut read = 0usize;
-    while read < max_bytes {
-        let n = file.read(&mut buf[read..]).await?;
-        if n == 0 {
-            break;
+    let buf = match compressed::open(path).await? {
+        Opened::Plain(mut file) => {
+            let mut buf = vec![0u8; max_bytes];
+            let mut read = 0usize;
+            while read < max_bytes {
+                let n = file.read(&mut buf[read..]).await?;
+                if n == 0 {
+                    break;
+                }
+                read += n;
+            }
+            buf.truncate(read);
+            buf
         }
-        read += n;
-    }
-    buf.truncate(read);
+        Opened::Compressed(file) => {
+            file.with_text(move |text| {
+                let mut buf = Vec::new();
+                std::io::Read::read_to_end(&mut std::io::Read::take(text, max_bytes as u64), &mut buf)?;
+                Ok(buf)
+            })
+            .await?
+        }
+    };
+    let read = buf.len();
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<&str> = text.split('\n').collect();
     // Drop the final partial line unless we read the whole file.
@@ -634,12 +660,12 @@ pub struct LossyLines<R> {
     buffer: Vec<u8>,
 }
 
-impl LossyLines<tokio::io::BufReader<tokio::fs::File>> {
-    /// Open `path` for line-by-line lossy reading.
+impl LossyLines<Box<dyn tokio::io::AsyncBufRead + Send + Unpin>> {
+    /// Open `path` for line-by-line lossy reading: a compressed transcript
+    /// ([`crate::compressed`]) as the text it decodes to.
     pub async fn open(path: &Path) -> std::io::Result<Self> {
-        let file = tokio::fs::File::open(path).await?;
         Ok(Self {
-            reader: tokio::io::BufReader::new(file),
+            reader: compressed::open_text(path).await?,
             buffer: Vec::new(),
         })
     }
@@ -944,6 +970,45 @@ mod tests {
             "300 KB took {:?}",
             started.elapsed()
         );
+    }
+
+    /// The head, the tail and the whole of a compressed transcript are the
+    /// lines its plain form gives, cut where the plain form's are cut.
+    #[tokio::test]
+    async fn a_compressed_transcript_reads_as_its_plain_form() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let plain = dir.path().join("rollout-1-a.jsonl");
+        let body: String = (0..3_000)
+            .map(|n| format!("{{\"n\":{n},\"pad\":\"{}\"}}\n", "z".repeat(n % 50)))
+            .collect();
+        std::fs::write(&plain, &body).expect("plain");
+        let compressed = compressed::compressed_path(&plain);
+        std::fs::write(&compressed, compressed::compress(body.as_bytes())).expect("zst");
+
+        // In an order that has the kept tail answer some asks and not others.
+        for budget in [1_000u64, 64 * 1024, 1_000, 10 * 1024 * 1024, 64 * 1024] {
+            assert_eq!(
+                read_tail_lines(&compressed, budget).await.expect("tail"),
+                read_tail_lines(&plain, budget).await.expect("tail"),
+                "a tail of {budget} bytes"
+            );
+            let budget = budget as usize;
+            assert_eq!(
+                read_head_lines(&compressed, budget).await.expect("head"),
+                read_head_lines(&plain, budget).await.expect("head"),
+                "a head of {budget} bytes"
+            );
+        }
+
+        async fn all(path: &Path) -> Vec<String> {
+            let mut lines = LossyLines::open(path).await.expect("open");
+            let mut all = Vec::new();
+            while let Some(line) = lines.next_line().await.expect("line") {
+                all.push(line);
+            }
+            all
+        }
+        assert_eq!(all(&compressed).await, all(&plain).await);
     }
 
     /// The budget stops the walk without pretending the file ended.
