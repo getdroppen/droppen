@@ -72,6 +72,7 @@ pub mod global;
 pub mod mux;
 pub mod search;
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -139,11 +140,11 @@ pub struct TranscriptPage {
 }
 
 /// The last `SESSION_PAGE_SIZE` items ending at `before`.
-pub fn transcript_page(items: &[TranscriptItem], before: usize) -> TranscriptPage {
+pub fn transcript_page(items: &[impl Borrow<TranscriptItem>], before: usize) -> TranscriptPage {
     let end_index = before.min(items.len());
     let start_index = end_index.saturating_sub(SESSION_PAGE_SIZE);
     TranscriptPage {
-        items: items[start_index..end_index].to_vec(),
+        items: items[start_index..end_index].iter().map(|item| item.borrow().clone()).collect(),
         start_index,
         end_index,
         total_items: items.len(),
@@ -1369,7 +1370,7 @@ mod tests {
     }
 
     fn transcript_at(path: &str, items: Vec<TranscriptItem>) -> Transcript {
-        Transcript::new(Path::new(path), Arc::new(items))
+        Transcript::parsed(Path::new(path), items)
     }
 
     /// What a client holding everything through the end of `transcript` would

@@ -43,6 +43,7 @@ pub mod routes;
 pub mod seen;
 pub mod unread;
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -115,10 +116,11 @@ pub struct FirstUnread {
 /// for a session never looked at. A message with no timestamp of its own stands
 /// at `fallback_at`, the transcript's mtime — the stand-in the ledger gives it
 /// too ([`unread::refresh`]), so the two count it alike.
-pub fn first_unread(items: &[TranscriptItem], after: Option<&str>, fallback_at: &str) -> FirstUnread {
+pub fn first_unread(items: &[impl Borrow<TranscriptItem>], after: Option<&str>, fallback_at: &str) -> FirstUnread {
     let mut first = None;
     let mut count = 0;
     for (index, item) in items.iter().enumerate() {
+        let item = item.borrow();
         if item.role != Role::Assistant || item.kind != ItemKind::Text {
             continue;
         }

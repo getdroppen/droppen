@@ -5,6 +5,7 @@
 //! parsers: the live feed, the history routes and the cloud agent's streams
 //! all read through it.
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,13 +59,14 @@ pub fn encode_fp(fp: &Fp) -> String {
 }
 
 /// The fingerprint chain of `items` read from `file_path`: entry `i` covers
-/// items `[0, i)`, so there are `items.len() + 1` of them.
-pub fn fingerprint_chain(file_path: &Path, items: &[TranscriptItem]) -> Vec<Fp> {
+/// items `[0, i)`, so there are `items.len() + 1` of them. `items` are a
+/// [`Transcript`]'s, each behind its `Arc`, or a reader's own.
+pub fn fingerprint_chain(file_path: &Path, items: &[impl Borrow<TranscriptItem>]) -> Vec<Fp> {
     let mut chain = Vec::with_capacity(items.len() + 1);
     let mut link = fp_seed(file_path);
     chain.push(link);
     for item in items {
-        link = fp_link(&link, item);
+        link = fp_link(&link, item.borrow());
         chain.push(link);
     }
     chain
@@ -76,20 +78,32 @@ pub fn fingerprint_chain(file_path: &Path, items: &[TranscriptItem]) -> Vec<Fp> 
 /// detail and the subagent list read the same cache and never need it.
 #[derive(Debug)]
 pub struct Transcript {
-    /// The normalized items.
-    pub items: Arc<Vec<TranscriptItem>>,
+    /// The normalized items, each behind an `Arc` of its own, so that a
+    /// transcript made of another's items ([`Transcript::prefix`]) shares
+    /// them rather than copying them.
+    pub items: Arc<Vec<Arc<TranscriptItem>>>,
     file_path: PathBuf,
     chain: std::sync::OnceLock<Arc<[Fp]>>,
 }
 
 impl Transcript {
-    /// A parse of `file_path`.
-    pub fn new(file_path: &Path, items: Arc<Vec<TranscriptItem>>) -> Self {
+    /// A parse of `file_path`, of items already shared.
+    pub fn new(file_path: &Path, items: Arc<Vec<Arc<TranscriptItem>>>) -> Self {
         Self {
             items,
             file_path: file_path.to_path_buf(),
             chain: std::sync::OnceLock::new(),
         }
+    }
+
+    /// A parse of `file_path`, of the items its reader returned.
+    pub fn parsed(file_path: &Path, items: Vec<TranscriptItem>) -> Self {
+        // Not `collect`: it would keep the reader's buffer, room for every
+        // item itself, to hold one pointer per item — tens of megabytes held
+        // for nothing by a long transcript.
+        let mut shared = Vec::with_capacity(items.len());
+        shared.extend(items.into_iter().map(Arc::new));
+        Self::new(file_path, Arc::new(shared))
     }
 
     /// How many items it holds.
@@ -120,8 +134,15 @@ impl Transcript {
 
     /// The parse of its first `end` items, of the same file, so its chain is
     /// this one's up to `end`. Panics when `end` is past the last item.
+    ///
+    /// Made of this one's items, not copies of them, and of its chain once
+    /// that is made: no item is cloned and none is hashed again.
     pub fn prefix(&self, end: usize) -> Self {
-        Self::new(&self.file_path, Arc::new(self.items[..end].to_vec()))
+        let prefix = Self::new(&self.file_path, Arc::new(self.items[..end].to_vec()));
+        if let Some(chain) = self.chain.get() {
+            let _ = prefix.chain.set(chain[..=end].into());
+        }
+        prefix
     }
 }
 
@@ -306,7 +327,7 @@ impl TranscriptSources {
     /// Shared as an `Arc` because the same parse is fanned out to every attached
     /// client and is the only thing a failed read can fall back on; a `Vec` would be
     /// deep-cloned on both paths.
-    pub async fn load_items(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str) -> Arc<Vec<TranscriptItem>> {
+    pub async fn load_items(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str) -> Arc<Vec<Arc<TranscriptItem>>> {
         self.load(paths, source, file_path, sig).await.items.clone()
     }
 
@@ -346,7 +367,7 @@ impl TranscriptSources {
                 }
                 match self.parse(paths, source, file_path).await {
                     Ok(items) => {
-                        let transcript = Arc::new(Transcript::new(file_path, Arc::new(items)));
+                        let transcript = Arc::new(Transcript::parsed(file_path, items));
                         remember_transcript(file_path, sig, flight.started, transcript.clone());
                         FAILED_READS.lock().expect("failed reads poisoned").remove(file_path);
                         Some(transcript)
@@ -390,7 +411,7 @@ impl TranscriptSources {
         let parsed = self
             .parse(paths, source, file_path)
             .await
-            .map(|items| Transcript::new(file_path, Arc::new(items)));
+            .map(|items| Transcript::parsed(file_path, items));
         match parsed {
             Ok(transcript) => Some(transcript),
             Err(error) => {
@@ -723,5 +744,59 @@ mod tests {
         assert_eq!(parses.count(), 2, "the parse it left was run again");
         assert_eq!(made_by(&waiter), "parse 2");
         assert!(!in_flight(file));
+    }
+
+    /// Five items as a reader returns them, the first a user's.
+    fn five_items() -> Vec<TranscriptItem> {
+        (0..5)
+            .map(|n| {
+                let role = if n == 0 { Role::User } else { Role::Assistant };
+                make_item(role, ItemKind::Text, &format!("item {n}"), Some("2026-11-20T00:00:00.000Z"))
+            })
+            .collect()
+    }
+
+    /// A prefix is made of the transcript's own items, not copies of them,
+    /// and of its chain once that is made: the chain a parse of those items
+    /// alone would have.
+    #[test]
+    fn a_prefix_shares_the_items_and_the_chain() {
+        let file = Path::new("/loader-test/prefix.jsonl");
+        let whole = Transcript::parsed(file, five_items());
+        let fresh = fingerprint_chain(file, &whole.items[..3]);
+
+        let early = whole.prefix(3);
+        assert!(
+            early.items.iter().zip(whole.items.iter()).all(|(mine, theirs)| Arc::ptr_eq(mine, theirs)),
+            "the same items, not copies"
+        );
+        assert!(early.chain.get().is_none(), "no chain to share before one is made");
+        assert_eq!(&early.chain()[..], fresh.as_slice());
+
+        whole.chain();
+        let late = whole.prefix(3);
+        assert!(late.chain.get().is_some(), "the whole one's chain, cut");
+        assert_eq!(&late.chain()[..], fresh.as_slice());
+        assert_eq!(&whole.prefix(0).chain()[..], &fresh[..1], "an empty prefix is the seed alone");
+    }
+
+    /// The items of a parse hold one pointer each and no room for more: the
+    /// reader's own buffer, sized for the items themselves, is not kept.
+    #[test]
+    fn a_parse_keeps_no_room_it_does_not_use() {
+        let transcript = Transcript::parsed(Path::new("/loader-test/room.jsonl"), five_items());
+        assert_eq!(transcript.items.capacity(), transcript.len());
+    }
+
+    /// An item behind its own `Arc` is written as the item itself: the sharing
+    /// never reaches the wire.
+    #[test]
+    fn shared_items_are_written_as_the_items_themselves() {
+        let items = five_items();
+        let transcript = Transcript::parsed(Path::new("/loader-test/json.jsonl"), items.clone());
+        assert_eq!(
+            serde_json::to_string(&transcript.items[1..4]).expect("json"),
+            serde_json::to_string(&items[1..4]).expect("json")
+        );
     }
 }

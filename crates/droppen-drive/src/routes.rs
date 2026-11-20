@@ -1591,7 +1591,7 @@ pub(crate) async fn search_session(
 /// read of every live registration and a walk back through the transcript's
 /// tail, and nothing that reads the items needs it. The scope is deliberately
 /// not checked either — reading is never gated.
-async fn whole_transcript(drive: &crate::Drive, source: Source, id: &str) -> Result<(std::sync::Arc<Vec<TranscriptItem>>, String), ApiError> {
+async fn whole_transcript(drive: &crate::Drive, source: Source, id: &str) -> Result<(Arc<Vec<Arc<TranscriptItem>>>, String), ApiError> {
     let file = transcript_file(drive, source, id).await?;
     Ok((drive.transcripts.load(&drive.paths, source, &file.path, &file.sig).await.items.clone(), file.mtime))
 }
@@ -2756,8 +2756,8 @@ mod tests {
             .map(|Json(page)| page)
     }
 
-    fn texts(items: &[TranscriptItem]) -> Vec<&str> {
-        items.iter().map(|item| item.text.as_str()).collect()
+    fn texts(items: &[impl std::borrow::Borrow<TranscriptItem>]) -> Vec<&str> {
+        items.iter().map(|item| item.borrow().text.as_str()).collect()
     }
 
     /// A live session is appended to between the feed's parse and the click
