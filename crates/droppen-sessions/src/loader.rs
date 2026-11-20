@@ -375,6 +375,13 @@ impl TranscriptSources {
         }
     }
 
+    /// The parse of `file_path` at `sig`, when one is remembered. Never a
+    /// read: for a reader waiting to try a version again that it could not
+    /// read, which another reader may have read since.
+    pub fn cached(&self, file_path: &Path, sig: &str) -> Option<Arc<Transcript>> {
+        cached_transcript(file_path, Some(sig))
+    }
+
     /// A transcript read now, past the cache and without filling it: for a
     /// reader that walks many sessions once (the cloud agent's first copy of a
     /// machine's history), which would otherwise push out the few parses the

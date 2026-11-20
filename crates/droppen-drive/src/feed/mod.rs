@@ -1203,6 +1203,10 @@ fn push_draft(draft: &Draft, tx: &broadcast::Sender<Broadcast>, latest_draft: &L
 /// transcript it could not read ([`FailedRead`]).
 const FAILED_READ_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How early a poll may come and still end the wait of a [`FailedRead`]:
+/// half a poll.
+const FAILED_READ_SLACK: std::time::Duration = std::time::Duration::from_millis(STATE_INTERVAL.as_millis() as u64 / 2);
+
 /// What the watcher has made of the transcript.
 #[derive(Debug, Default)]
 struct Seen {
@@ -1222,6 +1226,12 @@ struct Seen {
 /// or draft frame meanwhile. The retry is on a clock, not on a file event: a
 /// disk error that cleared or a permission put back changes neither the
 /// length nor the mtime. A new version is read at once.
+///
+/// The wait is counted from the end of the failed read, and a poll within
+/// [`FAILED_READ_SLACK`] of its end counts as at it: the poll that falls
+/// there is otherwise lost to the time the read took, and the retry waits a
+/// poll more. A version some other reader has parsed meanwhile (a REST
+/// detail, say) ends the wait at once: it is taken from the cache, no read.
 #[derive(Debug)]
 struct FailedRead {
     sig: String,
@@ -1245,11 +1255,15 @@ async fn refresh_items(
     if sig == seen.sig {
         return Some(false);
     }
-    let waiting = |failed: &FailedRead| failed.sig == sig && tokio::time::Instant::now() < failed.retry_at;
-    if seen.failed.as_ref().is_some_and(waiting) {
-        return Some(false);
-    }
-    let (transcript, current) = transcripts.load_checked(paths, source, file_path, &sig).await;
+    let waiting = |failed: &FailedRead| failed.sig == sig && tokio::time::Instant::now() + FAILED_READ_SLACK < failed.retry_at;
+    let (transcript, current) = if seen.failed.as_ref().is_some_and(waiting) {
+        let Some(transcript) = transcripts.cached(file_path, &sig) else {
+            return Some(false);
+        };
+        (transcript, true)
+    } else {
+        transcripts.load_checked(paths, source, file_path, &sig).await
+    };
     if !current {
         // The read failed, and what came back is the last good parse (or no
         // items), not the version at `sig`. Nothing is sent and `sig` is not
@@ -1916,9 +1930,10 @@ mod tests {
     /// version on disk: the watcher sends nothing and does not take that
     /// version as seen. It reads it again a poll later, then twice as long
     /// after each failure, up to [`FAILED_READ_MAX_DELAY`], and not at all in
-    /// between. A permission put back changes neither the length nor the
-    /// mtime, so it is the clock that brings the read back: the first one
-    /// after the wait sends the new items, though the file has not changed.
+    /// between, less half a poll of slack ([`FAILED_READ_SLACK`]). A
+    /// permission put back changes neither the length nor the mtime, so it is
+    /// the clock that brings the read back: the first one after the wait
+    /// sends the new items, though the file has not changed.
     #[cfg(unix)]
     #[tokio::test(start_paused = true)]
     async fn a_read_that_keeps_failing_is_tried_again_less_and_less_often() {
@@ -1935,12 +1950,12 @@ mod tests {
             let (sig, delay, retry_at) = feed.failed();
             assert_eq!(sig, newer);
             waits.push(delay.as_secs());
-            tokio::time::advance(delay - std::time::Duration::from_millis(1)).await;
+            tokio::time::advance(delay - FAILED_READ_SLACK - std::time::Duration::from_millis(1)).await;
             assert_eq!(feed.refresh().await, Some(false));
             assert_eq!(feed.failed().2, retry_at, "not read again inside the wait");
             tokio::time::advance(std::time::Duration::from_millis(1)).await;
             assert_eq!(feed.refresh().await, Some(false));
-            assert!(feed.failed().2 > retry_at, "read again once it is over, and failed again");
+            assert!(feed.failed().2 > retry_at, "read again from half a poll before its end, and failed again");
             assert_eq!(feed.seen.sig, older, "the version on disk is never taken as seen");
             assert_eq!(feed.sent(), None, "and nothing is sent");
         }
@@ -1989,6 +2004,38 @@ mod tests {
         assert_eq!(feed.refresh().await, Some(true));
         let (sig, texts) = feed.sent().expect("the newest version is sent");
         assert_eq!((sig, texts.len()), (newest, 3));
+    }
+
+    /// A version another reader has parsed since the watcher's read of it
+    /// failed (a REST detail, say) is taken from the cache at the next poll,
+    /// inside the wait, rather than once the wait is over.
+    #[cfg(unix)]
+    #[tokio::test(start_paused = true)]
+    async fn a_version_another_reader_has_read_ends_the_wait() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut feed = PolledFeed::new(dir.path(), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "the first turn\n").await;
+        append(&feed.file, "the second turn\n");
+        let newer = file_signature(&feed.file).await.expect("sig");
+        readable(&feed.file, false);
+        feed.refresh().await;
+        tokio::time::advance(STATE_INTERVAL).await;
+        feed.refresh().await;
+        assert_eq!(feed.failed().1, 2 * STATE_INTERVAL, "waiting 4 s");
+
+        readable(&feed.file, true);
+        assert_eq!(feed.refresh().await, Some(false), "still waiting, and nobody has read it");
+        let (_, current) = feed
+            .drive
+            .transcripts
+            .load_checked(&feed.drive.paths, crate::fake::SOURCE, &feed.file, &newer)
+            .await;
+        assert!(current, "another reader reads it");
+        assert_eq!(feed.refresh().await, Some(true), "taken inside the wait");
+        assert_eq!(
+            feed.sent(),
+            Some((newer.clone(), vec!["the first turn".into(), "the second turn".into()]))
+        );
+        assert!(feed.seen.sig == newer && feed.seen.failed.is_none());
     }
 
     /// The same when the read that fails is the one a client attaches with:
