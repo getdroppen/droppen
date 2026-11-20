@@ -33,17 +33,20 @@
 //! Every `delta` has *replace-from* semantics: the client drops whatever it
 //! holds at `fromIndex` and after, and puts `items` there. That is what lets a
 //! live delta deliver an in-place modification of a recent item rather than
-//! lose it ([`live_delta_from`] starts at the first item that changed). A
+//! lose it ([`live_delta`] starts at the first item that changed). A
 //! client sent a delta it cannot place — `fromIndex` beyond its window — never
 //! drops it silently: it sends `{"type":"resync","since":…,"fp":…}` up the
 //! socket and is answered with a delta that fits or a `reset`
 //! ([`FeedAttachment::client_frame`]).
 //!
 //! The fingerprint is a chain: `fp[0]` hashes the file's path, `fp[i + 1]`
-//! hashes `fp[i]` and item `i`'s JSON; 128 bits of SHA-256, base64url on the
-//! wire. It is computed once per parse and kept with it ([`Transcript`]), so
-//! any prefix's fingerprint is a lookup and the first difference between two
-//! versions is a binary search ([`common_prefix`]).
+//! hashes `fp[i]` and item `i`'s JSON as the transcript wrote it, without the
+//! chips of the files it mentions (they say what existed when it was parsed);
+//! 128 bits of SHA-256, base64url on the wire. It is computed once per parse
+//! and kept with it ([`Transcript`]), so any prefix's fingerprint is a lookup
+//! and the first difference between two versions is a binary search
+//! ([`common_prefix`]). A chip that came or went still reaches a client that
+//! is watching, as a live delta from its item ([`live_delta`]).
 //!
 //! Two things differ structurally from the TypeScript, both forced by Rust's
 //! ownership model rather than by choice:
@@ -234,6 +237,29 @@ pub fn live_delta_from(sent: &[Fp], next: &[Fp]) -> Option<usize> {
     let from = common_prefix(sent, next)?;
     let len = next.len() - 1;
     (len - from <= MAX_DELTA_ITEMS).then_some(from)
+}
+
+/// [`live_delta_from`] for the two versions themselves, so that a chip that
+/// came or went reaches a client that is watching.
+///
+/// The chains leave out the chips of the files a message mentions, which say
+/// what existed at parse time. A file written after the message that names it
+/// ("let me write `notes.md`", then the write) gives that message a chip on
+/// the next parse without moving the chain, and a deleted one takes it away.
+/// So the delta starts earlier, at the first item served differently, when
+/// that is within [`MAX_DELTA_ITEMS`] of the end; further back, the client
+/// keeps the chips it was sent until it reads the item again.
+pub fn live_delta(sent: &Transcript, next: &Transcript) -> Option<usize> {
+    let from = live_delta_from(sent.chain(), next.chain())?;
+    let reach = next.len().saturating_sub(MAX_DELTA_ITEMS);
+    Some((reach..from).find(|&i| served_differently(&sent.items[i], &next.items[i])).unwrap_or(from))
+}
+
+/// Whether two items whose fingerprints agree are sent differently. Only the
+/// annotation can make them, so only an item it changed is compared, and only
+/// in what it changes: the files, and the text a citation's label replaced.
+fn served_differently(sent: &TranscriptItem, next: &TranscriptItem) -> bool {
+    (sent.is_annotated() || next.is_annotated()) && (sent.files != next.files || sent.text != next.text)
 }
 
 /// Whether a client may be served the history page that ends at `before`.
@@ -632,12 +658,14 @@ pub struct FeedAttachment {
     latest: Latest,
     /// The signature this client last received a page for.
     sent_sig: String,
-    /// The fingerprint chain of the version this client holds, through the end
-    /// of its window: what its next delta is cut against.
+    /// The version this client holds, through the end of its window: what its
+    /// next delta is cut against. The parse and not just its chain, because a
+    /// chip can change where the chain does not ([`live_delta`]); it is the
+    /// same parse the watcher and every caught-up client share.
     ///
     /// Only for live tailoring. An attach does not need it — the client's own
     /// `since`/`fp` say what it holds — which is why a restart loses nothing.
-    sent: Arc<[Fp]>,
+    sent: Arc<Transcript>,
     /// The watcher's last `draft` frame, for after a lag.
     latest_draft: LatestDraft,
     /// A frame owed to this client before anything the broadcast has: the
@@ -697,7 +725,6 @@ pub async fn attach_session_feed_with(
         sig,
         transcript,
     } = StateAndTranscript::read(drive, source, id).await?;
-    let chain = transcript.chain().clone();
 
     // A resumed client is sent what it is missing and nothing else; its state
     // arrives in the replay below, as it would on any `state` frame.
@@ -764,6 +791,17 @@ pub async fn attach_session_feed_with(
             }
         }
     };
+    // At the version the watcher holds, the client holds the watcher's parse:
+    // its own may be a second copy, read after the first left the cache, and
+    // kept alive for as long as the session stays idle.
+    let sent = {
+        let latest = latest.lock().expect("feed latest poisoned");
+        if latest.0 == sig {
+            latest.1.clone()
+        } else {
+            transcript
+        }
+    };
 
     // The handle exists from here on, before anything else is awaited: the
     // client is counted on the feed now, and a caller that gives up on this
@@ -775,7 +813,7 @@ pub async fn attach_session_feed_with(
         rx,
         latest,
         sent_sig: sig,
-        sent: chain,
+        sent,
         latest_draft,
         owed: None,
     };
@@ -847,14 +885,13 @@ impl FeedAttachment {
 
     /// The frame that takes this client from the version it holds to
     /// `transcript`: a delta from the first item that differs, or a reset.
-    fn catch_up(&mut self, sig: &str, transcript: &Transcript) -> String {
-        let chain = transcript.chain().clone();
-        let frame = match live_delta_from(&self.sent, &chain) {
+    fn catch_up(&mut self, sig: &str, transcript: &Arc<Transcript>) -> String {
+        let frame = match live_delta(&self.sent, transcript) {
             Some(from) => delta_frame(sig, Some(&self.sent_sig), transcript, from),
             None => reset_frame(sig, transcript),
         };
         self.sent_sig = sig.to_string();
-        self.sent = chain;
+        self.sent = transcript.clone();
         frame
     }
 
@@ -883,7 +920,7 @@ impl FeedAttachment {
             .and_then(|resume| resume_frame(&sig, &transcript, resume))
             .unwrap_or_else(|| reset_frame(&sig, &transcript));
         self.sent_sig = sig;
-        self.sent = transcript.chain().clone();
+        self.sent = transcript;
         Some(frame)
     }
 }
@@ -1349,7 +1386,7 @@ mod tests {
             rx,
             latest,
             sent_sig: "sig-1".to_string(),
-            sent: held.chain().clone(),
+            sent: Arc::new(held),
             latest_draft: Arc::default(),
             owed: None,
         };
@@ -1372,7 +1409,88 @@ mod tests {
         assert_eq!(frame["totalItems"], 12);
         assert_eq!(frame["previousSig"], "sig-1");
         assert_eq!(frame["prefixFp"], next.prefix_fp());
-        assert_eq!(attachment.sent.len(), 13, "the client now holds the new version");
+        assert_eq!(attachment.sent.chain().len(), 13, "the client now holds the new version");
+    }
+
+    /// `n` messages of the agent's, the sixth naming `report`, read with the
+    /// files under `home` as they are now.
+    async fn mentioning(home: &Path, report: &Path, n: usize) -> Arc<Transcript> {
+        let mut all: Vec<TranscriptItem> = (0..n)
+            .map(|i| make_item(Role::Assistant, ItemKind::Text, &format!("item {i}"), None))
+            .collect();
+        all[5].text = format!("wrote `{}`", report.display());
+        droppen_sessions::mentions::annotate_mentioned_files(home, &mut all, None, droppen_sessions::mentions::no_citations).await;
+        Arc::new(transcript_at("/t/chips.jsonl", all))
+    }
+
+    /// A file written after the message that names it gives that message a
+    /// chip on the next parse, and the chain does not move: a watching client
+    /// is sent the item again all the same, and again when the file goes.
+    #[tokio::test]
+    async fn a_chip_that_comes_or_goes_reaches_a_live_client() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let report = home.path().join("report.md");
+        let held = mentioning(home.path(), &report, 10).await;
+        let latest: Latest = Arc::new(Mutex::new(("sig-1".to_string(), held.clone())));
+        let (tx, mut attachment) = lapped_attachment(&latest, &held);
+
+        std::fs::write(&report, "# report").expect("write");
+        let written = mentioning(home.path(), &report, 12).await;
+        assert_eq!(written.fp_at(10), held.fp_at(10), "the chain did not move");
+        tx.send(Broadcast::Transcript {
+            sig: "sig-2".to_string(),
+            transcript: written,
+        })
+        .expect("send");
+        let frame: Value = serde_json::from_str(&attachment.next_frame().await.expect("a frame")).expect("json");
+        assert_eq!(frame["type"], "delta", "{frame}");
+        assert_eq!(frame["fromIndex"], 5, "from the item whose chip came");
+        assert_eq!(frame["items"][0]["files"][0]["name"], "report.md");
+        assert_eq!(frame["endIndex"], 12);
+
+        std::fs::remove_file(&report).expect("remove");
+        tx.send(Broadcast::Transcript {
+            sig: "sig-3".to_string(),
+            transcript: mentioning(home.path(), &report, 13).await,
+        })
+        .expect("send");
+        let frame: Value = serde_json::from_str(&attachment.next_frame().await.expect("a frame")).expect("json");
+        assert_eq!(frame["type"], "delta", "{frame}");
+        assert_eq!(frame["fromIndex"], 5, "and from it again when it went");
+        assert!(frame["items"][0].get("files").is_none(), "{frame}");
+        assert_eq!(frame["endIndex"], 13);
+    }
+
+    /// Further back than a delta reaches, a chip is no reason for a reset: the
+    /// delta starts where the chain says, and the client keeps the chip it
+    /// was sent until it reads the item again.
+    #[tokio::test]
+    async fn a_chip_further_back_than_a_delta_reaches_is_no_reset() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let report = home.path().join("report.md");
+        let held = mentioning(home.path(), &report, MAX_DELTA_ITEMS + 10).await;
+        std::fs::write(&report, "# report").expect("write");
+        let written = mentioning(home.path(), &report, MAX_DELTA_ITEMS + 12).await;
+        assert!(written.items[5].files.is_some());
+        assert_eq!(live_delta(&held, &written), Some(MAX_DELTA_ITEMS + 10));
+    }
+
+    /// A client reconnecting across a chip change resumes: the marker it holds
+    /// is a fingerprint, and the chip is not in it.
+    #[tokio::test]
+    async fn a_chip_that_came_is_no_reason_to_reset_a_resuming_client() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let report = home.path().join("report.md");
+        let held = mentioning(home.path(), &report, 10).await;
+        let marker = marker_of(&held);
+        std::fs::write(&report, "# report").expect("write");
+        let written = mentioning(home.path(), &report, 12).await;
+
+        assert_eq!(resume_point(written.chain(), &marker), Some(10 - RESUME_OVERLAP));
+        let frame: Value = serde_json::from_str(&resume_frame("sig-2", &written, &marker).expect("a resume")).expect("json");
+        assert_eq!(frame["type"], "delta", "{frame}");
+        assert_eq!(frame["fromIndex"], 10 - RESUME_OVERLAP);
+        assert_eq!(frame["endIndex"], 12);
     }
 
     /// History paging checks the prefix it depends on and nothing else.
@@ -1416,7 +1534,7 @@ mod tests {
             rx,
             latest: latest.clone(),
             sent_sig: "sig-1".to_string(),
-            sent: held.chain().clone(),
+            sent: Arc::new(held.prefix(held.len())),
             latest_draft: Arc::default(),
             owed: None,
         };
@@ -1446,7 +1564,7 @@ mod tests {
         assert_eq!(value["sig"], "sig-2");
         assert_eq!(value["fromIndex"], 3);
         assert_eq!(value["endIndex"], 7);
-        assert_eq!(attachment.sent.len(), 8, "the client is now up to date");
+        assert_eq!(attachment.sent.chain().len(), 8, "the client is now up to date");
 
         // And when the file under it was replaced, nothing it holds is reusable.
         let (tx, mut attachment) = lapped_attachment(&latest, &held);
@@ -1477,7 +1595,7 @@ mod tests {
         assert_eq!(value["fromIndex"], 20 - RESUME_OVERLAP);
         assert_eq!(value["endIndex"], 25);
         assert_eq!(attachment.sent_sig, "sig-9");
-        assert_eq!(attachment.sent.len(), 26, "re-based on the answer");
+        assert_eq!(attachment.sent.chain().len(), 26, "re-based on the answer");
 
         let stale = serde_json::json!({"type": "resync", "since": 20, "fp": "stale"}).to_string();
         let value: Value = serde_json::from_str(&attachment.client_frame(&stale).expect("answered")).expect("json");
@@ -1576,7 +1694,7 @@ mod tests {
             assert!(got.get(marker).is_none(), "a draft must not carry `{marker}`: {got}");
         }
         assert_eq!(attachment.sent_sig, "sig-1");
-        assert_eq!(attachment.sent.len(), 11, "the window held is untouched");
+        assert_eq!(attachment.sent.chain().len(), 11, "the window held is untouched");
 
         // The next transcript frame is the delta it would have been anyway.
         let next = Arc::new(transcript_at("/t/drafted.jsonl", items(12)));
@@ -1659,5 +1777,25 @@ mod tests {
             (Some("the third turn"), Some(3)),
             "the snapshot"
         );
+    }
+
+    /// A client attaching at the version the watcher holds shares the
+    /// watcher's parse, even when its own was read again after the first left
+    /// the cache: an idle session is held once, however many are watching.
+    #[tokio::test]
+    async fn a_client_attaching_at_the_watchers_version_shares_its_parse() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = "77777777-7777-4777-8777-777777777777";
+        let (paths, drive) = crate::fake::drive(dir.path());
+        let file = crate::fake::session(&paths, id, "the first turn\n");
+        let registry = FeedRegistry::new();
+        let attach = || attach_session_feed_with(&registry, &drive, crate::fake::SOURCE, id, None, SESSION_PAGE_SIZE);
+
+        let first = attach().await.expect("attached");
+        droppen_sessions::loader::forget_transcript(&file);
+        let second = attach().await.expect("attached");
+        let latest = second.attachment.latest.lock().expect("latest").1.clone();
+        assert!(Arc::ptr_eq(&first.attachment.sent, &latest));
+        assert!(Arc::ptr_eq(&second.attachment.sent, &latest), "one parse for both");
     }
 }

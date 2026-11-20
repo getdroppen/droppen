@@ -82,7 +82,7 @@ pub struct QuestionEntry {
 }
 
 /// A file the item points at, offered to the UI as a download chip.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 pub struct FileRef {
     /// Base name, shown on the chip.
     pub name: String,
@@ -211,6 +211,12 @@ pub struct TranscriptItem {
     /// the words.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The item as its transcript wrote it, kept when the mentioned-file
+    /// chips changed it: what its fingerprint hashes
+    /// ([`TranscriptItem::as_transcribed`]). Never on the wire: a client reads
+    /// the chips themselves.
+    #[serde(skip)]
+    pub(crate) transcribed: Option<Box<TranscriptItem>>,
 }
 
 /// What a tool call or its result should look like on screen.
@@ -283,6 +289,7 @@ pub fn make_item(role: Role, kind: ItemKind, raw_text: &str, timestamp: Option<&
         task_status: None,
         synthetic: None,
         model: None,
+        transcribed: None,
     }
 }
 
@@ -313,6 +320,7 @@ pub fn make_tool_item(role: Role, kind: ItemKind, display: ToolDisplay, timestam
         task_status: None,
         synthetic: None,
         model: None,
+        transcribed: None,
     }
 }
 

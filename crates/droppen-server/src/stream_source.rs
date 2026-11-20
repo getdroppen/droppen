@@ -185,13 +185,13 @@ mod tests {
     /// makes them (`droppen_agent::streams::test_transcripts`). This holds a
     /// loader's transcript, read through [`LoadedTranscript`] as the streams
     /// read it, against that stand-in for the same items: the same items,
-    /// chain, fingerprints and resume markers, of the whole and of a prefix.
-    /// A change to how the loader chains or spells a fingerprint fails here
-    /// until the stand-in follows it.
-    #[test]
-    fn a_loaded_transcript_reads_as_the_streams_stand_in_does() {
+    /// chain, fingerprints and resume markers, of the whole and of a prefix,
+    /// with a mentioned file's chip on one item. A change to how the loader
+    /// chains or spells a fingerprint fails here until the stand-in follows it.
+    #[tokio::test]
+    async fn a_loaded_transcript_reads_as_the_streams_stand_in_does() {
         let path = Path::new("/tmp/t.jsonl");
-        let items: Vec<TranscriptItem> = (0..6)
+        let mut items: Vec<TranscriptItem> = (0..6)
             .map(|i| {
                 serde_json::from_value(serde_json::json!({
                     "role": if i % 2 == 0 { "user" } else { "assistant" }, "kind": "text", "text": format!("{i}:{}", "x".repeat(i * 7)),
@@ -202,8 +202,20 @@ mod tests {
                 .unwrap()
             })
             .collect();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("notes.md"), "hi").unwrap();
+        items[1].text = "wrote `~/notes.md`".into();
+        droppen_sessions::mentions::annotate_mentioned_files(home.path(), &mut items, None, droppen_sessions::mentions::no_citations).await;
+        assert!(items[1].is_annotated(), "the chip is there to be left out");
         let loaded = LoadedTranscript(Arc::new(loader::Transcript::new(path, Arc::new(items.clone()))));
-        let stand_in = TestTranscript::new(path, TestItems(items.iter().map(|item| serde_json::to_value(item).unwrap()).collect()));
+        let json = |item: &TranscriptItem| serde_json::to_value(item).unwrap();
+        let transcribed = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.is_annotated())
+            .map(|(i, item)| (i, json(item.as_transcribed())))
+            .collect();
+        let stand_in = TestTranscript::new(path, TestItems(items.iter().map(json).collect(), transcribed));
         let same = |real: &dyn Transcript, test: &dyn Transcript| {
             assert_eq!(real.len(), test.len());
             for i in 0..real.len() {

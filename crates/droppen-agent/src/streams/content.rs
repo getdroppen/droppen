@@ -625,7 +625,7 @@ mod tests {
     use super::super::test_transcripts::{encode_fp, fingerprint_chain, TestItems, TestRow, RESUME_OVERLAP};
 
     fn items(n: usize, text_len: usize) -> TestItems {
-        TestItems(
+        TestItems::of(
             (0..n)
                 .map(|i| {
                     serde_json::json!({
@@ -661,6 +661,27 @@ mod tests {
         assert_eq!(
             cursor.delta(&fingerprint_chain(std::path::Path::new("/tmp/other"), &list)),
             Delta::Rebuild
+        );
+    }
+
+    /// A chip that came or went with a mentioned file leaves the chain where
+    /// it was, so the copy holds what it held: nothing to send, however far
+    /// back the item is.
+    #[test]
+    fn a_chip_that_comes_or_goes_is_no_delta() {
+        let path = std::path::Path::new("/tmp/t.jsonl");
+        let cursor = SessionCursor::at(0, 10, &fingerprint_chain(path, &items(10, 5)), "s");
+        let mut chipped = items(10, 5);
+        chipped.1.insert(0, chipped.0[0].clone());
+        chipped.0[0]["files"] = serde_json::json!([{"name": "notes.md", "path": "/u/notes.md"}]);
+        assert_eq!(cursor.delta(&fingerprint_chain(path, &chipped)), Delta::None);
+
+        let mut renamed = items(10, 5);
+        renamed.0[0]["files"] = serde_json::json!([{"name": "notes.md", "path": "/u/notes.md"}]);
+        assert_eq!(
+            cursor.delta(&fingerprint_chain(path, &renamed)),
+            Delta::Rebuild,
+            "a file the transcript itself names is part of it"
         );
     }
 
