@@ -1484,6 +1484,26 @@ mod tests {
         assert_eq!(range_of(&transcript_range(&all, 0, 400)), range_of(&transcript_page(&all, 400)));
     }
 
+    /// The byte cap is on the JSON array the items are sent as, to the byte:
+    /// its brackets, every item, and a comma between each two. A range whose
+    /// array would be exactly the cap is sent; one byte more and its oldest
+    /// item is left for the next request.
+    #[test]
+    fn the_byte_cap_counts_the_array_exactly() {
+        // 4000 bytes of text an item: the cap falls about 250 items back,
+        // past the 200 of the page.
+        let (from, end) = (349, 600);
+        for (over, start) in [(0, from), (1, from + 1)] {
+            let mut all = heavy(end, 4000);
+            let short = MAX_HISTORY_BYTES + over - sent_len(&all[from..]);
+            all[from].text.push_str(&"y".repeat(short));
+            assert_eq!(sent_len(&all[from..]), MAX_HISTORY_BYTES + over);
+            let page = transcript_range(&all, 0, end);
+            assert_eq!(page.start_index, start, "an array of the cap {over:+} bytes");
+            assert!(sent_len(&page.items) <= MAX_HISTORY_BYTES);
+        }
+    }
+
     #[test]
     fn a_range_stops_at_whichever_cap_it_meets_first() {
         // Light items: two thousand of them are well under the bytes, and the item cap stops it.

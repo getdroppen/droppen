@@ -116,10 +116,15 @@ interface Probe {
   paging: string[];
 }
 
-/** A session view, as far as the jump sees it. */
-function Session({ all, cap, probe }: { all: TranscriptItem[]; cap: number; probe: Probe }) {
+/**
+ * A session view, as far as the jump sees it. `fails` says which of its
+ * history requests (the first is 1) do not come back: the window stays as it
+ * was and the view says why, as the feed does (`SessionFeed.loadEarlier`).
+ */
+function Session({ all, cap, probe, fails }: { all: TranscriptItem[]; cap: number; probe: Probe; fails?: (request: number) => boolean }) {
   const [win, setWin] = React.useState(() => lastPage(all));
   const [loading, setLoading] = React.useState(false);
+  const [historyError, setHistoryError] = React.useState<string | null>(null);
   const busy = React.useRef(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const rowsRef = React.useRef<HTMLDivElement>(null);
@@ -127,10 +132,15 @@ function Session({ all, cap, probe }: { all: TranscriptItem[]; cap: number; prob
     if (busy.current || !win.hasMoreBefore) return null;
     busy.current = true;
     setLoading(true);
+    setHistoryError(null);
     probe.asked.push(from);
+    const failed = fails?.(probe.asked.length) ?? false;
     const before = win.startIndex;
     return new Promise((resolve) => setTimeout(resolve, 0))
-      .then(() => setWin((prev) => prependHistoryPage(prev, serve(all, before, from, cap))))
+      .then(() => {
+        if (failed) setHistoryError("history failed");
+        else setWin((prev) => prependHistoryPage(prev, serve(all, before, from, cap)));
+      })
       .finally(() => {
         busy.current = false;
         setLoading(false);
@@ -141,7 +151,7 @@ function Session({ all, cap, probe }: { all: TranscriptItem[]; cap: number; prob
     id: "a",
     window: win,
     isLoadingEarlier: loading,
-    historyError: null,
+    historyError,
     loadEarlier,
     scrollRef,
     rowsRef,
@@ -181,7 +191,7 @@ function Session({ all, cap, probe }: { all: TranscriptItem[]; cap: number; prob
 }
 
 /** A view of its own for the test, taken down when the test ends however it ends. */
-async function mount(t: TestContext, all: TranscriptItem[], cap: number) {
+async function mount(t: TestContext, all: TranscriptItem[], cap: number, fails?: (request: number) => boolean) {
   const probe: Probe = { search: null, window: null, asked: [], paging: [] };
   const host = container.appendChild(window.document.createElement("div"));
   const root = createRoot(host);
@@ -189,7 +199,7 @@ async function mount(t: TestContext, all: TranscriptItem[], cap: number) {
     await act(async () => root.unmount());
     host.remove();
   });
-  await act(async () => root.render(<Session all={all} cap={cap} probe={probe} />));
+  await act(async () => root.render(<Session all={all} cap={cap} probe={probe} fails={fails} />));
   const flashed = () => [...host.querySelectorAll(".rh-search-flash")].map((el) => Number(el.getAttribute("data-ti")));
   return { probe, host, flashed };
 }
@@ -279,4 +289,29 @@ test("an item the window already holds is landed on at once, with no request", a
   assert.deepEqual(outcomes, ["landed"]);
   assert.deepEqual(probe.asked, []);
   assert.deepEqual(flashed(), [9805]);
+});
+
+test("a request for the rows above an item already brought in that fails still lands on the item", async (t) => {
+  const all = transcript(10_000, 10, "x");
+  // A page at a time: the first answer brings the item in 37 rows from the
+  // top, and the second, for the rows above it, does not come back.
+  const { probe, flashed } = await mount(t, all, PAGE, (request) => request === 2);
+  const outcomes: JumpOutcome[] = [];
+  await act(async () => probe.search!.jumpToItem(9637, (outcome) => outcomes.push(outcome)));
+  await settled(outcomes, probe);
+  assert.deepEqual(probe.asked, [9437, 9437]);
+  assert.equal(probe.window!.startIndex, 9600);
+  assert.deepEqual(outcomes, ["landed"]);
+  assert.deepEqual(flashed(), [9637]);
+});
+
+test("a request that fails before the item is in fails the jump", async (t) => {
+  const all = transcript(10_000, 10, "x");
+  const { probe, flashed } = await mount(t, all, MAX_HISTORY_ITEMS, () => true);
+  const outcomes: JumpOutcome[] = [];
+  await act(async () => probe.search!.jumpToItem(8000, (outcome) => outcomes.push(outcome)));
+  await settled(outcomes, probe);
+  assert.deepEqual(probe.asked, [7800]);
+  assert.deepEqual(outcomes, ["failed"]);
+  assert.deepEqual(flashed(), []);
 });
