@@ -275,6 +275,31 @@ pub fn history_anchor_holds(transcript: &Transcript, before: usize, fp: &str, si
     at >= before && transcript.fp_at(at).is_some_and(|ours| ours == fp)
 }
 
+/// The newest parse of `file_path` there is, and the signature it was taken
+/// at, for a route that proves its answer against its client's fingerprint
+/// (`holds`): served from instead of a load at `sig`, so that a transcript that
+/// has only been appended to since is not parsed again, whole, per request.
+///
+/// What `holds` checks is that the parse is the client's own over a prefix
+/// of it: the fingerprint the client sent, of items its window was cut from, is
+/// the parse's fingerprint of those items. An answer that depends on nothing
+/// past that prefix is then the one any parse holding the fingerprint gives,
+/// a fresh one included; a fresh one that no longer holds it is a client whose
+/// window the live feed is already replacing. `None` — and the caller loads at
+/// `sig` as it always did — when nothing is cached, when `holds` refuses, or
+/// when the signature shows the file was rewritten rather than appended to
+/// ([`droppen_sessions::may_have_grown`]), which the fingerprint of a parse
+/// taken before the rewrite could not.
+pub fn newest_parse_holding(
+    transcripts: &TranscriptSources,
+    file_path: &Path,
+    sig: &str,
+    holds: impl FnOnce(&Transcript) -> bool,
+) -> Option<(String, Arc<Transcript>)> {
+    let (cached_sig, transcript) = transcripts.newest_cached(file_path)?;
+    (droppen_sessions::may_have_grown(&cached_sig, sig) && holds(&transcript)).then_some((cached_sig, transcript))
+}
+
 /// The state half of a session, without any transcript.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

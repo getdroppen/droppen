@@ -1128,9 +1128,53 @@ pub async fn file_signature(path: &Path) -> Option<String> {
     Some(format!("{}:{}", compressed::content_len(&found, &metadata).await, mtime_ms(&metadata)))
 }
 
+/// Whether a transcript whose [`file_signature`] is `now` can be the one read
+/// at `then` with lines appended since: its text no shorter, its mtime no
+/// earlier.
+///
+/// A cheap refusal, not a proof. A file truncated, or replaced by a shorter or
+/// an older copy, fails it; one rewritten into something longer passes, and only
+/// a fingerprint can tell that one apart. A signature that does not read as one
+/// fails it too.
+pub fn may_have_grown(then: &str, now: &str) -> bool {
+    fn read(sig: &str) -> Option<(u64, f64)> {
+        let (len, mtime) = sig.split_once(':')?;
+        Some((len.parse().ok()?, mtime.parse().ok()?))
+    }
+    match (read(then), read(now)) {
+        (Some((then_len, then_at)), Some((now_len, now_at))) => now_len >= then_len && now_at >= then_at,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An append grows the text and moves the mtime on; a truncation, a
+    /// shorter copy or an older one shows in the signature and is refused.
+    #[tokio::test]
+    async fn a_signature_tells_an_append_from_a_rewrite_it_can_see() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "one\ntwo\n").expect("write");
+        let first = file_signature(&path).await.expect("sig");
+        assert!(may_have_grown(&first, &first), "unchanged");
+        writeln!(std::fs::OpenOptions::new().append(true).open(&path).expect("open"), "three").expect("append");
+        let appended = file_signature(&path).await.expect("sig");
+        assert!(may_have_grown(&first, &appended), "appended");
+        assert!(!may_have_grown(&appended, &first), "shorter");
+        std::fs::write(&path, "x\n").expect("rewrite");
+        let rewritten = file_signature(&path).await.expect("sig");
+        assert!(!may_have_grown(&appended, &rewritten), "rewritten shorter");
+
+        assert!(!may_have_grown("10:2000.5", "12:1000.25"), "an older copy");
+        assert!(may_have_grown("10:1000.25", "12:2000.5"));
+        assert!(!may_have_grown("", "12:2000.5"), "no signature to compare");
+        assert!(!may_have_grown("10:1000", "garbage"));
+    }
 
     /// #446: the transcript says `deepseek-v4.1-flash`, the process was asked
     /// for `deepseek-v4.1-flash[1m]`, and the composer has to show (and send)

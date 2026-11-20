@@ -172,7 +172,9 @@ pub struct SessionRename {
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistoryPage {
-    /// The transcript signature the page was read at.
+    /// The transcript signature the page was read at: with `fp` in the
+    /// query, possibly an older one than the file has now, since a page that
+    /// fingerprint proves is the same in every parse holding it.
     pub sig: String,
     /// The items in the window.
     pub items: Vec<TranscriptItem>,
@@ -180,7 +182,7 @@ pub struct SessionHistoryPage {
     pub start_index: usize,
     /// Absolute index one past the last item.
     pub end_index: usize,
-    /// Total item count of the transcript.
+    /// Total item count of the transcript at `sig`.
     pub total_items: usize,
     /// Whether older items exist before `start_index`.
     pub has_more_before: bool,
@@ -430,12 +432,24 @@ pub struct SearchQuery {
 }
 
 /// Query for `GET /api/sessions/{source}/{id}/first-unread`.
-#[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, Schematic)]
 pub struct FirstUnreadQuery {
     /// The read marker to count from: the `previousReadAt` the reader's
     /// arrival report answered with. Omitted for a session never read, which
     /// counts from the start.
     pub after: Option<String>,
+    /// The `endIndex` of the client's window, when `fp` is its resume marker.
+    pub since: Option<u32>,
+    /// The resume marker the session feed last sent the client (`prefixFp`):
+    /// its fingerprint of items `[0, since - 3)`. With `since`, it lets the
+    /// answer come from the newest parse the server already holds instead of a
+    /// fresh read of the transcript, when that parse holds the client's whole
+    /// window and the first unread message lies inside the part the marker
+    /// proves. `count` then counts through the end of that parse, which is at
+    /// least the client's window; messages written after it reach the client
+    /// through the feed. Without them, or when the parse cannot be proven, the
+    /// transcript is read as it is now.
+    pub fp: Option<String>,
 }
 
 // ------------------------------------------------------------------ validation
@@ -1485,15 +1499,31 @@ pub async fn session_history(
     let state_now = feed::load_session_state(drive, source, &id).await.ok_or_else(not_found)?;
     let file_path = PathBuf::from(&state_now.summary.file_path);
     let sig = file_signature(&file_path).await.ok_or_else(not_found)?;
-    let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
     let before = query.before as usize;
+    let since = query.since.map(|since| since as usize);
     // Only the prefix the page depends on is checked, so a session that grew
-    // since the client's window was cut is no reason to refuse it.
-    if let Some(fp) = query.fp.as_deref() {
-        if !feed::history_anchor_holds(&transcript, before, fp, query.since.map(|since| since as usize)) {
-            return Err(ApiError::conflict("transcript_changed"));
+    // since the client's window was cut is no reason to refuse it — nor to
+    // parse it again: the newest parse there is, at whatever signature, holds
+    // the same page whenever it holds the client's fingerprint. Its `sig` and
+    // `totalItems` are that parse's: a client places the page by `startFp`,
+    // and keeps the larger of its own total and the page's.
+    let cached = query.fp.as_deref().and_then(|fp| {
+        feed::newest_parse_holding(&drive.transcripts, &file_path, &sig, |transcript| {
+            feed::history_anchor_holds(transcript, before, fp, since)
+        })
+    });
+    let (sig, transcript) = match cached {
+        Some(cached) => cached,
+        None => {
+            let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
+            if let Some(fp) = query.fp.as_deref() {
+                if !feed::history_anchor_holds(&transcript, before, fp, since) {
+                    return Err(ApiError::conflict("transcript_changed"));
+                }
+            }
+            (sig, transcript)
         }
-    }
+    };
     let page = feed::transcript_page(&transcript.items, before);
     Ok(Json(SessionHistoryPage {
         sig,
@@ -1557,16 +1587,32 @@ pub(crate) async fn search_session(
 /// tail, and nothing that reads the items needs it. The scope is deliberately
 /// not checked either — reading is never gated.
 async fn whole_transcript(drive: &crate::Drive, source: Source, id: &str) -> Result<(std::sync::Arc<Vec<TranscriptItem>>, String), ApiError> {
+    let file = transcript_file(drive, source, id).await?;
+    Ok((drive.transcripts.load(&drive.paths, source, &file.path, &file.sig).await.items.clone(), file.mtime))
+}
+
+/// Where one session's transcript is and what it is now, without reading it.
+struct TranscriptFile {
+    path: PathBuf,
+    /// Its [`file_signature`].
+    sig: String,
+    /// Its mtime (ISO-8601).
+    mtime: String,
+}
+
+/// [`TranscriptFile`] for session `id`, looked up the way
+/// [`whole_transcript`] says.
+async fn transcript_file(drive: &crate::Drive, source: Source, id: &str) -> Result<TranscriptFile, ApiError> {
     let not_found = || ApiError::not_found("session not found");
-    let file_path = drive.transcripts.find_file(&drive.paths, source, id).await.ok_or_else(not_found)?;
-    let sig = file_signature(&file_path).await.ok_or_else(not_found)?;
+    let path = drive.transcripts.find_file(&drive.paths, source, id).await.ok_or_else(not_found)?;
+    let sig = file_signature(&path).await.ok_or_else(not_found)?;
     // In the form it is on disk: a codex rollout may be compressed.
-    let mtime = droppen_sessions::compressed::locate(&file_path)
+    let mtime = droppen_sessions::compressed::locate(&path)
         .await
         .and_then(|(_, metadata)| metadata.modified())
         .map(droppen_base::time::iso8601)
         .map_err(|_| not_found())?;
-    Ok((drive.transcripts.load(&drive.paths, source, &file_path, &sig).await.items.clone(), mtime))
+    Ok(TranscriptFile { path, sig, mtime })
 }
 
 /// Where the messages a visit has not read yet begin.
@@ -1576,7 +1622,9 @@ async fn whole_transcript(drive: &crate::Drive, source: Source, id: &str) -> Res
 /// so the answer is about what was unread *before* the reader got there, and
 /// no later report can move it. Read-only and ungated like search, and answered
 /// over the same cached parse, so the index is one the history route can page
-/// to. See `sessions::attention::first_unread`.
+/// to. With the client's resume marker (`since`, `fp`) that may be an older
+/// parse than the file now has, when it provably gives the same index.
+/// See `sessions::attention::first_unread`.
 #[api(
     id = "session_first_unread",
     group = "sessions",
@@ -1589,7 +1637,7 @@ pub async fn session_first_unread(
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiQuery(query): ApiQuery<FirstUnreadQuery>,
 ) -> Result<Json<droppen_sessions::attention::FirstUnread>, ApiError> {
-    first_unread_of(&state.drive, source, &id, query.after.as_deref()).await.map(Json)
+    first_unread_of(&state.drive, source, &id, &query).await.map(Json)
 }
 
 /// [`session_first_unread`] without the extractors, for the tests.
@@ -1597,10 +1645,51 @@ pub(crate) async fn first_unread_of(
     drive: &crate::Drive,
     source: Source,
     id: &str,
-    after: Option<&str>,
+    query: &FirstUnreadQuery,
 ) -> Result<droppen_sessions::attention::FirstUnread, ApiError> {
-    let (items, mtime) = whole_transcript(drive, source, id).await?;
-    Ok(droppen_sessions::attention::first_unread(&items, after, &mtime))
+    let file = transcript_file(drive, source, id).await?;
+    let after = query.after.as_deref();
+    let cached = match (query.since, query.fp.as_deref()) {
+        (Some(since), Some(fp)) => cached_first_unread(drive, &file, since as usize, fp, after),
+        _ => None,
+    };
+    if let Some(found) = cached {
+        return Ok(found);
+    }
+    let items = drive.transcripts.load(&drive.paths, source, &file.path, &file.sig).await.items.clone();
+    Ok(droppen_sessions::attention::first_unread(&items, after, &file.mtime))
+}
+
+/// [`droppen_sessions::attention::first_unread`] off the newest parse there
+/// is, when it is provably the index a fresh read would answer; `None` when
+/// the transcript has to be read.
+///
+/// The answer depends on the transcript's tail — an unread message may have
+/// been written after any parse — so the parse has to hold more than a page's
+/// anchor would. All three of:
+///
+/// * the client's resume marker: the parse's items `[0, since - K)` are the
+///   ones the client's window was cut from ([`feed::newest_parse_holding`]),
+///   and therefore the ones any parse still holding that marker has;
+/// * the client's whole window (`since` items), so that `count`, which counts
+///   to the end of the parse, misses nothing the client already holds;
+/// * an unread message inside `[0, since - K)`. Every item up to it is then
+///   the same in a fresh parse holding the marker: none before it is unread,
+///   and it is, whatever was written after. A message without a timestamp
+///   stands at the file's mtime as it is now, as on a fresh read.
+fn cached_first_unread(
+    drive: &crate::Drive,
+    file: &TranscriptFile,
+    since: usize,
+    fp: &str,
+    after: Option<&str>,
+) -> Option<droppen_sessions::attention::FirstUnread> {
+    let proven = since.checked_sub(droppen_sessions::loader::RESUME_OVERLAP)?;
+    let (_, transcript) = feed::newest_parse_holding(&drive.transcripts, &file.path, &file.sig, |transcript| {
+        transcript.len() >= since && transcript.fp_at(proven).is_some_and(|ours| ours == fp)
+    })?;
+    let found = droppen_sessions::attention::first_unread(&transcript.items, after, &file.mtime);
+    found.index.0.is_some_and(|index| index < proven).then_some(found)
 }
 
 /// Every subagent that ever wrote under a session.
@@ -2581,5 +2670,275 @@ mod tests {
             Some(QuestionState::Expired),
             "nothing moved, so a shorter answer can still be given"
         );
+    }
+
+    // ------------------------------------------------- pages and the first unread off the newest parse
+
+    /// `line {i}` for every `i` in `range`, one per line: user texts to the fake reader.
+    fn lines(range: std::ops::Range<usize>) -> String {
+        range.map(|i| format!("line {i}\n")).collect()
+    }
+
+    /// What a live CLI does to its transcript.
+    fn append(file: &std::path::Path, text: &str) {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(file)
+            .expect("open")
+            .write_all(text.as_bytes())
+            .expect("append");
+    }
+
+    /// The session feed's parse at the file's signature now, which is also
+    /// what the cache then holds.
+    async fn parse_now(drive: &Drive, file: &std::path::Path) -> (String, Arc<droppen_sessions::loader::Transcript>) {
+        let sig = file_signature(file).await.expect("sig");
+        let transcript = drive.transcripts.load(&drive.paths, fake::SOURCE, file, &sig).await;
+        (sig, transcript)
+    }
+
+    /// The signature of the parse the cache holds for `file`.
+    fn cached_sig(drive: &Drive, file: &std::path::Path) -> Option<String> {
+        drive.transcripts.newest_cached(file).map(|(sig, _)| sig)
+    }
+
+    /// Whether the cache's parse of `file` is of the file as it is now: it was
+    /// read again.
+    async fn read_again(drive: &Drive, file: &std::path::Path) -> bool {
+        cached_sig(drive, file) == file_signature(file).await
+    }
+
+    async fn history(state: &DriveState, id: &str, before: usize, fp: Option<String>, since: Option<usize>) -> Result<SessionHistoryPage, ApiError> {
+        let query = HistoryQuery {
+            before: before as u32,
+            fp,
+            since: since.map(|since| since as u32),
+        };
+        session_history(State(state.clone()), ApiPath((fake::SOURCE, id.to_string())), ApiQuery(query))
+            .await
+            .map(|Json(page)| page)
+    }
+
+    fn texts(items: &[TranscriptItem]) -> Vec<&str> {
+        items.iter().map(|item| item.text.as_str()).collect()
+    }
+
+    /// A live session is appended to between the feed's parse and the click
+    /// on "load earlier": the page is cut from the parse already held, which
+    /// gives exactly the page a fresh read gives, without reading the file.
+    #[tokio::test]
+    async fn a_history_page_is_cut_from_the_newest_parse_after_an_append() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-after-an-append";
+        let file = fake::session(&state.paths, id, &lines(0..300));
+        // The window the feed sent: the last two hundred items.
+        let (held_sig, held) = parse_now(&state.drive, &file).await;
+        let start_fp = held.fp_at(100).expect("in range");
+        append(&file, &lines(300..310));
+        let now = file_signature(&file).await.expect("sig");
+        assert_ne!(now, held_sig, "the file moved on");
+
+        let page = history(&state, id, 100, Some(start_fp.clone()), None).await.expect("a page");
+        assert_eq!(page.sig, held_sig, "read off the parse already held");
+        assert_eq!(cached_sig(&state.drive, &file), Some(held_sig.clone()), "and nothing was parsed");
+        assert_eq!((page.start_index, page.end_index, page.has_more_before), (0, 100, false));
+        assert_eq!(texts(&page.items), texts(&held.items[..100]));
+        assert_eq!(page.start_fp, held.fp_at(0).expect("the seed"));
+        assert_eq!(page.total_items, 300, "the total at the page's own signature, which a client never lowers its own to");
+
+        // A window that trimmed its start asks with its resume marker instead.
+        let by_marker = history(&state, id, 100, Some(held.prefix_fp()), Some(held.len())).await.expect("a page");
+        assert_eq!((by_marker.sig.as_str(), by_marker.start_index), (held_sig.as_str(), 0));
+
+        // What a fresh read of the file gives for the same request.
+        droppen_sessions::loader::forget_transcript(&file);
+        let fresh = history(&state, id, 100, Some(start_fp), None).await.expect("a page");
+        assert_eq!(fresh.sig, now, "read again, with nothing held");
+        assert_eq!(texts(&fresh.items), texts(&page.items));
+        assert_eq!(
+            (fresh.start_index, fresh.end_index, fresh.has_more_before, &fresh.start_fp),
+            (page.start_index, page.end_index, page.has_more_before, &page.start_fp)
+        );
+        assert_eq!(fresh.total_items, 310);
+    }
+
+    /// A transcript rewritten rather than appended to: the parse held cannot
+    /// vouch for the page, the file is read again, and the client is told its
+    /// window has to be replaced, as before. Rewritten shorter, the signature
+    /// says so before any fingerprint is compared; rewritten and parsed since
+    /// (the feed re-reads every change), the fingerprint does.
+    #[tokio::test]
+    async fn a_rewritten_transcript_is_read_again_and_its_page_refused() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-rewritten";
+        let file = fake::session(&state.paths, id, &lines(0..300));
+        let (_, held) = parse_now(&state.drive, &file).await;
+        let start_fp = held.fp_at(100).expect("in range");
+        let conflict = |result: Result<SessionHistoryPage, ApiError>| {
+            let error = result.expect_err("refused");
+            assert_eq!(error.status(), gotcha::axum::http::StatusCode::CONFLICT);
+            assert!(error.body().to_string().contains("transcript_changed"), "{}", error.body());
+        };
+
+        // Replaced by a shorter transcript, nothing parsed since.
+        std::fs::write(&file, (0..250).map(|i| format!("other {i}\n")).collect::<String>()).expect("rewrite");
+        conflict(history(&state, id, 100, Some(start_fp.clone()), None).await);
+        assert!(read_again(&state.drive, &file).await);
+
+        // Replaced by a longer one, which the feed has parsed since.
+        std::fs::write(&file, (0..400).map(|i| format!("another {i}\n")).collect::<String>()).expect("rewrite");
+        parse_now(&state.drive, &file).await;
+        conflict(history(&state, id, 100, Some(start_fp), None).await);
+        conflict(history(&state, id, 100, Some(held.prefix_fp()), Some(held.len())).await);
+    }
+
+    /// The parse held being unable to prove the anchor is no reason to refuse
+    /// a page: a client whose window is newer than it is served from a fresh
+    /// read, exactly as before.
+    #[tokio::test]
+    async fn a_page_the_parse_held_cannot_prove_is_read_fresh() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-newer-window";
+        let file = fake::session(&state.paths, id, &lines(0..300));
+        parse_now(&state.drive, &file).await;
+        append(&file, &lines(300..400));
+        // A window cut from a parse of all four hundred, which the cache does not hold.
+        let newer = state
+            .drive
+            .transcripts
+            .read_uncached(&state.paths, fake::SOURCE, &file)
+            .await
+            .expect("readable");
+        let page = history(&state, id, 300, Some(newer.prefix_fp()), Some(newer.len())).await.expect("a page");
+        let now = file_signature(&file).await.expect("sig");
+        assert_eq!((page.sig.as_str(), page.start_index, page.end_index), (now.as_str(), 100, 300));
+        assert_eq!(texts(&page.items), texts(&newer.items[100..300]));
+    }
+
+    /// `n` user lines, then `count` agent messages stamped in minute `minute`,
+    /// then `tail` more user lines.
+    fn with_answers(n: usize, minute: usize, count: usize, tail: usize) -> String {
+        let mut out = lines(0..n);
+        for i in 0..count {
+            out.push_str(&format!("agent@2026-10-01T10:{minute:02}:{i:02}.000Z answer {minute}.{i}\n"));
+        }
+        out + &lines(n..n + tail)
+    }
+
+    fn first_unread_query(after: &str, marker: Option<(usize, String)>) -> FirstUnreadQuery {
+        let (since, fp) = marker.map_or((None, None), |(since, fp)| (Some(since as u32), Some(fp)));
+        FirstUnreadQuery {
+            after: Some(after.to_string()),
+            since,
+            fp,
+        }
+    }
+
+    /// The first unread message is inside the window the client holds and the
+    /// parse proves: the answer is read off that parse, and it is the answer a
+    /// fresh read gives — with nothing new to count in the tail, `count` too.
+    #[tokio::test]
+    async fn the_first_unread_inside_the_parse_held_is_answered_from_it() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, drive) = drive();
+        let id = "first-unread-held";
+        // Read up to minute 1; the two answers of minute 2 are unread.
+        let file = fake::session(&drive.paths, id, &(with_answers(10, 1, 2, 5) + &with_answers(20, 2, 2, 30)));
+        let (held_sig, held) = parse_now(&drive, &file).await;
+        let marker = (held.len(), held.prefix_fp());
+        append(&file, &lines(100..120));
+        let read = "2026-10-01T10:01:59.000Z";
+
+        let found = first_unread_of(&drive, fake::SOURCE, id, &first_unread_query(read, Some(marker))).await.expect("readable");
+        assert_eq!(cached_sig(&drive, &file), Some(held_sig), "nothing was parsed");
+        let index = found.index.0.expect("an unread message");
+        assert_eq!((held.items[index].text.as_str(), found.count), ("answer 2.0", 2));
+
+        let fresh = first_unread_of(&drive, fake::SOURCE, id, &first_unread_query(read, None)).await.expect("readable");
+        assert!(read_again(&drive, &file).await, "this one read the file");
+        assert_eq!(found, fresh, "the same answer");
+    }
+
+    /// An answer written after the parse held: the index is still the one a
+    /// fresh read gives, and `count` counts to the end of that parse — the
+    /// client's whole window — not the message the feed has yet to send it.
+    #[tokio::test]
+    async fn the_count_off_the_parse_held_ends_where_it_does() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, drive) = drive();
+        let id = "first-unread-count";
+        let file = fake::session(&drive.paths, id, &with_answers(10, 2, 2, 30));
+        let (_, held) = parse_now(&drive, &file).await;
+        let marker = (held.len(), held.prefix_fp());
+        append(&file, "agent@2026-10-01T10:05:00.000Z a later answer\n");
+        let read = "2026-10-01T10:01:00.000Z";
+
+        let found = first_unread_of(&drive, fake::SOURCE, id, &first_unread_query(read, Some(marker))).await.expect("readable");
+        droppen_sessions::loader::forget_transcript(&file);
+        let fresh = first_unread_of(&drive, fake::SOURCE, id, &first_unread_query(read, None)).await.expect("readable");
+        assert_eq!(found.index, fresh.index);
+        assert_eq!((found.count, fresh.count), (2, 3));
+    }
+
+    /// Whenever the parse held cannot prove the answer, the transcript is read
+    /// as it is now: unread messages only in the tail written since, a first
+    /// unread among the last items the marker leaves out, a marker the parse
+    /// does not hold, a client's window longer than the parse, a file
+    /// rewritten — or no marker at all.
+    #[tokio::test]
+    async fn the_first_unread_the_parse_held_cannot_prove_is_read_fresh() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, drive) = drive();
+        let id = "first-unread-fresh";
+        let file = fake::session(&drive.paths, id, &with_answers(10, 1, 1, 30));
+        let read = "2026-10-01T10:01:59.000Z";
+        let ask = |query: FirstUnreadQuery| {
+            let drive = drive.clone();
+            async move { first_unread_of(&drive, fake::SOURCE, id, &query).await.expect("readable") }
+        };
+
+        // Nothing unread in the parse; a new answer in the tail.
+        let (_, held) = parse_now(&drive, &file).await;
+        append(&file, "agent@2026-10-01T10:05:00.000Z new\n");
+        let found = ask(first_unread_query(read, Some((held.len(), held.prefix_fp())))).await;
+        assert_eq!((found.index.0, found.count), (Some(held.len()), 1), "the message in the tail");
+        assert!(read_again(&drive, &file).await);
+
+        // The first unread among the last three items of the window: outside what the marker proves.
+        let (_, held) = parse_now(&drive, &file).await;
+        append(&file, &lines(200..201));
+        let found = ask(first_unread_query(read, Some((held.len(), held.prefix_fp())))).await;
+        assert_eq!(found.index.0, Some(held.len() - 1));
+        assert!(read_again(&drive, &file).await);
+
+        // A marker the parse does not hold.
+        let (_, held) = parse_now(&drive, &file).await;
+        append(&file, &lines(201..202));
+        ask(first_unread_query(read, Some((held.len(), "not-this-one".into())))).await;
+        assert!(read_again(&drive, &file).await);
+
+        // A window one item longer than the parse, whose marker the parse does hold.
+        let (_, held) = parse_now(&drive, &file).await;
+        append(&file, &lines(202..203));
+        let marker = held.fp_at(held.len() + 1 - droppen_sessions::loader::RESUME_OVERLAP).expect("in range");
+        ask(first_unread_query(read, Some((held.len() + 1, marker)))).await;
+        assert!(read_again(&drive, &file).await);
+
+        // Rewritten shorter: the signature refuses the parse held.
+        let (_, held) = parse_now(&drive, &file).await;
+        std::fs::write(&file, with_answers(1, 3, 1, 5)).expect("rewrite");
+        let found = ask(first_unread_query(read, Some((held.len(), held.prefix_fp())))).await;
+        assert_eq!((found.index.0, found.count), (Some(1), 1), "the rewritten file's answer");
+        assert!(read_again(&drive, &file).await);
+
+        // No marker: as before.
+        parse_now(&drive, &file).await;
+        append(&file, &lines(300..301));
+        ask(first_unread_query(read, None)).await;
+        assert!(read_again(&drive, &file).await);
     }
 }

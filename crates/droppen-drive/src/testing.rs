@@ -26,6 +26,10 @@ impl Drive {
     /// The first item of session `id` of `source` after `after`, as the session
     /// detail's unread marker is found.
     pub async fn first_unread_of(&self, source: Source, id: &str, after: Option<&str>) -> Result<FirstUnread, ApiError> {
-        crate::routes::first_unread_of(self, source, id, after).await
+        let query = crate::routes::FirstUnreadQuery {
+            after: after.map(str::to_owned),
+            ..Default::default()
+        };
+        crate::routes::first_unread_of(self, source, id, &query).await
     }
 }

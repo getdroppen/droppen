@@ -352,6 +352,22 @@ impl TranscriptSources {
             }
         }
     }
+
+    /// The newest parse of `file_path` the cache holds — of those remembered,
+    /// the one that started last ([`PARSES_STARTED`]) — whatever signature it
+    /// was taken at, and that signature; `None` with none. Never a read.
+    ///
+    /// For a reader that proves for itself how much of an older parse still
+    /// stands — the history route does, against its client's fingerprint — so
+    /// that a transcript appended to every few seconds does not cost it a parse
+    /// of the whole file on every request.
+    pub fn newest_cached(&self, file_path: &Path) -> Option<(String, Arc<Transcript>)> {
+        let cache = TRANSCRIPTS.lock().expect("transcript cache poisoned");
+        cache
+            .iter()
+            .find(|entry| entry.path == file_path)
+            .map(|entry| (entry.sig.clone(), entry.transcript.clone()))
+    }
 }
 
 #[cfg(test)]

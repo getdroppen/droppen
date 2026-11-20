@@ -111,6 +111,18 @@ test("the server is asked from the mark the arrival's report replaced", () => {
   assert.deepEqual(firstUnreadQuery(null), {}, "never read: from the start");
 });
 
+test("the window's resume marker goes with the question, so the server can skip a read", () => {
+  const window = { endIndex: 1200, prefixFp: "fp-of-1197" };
+  assert.deepEqual(firstUnreadQuery(READ_AT, window), { after: READ_AT, since: 1200, fp: "fp-of-1197" });
+  assert.deepEqual(firstUnreadQuery(null, window), { since: 1200, fp: "fp-of-1197" });
+  assert.deepEqual(
+    firstUnreadQuery(READ_AT, { endIndex: 1200, prefixFp: null }),
+    { after: READ_AT },
+    "no marker to prove the window with: the server reads the file",
+  );
+  assert.deepEqual(firstUnreadQuery(READ_AT, null), { after: READ_AT }, "no window yet");
+});
+
 test("a notification tapped for the session on screen is an arrival at it", () => {
   assert.equal(arrivesAt("/sessions/claude/abc", "claude", "abc"), true);
   assert.equal(arrivesAt("/sessions/claude/abc/?from=push#x", "claude", "abc"), true);
