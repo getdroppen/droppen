@@ -10405,7 +10405,7 @@ export interface operations {
                  *     knows the item it wants — a jump to a search hit or to the first unread
                  *     message: the page is then the items `[from, before)` in one answer
                  *     instead of the one page before `before`. Never fewer items than that
-                 *     page, and at most 2000 items and 4 MiB of them; past either cap it is
+                 *     page, and at most 2000 items and 1 MiB of them; past either cap it is
                  *     the newest part of the range, and its `startIndex`, later than `from`
                  *     and with `hasMoreBefore`, is where the next request picks up. `fp`
                  *     proves it exactly as it proves a page. Absent, one page, as before.

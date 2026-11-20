@@ -34,6 +34,7 @@
  * marker matches); any other is told `409 transcript_changed` and resyncs.
  */
 import type { components } from "@/api/schema";
+import { MAX_HISTORY_ITEMS } from "@/features/sessions/session-feed-state";
 import type { SessionCopy, MirrorChange } from "@/lib/hub/mirror";
 import type { FeedCopy, StatusState, SubscriptionProgress } from "@/lib/hub/streams";
 import { DEFAULT_LIMIT, firstUnreadIn, MAX_LIMIT, readMarkOf, searchCopy, validateQuery } from "./offline-search";
@@ -74,12 +75,6 @@ export interface OfflineOptions {
 
 /** The server's page size (`SESSION_PAGE_SIZE`), and the least a `sub` may ask for. */
 export const PAGE_SIZE = 200;
-/**
- * The most items a history request asked to reach back (`from`) is sent: the
- * server's `MAX_HISTORY_ITEMS`. The machine also stops at 4 MiB of them; the
- * copy is on the device already, so here the count is the only cap.
- */
-export const MAX_RANGE = 2000;
 const MIN_LIMIT = 20;
 /** `RESUME_OVERLAP`: a resume re-sends the last few items the client holds. */
 export const RESUME_OVERLAP = 3;
@@ -255,18 +250,20 @@ export async function offlineFetch(source: OfflineSource | null, opts: OfflineOp
     if (parts.length === 3) {
       const before = Number(q.get("before"));
       if (!Number.isInteger(before) || before < 0) return json(400, { error: "before must be a non-negative integer" });
+      // A jump's range: refused like the machine's (`u32`) when it is not an index.
+      const reach = q.get("from");
+      if (reach !== null && !/^\d+$/.test(reach)) return json(400, { error: "from must be a non-negative integer" });
       const fp = q.get("fp");
       if (fp) {
         const since = q.has("since") ? Number(q.get("since")) : null;
         const holds = since !== null ? since - RESUME_OVERLAP >= before && holdsThisCopy(state, since, fp) : before === state.endIndex && fp === state.fp;
         if (!holds) return json(409, { error: "transcript_changed" });
       }
-      // A jump's range (`from`), capped like the machine caps it; never less than a page.
-      const from = q.has("from") ? Number(q.get("from")) : null;
-      const size =
-        from !== null && Number.isInteger(from) && from >= 0
-          ? Math.min(Math.max(before - from, PAGE_SIZE), MAX_RANGE)
-          : PAGE_SIZE;
+      // With `from`, everything back to it from where the page ends, capped
+      // like the machine caps it and never less than a page
+      // (`feed::transcript_range`).
+      const end = Math.max(state.startIndex, Math.min(before, state.endIndex));
+      const size = reach === null ? PAGE_SIZE : Math.max(Math.min(end - Number(reach), MAX_HISTORY_ITEMS), PAGE_SIZE);
       const page = pageOf(state, before, size);
       // Before where the copy starts: nothing here to serve.
       if (page.startIndex === page.endIndex && before > 0) return json(404, { error: "not in the offline copy" });

@@ -421,7 +421,7 @@ pub struct HistoryQuery {
     /// knows the item it wants — a jump to a search hit or to the first unread
     /// message: the page is then the items `[from, before)` in one answer
     /// instead of the one page before `before`. Never fewer items than that
-    /// page, and at most 2000 items and 4 MiB of them; past either cap it is
+    /// page, and at most 2000 items and 1 MiB of them; past either cap it is
     /// the newest part of the range, and its `startIndex`, later than `from`
     /// and with `hasMoreBefore`, is where the next request picks up. `fp`
     /// proves it exactly as it proves a page. Absent, one page, as before.
@@ -2909,6 +2909,37 @@ mod tests {
         // A `from` inside the page is the page.
         let near = history_from(&state, id, 2800, Some(start_fp), None, Some(2750)).await.expect("a page");
         assert_eq!((near.start_index, near.end_index, near.items.len()), (2600, 2800, feed::SESSION_PAGE_SIZE));
+    }
+
+    /// A live session appended to since the feed's parse: the range is cut
+    /// from the parse already held, as a page is, and is exactly what a fresh
+    /// read gives.
+    #[tokio::test]
+    async fn a_range_is_cut_from_the_newest_parse_after_an_append() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-ranged-after-an-append";
+        let file = fake::session(&state.paths, id, &lines(0..3000));
+        let (held_sig, held) = parse_now(&state.drive, &file).await;
+        let start_fp = held.fp_at(2800).expect("in range");
+        append(&file, &lines(3000..3050));
+        let now = file_signature(&file).await.expect("sig");
+        assert_ne!(now, held_sig, "the file moved on");
+
+        let range = history_from(&state, id, 2800, Some(start_fp.clone()), None, Some(1500)).await.expect("a range");
+        assert_eq!(range.sig, held_sig, "read off the parse already held");
+        assert_eq!(cached_sig(&state.drive, &file), Some(held_sig.clone()), "and nothing was parsed");
+        assert_eq!((range.start_index, range.end_index, range.total_items), (1500, 2800, 3000));
+        assert_eq!(texts(&range.items), texts(&held.items[1500..2800]));
+
+        droppen_sessions::loader::forget_transcript(&file);
+        let fresh = history_from(&state, id, 2800, Some(start_fp), None, Some(1500)).await.expect("a range");
+        assert_eq!((fresh.sig.as_str(), fresh.total_items), (now.as_str(), 3050), "read again, with nothing held");
+        assert_eq!(texts(&fresh.items), texts(&range.items));
+        assert_eq!(
+            (fresh.start_index, fresh.end_index, fresh.has_more_before, &fresh.start_fp),
+            (range.start_index, range.end_index, range.has_more_before, &range.start_fp)
+        );
     }
 
     /// Further back than the cap, the answer is the newest part of the range,

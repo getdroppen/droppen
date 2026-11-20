@@ -113,11 +113,15 @@ pub const MAX_RESUME_BYTES: usize = 4 * 1024 * 1024;
 /// ([`MAX_RESUME_ITEMS`]). A jump to an item further back than that takes a
 /// request per this many items instead of one per page.
 pub const MAX_HISTORY_ITEMS: usize = 2000;
-/// How many bytes of items such a request is sent at most, whatever its item
-/// count: the bound a resume has ([`MAX_RESUME_BYTES`]), for the same phone on
-/// the same bad network. The page a request without `from` would have been
-/// sent is sent whatever it weighs, as it always was.
-pub const MAX_HISTORY_BYTES: usize = 4 * 1024 * 1024;
+/// How many bytes of items (their JSON array) such a request is sent at most,
+/// whatever its item count. A quarter of what a resume may send
+/// ([`MAX_RESUME_BYTES`]): a jump shows nothing but a spinner while one answer
+/// is on its way, and at 64 KiB/s a megabyte is a quarter of a minute where
+/// four were a whole one. A heavier range takes a few requests instead, and
+/// its progress is counted between them; on a fast link that is a round trip
+/// per megabyte, against one per page before. The page a request without
+/// `from` would have been sent is sent whatever it weighs, as it always was.
+pub const MAX_HISTORY_BYTES: usize = 1024 * 1024;
 /// How many frames the fan-out buffers before it starts lapping slow clients.
 const BROADCAST_CAPACITY: usize = 64;
 /// The poll backstop, for filesystem events the watcher misses.
@@ -171,16 +175,20 @@ pub fn transcript_page(items: &[impl Borrow<TranscriptItem>], before: usize) -> 
 /// Past either cap the page is the newest part of the range: it still ends at
 /// `before`, so it meets the client's window, and its `start_index` — later
 /// than `from`, with `has_more_before` — is where the next request picks up.
-pub fn transcript_range(items: &[TranscriptItem], from: usize, before: usize) -> TranscriptPage {
+pub fn transcript_range(items: &[impl Borrow<TranscriptItem>], from: usize, before: usize) -> TranscriptPage {
     let end_index = before.min(items.len());
     let page_start = end_index.saturating_sub(SESSION_PAGE_SIZE);
     let reach = from.max(end_index.saturating_sub(MAX_HISTORY_ITEMS)).min(page_start);
-    // Newest first, each item's JSON and the comma before it. The page
-    // `transcript_page` cuts is counted but never refused, as it never was.
+    if reach == page_start {
+        return transcript_page(items, before);
+    }
+    // Newest first, as the JSON array they are sent as: the brackets, each
+    // item, and a comma between two. The page `transcript_page` cuts is
+    // counted but never refused, as it never was.
     let mut start_index = end_index;
-    let mut bytes = 0;
+    let mut bytes = 2;
     while start_index > reach {
-        let next = json_len(&items[start_index - 1]) + 1;
+        let next = json_len(items[start_index - 1].borrow()) + usize::from(start_index < end_index);
         if start_index <= page_start && bytes + next > MAX_HISTORY_BYTES {
             break;
         }
@@ -188,7 +196,7 @@ pub fn transcript_range(items: &[TranscriptItem], from: usize, before: usize) ->
         start_index -= 1;
     }
     TranscriptPage {
-        items: items[start_index..end_index].to_vec(),
+        items: items[start_index..end_index].iter().map(|item| item.borrow().clone()).collect(),
         start_index,
         end_index,
         total_items: items.len(),
@@ -1461,25 +1469,62 @@ mod tests {
 
     #[test]
     fn a_range_past_the_byte_cap_is_its_newest_part_but_never_less_than_the_page() {
-        // 4 KiB of text an item: about a thousand items to the byte cap.
-        let heavy = |n: usize, size: usize| -> Vec<TranscriptItem> {
-            (0..n)
-                .map(|i| make_item(Role::User, ItemKind::Text, &format!("{i:05} {}", "x".repeat(size)), None))
-                .collect()
-        };
-        let all = heavy(1500, 4096);
+        // 2 KiB of text an item: about four hundred and fifty items to the byte cap.
+        let all = heavy(1500, 2048);
         let page = transcript_range(&all, 0, 1500);
-        let bytes: usize = page.items.iter().map(|item| json_len(item) + 1).sum();
-        assert!(bytes <= MAX_HISTORY_BYTES, "{bytes}");
+        assert!(sent_len(&page.items) <= MAX_HISTORY_BYTES, "{}", sent_len(&page.items));
         assert!(page.items.len() > SESSION_PAGE_SIZE && page.items.len() < 1500, "{}", page.items.len());
-        let one_more = json_len(&all[page.start_index - 1]) + 1;
-        assert!(bytes + one_more > MAX_HISTORY_BYTES, "as many as fit");
+        assert!(sent_len(&all[page.start_index - 1..1500]) > MAX_HISTORY_BYTES, "as many as fit");
         assert_eq!((page.end_index, page.has_more_before), (1500, true));
         assert!(page.items[0].text.starts_with(&format!("{:05}", page.start_index)));
 
         // A page heavier than the cap on its own is sent whole, as it always was, and nothing more.
-        let all = heavy(400, 32 * 1024);
+        let all = heavy(400, 8 * 1024);
+        assert!(sent_len(&all[200..]) > MAX_HISTORY_BYTES);
         assert_eq!(range_of(&transcript_range(&all, 0, 400)), range_of(&transcript_page(&all, 400)));
+    }
+
+    #[test]
+    fn a_range_stops_at_whichever_cap_it_meets_first() {
+        // Light items: two thousand of them are well under the bytes, and the item cap stops it.
+        let light = items(5000);
+        assert!(sent_len(&light[3000..]) < MAX_HISTORY_BYTES);
+        assert_eq!(range_of(&transcript_range(&light, 0, 5000)), (3000, 5000, MAX_HISTORY_ITEMS, true));
+
+        // Light at the end and heavy further back, all within the item cap's
+        // reach: the bytes stop it first, in the heavy part.
+        let mut mixed = items(3000);
+        for item in &mut mixed[..2000] {
+            item.text = "x".repeat(4096);
+        }
+        let page = transcript_range(&mixed, 0, 3000);
+        assert!(page.start_index > 1000 && page.start_index < 2000, "{}", page.start_index);
+        assert!(page.items.len() < MAX_HISTORY_ITEMS);
+        assert!(sent_len(&page.items) <= MAX_HISTORY_BYTES);
+        assert!(sent_len(&mixed[page.start_index - 1..]) > MAX_HISTORY_BYTES, "as many as fit");
+
+        // Both bind on the same request: heavy past the item cap's reach, so
+        // whichever is nearer wins and neither is exceeded.
+        for size in [64, 256, 512, 1024] {
+            let all = heavy(5000, size);
+            let page = transcript_range(&all, 0, 5000);
+            assert!(page.items.len() <= MAX_HISTORY_ITEMS, "{size}");
+            assert!(sent_len(&page.items) <= MAX_HISTORY_BYTES, "{size}");
+            let at_item_cap = page.items.len() == MAX_HISTORY_ITEMS;
+            assert!(at_item_cap || sent_len(&all[page.start_index - 1..]) > MAX_HISTORY_BYTES, "{size}: stopped by one of the two");
+        }
+    }
+
+    /// `n` items of `size` bytes of text, each led by its index.
+    fn heavy(n: usize, size: usize) -> Vec<TranscriptItem> {
+        (0..n)
+            .map(|i| make_item(Role::User, ItemKind::Text, &format!("{i:05} {}", "x".repeat(size)), None))
+            .collect()
+    }
+
+    /// How many bytes `items` are sent as.
+    fn sent_len(items: &[TranscriptItem]) -> usize {
+        serde_json::to_vec(items).expect("json").len()
     }
 
     #[test]

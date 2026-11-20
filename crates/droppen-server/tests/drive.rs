@@ -166,6 +166,59 @@ async fn an_older_page_of_the_transcript_can_be_paged_back_to() {
     probe.stop().await;
 }
 
+/// A jump to an item far back asks for the whole way to it in one request
+/// (`from`): one answer back to the item, capped at 2000 items, proven by the
+/// window's start fingerprint like a page. A `from` that is not an index is
+/// refused before anything is read.
+#[tokio::test]
+async fn a_jump_reaches_back_to_an_older_item_in_one_request() {
+    let probe = Probe::start().await;
+    let path = probe.seed_session(&probe.local_root(), SESSION_ID, &probe.workspace());
+    let mut file = std::fs::OpenOptions::new().append(true).open(&path).expect("append");
+    for index in 0..2500 {
+        writeln!(
+            file,
+            "{}",
+            json!({"type": "assistant", "message": {"content": [{"type": "text", "text": format!("line {index}")}]}})
+        )
+        .expect("write");
+    }
+    drop(file);
+
+    // The client's window: the newest page, [2301, 2501).
+    let history = format!("/api/sessions/claude/{SESSION_ID}/history");
+    let window = probe.get_json(&format!("{history}?before=2501")).await;
+    assert_eq!(window["startIndex"], 2301);
+    let start_fp = window["startFp"].as_str().expect("startFp").to_string();
+
+    let range = probe.get_json(&format!("{history}?before=2301&fp={start_fp}&from=500")).await;
+    assert_eq!((range["startIndex"].clone(), range["endIndex"].clone()), (json!(500), json!(2301)));
+    assert_eq!(range["items"].as_array().expect("items").len(), 1801);
+    assert_eq!(range["items"][0]["text"], "line 499", "item 0 is the seeded greeting");
+    assert_eq!(range["hasMoreBefore"], true);
+    assert_eq!(range["totalItems"], 2501);
+
+    let capped = probe.get_json(&format!("{history}?before=2301&fp={start_fp}&from=0")).await;
+    assert_eq!((capped["startIndex"].clone(), capped["items"].as_array().expect("items").len()), (json!(301), 2000));
+    let rest_fp = capped["startFp"].as_str().expect("startFp");
+    let rest = probe.get_json(&format!("{history}?before=301&fp={rest_fp}&from=0")).await;
+    assert_eq!((rest["startIndex"].clone(), rest["hasMoreBefore"].clone()), (json!(0), json!(false)));
+
+    // Without `from`, the page it always was.
+    let page = probe.get_json(&format!("{history}?before=2301&fp={start_fp}")).await;
+    assert_eq!((page["startIndex"].clone(), page["endIndex"].clone()), (json!(2101), json!(2301)));
+
+    let (status, body) = probe.get(&format!("{history}?before=2301&fp=stale&from=0")).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("transcript_changed"), "{body}");
+    for from in ["-1", "", "x", "1.5"] {
+        let (status, body) = probe.get(&format!("{history}?before=2301&fp={start_fp}&from={from}")).await;
+        assert_eq!(status, 400, "from={from}: {body}");
+    }
+
+    probe.stop().await;
+}
+
 /// Whether a file a message names exists is the filesystem's state, not the
 /// transcript's: creating it, or deleting it, while the session goes on must
 /// not refuse an older page anchored past the mention as `transcript_changed`.

@@ -52,7 +52,6 @@ import type { IconComponent } from "@/lib/icon";
 import { isImeKeydown } from "@/lib/ime";
 import {
   highlightSegments,
-  HISTORY_RANGE_MAX,
   hitRanges,
   JUMP_IDLE,
   jumpStatusReducer,
@@ -71,6 +70,7 @@ import {
   type JumpOwner,
   type SearchMatch,
 } from "@/features/sessions/session-search";
+import { MAX_HISTORY_ITEMS } from "@/features/sessions/session-feed-state";
 import { useApi } from "@/lib/machines/context";
 import { isSessionSource } from "./new-session-flow";
 
@@ -445,7 +445,7 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
         inflight: false,
         aheadSince: null,
         askedAt: null,
-        rangeSize: HISTORY_RANGE_MAX,
+        rangeSize: MAX_HISTORY_ITEMS,
       };
       dispatchJump({ type: "start", owner });
       setJumpTick((n) => n + 1);
@@ -647,9 +647,12 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
     const jump = jumpRef.current;
     if (!jump || !loaded || jump.inflight) return;
     const fail = () => settleJump("failed");
-    // A page this jump asked for did not come.
+    // A page this jump asked for did not come. One that was only to bring the
+    // rows above an item already here is no reason not to land on it.
     if (host.historyError && jump.pagesLoaded > 0 && !host.isLoadingEarlier) {
-      fail();
+      const target = jump.match.index;
+      const held = target >= loaded.startIndex && target < loaded.endIndex;
+      settleJump(held && land(jump) ? "landed" : "failed");
       return;
     }
     // What the last request brought is what the rest are estimated at. A

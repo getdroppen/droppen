@@ -159,6 +159,14 @@ export function resyncMessage(
 }
 
 /**
+ * How many items one history request asked to reach back (`from`) is sent at
+ * most: the server's `MAX_HISTORY_ITEMS` (`crates/droppen-drive/src/feed/mod.rs`).
+ * The jump estimates its requests by it, and the offline copy's history route
+ * caps by it as the machine does. The machine's byte cap is its own.
+ */
+export const MAX_HISTORY_ITEMS = 2000;
+
+/**
  * How to ask for the page before `window`: proving the prefix it hangs off with
  * the window's start fingerprint when it is known, and with the resume marker —
  * which covers more than it needs to, but is never unknown — when it is not.

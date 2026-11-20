@@ -167,7 +167,24 @@ test("a session's detail is the copy's last page, read-only, and its history pag
   assert.deepEqual([range.status, range.body.startIndex, range.body.endIndex, range.body.items.length], [200, 10, 250, 240]);
   assert.equal(range.body.items[0].text, "item 10");
   assert.equal((await get(source, "/api/sessions/claude/a/history?before=250&fp=fp250&from=240")).body.startIndex, 50, "a page");
+  assert.equal((await get(source, "/api/sessions/claude/a/history?before=250&fp=fp250&from=900")).body.startIndex, 50, "a `from` past `before` is a page");
   assert.equal((await get(source, "/api/sessions/claude/a/history?before=50&fp=other&since=250&from=0")).status, 409, "proven like a page");
+});
+
+test("a jump's range on the copy is capped and cut as the machine cuts it", async () => {
+  const source = new FakeSource();
+  source.copies.set("claude/a", copyOf(5000, 7));
+  const history = (query: string) => get(source, `/api/sessions/claude/a/history?${query}`);
+  const range = await history("before=4800&fp=pre4997&since=5000&from=0");
+  assert.deepEqual([range.status, range.body.startIndex, range.body.endIndex, range.body.items.length, range.body.hasMoreBefore], [200, 2800, 4800, 2000, true]);
+  // Unchecked, `before` past the end: cut back from the end there is, never older than `from`.
+  const past = await history("before=9000&from=4500");
+  assert.deepEqual([past.body.startIndex, past.body.endIndex, past.body.items.length], [4500, 5000, 500]);
+  assert.equal((await history("before=4800&from=4700")).body.startIndex, 4600, "a page");
+  for (const from of ["-1", "", "x", "1.5"]) {
+    const refused = await history(`before=4800&from=${from}`);
+    assert.equal(refused.status, 400, `from=${from}: as the machine refuses it`);
+  }
 });
 
 test("settings, accounts and quota come from the status; everything else is a 503 the app can read", async () => {

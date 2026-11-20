@@ -615,9 +615,9 @@ test("a jump to a message nine pages back costs one history request, and the win
     await feed.loadEarlier(step.from);
   }
   assert.equal(requests, 1);
-  assert.deepEqual(session.asked, [{ before: 9800, fp: "start@9800", from: 8000 }]);
+  assert.deepEqual(session.asked, [{ before: 9800, fp: "start@9800", from: 7800 }]);
   const data = feed.getView().data!;
-  assert.deepEqual([data.startIndex, data.endIndex, data.items.length, data.hasMoreBefore], [8000, 10_000, 2000, true]);
+  assert.deepEqual([data.startIndex, data.endIndex, data.items.length, data.hasMoreBefore], [7800, 10_000, 2200, true]);
   assert.equal(data.items[target - data.startIndex]!.text, "item 8000", "the item the jump lands on");
   assert.equal(feed.getView().historyError, null);
 
@@ -625,11 +625,11 @@ test("a jump to a message nine pages back costs one history request, and the win
   session.asked.length = 0;
   for (let i = 0; i < 3; i++) await feed.loadEarlier(0);
   assert.deepEqual(session.asked, [
-    { before: 8000, fp: "start@8000", from: 0 },
-    { before: 6000, fp: "start@6000", from: 0 },
-    { before: 4000, fp: "start@4000", from: 0 },
+    { before: 7800, fp: "start@7800", from: 0 },
+    { before: 5800, fp: "start@5800", from: 0 },
+    { before: 3800, fp: "start@3800", from: 0 },
   ]);
-  assert.deepEqual([feed.getView().data!.startIndex, feed.getView().data!.hasMoreBefore], [2000, true]);
+  assert.deepEqual([feed.getView().data!.startIndex, feed.getView().data!.hasMoreBefore], [1800, true]);
 });
 
 test("a jump's request refused as stale asks the socket for a fresh window, as a page's does", async (t) => {
