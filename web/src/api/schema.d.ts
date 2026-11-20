@@ -5692,6 +5692,19 @@ export interface components {
              */
             activity: components["schemas"]["SessionActivity"];
             /**
+             * @description The name other agent sessions message this one by (Claude Code's
+             *     `ListAgents` and `SendMessage`), while its CLI is running; absent
+             *     otherwise, and always for codex and acp.
+             *
+             *     Read off the live CLI's registration (`<root>/sessions/<pid>.json`) by
+             *     the overlay that reads its live status, on every listing, and never
+             *     cached with the row: the CLI picks the name when it starts, so a
+             *     resident this server restarts can come back under another. The `[ref]`
+             *     `ListAgents` adds to tell two agents of one name apart is not in the
+             *     registration, and not here.
+             */
+            agentName?: string;
+            /**
              * @description Whether the agent has stopped to ask the user something, and cannot go
              *     on without an answer.
              *

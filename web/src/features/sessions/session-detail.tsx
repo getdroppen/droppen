@@ -83,7 +83,7 @@ import { DeviceChip } from "@/features/machines/device-picker";
 import { sessionKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
 import { Composer } from "@/features/sessions/composer";
-import { SessionMetaChip, sessionMetaFacts } from "@/features/sessions/session-meta";
+import { AgentNameChip, SessionMetaChip, sessionMetaFacts } from "@/features/sessions/session-meta";
 import { SessionOpening } from "@/features/sessions/session-opening";
 import { type Source, useSessionFeed } from "@/features/sessions/use-session-feed";
 import { BubbleRun } from "@/features/sessions/bubble-run";
@@ -742,6 +742,9 @@ export function SessionDetailInner({
             <SourceIcon source={summary.source} className="text-muted" />
           )}
           {summary.parentId && <ParentSessionLink source={summary.source} id={summary.parentId} />}
+          {/* Only the machine's own state can say it: a copy's row may hold the
+              name of a CLI long gone, and other agents address the live one. */}
+          {stateIn && summary.agentName && <AgentNameChip name={summary.agentName} />}
           {/* An ACP agent runs on its own configuration: there is no account to show or bind. */}
           {!readOnly && summary.source !== "acp" && stateIn && (
             <SessionAccountBadge

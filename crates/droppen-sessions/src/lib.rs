@@ -636,6 +636,18 @@ pub struct SessionSummary {
     /// codex. It may name an agent that has since been removed, whose sessions
     /// are listed and read but not continued.
     pub acp_agent: Option<String>,
+    /// The name other agent sessions message this one by (Claude Code's
+    /// `ListAgents` and `SendMessage`), while its CLI is running; absent
+    /// otherwise, and always for codex and acp.
+    ///
+    /// Read off the live CLI's registration (`<root>/sessions/<pid>.json`) by
+    /// the overlay that reads its live status, on every listing, and never
+    /// cached with the row: the CLI picks the name when it starts, so a
+    /// resident this server restarts can come back under another. The `[ref]`
+    /// `ListAgents` adds to tell two agents of one name apart is not in the
+    /// registration, and not here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
     /// Account the session is pinned to, for managed-root sessions.
     pub account_id: Option<String>,
     /// When the assistant last spoke on the main chain, ISO-8601.
@@ -1302,6 +1314,7 @@ mod tests {
             resident: Nullable(None),
             claude_root: None,
             acp_agent: None,
+            agent_name: None,
             account_id: None,
             attention_at: Nullable(None),
             unread: false,

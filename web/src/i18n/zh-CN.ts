@@ -153,6 +153,8 @@ export const zhCN: Record<string, string> = {
   "contains a failed tool call": "包含失败的工具调用",
   "context compacted": "上下文已压缩",
   "copy session id": "复制会话 ID",
+  "copy agent name": "复制 agent 名称",
+  "other agent sessions can message this session by this name": "其他 agent 会话可以用这个名称给这个会话发消息",
   "dark": "深色",
   "default model": "默认模型",
   "delete chat": "删除聊天",

@@ -49,8 +49,18 @@
 //! Neither guard is needed for a process the *running* server started: that one
 //! is still its child, watched by a supervisor that stores the moment it exits,
 //! and a pid cannot be recycled while its parent has yet to reap it.
+//!
+//! # [`start_time`] — a wall-clock start, for a record somebody else wrote
+//!
+//! A file another program wrote holds no token of ours, but it may say when its
+//! process started, by the wall clock: Claude Code's live-session registration
+//! does. The same start time as the token, as a [`SystemTime`], is what that
+//! record can be held to: a process at its pid that started *after* the record
+//! says its own did is somebody else. Coarser than the token — Linux dates a
+//! process in clock ticks since a boot it dates in whole seconds — so a caller
+//! compares with a little slack.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// How long a process group is given to stop before it is made to.
 const KILL_GRACE: Duration = Duration::from_secs(3);
@@ -104,6 +114,23 @@ pub fn is_same_process(pid: u32, token: Option<&str>) -> bool {
 /// An opaque token for when `pid` started, or `None` if it cannot be read.
 #[cfg(target_os = "macos")]
 pub fn start_token(pid: u32) -> Option<String> {
+    let info = bsd_info(pid)?;
+    Some(format!("{}.{:06}", info.pbi_start_tvsec, info.pbi_start_tvusec))
+}
+
+/// When `pid` started, by the wall clock, or `None` if it cannot be read.
+///
+/// The moment [`start_token`] spells, to the microsecond.
+#[cfg(target_os = "macos")]
+pub fn start_time(pid: u32) -> Option<SystemTime> {
+    let info = bsd_info(pid)?;
+    let micros = u32::try_from(info.pbi_start_tvusec).ok().filter(|&us| us < 1_000_000)?;
+    Some(SystemTime::UNIX_EPOCH + Duration::new(info.pbi_start_tvsec, micros * 1_000))
+}
+
+/// The kernel's BSD description of `pid`, which is where its start time is.
+#[cfg(target_os = "macos")]
+fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {
     if pid == 0 {
         return None;
     }
@@ -127,7 +154,7 @@ pub fn start_token(pid: u32) -> Option<String> {
     if read != size {
         return None;
     }
-    Some(format!("{}.{:06}", info.pbi_start_tvsec, info.pbi_start_tvusec))
+    Some(info)
 }
 
 /// An opaque token for when `pid` started, or `None` if it cannot be read.
@@ -146,9 +173,32 @@ pub fn start_token(pid: u32) -> Option<String> {
     Some(starttime.to_string())
 }
 
+/// When `pid` started, by the wall clock, or `None` if it cannot be read.
+///
+/// [`start_token`]'s ticks since boot, after the boot's own wall-clock time
+/// (`btime` in `/proc/stat`) — the sum `ps -o lstart` prints. `btime` is whole
+/// seconds, so this can read up to a second early, never late; and it moves
+/// when the clock is set, the start time it is added to does not.
+#[cfg(target_os = "linux")]
+pub fn start_time(pid: u32) -> Option<SystemTime> {
+    let ticks: u64 = start_token(pid)?.parse().ok()?;
+    // SAFETY: `sysconf` reads a configuration value and touches no memory of ours.
+    let hz = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok().filter(|&hz| hz > 0)?;
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    let boot: u64 = stat.lines().find_map(|line| line.strip_prefix("btime "))?.trim().parse().ok()?;
+    let since_boot = Duration::from_secs(ticks / hz) + Duration::from_nanos((ticks % hz) * 1_000_000_000 / hz);
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(boot) + since_boot)
+}
+
 /// An opaque token for when `pid` started, or `None` if it cannot be read.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn start_token(_pid: u32) -> Option<String> {
+    None
+}
+
+/// When `pid` started, by the wall clock, or `None` if it cannot be read.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn start_time(_pid: u32) -> Option<SystemTime> {
     None
 }
 
@@ -253,6 +303,34 @@ mod tests {
 
         // A record written before the guard existed still adopts on liveness.
         assert!(is_same_process(me, None));
+    }
+
+    /// What a registration written by another program is held to: the process
+    /// at its pid started no later than the registration says its own did.
+    #[test]
+    fn a_process_is_dated_by_the_wall_clock() {
+        let me = start_time(std::process::id()).expect("this platform is macOS or Linux, so a start time must be readable");
+        let now = SystemTime::now();
+        assert!(me <= now, "this process started before now");
+        assert!(now.duration_since(me).expect("in the past") < Duration::from_secs(24 * 3600), "and recently: {me:?}");
+
+        // A process started after a moment is dated after it — within the
+        // second Linux's whole-second boot time can cost.
+        let before = SystemTime::now();
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn");
+        let started = start_time(child.id());
+        child.kill().expect("kill");
+        child.wait().expect("reap");
+        let started = started.expect("a live child is dated");
+        assert!(started + Duration::from_secs(1) >= before, "{started:?} is not before {before:?}");
+        assert!(start_time(child.id()).is_none(), "a reaped child is not dated at all");
+        assert!(start_time(0).is_none());
     }
 
     #[test]

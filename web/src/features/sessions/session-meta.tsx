@@ -1,8 +1,8 @@
 /*
  * The session header's secondary facts, formatted in one place and shown
- * behind a chip.
+ * behind a chip; and the chip for the name other agents message it by.
  */
-import { CheckIcon, CopyIcon, InfoIcon } from "@phosphor-icons/react";
+import { AtIcon, CheckIcon, CopyIcon, InfoIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCopy } from "@/lib/clipboard";
@@ -46,6 +46,38 @@ export function sessionMetaFacts(input: {
     items: Math.max(0, input.totalItems),
     omitted: Math.max(0, input.omittedItems),
   };
+}
+
+/**
+ * The name other agent sessions message this one by (Claude Code's
+ * `ListAgents` and `SendMessage`), as a chip that copies it.
+ *
+ * The session id is no address for that, which is why this exists: with three
+ * sessions in one project, the name is the only thing that tells another
+ * agent which of them to write to. The server sends it only while the
+ * session's CLI runs, and a resident it restarts can come back under another
+ * name, so the chip shows whatever the newest summary says and keeps nothing.
+ * A press copies it and says so the way every copy control does (`useCopy`):
+ * a check, and "copied" in the tooltip, for a moment. A name too long for the
+ * row is cut at its end; the copy is whole.
+ */
+export function AgentNameChip({ name }: { name: string }) {
+  const { t } = useTranslation();
+  // No clipboard permission (or no secure context): nothing to fall back on
+  // but the name on the chip, which is the whole name more often than not.
+  const { copied, copy } = useCopy();
+  return (
+    <button
+      type="button"
+      data-agent-name=""
+      title={copied ? t("copied") : t("other agent sessions can message this session by this name")}
+      onClick={() => copy(name)}
+      className="flex h-5 min-w-0 items-center gap-1 px-1.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
+    >
+      {copied ? <CheckIcon aria-hidden="true" className="size-3 shrink-0" /> : <AtIcon aria-hidden="true" className="size-3 shrink-0" />}
+      <span className="truncate">{name}</span>
+    </button>
+  );
 }
 
 /** One `label   value` line of the session-details popover. */

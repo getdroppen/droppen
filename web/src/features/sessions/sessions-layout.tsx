@@ -185,21 +185,63 @@ const SessionRow = memo(function SessionRow({
           </MachineLink>
         }
       />
-      <ContextMenuContent>
-        {!readOnly && <ContextMenuItem disabled={pinPending} onClick={() => onPin(session)}>{t(session.pinned ? "unpin session" : "pin session")}</ContextMenuItem>}
-        {!readOnly && <ContextMenuItem onClick={() => onRename(session)}>{t("rename")}</ContextMenuItem>}
-        <ContextMenuItem onClick={() => void navigator.clipboard.writeText(session.id)}>
-          {t("copy session id")}
-        </ContextMenuItem>
-        {!readOnly && (
-          <ContextMenuItem danger onClick={() => onArchive(session)}>
-            {t("archive session")}
-          </ContextMenuItem>
-        )}
-      </ContextMenuContent>
+      <SessionRowMenu
+        session={session}
+        readOnly={readOnly}
+        pinPending={pinPending}
+        onPin={onPin}
+        onRename={onRename}
+        onArchive={onArchive}
+      />
     </ContextMenu>
   );
 });
+
+/**
+ * What right-clicking (or long-pressing) a session row offers.
+ *
+ * The session id, always; and while its CLI runs, the name other agent
+ * sessions message it by (`agentName`), which is the one to hand an agent —
+ * the id is no address. On another device's row, shown from its copy, nothing
+ * that changes the session, and no name: the copy's may be a CLI's long gone.
+ */
+export function SessionRowMenu({
+  session,
+  readOnly,
+  pinPending,
+  onPin,
+  onRename,
+  onArchive,
+}: {
+  session: SessionSummary;
+  readOnly: boolean;
+  pinPending: boolean;
+  onPin: (session: SessionSummary) => void;
+  onRename: (session: SessionSummary) => void;
+  onArchive: (session: SessionSummary) => void;
+}) {
+  const { t } = useTranslation();
+  const agentName = readOnly ? null : session.agentName;
+  return (
+    <ContextMenuContent>
+      {!readOnly && <ContextMenuItem disabled={pinPending} onClick={() => onPin(session)}>{t(session.pinned ? "unpin session" : "pin session")}</ContextMenuItem>}
+      {!readOnly && <ContextMenuItem onClick={() => onRename(session)}>{t("rename")}</ContextMenuItem>}
+      <ContextMenuItem onClick={() => void navigator.clipboard.writeText(session.id)}>
+        {t("copy session id")}
+      </ContextMenuItem>
+      {agentName && (
+        <ContextMenuItem onClick={() => void navigator.clipboard.writeText(agentName)}>
+          {t("copy agent name")}
+        </ContextMenuItem>
+      )}
+      {!readOnly && (
+        <ContextMenuItem danger onClick={() => onArchive(session)}>
+          {t("archive session")}
+        </ContextMenuItem>
+      )}
+    </ContextMenuContent>
+  );
+}
 
 /** How far each level of the tree steps in: a row's chevron sits on the line its own children hang off. */
 const TREE_STEP = 16;

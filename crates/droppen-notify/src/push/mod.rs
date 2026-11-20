@@ -940,6 +940,7 @@ mod tests {
             resident: Nullable(None),
             claude_root: None,
             acp_agent: None,
+            agent_name: None,
             account_id: None,
             attention_at: Nullable(None),
             unread: false,
