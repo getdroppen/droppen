@@ -411,6 +411,11 @@ const STATE_READS: usize = 3;
 struct StateAndTranscript {
     state: SessionState,
     file_path: PathBuf,
+    /// The signature `transcript` is the parse at; empty when the read failed
+    /// and it is the last good parse, or no items
+    /// ([`TranscriptSources::load_checked`]). Empty names no version of the
+    /// file, so neither the watcher nor a client takes it for the one on
+    /// disk, and the watcher's next read of that one is sent.
     sig: String,
     transcript: Arc<Transcript>,
 }
@@ -446,14 +451,14 @@ impl StateAndTranscript {
                     continue;
                 }
             }
-            let transcript = drive.transcripts.load(&drive.paths, source, &file_path, &sig).await;
+            let (transcript, current) = drive.transcripts.load_checked(&drive.paths, source, &file_path, &sig).await;
             match file_signature(&file_path).await {
                 Some(now) if now != sig && !last => sig = now,
                 _ => {
                     return Some(Self {
                         state,
                         file_path,
-                        sig,
+                        sig: if current { sig } else { String::new() },
                         transcript,
                     })
                 }
@@ -1151,8 +1156,8 @@ fn push_draft(draft: &Draft, tx: &broadcast::Sender<Broadcast>, latest_draft: &L
 }
 
 /// Read the transcript again if it changed: `Some(true)` when it did and
-/// everyone has been told, `Some(false)` when it had not, and `None` once it is
-/// gone and the feed should close.
+/// everyone has been told, `Some(false)` when it had not or could not be read,
+/// and `None` once it is gone and the feed should close.
 async fn refresh_items(
     paths: &Paths,
     transcripts: &TranscriptSources,
@@ -1166,7 +1171,15 @@ async fn refresh_items(
     if sig == *last_sig {
         return Some(false);
     }
-    let transcript = transcripts.load(paths, source, file_path, &sig).await;
+    let (transcript, current) = transcripts.load_checked(paths, source, file_path, &sig).await;
+    if !current {
+        // The read failed, and what came back is the last good parse (or no
+        // items), not the version at `sig`. Nothing is sent and `sig` is not
+        // taken as seen, so the next poll reads the file again — one read per
+        // poll for as long as it fails — rather than leave every client on the
+        // old items until the file next changes.
+        return Some(false);
+    }
     // Fingerprinted here, once, rather than by whichever client gets to it
     // first while the others wait on the lock. Each client then cuts its own
     // delta against the version it holds (`FeedAttachment::catch_up`): a file
@@ -1659,5 +1672,105 @@ mod tests {
             (Some("the third turn"), Some(3)),
             "the snapshot"
         );
+    }
+
+    /// Make `file` unreadable, or readable again. Its signature, a length and
+    /// an mtime, is the same either way.
+    #[cfg(unix)]
+    fn readable(file: &Path, readable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if readable { 0o644 } else { 0o000 };
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    }
+
+    /// A read that fails answers the last good parse, which is not the
+    /// version on disk: the watcher sends nothing and does not take that
+    /// version as seen. Each poll reads it again, once, and is answered as an
+    /// unchanged file is for as long as the read fails; the first poll that
+    /// reads it sends the new items, though the file has not changed since.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_read_is_read_again_at_the_next_poll() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (paths, drive) = crate::fake::drive(dir.path());
+        let file = crate::fake::session(&paths, "77777777-7777-4777-8777-777777777777", "the first turn\n");
+        let (tx, mut rx) = broadcast::channel(8);
+        let latest: Latest = Arc::new(Mutex::new((String::new(), Arc::new(transcript_at("/t/none.jsonl", vec![])))));
+        let mut last_sig = String::new();
+        let older = file_signature(&file).await.expect("sig");
+        let refreshed = refresh_items(&drive.paths, &drive.transcripts, crate::fake::SOURCE, &file, &tx, &latest, &mut last_sig).await;
+        assert_eq!((refreshed, last_sig.as_str()), (Some(true), older.as_str()));
+        rx.try_recv().expect("the first version is sent");
+
+        append(&file, "the second turn\n");
+        let newer = file_signature(&file).await.expect("sig");
+        readable(&file, false);
+        for poll in 1..=3 {
+            let refreshed = refresh_items(&drive.paths, &drive.transcripts, crate::fake::SOURCE, &file, &tx, &latest, &mut last_sig).await;
+            assert_eq!(refreshed, Some(false), "poll {poll}: answered as an unchanged file is");
+            assert_eq!(last_sig, older, "poll {poll}: the version on disk is not taken as seen");
+            assert!(rx.try_recv().is_err(), "poll {poll}: and nothing is sent");
+        }
+        assert_eq!(latest.lock().expect("latest").0, older, "a lapped client is caught up to what was sent");
+
+        readable(&file, true);
+        assert_eq!(file_signature(&file).await.as_ref(), Some(&newer), "the file has not changed since");
+        let refreshed = refresh_items(&drive.paths, &drive.transcripts, crate::fake::SOURCE, &file, &tx, &latest, &mut last_sig).await;
+        assert_eq!((refreshed, last_sig.as_str()), (Some(true), newer.as_str()));
+        let Ok(Broadcast::Transcript { sig, transcript }) = rx.try_recv() else {
+            panic!("the new version is sent");
+        };
+        assert_eq!(sig, newer);
+        let texts: Vec<&str> = transcript.items.iter().map(|item| item.text.as_str()).collect();
+        assert_eq!(texts, ["the first turn", "the second turn"]);
+    }
+
+    /// The same when the read that fails is the one a client attaches with:
+    /// it is opened with the last good parse under no signature, so neither
+    /// it nor the watcher takes that for the version on disk, and the
+    /// watcher's next read of that version catches it up. The REST detail
+    /// answers under no signature too, so a client polling it is not told the
+    /// version on disk is the one it holds.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_client_attached_on_a_failed_read_is_caught_up_once_it_reads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = "88888888-8888-4888-8888-888888888888";
+        let (paths, drive) = crate::fake::drive(dir.path());
+        let file = crate::fake::session(&paths, id, "the first turn\n");
+        let older = file_signature(&file).await.expect("sig");
+        drive.transcripts.load(&drive.paths, crate::fake::SOURCE, &file, &older).await;
+        append(&file, "the second turn\n");
+        let newer = file_signature(&file).await.expect("sig");
+        readable(&file, false);
+
+        let detail = load_session_detail(&drive, crate::fake::SOURCE, id).await.expect("detail");
+        assert_eq!((detail.sig.as_str(), detail.items.len()), ("", 1), "the detail");
+        let registry = FeedRegistry::new();
+        let mut attached = attach_session_feed_with(&registry, &drive, crate::fake::SOURCE, id, None, SESSION_PAGE_SIZE)
+            .await
+            .expect("attached");
+        let snapshot: Value = serde_json::from_str(&attached.opening[0]).expect("json");
+        assert_eq!(
+            (snapshot["type"].as_str(), snapshot["sig"].as_str(), snapshot["totalItems"].as_u64()),
+            (Some("snapshot"), Some(""), Some(1)),
+            "the last good items, under no signature"
+        );
+
+        readable(&file, true);
+        let frame = loop {
+            let frame = tokio::time::timeout(5 * STATE_INTERVAL, attached.attachment.next_frame())
+                .await
+                .expect("caught up at the watcher's next read")
+                .expect("a frame");
+            let frame: Value = serde_json::from_str(&frame).expect("json");
+            if frame["type"] != "state" {
+                break frame;
+            }
+        };
+        assert_eq!(frame["type"], "delta", "{frame}");
+        assert_eq!((frame["sig"].as_str(), frame["fromIndex"].as_u64()), (Some(newer.as_str()), Some(1)));
+        assert_eq!(frame["items"][0]["text"], "the second turn");
+        assert_eq!(frame["totalItems"], 2);
     }
 }

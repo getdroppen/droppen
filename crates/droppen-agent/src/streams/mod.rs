@@ -1190,7 +1190,7 @@ impl Sync {
         let row = self.row(stream, Kind::Session, summary.source(), summary.id(), Some(target));
         self.names.insert(stream, (summary.source().to_string(), summary.id().to_string()));
         let sig = summary.signature().await.ok_or("unreadable")?;
-        let transcript = summary.transcript(&sig).await;
+        let transcript = summary.transcript(&sig).await.ok_or("unreadable")?;
         self.rebuild_session(&row, &*transcript, &sig, 0, true)
     }
 
@@ -1316,7 +1316,7 @@ impl Sync {
         let transcript: Arc<dyn Transcript> = if fresh {
             summary.read_transcript().await.ok_or("unreadable")?
         } else {
-            summary.transcript(sig).await
+            summary.transcript(sig).await.ok_or("unreadable")?
         };
         let chain = transcript.chain();
         let len = transcript.len();
@@ -1423,7 +1423,7 @@ impl Sync {
                     .find(|s| s.source() == source && s.id() == row.id)
                     .ok_or("the session is gone")?;
                 let sig = summary.signature().await.ok_or("unreadable")?;
-                let transcript = summary.transcript(&sig).await;
+                let transcript = summary.transcript(&sig).await.ok_or("unreadable")?;
                 self.rebuild_session(&row, &*transcript, &sig, upto, true)
             }
         }
@@ -1646,7 +1646,7 @@ impl Sync {
             .find(|s| s.source() == source && s.id() == row.id)
             .ok_or("the session is gone")?;
         let sig = summary.signature().await.ok_or("unreadable")?;
-        let transcript = summary.transcript(&sig).await;
+        let transcript = summary.transcript(&sig).await.ok_or("unreadable")?;
         let cursor = SessionCursor::parse(&row.cursor).ok_or("no cursor")?;
         // The pages must be exactly what the records fold to: the transcript
         // still agrees with the copy through its end, and the pages stop there.
