@@ -169,7 +169,12 @@ async fn an_older_page_of_the_transcript_can_be_paged_back_to() {
 /// Whether a file a message names exists is the filesystem's state, not the
 /// transcript's: creating it, or deleting it, while the session goes on must
 /// not refuse an older page anchored past the mention as `transcript_changed`.
-/// The page offers the chip as the file is when the page is read.
+///
+/// The page offers the chip as the file was when the parse it is cut from was
+/// read. Before anything reads the grown file again, that is the parse already
+/// held, which proves the page as well as a fresh one would; once the file is
+/// read again (the session feed does on every change), it is the new parse,
+/// whose fingerprints the changed chip leaves as they were.
 #[tokio::test]
 async fn a_file_created_or_deleted_under_a_mention_does_not_refuse_an_older_page() {
     let probe = Probe::start().await;
@@ -193,20 +198,31 @@ async fn a_file_created_or_deleted_under_a_mention_does_not_refuse_an_older_page
     let start_fp = window["startFp"].as_str().expect("startFp").to_string();
     let older = format!("/api/sessions/claude/{SESSION_ID}/history?before=52&fp={start_fp}");
     let chips = |page: &Value| page["items"][1]["files"].as_array().map(|files| files.iter().map(|file| file["name"].clone()).collect::<Vec<_>>());
+    let (at, older) = (&probe, older.as_str());
+    let older_page = || async move {
+        let (status, body) = at.get(older).await;
+        assert_eq!(status, 200, "a created or deleted file is no change to the transcript: {body}");
+        serde_json::from_str::<Value>(&body).expect("json")
+    };
+    // What the session feed does on every change: read the file at its new
+    // signature (the newest page, unchecked, is such a read).
+    let read_again = |len: usize| async move { at.get_json(&format!("/api/sessions/claude/{SESSION_ID}/history?before={len}")).await };
 
     std::fs::write(&report, "# report").expect("write");
     say("line 250".into());
-    let (status, body) = probe.get(&older).await;
-    assert_eq!(status, 200, "a created file is no change to the transcript: {body}");
-    let page: Value = serde_json::from_str(&body).expect("json");
+    let page = older_page().await;
+    assert_eq!(page["totalItems"], 252, "cut from the parse held, at its own length");
+    assert_eq!(chips(&page), None, "with its chips");
+    read_again(253).await;
+    let page = older_page().await;
     assert_eq!(page["totalItems"], 253, "read again, at the new length");
     assert_eq!(chips(&page), Some(vec![json!("report.md")]), "the chip is offered now the file exists");
 
     std::fs::remove_file(&report).expect("remove");
     say("line 251".into());
-    let (status, body) = probe.get(&older).await;
-    assert_eq!(status, 200, "nor is a deleted one: {body}");
-    let page: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(chips(&older_page().await), Some(vec![json!("report.md")]), "the parse held, until the file is read again");
+    read_again(254).await;
+    let page = older_page().await;
     assert_eq!(page["totalItems"], 254);
     assert_eq!(chips(&page), None, "and withdrawn once it is gone");
 

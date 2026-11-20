@@ -22,6 +22,8 @@
  * that touches the DOM and the network.
  */
 
+import type { TranscriptWindow } from "./session-feed-state";
+
 /** The button, while there is one: where it leads and what it says. */
 export interface FirstUnreadTarget {
   /** The first unread message's item index, in the feed's numbering. */
@@ -119,9 +121,23 @@ export function firstUnreadView(state: FirstUnreadState): FirstUnreadView | null
   return target ? { kind: "offer", target } : null;
 }
 
-/** The query that asks where an arrival's unread messages begin. */
-export function firstUnreadQuery(previousReadAt: string | null): { after?: string } {
-  return previousReadAt === null ? {} : { after: previousReadAt };
+/**
+ * The query that asks where an arrival's unread messages begin: from the mark
+ * the arrival's report replaced, and with the resume marker of the window the
+ * feed holds, when it holds one. The marker only spares the server a read: it
+ * lets it answer off the transcript it last read when that read provably
+ * holds the window, and it reads the file as it is now when it cannot.
+ */
+export function firstUnreadQuery(
+  previousReadAt: string | null,
+  window?: Pick<TranscriptWindow, "endIndex" | "prefixFp"> | null,
+): { after?: string; since?: number; fp?: string } {
+  return {
+    ...(previousReadAt === null ? {} : { after: previousReadAt }),
+    ...(window?.prefixFp && Number.isInteger(window.endIndex)
+      ? { since: window.endIndex, fp: window.prefixFp }
+      : {}),
+  };
 }
 
 /** The server's answer as a button target: none for nothing unread. */

@@ -1939,7 +1939,9 @@ export interface paths {
          *     so the answer is about what was unread *before* the reader got there, and
          *     no later report can move it. Read-only and ungated like search, and answered
          *     over the same cached parse, so the index is one the history route can page
-         *     to. See `sessions::attention::first_unread`.
+         *     to. With the client's resume marker (`since`, `fp`) that may be an older
+         *     parse than the file now has, when it provably gives the same index.
+         *     See `sessions::attention::first_unread`.
          */
         get: operations["session_first_unread"];
         put?: never;
@@ -3932,7 +3934,10 @@ export interface components {
             /**
              * @description How many agent messages are newer than `after`, which is what the
              *     client's button says. Not capped at 99 like `unreadCount`: this walks the
-             *     whole transcript. Zero exactly when `index` is `null`.
+             *     whole of the parse it is read off — the transcript as it is now or, when
+             *     the client sent its resume marker, a parse the file was last written at
+             *     most a few seconds after, which may not hold the messages of those
+             *     seconds yet. Zero exactly when `index` is `null`.
              */
             count: number;
             /**
@@ -5516,7 +5521,11 @@ export interface components {
             hasMoreBefore: boolean;
             /** @description The items in the window. */
             items: components["schemas"]["TranscriptItem"][];
-            /** @description The transcript signature the page was read at. */
+            /**
+             * @description The transcript signature the page was read at: with `fp` in the
+             *     query, possibly an older one than the file has now, since a page that
+             *     fingerprint proves is the same in every parse holding it.
+             */
             sig: string;
             /**
              * @description Fingerprint of every item before `start_index`: the window's new start
@@ -5526,7 +5535,7 @@ export interface components {
             startFp: string;
             /** @description Absolute index of the first item. */
             startIndex: number;
-            /** @description Total item count of the transcript. */
+            /** @description Total item count of the transcript at `sig`. */
             totalItems: number;
         };
         /** @description The session list response. */
@@ -10329,6 +10338,21 @@ export interface operations {
                  *     counts from the start.
                  */
                 after?: string | null;
+                /** @description The `endIndex` of the client's window, when `fp` is its resume marker. */
+                since?: number | null;
+                /**
+                 * @description The resume marker the session feed last sent the client (`prefixFp`):
+                 *     its fingerprint of items `[0, since - 3)`. With `since`, it lets the
+                 *     answer come from the newest parse the server already holds instead of a
+                 *     fresh read of the transcript, when that parse holds the client's whole
+                 *     window, the first unread message lies inside the part the marker
+                 *     proves, and the file was last written no more than 10 seconds (and 8
+                 *     MiB) after that parse. `count` then counts through the end of that
+                 *     parse, which is at least the client's window; messages written in
+                 *     those few seconds reach the client through the feed. Without them, or
+                 *     when the parse cannot be proven, the transcript is read as it is now.
+                 */
+                fp?: string | null;
             };
             header?: never;
             path: {
