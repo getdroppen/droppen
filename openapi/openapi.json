@@ -12476,7 +12476,7 @@
     "/api/sessions/{source}/{id}/history": {
       "get": {
         "deprecated": false,
-        "description": "The transcript page immediately before an index the client already holds.",
+        "description": "The transcript page immediately before an index the client already holds,\nor — with `from` — the range back to that index, capped.",
         "operationId": "session_history",
         "parameters": [
           {
@@ -12539,6 +12539,23 @@
               ],
               "description": "The `endIndex` of the client's window, when `fp` is its resume marker."
             }
+          },
+          {
+            "description": "The absolute index the page should reach back to, for a client that\nknows the item it wants — a jump to a search hit or to the first unread\nmessage: the page is then the items `[from, before)` in one answer\ninstead of the one page before `before`. Never fewer items than that\npage, and at most 2000 items and 1 MiB of them; past either cap it is\nthe newest part of the range, and its `startIndex`, later than `from`\nand with `hasMoreBefore`, is where the next request picks up. `fp`\nproves it exactly as it proves a page. Absent, one page, as before.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The absolute index the page should reach back to, for a client that\nknows the item it wants — a jump to a search hit or to the first unread\nmessage: the page is then the items `[from, before)` in one answer\ninstead of the one page before `before`. Never fewer items than that\npage, and at most 2000 items and 1 MiB of them; past either cap it is\nthe newest part of the range, and its `startIndex`, later than `from`\nand with `hasMoreBefore`, is where the next request picks up. `fp`\nproves it exactly as it proves a page. Absent, one page, as before."
+            }
           }
         ],
         "responses": {
@@ -12550,7 +12567,7 @@
                 }
               }
             },
-            "description": "The contiguous transcript page immediately before the requested index"
+            "description": "The contiguous transcript page immediately before the requested index, or with `from` as much of the range `[from, before)` as the caps allow"
           },
           "404": {
             "content": {

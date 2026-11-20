@@ -495,7 +495,10 @@ export function SessionDetailInner({
     //
     // Answers the request, or `null` when none went out — which the search's
     // page-in needs to tell "a page is coming" from "nothing will happen".
-    (keepPinned = false): Promise<void> | null => {
+    //
+    // `from` is the item a jump is after: everything back to it comes in one
+    // request rather than a page at a time (`historyQueryFor`).
+    (keepPinned = false, from?: number): Promise<void> | null => {
       const el = scrollRef.current;
       if (!el || !data?.hasMoreBefore || isLoadingEarlier) return null;
       if (!keepPinned) publishPin(false, boxOf(el));
@@ -503,7 +506,7 @@ export function SessionDetailInner({
         startIndex: data.startIndex,
         scrollHeight: el.scrollHeight,
       };
-      return loadEarlier();
+      return loadEarlier(from);
     },
     [data?.hasMoreBefore, data?.startIndex, isLoadingEarlier, loadEarlier, publishPin],
   );
@@ -511,20 +514,22 @@ export function SessionDetailInner({
   /**
    * In-session search, over the whole transcript rather than this window. A
    * jump to an older match pages history in through `beginLoadEarlier` — the
-   * same anchored request scrolling up makes — so the window stays contiguous
-   * and the resume marker is untouched; see `session-search-view.tsx`.
+   * same anchored request scrolling up makes, asked to reach back to the
+   * match — so the window stays contiguous and the resume marker is
+   * untouched; see `session-search-view.tsx`.
    */
   const unpinForSearch = useCallback(() => {
     const el = scrollRef.current;
     if (el) publishPin(false, boxOf(el));
   }, [publishPin]);
+  const loadEarlierForSearch = useCallback((from?: number) => beginLoadEarlier(false, from), [beginLoadEarlier]);
   const search = useSessionSearch({
     source,
     id,
     window: data,
     isLoadingEarlier,
     historyError,
-    loadEarlier: beginLoadEarlier,
+    loadEarlier: loadEarlierForSearch,
     scrollRef,
     rowsRef,
     unpin: unpinForSearch,

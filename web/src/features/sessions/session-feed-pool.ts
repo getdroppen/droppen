@@ -801,8 +801,12 @@ export class SessionFeed {
 
   private loadingEarlier = false;
 
-  /** Page in the items before the window. */
-  async loadEarlier(): Promise<void> {
+  /**
+   * Page in the items before the window: one page, or — with `from`, the item
+   * a jump is after — everything back to it in one request, as far as the
+   * server's cap allows (`historyQueryFor`).
+   */
+  async loadEarlier(from?: number): Promise<void> {
     const data = this.view.data;
     const before = data?.startIndex ?? 0;
     if (
@@ -821,12 +825,15 @@ export class SessionFeed {
     try {
       // The query proves which prefix the page has to hang off, so the server
       // can serve it however much the session has grown since.
-      const query = historyQueryFor({
-        startIndex: before,
-        endIndex: data.endIndex,
-        startFp: requestedStartFp,
-        prefixFp: data.prefixFp,
-      });
+      const query = historyQueryFor(
+        {
+          startIndex: before,
+          endIndex: data.endIndex,
+          startFp: requestedStartFp,
+          prefixFp: data.prefixFp,
+        },
+        from,
+      );
       const res = await this.deps.fetchHistory(this.source, this.id, query);
       if (this.epoch !== epoch) return;
       if (!res.page) {

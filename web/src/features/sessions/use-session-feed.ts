@@ -39,7 +39,8 @@ interface SessionFeedResult {
    * `null` once there is a window. Said under the spinner (`SessionOpening`).
    */
   opening: FeedOpening | null;
-  loadEarlier: () => Promise<void>;
+  /** One page before the window, or with `from` everything back to that index ([`SessionFeed.loadEarlier`]). */
+  loadEarlier: (from?: number) => Promise<void>;
   isLoadingEarlier: boolean;
   historyError: string | null;
   /** Re-attach the socket, which re-snapshots state the server just rewrote. */
@@ -120,7 +121,7 @@ export function useSessionFeed(
     feed.getView,
     feed.getView,
   );
-  const loadEarlier = useCallback(() => feed.loadEarlier(), [feed]);
+  const loadEarlier = useCallback((from?: number) => feed.loadEarlier(from), [feed]);
   const refresh = useCallback(() => feed.reattach(), [feed]);
   const refreshState = useCallback(() => feed.refreshState(), [feed]);
   return {

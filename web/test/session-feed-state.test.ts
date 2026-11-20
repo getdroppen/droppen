@@ -180,6 +180,40 @@ test("load earlier proves its prefix with the start fingerprint, or the resume m
   assert.deepEqual(historyQueryFor(unknown), { before: 200 });
 });
 
+test("a jump asks for the whole way back to its item, proven the same way; anything else asks for a page", () => {
+  const window = held(9800, 10000);
+  assert.deepEqual(historyQueryFor(window, 8000), { before: 9800, fp: "start@9800", from: 8000 });
+  const trimmed = { ...window, startFp: null };
+  assert.deepEqual(historyQueryFor(trimmed, 8000), { before: 9800, fp: "pfx@10000", since: 10000, from: 8000 });
+  assert.deepEqual(historyQueryFor({ ...trimmed, prefixFp: null }, 0), { before: 9800, from: 0 });
+  // Scroll-back, and a `from` with nothing to reach for: the page, asked as it always was.
+  for (const from of [undefined, 9800, 9900, -1, 1.5, Number.NaN]) {
+    assert.deepEqual(historyQueryFor(window, from), { before: 9800, fp: "start@9800" }, String(from));
+  }
+});
+
+test("a range far longer than a page is prepended whole and leaves the window able to page on", () => {
+  const window = held(9800, 10000);
+  const range: TranscriptHistoryPage = {
+    sig: "v3",
+    items: itemsFrom(7800, 9800),
+    startIndex: 7800,
+    endIndex: 9800,
+    totalItems: 10_050,
+    hasMoreBefore: true,
+    startFp: "start@7800",
+  };
+  const merged = prependHistoryPage(window, range);
+  assert.deepEqual(
+    [merged.startIndex, merged.endIndex, merged.items.length, merged.hasMoreBefore, merged.totalItems],
+    [7800, 10000, 2200, true, 10_050],
+  );
+  assert.equal(texts(merged)[0], "7800");
+  assert.equal(texts(merged)[2199], "9999");
+  assert.equal(merged.sig, "v1", "the window's own signature: the range hangs off its fingerprint");
+  assert.deepEqual(historyQueryFor(merged, 100), { before: 7800, fp: "start@7800", from: 100 }, "the next request goes on from it");
+});
+
 // ---------------------------------------------------------------- deltas
 
 test("a pure append extends the window and keeps what it held by reference", () => {

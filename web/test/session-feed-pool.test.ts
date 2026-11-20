@@ -12,6 +12,8 @@ import {
   type FeedPoolDeps,
   type FeedSocket,
 } from "../src/features/sessions/session-feed-pool.js";
+import { pageInBudget, planPageIn } from "../src/features/sessions/session-search.js";
+import { transcriptItem } from "./session-fixtures.js";
 
 class FakeSocket implements FeedSocket {
   readyState = 0;
@@ -536,4 +538,108 @@ test("closed over a window on screen keeps the window and says no opening", asyn
   sockets[0]!.frame(snapshot("a", 3));
   sockets[0]!.frame({ type: "closed" });
   assert.equal(opening(), null);
+});
+
+// ---------------------------------------------------------------------------
+// History: scroll-back's page, a jump's one request
+
+/**
+ * A session `total` items long whose window holds its last page, and its
+ * server's `GET …/history`: the page before `before`, or — with `from` — the
+ * range back to it, capped as the server caps it; `409` to a stale anchor.
+ */
+function longSession(total: number) {
+  const all = Array.from({ length: total }, (_, i) => transcriptItem({ role: "user", text: `item ${i}` }));
+  const frame = {
+    type: "snapshot",
+    sig: "v1",
+    summary: { id: "a", source: "claude", title: "a", status: "idle" },
+    items: all.slice(total - 200),
+    startIndex: total - 200,
+    endIndex: total,
+    totalItems: total,
+    hasMoreBefore: true,
+    prefixFp: `pfx@${total - 3}`,
+    startFp: `start@${total - 200}`,
+  };
+  const asked: Parameters<FeedPoolDeps["fetchHistory"]>[2][] = [];
+  const fetchHistory: FeedPoolDeps["fetchHistory"] = async (_source, _id, query) => {
+    asked.push(query);
+    if (query.fp !== `start@${query.before}`) return { status: 409, error: "transcript_changed" };
+    const page = Math.max(0, query.before - 200);
+    const startIndex = query.from === undefined ? page : Math.min(page, Math.max(query.from, query.before - 2000));
+    return {
+      status: 200,
+      page: {
+        sig: "v1",
+        items: all.slice(startIndex, query.before),
+        startIndex,
+        endIndex: query.before,
+        totalItems: total,
+        hasMoreBefore: startIndex > 0,
+        startFp: `start@${startIndex}`,
+      },
+    };
+  };
+  return { frame, asked, fetchHistory };
+}
+
+test("scroll-back asks for the one page before the window, as it always did", async (t) => {
+  const session = longSession(10_000);
+  const { sockets, feed } = await opened(t, { fetchHistory: session.fetchHistory });
+  sockets[0]!.open();
+  sockets[0]!.frame(session.frame);
+  await feed.loadEarlier();
+  assert.deepEqual(session.asked, [{ before: 9800, fp: "start@9800" }], "no `from`: a page");
+  const data = feed.getView().data!;
+  assert.deepEqual([data.startIndex, data.endIndex, data.items.length, data.startFp], [9600, 10_000, 400, "start@9600"]);
+});
+
+test("a jump to a message nine pages back costs one history request, and the window then holds it", async (t) => {
+  const session = longSession(10_000);
+  const { sockets, feed } = await opened(t, { fetchHistory: session.fetchHistory });
+  sockets[0]!.open();
+  sockets[0]!.frame(session.frame);
+  // What the view's jump does (`session-search-view.tsx`): plan, ask, plan again.
+  const target = 8000;
+  const budget = pageInBudget(target, feed.getView().data!.startIndex);
+  let requests = 0;
+  for (;;) {
+    const view = feed.getView();
+    const step = planPageIn({ target, window: view.data!, loading: view.isLoadingEarlier, pagesLoaded: requests, budget });
+    if (step.kind !== "load") {
+      assert.equal(step.kind, "ready");
+      break;
+    }
+    requests += 1;
+    await feed.loadEarlier(step.from);
+  }
+  assert.equal(requests, 1);
+  assert.deepEqual(session.asked, [{ before: 9800, fp: "start@9800", from: 7800 }]);
+  const data = feed.getView().data!;
+  assert.deepEqual([data.startIndex, data.endIndex, data.items.length, data.hasMoreBefore], [7800, 10_000, 2200, true]);
+  assert.equal(data.items[target - data.startIndex]!.text, "item 8000", "the item the jump lands on");
+  assert.equal(feed.getView().historyError, null);
+
+  // Further back than the cap: a request per cap, each reaching for the item.
+  session.asked.length = 0;
+  for (let i = 0; i < 3; i++) await feed.loadEarlier(0);
+  assert.deepEqual(session.asked, [
+    { before: 7800, fp: "start@7800", from: 0 },
+    { before: 5800, fp: "start@5800", from: 0 },
+    { before: 3800, fp: "start@3800", from: 0 },
+  ]);
+  assert.deepEqual([feed.getView().data!.startIndex, feed.getView().data!.hasMoreBefore], [1800, true]);
+});
+
+test("a jump's request refused as stale asks the socket for a fresh window, as a page's does", async (t) => {
+  const session = longSession(10_000);
+  const { sockets, feed } = await opened(t, { fetchHistory: async () => ({ status: 409, error: "transcript_changed" }) });
+  sockets[0]!.open();
+  sockets[0]!.frame(session.frame);
+  const held = feed.getView().data;
+  await feed.loadEarlier(8000);
+  assert.equal(feed.getView().data, held, "the window is kept until the socket replaces it");
+  assert.equal(feed.getView().historyError, null);
+  assert.deepEqual(sockets[0]!.sent.map((frame) => JSON.parse(frame)), [{ type: "resync" }]);
 });

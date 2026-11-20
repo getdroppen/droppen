@@ -5,10 +5,11 @@
  * the reader paged in — so the browser's own find cannot see most of a long
  * session. `GET /api/sessions/{source}/{id}/search` answers over the whole
  * transcript, in the feed's own item numbering, and the view pages in to a
- * match with the history paging it already has. Everything here is the part of
- * that which can be wrong in a way a test can see: which key opens which
- * session's bar, how stepping wraps, how many pages a jump costs and when it
- * gives up, and where the hits are inside a run of text.
+ * match with the history request it already has, asked to reach back to the
+ * match in one go. Everything here is the part of that which can be wrong in
+ * a way a test can see: which key opens which session's bar, how stepping
+ * wraps, how many requests a jump costs and when it gives up, and where the
+ * hits are inside a run of text.
  *
  * Matches are kept **newest first**. A transcript is read from the bottom, so
  * the first match is the one nearest to where the reader already is, and
@@ -16,6 +17,7 @@
  * them are.
  */
 import type { components } from "../../api/schema.js";
+import { MAX_HISTORY_ITEMS } from "./session-feed-state.js";
 
 export type SearchMatch = components["schemas"]["SearchMatch"];
 export type SessionSearchResult = components["schemas"]["SessionSearchResult"];
@@ -30,6 +32,13 @@ export const SEARCH_LIMIT = 200;
  * the server sends.
  */
 export const HISTORY_PAGE_SIZE = 200;
+/**
+ * Items a jump keeps above the one it lands on, when the transcript has them:
+ * a page, what scrolling up would have brought. Enough rows to centre the
+ * target clear of the scroll-top "load earlier", and to hold the call a tool
+ * result folds into, which comes just before it.
+ */
+export const JUMP_MARGIN = HISTORY_PAGE_SIZE;
 /**
  * How many pages past the estimate a jump may spend before it gives up. A
  * history page can be refused (the transcript was rewritten under the window,
@@ -263,17 +272,31 @@ export function pagesToReach(target: number, startIndex: number, pageSize = HIST
   return target >= startIndex ? 0 : Math.ceil((startIndex - target) / pageSize);
 }
 
-/** What a jump may spend on pages before it gives up; see [`PAGE_IN_SLACK`]. */
+/** Where a jump to `target` asks the window to reach back to: [`JUMP_MARGIN`] above it. */
+export function jumpReach(target: number): number {
+  return Math.max(0, target - JUMP_MARGIN);
+}
+
+/**
+ * What a jump may spend on requests before it gives up; see [`PAGE_IN_SLACK`].
+ * Counted in pages to where it reaches, not in ranges: a server from before
+ * ranges, or a range the byte cap cut short, answers a page at a time, and
+ * the jump still gets there.
+ */
 export function pageInBudget(target: number, startIndex: number, pageSize = HISTORY_PAGE_SIZE): number {
-  return pagesToReach(target, startIndex, pageSize) + PAGE_IN_SLACK;
+  return pagesToReach(jumpReach(target), startIndex, pageSize) + PAGE_IN_SLACK;
 }
 
 /** The next move of a jump to an item that may not be loaded yet. */
 export type PageInStep =
   /** The item is in the window: scroll to it. */
   | { kind: "ready" }
-  /** Ask for the page before the window; `pagesLeft` is the estimate. */
-  | { kind: "load"; pagesLeft: number }
+  /**
+   * Ask for everything from `from` ([`jumpReach`]) to the window's start,
+   * which the server sends in one answer up to its cap. `requestsLeft` is the
+   * estimate, this one included.
+   */
+  | { kind: "load"; from: number; requestsLeft: number }
   /** A page is already on its way; wait for it. */
   | { kind: "wait" }
   /**
@@ -292,24 +315,50 @@ export type PageInStep =
  * window is replaced by a fresh tail, after which the right number of pages is
  * whatever it is *now*. `budget` is what stops a transcript that keeps changing
  * from being paged for ever.
+ *
+ * Every request asks for the whole way back at once, since the target is
+ * known: a jump within the server's cap is one request, not one per page, and
+ * over a relay each of those was a round trip and a server answer before the
+ * view could move. Further back than the cap, each answer is the newest part
+ * of the range and the next request goes on from where it ends.
+ *
+ * The way back ends [`JUMP_MARGIN`] items above the target, not at it, and a
+ * jump that has paged is not done until the window holds them (or all there
+ * is, or the budget is spent). A window that starts at the target cannot
+ * centre it: the view lands at the very top, where its own "load earlier"
+ * fires under the reader, and a tool result's call — just before it — is
+ * left outside, so the jump lands on the result's own row until that page
+ * folds it into the call's closed card. A target the window already held
+ * before any paging is landed on at once, as it always was.
  */
 export function planPageIn(input: {
   target: number;
   window: { startIndex: number; endIndex: number; hasMoreBefore: boolean };
   /** A history request is out — this jump's or anybody's. */
   loading: boolean;
-  /** Pages this jump has asked for so far. */
+  /** Requests this jump has made so far. */
   pagesLoaded: number;
   budget: number;
-  pageSize?: number;
+  /** Items one request brings, for the estimate; the server's cap when unknown. */
+  rangeSize?: number;
 }): PageInStep {
   const { target, window } = input;
-  if (target >= window.startIndex && target < window.endIndex) return { kind: "ready" };
   if (target >= window.endIndex) return { kind: "ahead" };
+  const from = jumpReach(target);
+  if (
+    target >= window.startIndex &&
+    (from >= window.startIndex || !window.hasMoreBefore || input.pagesLoaded === 0 || input.pagesLoaded >= input.budget)
+  ) {
+    return { kind: "ready" };
+  }
   if (input.loading) return { kind: "wait" };
   if (!window.hasMoreBefore) return { kind: "fail", reason: "unreachable" };
   if (input.pagesLoaded >= input.budget) return { kind: "fail", reason: "budget" };
-  return { kind: "load", pagesLeft: pagesToReach(target, window.startIndex, input.pageSize) };
+  return {
+    kind: "load",
+    from,
+    requestsLeft: pagesToReach(from, window.startIndex, input.rangeSize ?? MAX_HISTORY_ITEMS),
+  };
 }
 
 type WindowItem = Pick<components["schemas"]["TranscriptItem"], "kind" | "toolUseId" | "resultOf" | "toolName">;
@@ -342,7 +391,11 @@ export type JumpOwner = "search" | "item";
 /** What the view shows about the jump in flight, and the last one that failed. */
 export interface JumpStatus {
   owner: JumpOwner | null;
-  /** Pages paged in so far, of about `total`, while a jump pages history in. */
+  /**
+   * History requests made so far, of about `total`, while a jump pages history
+   * in. A jump within the server's cap is one request, and its view draws no
+   * count for it.
+   */
   paging: { loaded: number; total: number } | null;
   /** The search bar's "could not reach this match". Only ever a search's own. */
   failed: boolean;

@@ -417,6 +417,15 @@ pub struct HistoryQuery {
     pub fp: Option<String>,
     /// The `endIndex` of the client's window, when `fp` is its resume marker.
     pub since: Option<u32>,
+    /// The absolute index the page should reach back to, for a client that
+    /// knows the item it wants — a jump to a search hit or to the first unread
+    /// message: the page is then the items `[from, before)` in one answer
+    /// instead of the one page before `before`. Never fewer items than that
+    /// page, and at most 2000 items and 1 MiB of them; past either cap it is
+    /// the newest part of the range, and its `startIndex`, later than `from`
+    /// and with `hasMoreBefore`, is where the next request picks up. `fp`
+    /// proves it exactly as it proves a page. Absent, one page, as before.
+    pub from: Option<u32>,
 }
 
 /// Query for `GET /api/sessions/{source}/{id}/search`.
@@ -1479,12 +1488,13 @@ pub async fn archive_session(State(state): State<DriveState>, ApiPath((source, i
     Ok(Json(SendResult { accepted: true }))
 }
 
-/// The transcript page immediately before an index the client already holds.
+/// The transcript page immediately before an index the client already holds,
+/// or — with `from` — the range back to that index, capped.
 #[api(
     id = "session_history",
     group = "sessions",
     summary = "Older transcript",
-    responses(200 = "The contiguous transcript page immediately before the requested index"),
+    responses(200 = "The contiguous transcript page immediately before the requested index, or with `from` as much of the range `[from, before)` as the caps allow"),
     errors(
         404 = "Session not found",
         409 = "`transcript_changed`: the items before `before` are no longer the ones `fp` fingerprinted; the client's window needs replacing"
@@ -1529,7 +1539,12 @@ pub async fn session_history(
             (sig, transcript)
         }
     };
-    let page = feed::transcript_page(&transcript.items, before);
+    // A range depends on nothing past `before` either, so the anchor that
+    // proves a page proves it.
+    let page = match query.from {
+        Some(from) => feed::transcript_range(&transcript.items, from as usize, before),
+        None => feed::transcript_page(&transcript.items, before),
+    };
     Ok(Json(SessionHistoryPage {
         sig,
         start_fp: transcript.fp_at(page.start_index).unwrap_or_default(),
@@ -2746,10 +2761,23 @@ mod tests {
     }
 
     async fn history(state: &DriveState, id: &str, before: usize, fp: Option<String>, since: Option<usize>) -> Result<SessionHistoryPage, ApiError> {
+        history_from(state, id, before, fp, since, None).await
+    }
+
+    /// [`history`] reaching back to `from`.
+    async fn history_from(
+        state: &DriveState,
+        id: &str,
+        before: usize,
+        fp: Option<String>,
+        since: Option<usize>,
+        from: Option<usize>,
+    ) -> Result<SessionHistoryPage, ApiError> {
         let query = HistoryQuery {
             before: before as u32,
             fp,
             since: since.map(|since| since as u32),
+            from: from.map(|from| from as u32),
         };
         session_history(State(state.clone()), ApiPath((fake::SOURCE, id.to_string())), ApiQuery(query))
             .await
@@ -2853,6 +2881,129 @@ mod tests {
         let now = file_signature(&file).await.expect("sig");
         assert_eq!((page.sig.as_str(), page.start_index, page.end_index), (now.as_str(), 100, 300));
         assert_eq!(texts(&page.items), texts(&newer.items[100..300]));
+    }
+
+    /// A jump to an item far back asks for everything from it to its window
+    /// in one request: one answer, proven by the window's start fingerprint
+    /// like a page, that places by its own start fingerprint like a page.
+    #[tokio::test]
+    async fn a_ranged_history_request_is_one_answer_back_to_from() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-ranged";
+        let file = fake::session(&state.paths, id, &lines(0..3000));
+        let (sig, held) = parse_now(&state.drive, &file).await;
+        // The window the feed sent: the last two hundred items.
+        let start_fp = held.fp_at(2800).expect("in range");
+
+        let range = history_from(&state, id, 2800, Some(start_fp.clone()), None, Some(1000)).await.expect("a range");
+        assert_eq!((range.start_index, range.end_index, range.has_more_before), (1000, 2800, true));
+        assert_eq!(texts(&range.items), texts(&held.items[1000..2800]));
+        assert_eq!(range.start_fp, held.fp_at(1000).expect("in range"), "what the next page down is asked for with");
+        assert_eq!((range.sig.as_str(), range.total_items), (sig.as_str(), 3000));
+
+        // A trimmed window proves it with its resume marker, as a page.
+        let by_marker = history_from(&state, id, 2800, Some(held.prefix_fp()), Some(held.len()), Some(1000)).await.expect("a range");
+        assert_eq!((by_marker.start_index, by_marker.end_index), (1000, 2800));
+
+        // A `from` inside the page is the page.
+        let near = history_from(&state, id, 2800, Some(start_fp), None, Some(2750)).await.expect("a page");
+        assert_eq!((near.start_index, near.end_index, near.items.len()), (2600, 2800, feed::SESSION_PAGE_SIZE));
+    }
+
+    /// A live session appended to since the feed's parse: the range is cut
+    /// from the parse already held, as a page is, and is exactly what a fresh
+    /// read gives.
+    #[tokio::test]
+    async fn a_range_is_cut_from_the_newest_parse_after_an_append() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-ranged-after-an-append";
+        let file = fake::session(&state.paths, id, &lines(0..3000));
+        let (held_sig, held) = parse_now(&state.drive, &file).await;
+        let start_fp = held.fp_at(2800).expect("in range");
+        append(&file, &lines(3000..3050));
+        let now = file_signature(&file).await.expect("sig");
+        assert_ne!(now, held_sig, "the file moved on");
+
+        let range = history_from(&state, id, 2800, Some(start_fp.clone()), None, Some(1500)).await.expect("a range");
+        assert_eq!(range.sig, held_sig, "read off the parse already held");
+        assert_eq!(cached_sig(&state.drive, &file), Some(held_sig.clone()), "and nothing was parsed");
+        assert_eq!((range.start_index, range.end_index, range.total_items), (1500, 2800, 3000));
+        assert_eq!(texts(&range.items), texts(&held.items[1500..2800]));
+
+        droppen_sessions::loader::forget_transcript(&file);
+        let fresh = history_from(&state, id, 2800, Some(start_fp), None, Some(1500)).await.expect("a range");
+        assert_eq!((fresh.sig.as_str(), fresh.total_items), (now.as_str(), 3050), "read again, with nothing held");
+        assert_eq!(texts(&fresh.items), texts(&range.items));
+        assert_eq!(
+            (fresh.start_index, fresh.end_index, fresh.has_more_before, &fresh.start_fp),
+            (range.start_index, range.end_index, range.has_more_before, &range.start_fp)
+        );
+    }
+
+    /// Further back than the cap, the answer is the newest part of the range,
+    /// and the next request picks up from its start.
+    #[tokio::test]
+    async fn a_ranged_history_request_past_the_cap_is_its_newest_part() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-ranged-capped";
+        let file = fake::session(&state.paths, id, &lines(0..3000));
+        let (_, held) = parse_now(&state.drive, &file).await;
+
+        let first = history_from(&state, id, 2800, held.fp_at(2800), None, Some(0)).await.expect("a range");
+        assert_eq!(first.items.len(), feed::MAX_HISTORY_ITEMS);
+        assert_eq!((first.start_index, first.end_index, first.has_more_before), (800, 2800, true));
+        let rest = history_from(&state, id, first.start_index, Some(first.start_fp.clone()), None, Some(0))
+            .await
+            .expect("the rest");
+        assert_eq!((rest.start_index, rest.end_index, rest.has_more_before), (0, 800, false));
+        assert_eq!(texts(&rest.items), texts(&held.items[..800]));
+    }
+
+    /// A range is refused exactly when a page would be: its anchor no longer
+    /// holds — rewritten shorter, which the signature says, or rewritten and
+    /// parsed since, which the fingerprint does
+    /// (`a_rewritten_transcript_is_read_again_and_its_page_refused`).
+    #[tokio::test]
+    async fn a_ranged_history_request_on_a_rewritten_transcript_is_refused() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-ranged-rewritten";
+        let file = fake::session(&state.paths, id, &lines(0..1000));
+        let (_, held) = parse_now(&state.drive, &file).await;
+        let start_fp = held.fp_at(800).expect("in range");
+        let conflict = |result: Result<SessionHistoryPage, ApiError>| {
+            let error = result.expect_err("refused");
+            assert_eq!(error.status(), gotcha::axum::http::StatusCode::CONFLICT);
+            assert!(error.body().to_string().contains("transcript_changed"), "{}", error.body());
+        };
+
+        std::fs::write(&file, (0..900).map(|i| format!("o {i}\n")).collect::<String>()).expect("rewrite");
+        conflict(history_from(&state, id, 800, Some(start_fp.clone()), None, Some(0)).await);
+
+        std::fs::write(&file, (0..1200).map(|i| format!("other {i}\n")).collect::<String>()).expect("rewrite");
+        parse_now(&state.drive, &file).await;
+        conflict(history_from(&state, id, 800, Some(start_fp), None, Some(0)).await);
+        conflict(history_from(&state, id, 800, Some(held.prefix_fp()), Some(held.len()), Some(0)).await);
+    }
+
+    /// A request without `from` is the one page it always was, however far
+    /// back the window starts.
+    #[tokio::test]
+    async fn a_history_request_without_from_is_one_page() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-one-page";
+        let file = fake::session(&state.paths, id, &lines(0..3000));
+        let (_, held) = parse_now(&state.drive, &file).await;
+        let page = history(&state, id, 2800, held.fp_at(2800), None).await.expect("a page");
+        assert_eq!((page.start_index, page.end_index, page.has_more_before), (2600, 2800, true));
+        assert_eq!(texts(&page.items), texts(&held.items[2600..2800]));
+        assert_eq!(page.start_fp, held.fp_at(2600).expect("in range"));
+        let unchecked = history(&state, id, 150, None, None).await.expect("a page");
+        assert_eq!((unchecked.start_index, unchecked.end_index, unchecked.has_more_before), (0, 150, false));
     }
 
     /// `n` user lines, then `count` agent messages stamped in minute `minute`,

@@ -1,11 +1,12 @@
 // In-session search, without a DOM: which key opens which session's bar, how
-// stepping wraps, how many history pages a jump costs and when it gives up,
+// stepping wraps, how many history requests a jump costs and when it gives up,
 // and where the hits are inside a run of text.
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
   foldText,
   HISTORY_PAGE_SIZE,
+  JUMP_MARGIN,
   highlightSegments,
   hitRanges,
   isFindChord,
@@ -29,6 +30,7 @@ import {
   type JumpEvent,
   type JumpStatus,
 } from "../src/features/sessions/session-search.js";
+import { MAX_HISTORY_ITEMS } from "../src/features/sessions/session-feed-state.js";
 
 function key(overrides: Partial<FindKey>): FindKey {
   return { key: "f", code: "KeyF", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...overrides };
@@ -140,40 +142,91 @@ test("a match inside the window needs no paging", () => {
   assert.equal(pagesToReach(900, 800), 0);
 });
 
-test("paging in walks back a page at a time and stops on the page that holds the item", () => {
-  let window = { startIndex: 1000, endIndex: 1200, hasMoreBefore: true };
-  const target = 437;
+type PageWindow = { startIndex: number; endIndex: number; hasMoreBefore: boolean };
+
+/**
+ * The window after the server answers a request reaching back to `from`: as
+ * far back as `cap` items, and never less than a page — or, from a server
+ * that predates ranges (`cap` a page), the one page.
+ */
+function answered(window: PageWindow, from: number, cap = MAX_HISTORY_ITEMS): PageWindow {
+  const start = Math.max(0, Math.min(window.startIndex - HISTORY_PAGE_SIZE, Math.max(from, window.startIndex - cap)));
+  return { startIndex: start, endIndex: window.endIndex, hasMoreBefore: start > 0 };
+}
+
+/** Walk a jump to `target` the way the view does, counting its requests. */
+function jump(start: PageWindow, target: number, cap = MAX_HISTORY_ITEMS) {
+  let window = start;
   const budget = pageInBudget(target, window.startIndex);
-  assert.equal(budget, 3 + PAGE_IN_SLACK, "1000 → 800 → 600 → 400");
-  let pages = 0;
-  const left: number[] = [];
+  let requests = 0;
+  const steps: { from: number; requestsLeft: number }[] = [];
   for (;;) {
-    const step = planPageIn({ target, window, loading: false, pagesLoaded: pages, budget });
-    if (step.kind === "ready") break;
-    assert.equal(step.kind, "load");
-    if (step.kind === "load") left.push(step.pagesLeft);
-    // The page is in flight: nothing else goes out meanwhile.
-    assert.deepEqual(planPageIn({ target, window, loading: true, pagesLoaded: pages + 1, budget }), { kind: "wait" });
-    pages += 1;
-    const start = Math.max(0, window.startIndex - HISTORY_PAGE_SIZE);
-    window = { startIndex: start, endIndex: window.endIndex, hasMoreBefore: start > 0 };
+    const step = planPageIn({ target, window, loading: false, pagesLoaded: requests, budget });
+    if (step.kind !== "load") return { step, requests, steps, window };
+    steps.push({ from: step.from, requestsLeft: step.requestsLeft });
+    // The request is in flight: nothing else goes out meanwhile.
+    assert.deepEqual(planPageIn({ target, window, loading: true, pagesLoaded: requests + 1, budget }), { kind: "wait" });
+    requests += 1;
+    window = answered(window, step.from, cap);
   }
-  assert.equal(pages, 3);
-  assert.deepEqual(left, [3, 2, 1], "the estimate counts down");
-  assert.ok(window.startIndex <= target && target < window.endIndex);
+}
+
+test("a jump to an item many pages back asks for the whole way in one request, with a page above the item", () => {
+  // Nine pages back: the first unread message after a long absence.
+  const { step, requests, steps, window } = jump({ startIndex: 9800, endIndex: 10000, hasMoreBefore: true }, 8000);
+  assert.equal(step.kind, "ready");
+  assert.equal(requests, 1, "one request, not nine");
+  assert.deepEqual(steps, [{ from: 8000 - JUMP_MARGIN, requestsLeft: 1 }], "one request draws no n/m");
+  // Not the item as the window's first row, which the view cannot centre: it
+  // would land at the top, where "load earlier" fires under it, and a tool
+  // result's call would be left outside.
+  assert.equal(8000 - window.startIndex, JUMP_MARGIN);
+});
+
+test("further back than the cap, each request reaches as far and the next goes on from where it stopped", () => {
+  const { step, requests, steps } = jump({ startIndex: 9000, endIndex: 9200, hasMoreBefore: true }, 100);
+  assert.equal(step.kind, "ready");
+  assert.equal(requests, 5, "9000 → 7000 → 5000 → 3000 → 1000 → 0");
+  assert.deepEqual(steps.map((s) => s.from), [0, 0, 0, 0, 0], "a page above the item, as far as there is one");
+  assert.deepEqual(steps.map((s) => s.requestsLeft), [5, 4, 3, 2, 1], "the estimate counts down");
+});
+
+test("a range the cap cut short of the rows above the item is topped up by one more request", () => {
+  // The cap stops the first answer ten items above the target.
+  const { step, requests, steps, window } = jump({ startIndex: 4300, endIndex: 4500, hasMoreBefore: true }, 2310);
+  assert.equal(step.kind, "ready");
+  assert.equal(requests, 2);
+  assert.deepEqual(steps.map((s) => s.from), [2110, 2110]);
+  assert.ok(2310 - window.startIndex >= JUMP_MARGIN, `${window.startIndex}`);
+});
+
+test("a server that answers a page at a time still gets the jump there, rows above and all, within its budget", () => {
+  // One from before ranges, or ranges the byte cap cut down to a page.
+  const { step, requests, steps, window } = jump({ startIndex: 1000, endIndex: 1200, hasMoreBefore: true }, 437, HISTORY_PAGE_SIZE);
+  assert.equal(step.kind, "ready");
+  assert.equal(requests, 4, "1000 → 800 → 600 → 400, which holds the item, → 200, which holds the rows above it");
+  assert.ok(requests <= pageInBudget(437, 1000));
+  assert.equal(pageInBudget(437, 1000), 4 + PAGE_IN_SLACK, "the budget is counted in pages to the rows above");
+  assert.deepEqual(steps.map((s) => s.from), [237, 237, 237, 237]);
+  assert.deepEqual([window.startIndex, window.hasMoreBefore], [200, true]);
+});
+
+test("a jump short of the rows above lands anyway when there are no more, or its budget is spent", () => {
+  const held = { startIndex: 400, endIndex: 1200, hasMoreBefore: true };
+  assert.deepEqual(planPageIn({ target: 437, window: held, loading: false, pagesLoaded: 2, budget: 6 }), { kind: "load", from: 237, requestsLeft: 1 });
+  assert.deepEqual(planPageIn({ target: 437, window: held, loading: true, pagesLoaded: 2, budget: 6 }), { kind: "wait" });
+  assert.deepEqual(planPageIn({ target: 437, window: held, loading: false, pagesLoaded: 6, budget: 6 }), { kind: "ready" });
+  assert.deepEqual(planPageIn({ target: 437, window: { ...held, startIndex: 0, hasMoreBefore: false }, loading: false, pagesLoaded: 2, budget: 6 }), { kind: "ready" });
+  assert.deepEqual(planPageIn({ target: 10, window: { ...held, startIndex: 5, hasMoreBefore: false }, loading: false, pagesLoaded: 1, budget: 6 }), { kind: "ready" });
 });
 
 test("paging in to the very first item ends at the start of the transcript", () => {
-  let window = { startIndex: 450, endIndex: 650, hasMoreBefore: true };
-  let pages = 0;
-  const budget = pageInBudget(0, window.startIndex);
-  while (planPageIn({ target: 0, window, loading: false, pagesLoaded: pages, budget }).kind === "load") {
-    pages += 1;
-    const start = Math.max(0, window.startIndex - HISTORY_PAGE_SIZE);
-    window = { ...window, startIndex: start, hasMoreBefore: start > 0 };
-  }
-  assert.equal(pages, 3, "450 → 250 → 50 → 0");
-  assert.equal(planPageIn({ target: 0, window, loading: false, pagesLoaded: pages, budget }).kind, "ready");
+  const start = { startIndex: 450, endIndex: 650, hasMoreBefore: true };
+  const { step, requests, window } = jump(start, 0);
+  assert.equal(step.kind, "ready");
+  assert.equal(requests, 1);
+  assert.deepEqual([window.startIndex, window.hasMoreBefore], [0, false]);
+  assert.equal(jump(start, 0, HISTORY_PAGE_SIZE).requests, 3, "a page at a time: 450 → 250 → 50 → 0");
 });
 
 test("a jump gives up rather than paging for ever", () => {
@@ -187,7 +240,7 @@ test("a jump gives up rather than paging for ever", () => {
     step = planPageIn({ target: 900, window, loading: false, pagesLoaded: pages, budget });
   }
   assert.deepEqual(step, { kind: "fail", reason: "budget" });
-  assert.equal(pages, 1 + PAGE_IN_SLACK);
+  assert.equal(pages, 2 + PAGE_IN_SLACK, "two pages to the rows above the item, and the slack");
   // A window that has nothing before it cannot hold an older item.
   assert.deepEqual(
     planPageIn({ target: 10, window: { startIndex: 50, endIndex: 250, hasMoreBefore: false }, loading: false, pagesLoaded: 0, budget: 9 }),
@@ -196,11 +249,16 @@ test("a jump gives up rather than paging for ever", () => {
 });
 
 test("a reset in the middle of paging is planned from where the window is now", () => {
-  // Two pages in, the transcript was rewritten and the window replaced by a
-  // fresh tail: the estimate goes back up and the paging carries on.
+  // Two requests in, the transcript was rewritten and the window replaced by
+  // a fresh tail: the jump asks again, from where the window is now.
   const reset = { startIndex: 1100, endIndex: 1300, hasMoreBefore: true };
   const step = planPageIn({ target: 437, window: reset, loading: false, pagesLoaded: 2, budget: 6 });
-  assert.deepEqual(step, { kind: "load", pagesLeft: 4 });
+  assert.deepEqual(step, { kind: "load", from: 237, requestsLeft: 1 });
+  assert.deepEqual(
+    planPageIn({ target: 437, window: reset, loading: false, pagesLoaded: 2, budget: 6, rangeSize: HISTORY_PAGE_SIZE }),
+    { kind: "load", from: 237, requestsLeft: 5 },
+    "estimated a page at a time, it is the pages left",
+  );
 });
 
 test("a match newer than the window waits for the live feed", () => {

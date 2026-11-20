@@ -30,7 +30,10 @@ const FAILED_MS = 3000;
 export interface FirstUnreadJump {
   /** What the button draws; `null` while there is none. */
   view: FirstUnreadView | null;
-  /** Pages paged in so far while the jump runs, of about `total`. */
+  /**
+   * History requests made so far while the jump runs, of about `total`: one
+   * for a message within the server's cap, which draws no count.
+   */
   paging: { loaded: number; total: number } | null;
   /** For `useReportSeen`: the mark an arrival's report replaced. */
   onArrival: (previousReadAt: string | null) => void;

@@ -6,8 +6,9 @@
  * session view:
  *
  * - [`useSessionSearch`]: the query, its results, which match is active, and
- *   the jump — which pages history in through the view's own "load earlier"
- *   until the match is in the window, then scrolls it into view and flashes it.
+ *   the jump — which pages history in through the view's own "load earlier",
+ *   asked to reach back to the match in one request, until the match is in
+ *   the window, then scrolls it into view and flashes it.
  * - [`useFindShortcut`]: one `keydown` listener for the whole page, shared by
  *   every mounted session view, that hands Cmd/Ctrl+F to the session the user
  *   is working in.
@@ -69,6 +70,7 @@ import {
   type JumpOwner,
   type SearchMatch,
 } from "@/features/sessions/session-search";
+import { MAX_HISTORY_ITEMS } from "@/features/sessions/session-feed-state";
 import { useApi } from "@/lib/machines/context";
 import { isSessionSource } from "./new-session-flow";
 
@@ -286,11 +288,12 @@ export interface SearchHost {
   isLoadingEarlier: boolean;
   historyError: string | null;
   /**
-   * Ask for the page before the window exactly as the reader scrolling up
-   * does — anchored, so the rows on screen stay put. `null` when no request
-   * went out (one is already in flight).
+   * Ask for the items before the window exactly as the reader scrolling up
+   * does — anchored, so the rows on screen stay put — but reaching back to
+   * `from`, the item the jump is after, in one request rather than a page.
+   * `null` when no request went out (one is already in flight).
    */
-  loadEarlier: () => Promise<void> | null;
+  loadEarlier: (from?: number) => Promise<void> | null;
   scrollRef: RefObject<HTMLDivElement | null>;
   rowsRef: RefObject<HTMLDivElement | null>;
   /** Take the view off the newest row, so the pin and the trim leave it be. */
@@ -319,10 +322,20 @@ interface Jump {
   owner: JumpOwner;
   /** Told how it ended, once. */
   onSettled?: (outcome: JumpOutcome) => void;
+  /** History requests made so far. */
   pagesLoaded: number;
   budget: number;
   inflight: boolean;
   aheadSince: number | null;
+  /** Where the window started when the last request went out, until what it brought is counted. */
+  askedAt: number | null;
+  /**
+   * Items one of this jump's requests brings, which the progress estimate
+   * counts in: the server's cap until one has answered, then what that one
+   * brought — less when the byte cap cut it short, a page from a server that
+   * predates ranges.
+   */
+  rangeSize: number;
 }
 
 export interface SessionSearch {
@@ -349,7 +362,7 @@ export interface SessionSearch {
    * `onSettled` hears how it ended; the search bar hears nothing of it.
    */
   jumpToItem: (index: number, onSettled?: (outcome: JumpOutcome) => void) => void;
-  /** A search's jump paging history in, `loaded` of about `total` pages. */
+  /** A search's jump paging history in, `loaded` of about `total` requests. */
   paging: { loaded: number; total: number } | null;
   /** The same for a `jumpToItem` jump, for its caller to draw. */
   itemPaging: { loaded: number; total: number } | null;
@@ -431,6 +444,8 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
         budget: pageInBudget(match.index, held?.startIndex ?? 0),
         inflight: false,
         aheadSince: null,
+        askedAt: null,
+        rangeSize: MAX_HISTORY_ITEMS,
       };
       dispatchJump({ type: "start", owner });
       setJumpTick((n) => n + 1);
@@ -632,10 +647,20 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
     const jump = jumpRef.current;
     if (!jump || !loaded || jump.inflight) return;
     const fail = () => settleJump("failed");
-    // A page this jump asked for did not come.
+    // A page this jump asked for did not come. One that was only to bring the
+    // rows above an item already here is no reason not to land on it.
     if (host.historyError && jump.pagesLoaded > 0 && !host.isLoadingEarlier) {
-      fail();
+      const target = jump.match.index;
+      const held = target >= loaded.startIndex && target < loaded.endIndex;
+      settleJump(held && land(jump) ? "landed" : "failed");
       return;
+    }
+    // What the last request brought is what the rest are estimated at. A
+    // window that did not move (a refused request) or was replaced says
+    // nothing about that.
+    if (jump.askedAt !== null) {
+      if (loaded.startIndex < jump.askedAt) jump.rangeSize = jump.askedAt - loaded.startIndex;
+      jump.askedAt = null;
     }
     const next = planPageIn({
       target: jump.match.index,
@@ -643,6 +668,7 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
       loading: host.isLoadingEarlier,
       pagesLoaded: jump.pagesLoaded,
       budget: jump.budget,
+      rangeSize: jump.rangeSize,
     });
     switch (next.kind) {
       case "ready":
@@ -661,11 +687,14 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
         return () => clearTimeout(timer);
       }
       case "load": {
-        const request = host.loadEarlier();
+        // The whole way back to the item in one request, up to the server's
+        // cap; a page at a time from a server that predates ranges.
+        const request = host.loadEarlier(next.from);
         if (!request) return;
         jump.inflight = true;
+        jump.askedAt = loaded.startIndex;
         jump.pagesLoaded += 1;
-        dispatchJump({ type: "page", loaded: jump.pagesLoaded, total: jump.pagesLoaded + next.pagesLeft - 1 });
+        dispatchJump({ type: "page", loaded: jump.pagesLoaded, total: jump.pagesLoaded + next.requestsLeft - 1 });
         void request.finally(() => {
           jump.inflight = false;
           // Re-plan even when the window did not move: a refused page leaves
