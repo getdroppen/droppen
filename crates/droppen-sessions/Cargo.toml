@@ -27,7 +27,9 @@ rusqlite = { version = "0.41", features = ["bundled"] }
 # crate would link a C library. Without `hash`, which only checks a frame's
 # checksum, and Codex writes none.
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }
-serde = { version = "1", features = ["derive"] }
+# `rc`: a transcript's items are each behind an `Arc` (`loader::Transcript`),
+# and a slice of them is written as the items themselves.
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { workspace = true }
 sha2 = "0.10"
 thiserror = "1"

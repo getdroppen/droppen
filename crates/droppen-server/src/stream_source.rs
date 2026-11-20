@@ -207,7 +207,7 @@ mod tests {
         items[1].text = "wrote `~/notes.md`".into();
         droppen_sessions::mentions::annotate_mentioned_files(home.path(), &mut items, None, droppen_sessions::mentions::no_citations).await;
         assert!(items[1].is_annotated(), "the chip is there to be left out");
-        let loaded = LoadedTranscript(Arc::new(loader::Transcript::new(path, Arc::new(items.clone()))));
+        let loaded = LoadedTranscript(Arc::new(loader::Transcript::parsed(path, items.clone())));
         let json = |item: &TranscriptItem| serde_json::to_value(item).unwrap();
         let transcribed = items
             .iter()

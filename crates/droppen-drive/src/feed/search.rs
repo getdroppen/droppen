@@ -29,7 +29,7 @@
 //! the one field it shows and never from the rest of the item, so a match's
 //! cost does not grow with how much output a tool call had.
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
@@ -331,12 +331,13 @@ pub fn snippet_of(text: &str, terms: &[String]) -> (String, Vec<Vec<u32>>) {
 /// Search `items` for every item holding all of `terms`; see the module docs.
 ///
 /// `terms` are folded already ([`terms_of`]); none at all matches nothing.
-pub fn search_items(items: &[TranscriptItem], query: &str, terms: &[String], limit: usize, cap: usize) -> SessionSearchResult {
+pub fn search_items(items: &[impl Borrow<TranscriptItem>], query: &str, terms: &[String], limit: usize, cap: usize) -> SessionSearchResult {
     let mut total = 0;
     let mut truncated = false;
     let mut matches = Vec::new();
     if !terms.is_empty() {
         for (index, item) in items.iter().enumerate().rev() {
+            let item = item.borrow();
             let stacks = haystacks(item);
             let folded: Vec<Cow<'_, str>> = stacks.iter().map(|(_, text)| fold(text)).collect();
             if !terms.iter().all(|term| folded.iter().any(|text| text.contains(term.as_str()))) {
