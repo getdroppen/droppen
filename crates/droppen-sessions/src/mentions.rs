@@ -9,6 +9,10 @@
 //! Existence-gating is what keeps precision high; the two caps
 //! ([`MAX_FILES_PER_ITEM`], [`MAX_STATS_PER_TRANSCRIPT`]) are what keeps the
 //! `stat` cost of a very long transcript bounded.
+//!
+//! The chips are the filesystem's state when the transcript was parsed, not
+//! the transcript's, so they stay out of its fingerprint chain
+//! ([`TranscriptItem::as_transcribed`]).
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -37,6 +41,35 @@ pub type FileCitations = fn(&str) -> Vec<FileCitation>;
 /// A CLI with no markup of its own: every file is found in the prose.
 pub fn no_citations(_text: &str) -> Vec<FileCitation> {
     Vec::new()
+}
+
+impl TranscriptItem {
+    /// The item as its transcript wrote it, before [`annotate_mentioned_files`]
+    /// gave it chips or turned its citations into their labels: what the
+    /// fingerprint chain hashes. The item itself unless the annotation changed
+    /// it.
+    ///
+    /// Whether a mentioned file exists is the filesystem's answer at parse
+    /// time, and so is which mentions the `stat` budget reached: both move
+    /// while the transcript stays as it was. A fingerprint over them moved too,
+    /// for every later prefix, and refused each history page and resume
+    /// anchored past the item as a changed transcript.
+    pub fn as_transcribed(&self) -> &TranscriptItem {
+        self.transcribed.as_deref().unwrap_or(self)
+    }
+
+    /// Whether [`annotate_mentioned_files`] changed the item, so that it is
+    /// served otherwise than it is fingerprinted.
+    pub fn is_annotated(&self) -> bool {
+        self.transcribed.is_some()
+    }
+
+    /// Keep the item as it is, before the annotation's first change to it.
+    fn keep_transcribed(&mut self) {
+        if self.transcribed.is_none() {
+            self.transcribed = Some(Box::new(self.clone()));
+        }
+    }
 }
 
 fn clean_token(token: &str) -> &str {
@@ -137,6 +170,9 @@ pub fn resolve_within_home(home: &Path, candidate: &str, cwd: Option<&Path>) -> 
 
 /// Attach download chips for files an assistant message points at, the ones
 /// its CLI's markup names (`citations`, from the reader) first.
+///
+/// Each item it changes keeps a copy of itself from before, for its
+/// fingerprint ([`TranscriptItem::as_transcribed`]).
 pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem], cwd: Option<&str>, citations_of: FileCitations) {
     let cwd = cwd.map(Path::new);
     let mut exists: HashMap<PathBuf, bool> = HashMap::new();
@@ -181,6 +217,7 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
             }
         }
         if !found.is_empty() {
+            item.keep_transcribed();
             item.files.get_or_insert_with(Vec::new).extend(found);
         }
         // Only replace a directive once its real file has a chip. Missing,
@@ -199,6 +236,7 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
                 }
                 label.push(c);
             }
+            item.keep_transcribed();
             item.text.replace_range(citation.range, &label);
         }
     }
@@ -207,6 +245,7 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loader::fingerprint_chain;
     use crate::util::make_item;
 
     #[test]
@@ -278,5 +317,111 @@ mod tests {
         let mut items = vec![make_item(Role::Assistant, ItemKind::Text, &text, None)];
         annotate_mentioned_files(home.path(), &mut items, None, no_citations).await;
         assert_eq!(items[0].files.as_ref().expect("chips").len(), MAX_FILES_PER_ITEM);
+    }
+
+    /// A transcript's items as its reader makes them, before the annotation:
+    /// a user turn, an assistant message naming `named`, and a reply.
+    fn naming(named: &Path) -> Vec<TranscriptItem> {
+        vec![
+            make_item(Role::User, ItemKind::Text, "write the report", None),
+            make_item(Role::Assistant, ItemKind::Text, &format!("wrote `{}`", named.display()), None),
+            make_item(Role::Assistant, ItemKind::Text, "anything else?", None),
+        ]
+    }
+
+    async fn annotated(home: &Path, mut items: Vec<TranscriptItem>, cwd: Option<&str>) -> Vec<TranscriptItem> {
+        annotate_mentioned_files(home, &mut items, cwd, no_citations).await;
+        items
+    }
+
+    /// A file created or deleted between two parses of the same transcript
+    /// changes its chips, and not one fingerprint: the chain names what the
+    /// transcript wrote, which is also what it was before chips existed.
+    #[tokio::test]
+    async fn a_file_created_or_deleted_between_parses_moves_the_chips_not_the_chain() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let report = home.path().join("report.md");
+        let file = Path::new("/t/s.jsonl");
+        let chain = fingerprint_chain(file, &naming(&report));
+
+        let absent = annotated(home.path(), naming(&report), None).await;
+        assert!(absent[1].files.is_none());
+        assert_eq!(fingerprint_chain(file, &absent), chain);
+
+        std::fs::write(&report, "hi").expect("write");
+        let present = annotated(home.path(), naming(&report), None).await;
+        let chips: Vec<&str> = present[1].files.iter().flatten().map(|file| file.name.as_str()).collect();
+        assert_eq!(chips, ["report.md"], "the chip follows the file");
+        assert_eq!(fingerprint_chain(file, &present), chain);
+        let again = annotated(home.path(), absent.clone(), None).await;
+        assert!(again[1].files.is_some());
+        assert_eq!(fingerprint_chain(file, &again), chain, "a second annotation is left out too");
+
+        std::fs::remove_file(&report).expect("remove");
+        let deleted = annotated(home.path(), naming(&report), None).await;
+        assert!(deleted[1].files.is_none(), "and goes with it");
+        assert_eq!(fingerprint_chain(file, &deleted), chain);
+    }
+
+    /// The `stat` budget is spent in order, so which later mentions it reaches
+    /// depends on the files an earlier message names: here six of them
+    /// existing gives a later message its chip. The chain does not move.
+    #[tokio::test]
+    async fn the_stat_budget_spent_differently_moves_no_fingerprint() {
+        let home = tempfile::tempdir().expect("tempdir");
+        std::fs::write(home.path().join("report.md"), "hi").expect("write");
+        let drafts: Vec<String> = (0..MAX_STATS_PER_TRANSCRIPT).map(|n| format!("`d{n}.md`")).collect();
+        let items = || {
+            vec![
+                make_item(Role::Assistant, ItemKind::Text, &format!("drafts: {}", drafts.join(" ")), None),
+                make_item(Role::Assistant, ItemKind::Text, "wrote `report.md`", None),
+            ]
+        };
+        let cwd = home.path().to_str();
+        let file = Path::new("/t/s.jsonl");
+
+        let spent = annotated(home.path(), items(), cwd).await;
+        assert!(spent[0].files.is_none());
+        assert!(spent[1].files.is_none(), "every stat went on the drafts");
+
+        for n in 0..MAX_FILES_PER_ITEM {
+            std::fs::write(home.path().join(format!("d{n}.md")), "x").expect("write");
+        }
+        let left = annotated(home.path(), items(), cwd).await;
+        assert_eq!(left[0].files.as_ref().map(Vec::len), Some(MAX_FILES_PER_ITEM));
+        assert_eq!(left[1].files.as_ref().map(Vec::len), Some(1), "six stats found six drafts; the report got one too");
+
+        assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &spent));
+        assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &items()));
+    }
+
+    /// A file the item already named keeps counting, as the transcript's own:
+    /// only the chip added beside it is left out.
+    #[tokio::test]
+    async fn a_file_the_item_already_named_stays_in_its_fingerprint() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let report = home.path().join("report.md");
+        std::fs::write(&report, "hi").expect("write");
+        let named = |path: &str| {
+            let mut items = naming(&report);
+            items[1].files = Some(vec![FileRef {
+                name: "draft.md".into(),
+                path: path.into(),
+            }]);
+            items
+        };
+        let file = Path::new("/t/s.jsonl");
+
+        let chipped = annotated(home.path(), named("/u/draft.md"), None).await;
+        let files: Vec<&str> = chipped[1].files.iter().flatten().map(|file| file.name.as_str()).collect();
+        assert_eq!(files, ["draft.md", "report.md"]);
+        let kept: Vec<&str> = chipped[1].as_transcribed().files.iter().flatten().map(|file| file.name.as_str()).collect();
+        assert_eq!(kept, ["draft.md"]);
+        assert_eq!(fingerprint_chain(file, &chipped), fingerprint_chain(file, &named("/u/draft.md")));
+        assert_ne!(
+            fingerprint_chain(file, &chipped),
+            fingerprint_chain(file, &named("/u/other.md")),
+            "the file it named is the transcript's"
+        );
     }
 }

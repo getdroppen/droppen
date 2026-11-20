@@ -2347,4 +2347,33 @@ mod tests {
         assert_eq!(files, ["report.txt"]);
         assert_eq!(items[0].text, r"wrote report\.txt");
     }
+
+    /// A citation becomes its label only while its file exists, so a file
+    /// created or deleted between two parses changes the message's text as
+    /// well as its chip. Neither moves a fingerprint.
+    #[tokio::test]
+    async fn a_cited_file_created_or_deleted_between_parses_changes_no_fingerprint() {
+        let text = r#"wrote :codex-file-citation{path="~/report.txt" purpose="output"}"#;
+        let lines = [
+            serde_json::json!({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}}),
+            serde_json::json!({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "anything else?"}]}}),
+        ]
+        .map(|line| line.to_string());
+        let (dir, path) = rollout(&lines.each_ref().map(String::as_str));
+        let paths = Paths::new(dir.path().to_path_buf());
+        let chain = |items: &[TranscriptItem]| droppen_sessions::loader::fingerprint_chain(&path, items);
+
+        let absent = parse_codex_transcript(&paths, &path).await.expect("parse");
+        assert_eq!((absent[0].text.as_str(), absent[0].files.is_none()), (text, true));
+        std::fs::write(dir.path().join("report.txt"), "hi").expect("write");
+        let created = parse_codex_transcript(&paths, &path).await.expect("parse");
+        assert_eq!(created[0].text, r"wrote report\.txt");
+        assert!(created[0].files.is_some());
+        std::fs::remove_file(dir.path().join("report.txt")).expect("remove");
+        let deleted = parse_codex_transcript(&paths, &path).await.expect("parse");
+        assert_eq!((deleted[0].text.as_str(), deleted[0].files.is_none()), (text, true));
+
+        assert_eq!(chain(&created), chain(&absent));
+        assert_eq!(chain(&deleted), chain(&absent));
+    }
 }

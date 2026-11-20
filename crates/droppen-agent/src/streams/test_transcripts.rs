@@ -6,6 +6,7 @@
 //! (`stream_source`), so the two cannot drift apart unnoticed. With
 //! `test-support` only.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,11 +22,22 @@ pub const RESUME_OVERLAP: usize = 3;
 /// One link of a fingerprint chain: 128 bits of SHA-256, as the loader keeps.
 pub type Fp = [u8; 16];
 
-/// A transcript's items, each the JSON a transcript item writes.
+/// A transcript's items, each the JSON a transcript item writes, and what the
+/// fingerprint of each one its mentioned-file chips changed hashes instead.
 pub struct TestItems(
     /// The items.
     pub Vec<Value>,
+    /// Item `i` as its transcript wrote it, where the chips changed it: the
+    /// loader's `TranscriptItem::as_transcribed`.
+    pub BTreeMap<usize, Value>,
 );
+
+impl TestItems {
+    /// `items`, none of them changed by chips.
+    pub fn of(items: Vec<Value>) -> Self {
+        Self(items, BTreeMap::new())
+    }
+}
 
 impl Items for TestItems {
     fn len(&self) -> usize {
@@ -45,7 +57,7 @@ impl Items for TestItems {
 /// A transcript's fingerprint chain, made as the loader makes it: entry `i`
 /// covers items `[0, i)` of one file, so there are `items + 1` entries, the
 /// same file with the same items has the same chain, and a change to item
-/// `i` changes every entry after `i`.
+/// `i` changes every entry after `i` — unless all it changed is its chips.
 pub struct TestChain(
     /// Entry `i`, covering items `[0, i)`.
     pub Vec<Fp>,
@@ -81,10 +93,10 @@ pub fn fingerprint_chain(path: &Path, items: &TestItems) -> TestChain {
     seed.update(path.as_os_str().as_encoded_bytes());
     let mut link = cut(&seed.finalize());
     let mut chain = vec![link];
-    for item in &items.0 {
+    for (i, item) in items.0.iter().enumerate() {
         let mut hasher = Sha256::new();
         hasher.update(link);
-        hasher.update(serde_json::to_vec(item).unwrap_or_default());
+        hasher.update(serde_json::to_vec(items.1.get(&i).unwrap_or(item)).unwrap_or_default());
         link = cut(&hasher.finalize());
         chain.push(link);
     }
@@ -120,7 +132,8 @@ impl Transcript for TestTranscript {
         &self.chain
     }
     fn prefix(&self, end: usize) -> Arc<dyn Transcript> {
-        Arc::new(Self::new(&self.path, TestItems(self.items.0[..end].to_vec())))
+        let transcribed = self.items.1.range(..end).map(|(i, item)| (*i, item.clone())).collect();
+        Arc::new(Self::new(&self.path, TestItems(self.items.0[..end].to_vec(), transcribed)))
     }
 }
 

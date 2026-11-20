@@ -1171,6 +1171,42 @@ mod tests {
         assert_eq!(items[0].text, text);
     }
 
+    /// The same transcript parsed again after the file it names was created,
+    /// and again after it was deleted, has the same fingerprints: a history
+    /// page or a resume anchored past the mention still holds. The chip each
+    /// parse offers is the file as it was then.
+    #[tokio::test]
+    async fn a_file_created_or_deleted_between_parses_changes_no_fingerprint() {
+        let lines = [
+            serde_json::json!({"type": "user", "message": {"content": [{"type": "text", "text": "write the report"}]}}),
+            serde_json::json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "wrote `~/report.txt`"}]}}),
+            serde_json::json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "anything else?"}]}}),
+        ]
+        .map(|line| line.to_string());
+        let (dir, path) = write_jsonl(&lines.each_ref().map(String::as_str));
+        let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+        let chips = |items: &[TranscriptItem]| {
+            items
+                .iter()
+                .flat_map(|item| item.files.iter().flatten())
+                .map(|file| file.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let chain = |items: &[TranscriptItem]| droppen_sessions::loader::fingerprint_chain(&path, items);
+
+        let absent = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+        assert!(chips(&absent).is_empty());
+        std::fs::write(dir.path().join("report.txt"), "hi").expect("write");
+        let created = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+        assert_eq!(chips(&created), ["report.txt"]);
+        std::fs::remove_file(dir.path().join("report.txt")).expect("remove");
+        let deleted = parse_claude_transcript(&paths, &path, false).await.expect("parse");
+        assert!(chips(&deleted).is_empty());
+
+        assert_eq!(chain(&created), chain(&absent));
+        assert_eq!(chain(&deleted), chain(&absent));
+    }
+
     #[tokio::test]
     async fn assistant_text_thinking_and_tools_normalize() {
         let (dir, path) = write_jsonl(&[

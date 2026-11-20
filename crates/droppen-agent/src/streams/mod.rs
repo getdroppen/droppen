@@ -1994,7 +1994,7 @@ mod tests {
 
     /// `n` items of about 8 KB, the first `old` dated `old_ms`, the rest `new_ms`.
     fn dated_items(n: usize, old: usize, old_ms: u64, new_ms: u64) -> TestItems {
-        TestItems(
+        TestItems::of(
             (0..n)
                 .map(|i| {
                     let at = ms_iso(if i < old { old_ms } else { new_ms });
