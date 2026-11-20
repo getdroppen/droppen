@@ -56,7 +56,7 @@ impl Oracle {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let home = dir.path().to_path_buf();
-        for (file, body) in [("proj/notes.md", "n"), ("proj/src/lib.rs", "l"), ("proj/pic.png", "p")] {
+        for (file, body) in [("proj/notes.md", "n"), ("proj/src/lib.rs", "l"), ("proj/pic.png", "p"), ("other/src/lib.rs", "o")] {
             let path = home.join(file);
             std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
             std::fs::write(path, body).expect("write");
@@ -215,6 +215,9 @@ fn fixture(oracle: &Oracle) -> Vec<Vec<u8>> {
         pieces.meta,
         message("user", "start"),
         message("assistant", "see `~/proj/notes.md` and :codex-file-citation{path=\"~/proj/src/lib.rs\"}"),
+        message("assistant", "and `src/lib.rs`, where the session runs"),
+        function_call("call_R", "view_image", json!({"path": "pic.png"})),
+        function_output("call_R", json!("viewed")),
         reasoning("Weighing it"),
         reasoning("Weighing it up"),
         function_call("call_X", "exec_command", json!({"cmd": "pwd"})),
@@ -257,6 +260,10 @@ fn fixture(oracle: &Oracle) -> Vec<Vec<u8>> {
         function_output("call_V", json!("viewed")),
         line("response_item", json!({"type": "web_search_call", "id": "ws_1", "status": "completed", "action": {"type": "search", "query": "rust"}})),
         line("turn_context", json!({"model": "gpt-5-mini"})),
+        line("session_meta", json!({"id": "x", "cwd": oracle.home.join("other")})),
+        message("assistant", "now `src/lib.rs` is the other one"),
+        function_call("call_W", "view_image", json!({"path": "pic.png"})),
+        function_output("call_W", json!("viewed")),
         format!("{}\r\n", json!({"timestamp": AT, "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "written on Windows"}]}})).into_bytes(),
         b"{not json\n".to_vec(),
         b"\n".to_vec(),
@@ -419,6 +426,40 @@ async fn citations_and_files_written_or_deleted_between_reads_keep_to_the_whole_
     std::fs::remove_file(oracle.home.join("report.md")).expect("delete");
     let deleted = oracle.step().await;
     assert!(deleted.items[said].text.contains(":codex-file-citation"));
+}
+
+/// The session's directory, named in an earlier read, resolves a relative
+/// mention and a relative image read on in a later one; and one named again
+/// mid-rollout resolves what comes after it.
+#[tokio::test]
+async fn the_sessions_directory_carries_across_reads() {
+    let mut oracle = Oracle::new();
+    let pieces = pieces(&oracle);
+    oracle.append(&pieces.meta);
+    oracle.step().await;
+    oracle.append(
+        &[
+            message("assistant", "see `src/lib.rs`"),
+            function_call("call_V", "view_image", json!({"path": "pic.png"})),
+            function_output("call_V", json!("viewed")),
+        ]
+        .concat(),
+    );
+    let read = oracle.step().await;
+    assert_eq!(read.read, Read::On);
+    let proj = oracle.home.join("proj");
+    let said = read.items.iter().find(|item| item.text == "see `src/lib.rs`").expect("the message");
+    let chips: Vec<String> = said.files.iter().flatten().map(|file| file.path.clone()).collect();
+    assert_eq!(chips, [proj.join("src/lib.rs").to_string_lossy().into_owned()]);
+    let shown = read.items.iter().find(|item| item.images.is_some()).expect("the thumbnail");
+    assert_eq!(shown.images, Some(vec![proj.join("pic.png").to_string_lossy().into_owned()]));
+
+    oracle.append(&[line("session_meta", json!({"id": "x", "cwd": oracle.home.join("other")})), message("assistant", "and `src/lib.rs` here")].concat());
+    let moved = oracle.step().await;
+    assert_eq!(moved.read, Read::On);
+    let here = moved.items.last().expect("the message");
+    let chips: Vec<String> = here.files.iter().flatten().map(|file| file.path.clone()).collect();
+    assert_eq!(chips, [oracle.home.join("other/src/lib.rs").to_string_lossy().into_owned()]);
 }
 
 /// A rollout read compressed goes on in the plain file Codex writes back

@@ -593,6 +593,30 @@ mod tests {
         assert_eq!(served(&log), whole(&log).await, "started over");
     }
 
+    /// Where starting over matters: a message that spent the whole budget is
+    /// moved along by one put in ahead of it, which a walk from the first
+    /// item looks at first, with the budget whole. Walking on from where it
+    /// was put in, the budget would be spent already.
+    #[tokio::test]
+    async fn a_message_put_in_ahead_of_the_one_that_spent_the_budget_is_walked_with_it_whole() {
+        let home = tempfile::tempdir().expect("tempdir");
+        std::fs::write(home.path().join("notes.md"), "x").expect("write");
+        let spender: Vec<String> = (0..MAX_STATS_PER_TRANSCRIPT + 100).map(|n| format!("`~/gone{n}.md`")).collect();
+        let mut mentions = Mentions::new();
+        let mut log = ItemLog::new();
+        log.push(make_item(Role::Assistant, ItemKind::Text, &spender.join(" "), None));
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+
+        let (items, _) = log.into_parts();
+        let mut log = ItemLog::resume(items);
+        log.insert(0, [make_item(Role::Assistant, ItemKind::Text, "see `~/notes.md`", None)]);
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+        let mut whole: Vec<TranscriptItem> = log.items().iter().map(|item| item.as_transcribed().clone()).collect();
+        annotate_mentioned_files(home.path(), &mut whole, None, no_citations).await;
+        assert_eq!(whole[0].files.as_ref().map(Vec::len), Some(1), "a walk from the first item chips it");
+        assert_eq!(log.items()[0].files, whole[0].files, "and so does this one");
+    }
+
     /// A file the item already named keeps counting, as the transcript's own:
     /// only the chip added beside it is left out.
     #[tokio::test]

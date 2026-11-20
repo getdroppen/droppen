@@ -1566,6 +1566,13 @@ struct OpenCell {
 /// Every call is matched to its output by `call_id`, which is what makes the
 /// web draw them as one row. Code-mode cells are folded into the calls they
 /// make; see the module docs.
+///
+/// Kept whole between the parses of a live rollout (the loader's checkpoint),
+/// so what it holds lasts as long as the rollout is read: `answered` gains an
+/// entry for every output with a `call_id` and never loses one (a call's own
+/// item can come after its answer at any distance), and `pending` keeps the
+/// calls an interrupted turn never answered, a patch's files included. About
+/// a megabyte per ten thousand calls.
 #[derive(Debug, Default)]
 pub struct CodexTools {
     pending: HashMap<String, Pending>,

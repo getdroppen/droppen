@@ -120,16 +120,18 @@ impl ItemLog {
 
     /// Put `item` in place of item `index`; see [`ItemLog::get_mut`].
     pub fn replace(&mut self, index: usize, item: TranscriptItem) {
+        debug_assert!(!item.is_annotatable(), "an item the annotation could chip put in place of item {index}");
         if let Some(old) = self.get_mut(index) {
+            debug_assert!(!old.is_annotatable(), "item {index}, which the annotation could chip, replaced");
             *old = item;
         }
     }
 
-    /// Take the newest item out.
+    /// Take the newest item out. One the annotation could chip has the walk
+    /// start over ([`ItemLog::moved_from`]), so even a chipped one may go.
     pub fn pop(&mut self) -> Option<TranscriptItem> {
         let item = self.items.pop()?;
         let index = self.items.len();
-        debug_assert!(!item.is_annotated(), "item {index} was taken out after it was annotated");
         self.changed_from = self.changed_from.min(index);
         self.moved_from = self.moved_from.min(index);
         self.moved_annotatable |= item.is_annotatable();
@@ -216,8 +218,8 @@ mod tests {
         log.push(item("e"));
         assert_eq!((texts(&log), log.changed_from()), (vec!["a", "b", "c", "D", "e"], 3));
 
-        let mut log = ItemLog::resume(earlier.clone());
-        log.replace(2, item("C"));
+        let mut log = ItemLog::resume(["a", "b", "c", "d"].map(|text| Arc::new(tool(text))).into());
+        log.replace(2, tool("C"));
         assert_eq!((texts(&log), log.changed_from(), log.moved_from()), (vec!["a", "b", "C", "d"], 2, 4), "replaced in place: nothing moved");
 
         let mut log = ItemLog::resume(earlier);
