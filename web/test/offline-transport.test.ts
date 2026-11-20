@@ -161,6 +161,13 @@ test("a session's detail is the copy's last page, read-only, and its history pag
   assert.equal((await get(source, "/api/sessions/claude/a/history?before=50&fp=fp250")).status, 409, "a start fingerprint the copy cannot check");
   assert.equal((await get(source, "/api/sessions/claude/a/history?before=250&fp=fp250")).status, 200, "except at its very end");
   assert.equal((await get(source, "/api/sessions/claude/a/history?before=120")).body.startIndex, 0, "unchecked without fp, like the machine");
+
+  // A jump's range: back to `from` in one answer, never less than a page.
+  const range = await get(source, "/api/sessions/claude/a/history?before=250&fp=fp250&from=10");
+  assert.deepEqual([range.status, range.body.startIndex, range.body.endIndex, range.body.items.length], [200, 10, 250, 240]);
+  assert.equal(range.body.items[0].text, "item 10");
+  assert.equal((await get(source, "/api/sessions/claude/a/history?before=250&fp=fp250&from=240")).body.startIndex, 50, "a page");
+  assert.equal((await get(source, "/api/sessions/claude/a/history?before=50&fp=other&since=250&from=0")).status, 409, "proven like a page");
 });
 
 test("settings, accounts and quota come from the status; everything else is a 503 the app can read", async () => {

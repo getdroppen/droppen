@@ -108,6 +108,16 @@ pub const MAX_RESUME_ITEMS: usize = 2000;
 /// count: a phone on a bad network should not be handed megabytes of tool
 /// output to keep a scroll position.
 pub const MAX_RESUME_BYTES: usize = 4 * 1024 * 1024;
+/// How many items one history request that names where it reaches back to
+/// (`from`) is sent at most: ten pages, as many as a resume
+/// ([`MAX_RESUME_ITEMS`]). A jump to an item further back than that takes a
+/// request per this many items instead of one per page.
+pub const MAX_HISTORY_ITEMS: usize = 2000;
+/// How many bytes of items such a request is sent at most, whatever its item
+/// count: the bound a resume has ([`MAX_RESUME_BYTES`]), for the same phone on
+/// the same bad network. The page a request without `from` would have been
+/// sent is sent whatever it weighs, as it always was.
+pub const MAX_HISTORY_BYTES: usize = 4 * 1024 * 1024;
 /// How many frames the fan-out buffers before it starts lapping slow clients.
 const BROADCAST_CAPACITY: usize = 64;
 /// The poll backstop, for filesystem events the watcher misses.
@@ -150,6 +160,59 @@ pub fn transcript_page(items: &[impl Borrow<TranscriptItem>], before: usize) -> 
         total_items: items.len(),
         has_more_before: start_index > 0,
     }
+}
+
+/// The items `[from, before)` as one page, for a client that knows how far
+/// back the item it wants is: as far towards `from` as [`MAX_HISTORY_ITEMS`]
+/// and [`MAX_HISTORY_BYTES`] allow, and never less than the page
+/// [`transcript_page`] cuts at `before` — so `from` only ever widens a page,
+/// and a `from` inside that page changes nothing.
+///
+/// Past either cap the page is the newest part of the range: it still ends at
+/// `before`, so it meets the client's window, and its `start_index` — later
+/// than `from`, with `has_more_before` — is where the next request picks up.
+pub fn transcript_range(items: &[TranscriptItem], from: usize, before: usize) -> TranscriptPage {
+    let end_index = before.min(items.len());
+    let page_start = end_index.saturating_sub(SESSION_PAGE_SIZE);
+    let reach = from.max(end_index.saturating_sub(MAX_HISTORY_ITEMS)).min(page_start);
+    // Newest first, each item's JSON and the comma before it. The page
+    // `transcript_page` cuts is counted but never refused, as it never was.
+    let mut start_index = end_index;
+    let mut bytes = 0;
+    while start_index > reach {
+        let next = json_len(&items[start_index - 1]) + 1;
+        if start_index <= page_start && bytes + next > MAX_HISTORY_BYTES {
+            break;
+        }
+        bytes += next;
+        start_index -= 1;
+    }
+    TranscriptPage {
+        items: items[start_index..end_index].to_vec(),
+        start_index,
+        end_index,
+        total_items: items.len(),
+        has_more_before: start_index > 0,
+    }
+}
+
+/// How long `value` is as JSON, without writing it anywhere.
+fn json_len(value: &impl Serialize) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    // Writing to a counter cannot fail, and an item that cannot be serialized
+    // would fail the whole answer anyway: either way it weighs nothing here.
+    let _ = serde_json::to_writer(&mut count, value);
+    count.0
 }
 
 /// Keep the head and tail of an over-long transcript, dropping the middle.
@@ -1355,6 +1418,68 @@ mod tests {
         let earlier = transcript_page(&all, 50);
         assert_eq!((earlier.start_index, earlier.end_index), (0, 50));
         assert!(!earlier.has_more_before);
+    }
+
+    fn range_of(page: &TranscriptPage) -> (usize, usize, usize, bool) {
+        (page.start_index, page.end_index, page.items.len(), page.has_more_before)
+    }
+
+    #[test]
+    fn a_range_is_every_item_from_where_it_reaches_back_to() {
+        let all = items(3000);
+        let page = transcript_range(&all, 1200, 2800);
+        assert_eq!(range_of(&page), (1200, 2800, 1600, true));
+        assert_eq!(page.items[0].text, "item 1200");
+        assert_eq!(page.items[1599].text, "item 2799");
+        assert_eq!(page.total_items, 3000);
+        assert_eq!(range_of(&transcript_range(&all, 0, 1500)), (0, 1500, 1500, false), "back to the start");
+    }
+
+    #[test]
+    fn a_range_is_never_less_than_the_page() {
+        let all = items(3000);
+        let page = transcript_page(&all, 2800);
+        for from in [2700, 2799, 2800, 5000] {
+            let range = transcript_range(&all, from, 2800);
+            assert_eq!(range_of(&range), range_of(&page), "from {from}");
+        }
+        // `before` past the end is clamped, as for a page.
+        assert_eq!(range_of(&transcript_range(&all, 2500, 9000)), (2500, 3000, 500, true));
+        assert_eq!(range_of(&transcript_range(&all, 0, 50)), range_of(&transcript_page(&all, 50)));
+    }
+
+    #[test]
+    fn a_range_past_the_item_cap_is_its_newest_part() {
+        let all = items(6000);
+        let page = transcript_range(&all, 100, 5000);
+        assert_eq!(range_of(&page), (5000 - MAX_HISTORY_ITEMS, 5000, MAX_HISTORY_ITEMS, true));
+        // The next request picks up where this one stopped.
+        let next = transcript_range(&all, 100, page.start_index);
+        assert_eq!(range_of(&next), (1000, 3000, MAX_HISTORY_ITEMS, true));
+        assert_eq!(range_of(&transcript_range(&all, 100, next.start_index)), (100, 1000, 900, true));
+    }
+
+    #[test]
+    fn a_range_past_the_byte_cap_is_its_newest_part_but_never_less_than_the_page() {
+        // 4 KiB of text an item: about a thousand items to the byte cap.
+        let heavy = |n: usize, size: usize| -> Vec<TranscriptItem> {
+            (0..n)
+                .map(|i| make_item(Role::User, ItemKind::Text, &format!("{i:05} {}", "x".repeat(size)), None))
+                .collect()
+        };
+        let all = heavy(1500, 4096);
+        let page = transcript_range(&all, 0, 1500);
+        let bytes: usize = page.items.iter().map(|item| json_len(item) + 1).sum();
+        assert!(bytes <= MAX_HISTORY_BYTES, "{bytes}");
+        assert!(page.items.len() > SESSION_PAGE_SIZE && page.items.len() < 1500, "{}", page.items.len());
+        let one_more = json_len(&all[page.start_index - 1]) + 1;
+        assert!(bytes + one_more > MAX_HISTORY_BYTES, "as many as fit");
+        assert_eq!((page.end_index, page.has_more_before), (1500, true));
+        assert!(page.items[0].text.starts_with(&format!("{:05}", page.start_index)));
+
+        // A page heavier than the cap on its own is sent whole, as it always was, and nothing more.
+        let all = heavy(400, 32 * 1024);
+        assert_eq!(range_of(&transcript_range(&all, 0, 400)), range_of(&transcript_page(&all, 400)));
     }
 
     #[test]

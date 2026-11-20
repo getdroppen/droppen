@@ -1961,7 +1961,8 @@ export interface paths {
         };
         /**
          * Older transcript
-         * @description The transcript page immediately before an index the client already holds.
+         * @description The transcript page immediately before an index the client already holds,
+         *     or — with `from` — the range back to that index, capped.
          */
         get: operations["session_history"];
         put?: never;
@@ -10399,6 +10400,17 @@ export interface operations {
                 fp?: string | null;
                 /** @description The `endIndex` of the client's window, when `fp` is its resume marker. */
                 since?: number | null;
+                /**
+                 * @description The absolute index the page should reach back to, for a client that
+                 *     knows the item it wants — a jump to a search hit or to the first unread
+                 *     message: the page is then the items `[from, before)` in one answer
+                 *     instead of the one page before `before`. Never fewer items than that
+                 *     page, and at most 2000 items and 4 MiB of them; past either cap it is
+                 *     the newest part of the range, and its `startIndex`, later than `from`
+                 *     and with `hasMoreBefore`, is where the next request picks up. `fp`
+                 *     proves it exactly as it proves a page. Absent, one page, as before.
+                 */
+                from?: number | null;
             };
             header?: never;
             path: {
@@ -10410,7 +10422,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The contiguous transcript page immediately before the requested index */
+            /** @description The contiguous transcript page immediately before the requested index, or with `from` as much of the range `[from, before)` as the caps allow */
             200: {
                 headers: {
                     [name: string]: unknown;

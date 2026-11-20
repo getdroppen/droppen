@@ -51,7 +51,11 @@ export interface TranscriptWindow {
   startFp: string | null;
 }
 
-/** One older, contiguous transcript page returned by the server. */
+/**
+ * One older, contiguous transcript page returned by the server: a page, or —
+ * asked with `from` — the longer range a jump asked for. Either is placed by
+ * its indices, whatever its length.
+ */
 export interface TranscriptHistoryPage {
   sig: string;
   items: TranscriptItem[];
@@ -158,15 +162,26 @@ export function resyncMessage(
  * How to ask for the page before `window`: proving the prefix it hangs off with
  * the window's start fingerprint when it is known, and with the resume marker —
  * which covers more than it needs to, but is never unknown — when it is not.
+ *
+ * `from` is for a caller that knows how far back the item it wants is (a jump
+ * to a search hit or to the first unread message): the server then answers
+ * with everything from there to the window in one page, as far back as its
+ * cap allows, instead of one page. Asked of a server from before it, the
+ * answer is one page, and the caller asks again.
  */
 export function historyQueryFor(
   window: Pick<TranscriptWindow, "startIndex" | "endIndex" | "startFp" | "prefixFp">,
-): { before: number; fp?: string; since?: number } {
-  if (window.startFp) return { before: window.startIndex, fp: window.startFp };
+  from?: number,
+): { before: number; fp?: string; since?: number; from?: number } {
+  const reach =
+    from !== undefined && Number.isInteger(from) && from >= 0 && from < window.startIndex
+      ? { from }
+      : {};
+  if (window.startFp) return { before: window.startIndex, fp: window.startFp, ...reach };
   if (window.prefixFp) {
-    return { before: window.startIndex, fp: window.prefixFp, since: window.endIndex };
+    return { before: window.startIndex, fp: window.prefixFp, since: window.endIndex, ...reach };
   }
-  return { before: window.startIndex };
+  return { before: window.startIndex, ...reach };
 }
 
 function isValidRange(
