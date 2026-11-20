@@ -211,11 +211,12 @@ pub struct TranscriptItem {
     /// the words.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// What the mentioned-file chips changed on the item, so its fingerprint
-    /// can leave them out ([`TranscriptItem::as_transcribed`]). Never on the
-    /// wire: a client reads the chips themselves.
+    /// The item as its transcript wrote it, kept when the mentioned-file
+    /// chips changed it: what its fingerprint hashes
+    /// ([`TranscriptItem::as_transcribed`]). Never on the wire: a client reads
+    /// the chips themselves.
     #[serde(skip)]
-    pub(crate) annotated: Option<Box<crate::mentions::Annotated>>,
+    pub(crate) transcribed: Option<Box<TranscriptItem>>,
 }
 
 /// What a tool call or its result should look like on screen.
@@ -288,7 +289,7 @@ pub fn make_item(role: Role, kind: ItemKind, raw_text: &str, timestamp: Option<&
         task_status: None,
         synthetic: None,
         model: None,
-        annotated: None,
+        transcribed: None,
     }
 }
 
@@ -319,7 +320,7 @@ pub fn make_tool_item(role: Role, kind: ItemKind, display: ToolDisplay, timestam
         task_status: None,
         synthetic: None,
         model: None,
-        annotated: None,
+        transcribed: None,
     }
 }
 

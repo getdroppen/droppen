@@ -48,7 +48,7 @@ fn fp_seed(file_path: &Path) -> Fp {
 fn fp_link(previous: &Fp, item: &TranscriptItem) -> Fp {
     let mut hasher = Sha256::new();
     hasher.update(previous);
-    hasher.update(serde_json::to_vec(&*item.as_transcribed()).unwrap_or_default());
+    hasher.update(serde_json::to_vec(item.as_transcribed()).unwrap_or_default());
     truncate_digest(&hasher.finalize())
 }
 

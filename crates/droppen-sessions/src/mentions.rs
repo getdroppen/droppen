@@ -14,7 +14,6 @@
 //! the transcript's, so they stay out of its fingerprint chain
 //! ([`TranscriptItem::as_transcribed`]).
 
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -44,55 +43,31 @@ pub fn no_citations(_text: &str) -> Vec<FileCitation> {
     Vec::new()
 }
 
-/// What [`annotate_mentioned_files`] changed on one item, kept on it so the
-/// item can still be seen as its transcript wrote it.
-///
-/// Whether a mentioned file exists is the filesystem's answer at parse time,
-/// and so is which mentions the `stat` budget reached: both move while the
-/// transcript stays as it was. A fingerprint over them moved too, for every
-/// later prefix, and refused each history page and resume anchored past the
-/// item as a changed transcript.
-#[derive(Debug, Clone)]
-pub struct Annotated {
-    /// The text before a citation was replaced by its chip's label, if one was.
-    text: Option<String>,
-    /// How many files the item named before its chips; `None` for no `files` at all.
-    files: Option<usize>,
-}
-
 impl TranscriptItem {
-    /// The item without what [`annotate_mentioned_files`] added: its chips,
-    /// and the labels that replaced its citations. What the fingerprint chain
-    /// hashes, so a prefix's fingerprint depends on the transcript alone.
+    /// The item as its transcript wrote it, before [`annotate_mentioned_files`]
+    /// gave it chips or turned its citations into their labels: what the
+    /// fingerprint chain hashes. The item itself unless the annotation changed
+    /// it.
     ///
-    /// Borrowed unless there is something to take off, which is rare.
-    pub fn as_transcribed(&self) -> Cow<'_, TranscriptItem> {
-        let Some(annotated) = self.annotated.as_deref() else {
-            return Cow::Borrowed(self);
-        };
-        let mut item = self.clone();
-        item.annotated = None;
-        if let Some(text) = &annotated.text {
-            item.text.clone_from(text);
-        }
-        item.files = annotated.files.map(|count| {
-            let mut files = item.files.take().unwrap_or_default();
-            files.truncate(count);
-            files
-        });
-        Cow::Owned(item)
+    /// Whether a mentioned file exists is the filesystem's answer at parse
+    /// time, and so is which mentions the `stat` budget reached: both move
+    /// while the transcript stays as it was. A fingerprint over them moved too,
+    /// for every later prefix, and refused each history page and resume
+    /// anchored past the item as a changed transcript.
+    pub fn as_transcribed(&self) -> &TranscriptItem {
+        self.transcribed.as_deref().unwrap_or(self)
     }
 
-    /// Remember what the annotation is about to change, unless an earlier
-    /// annotation already did: undoing that one undoes this one too.
-    fn note_annotation(&mut self, text: Option<String>, files: Option<usize>) {
-        match &mut self.annotated {
-            Some(earlier) => {
-                if earlier.text.is_none() {
-                    earlier.text = text;
-                }
-            }
-            None => self.annotated = Some(Box::new(Annotated { text, files })),
+    /// Whether [`annotate_mentioned_files`] changed the item, so that it is
+    /// served otherwise than it is fingerprinted.
+    pub fn is_annotated(&self) -> bool {
+        self.transcribed.is_some()
+    }
+
+    /// Keep the item as it is, before the annotation's first change to it.
+    fn keep_transcribed(&mut self) {
+        if self.transcribed.is_none() {
+            self.transcribed = Some(Box::new(self.clone()));
         }
     }
 }
@@ -196,8 +171,8 @@ pub fn resolve_within_home(home: &Path, candidate: &str, cwd: Option<&Path>) -> 
 /// Attach download chips for files an assistant message points at, the ones
 /// its CLI's markup names (`citations`, from the reader) first.
 ///
-/// Each item it changes remembers how it was ([`Annotated`]), for its
-/// fingerprint.
+/// Each item it changes keeps a copy of itself from before, for its
+/// fingerprint ([`TranscriptItem::as_transcribed`]).
 pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem], cwd: Option<&str>, citations_of: FileCitations) {
     let cwd = cwd.map(Path::new);
     let mut exists: HashMap<PathBuf, bool> = HashMap::new();
@@ -241,12 +216,10 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
                 });
             }
         }
-        let files_before = item.files.as_ref().map(Vec::len);
-        let chipped = !found.is_empty();
-        if chipped {
+        if !found.is_empty() {
+            item.keep_transcribed();
             item.files.get_or_insert_with(Vec::new).extend(found);
         }
-        let mut text_before = None;
         // Only replace a directive once its real file has a chip. Missing,
         // out-of-home and over-budget references remain visible, not erased.
         for citation in citations.into_iter().rev() {
@@ -263,11 +236,8 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
                 }
                 label.push(c);
             }
-            text_before.get_or_insert_with(|| item.text.clone());
+            item.keep_transcribed();
             item.text.replace_range(citation.range, &label);
-        }
-        if chipped || text_before.is_some() {
-            item.note_annotation(text_before, files_before);
         }
     }
 }
@@ -423,5 +393,35 @@ mod tests {
 
         assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &spent));
         assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &items()));
+    }
+
+    /// A file the item already named keeps counting, as the transcript's own:
+    /// only the chip added beside it is left out.
+    #[tokio::test]
+    async fn a_file_the_item_already_named_stays_in_its_fingerprint() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let report = home.path().join("report.md");
+        std::fs::write(&report, "hi").expect("write");
+        let named = |path: &str| {
+            let mut items = naming(&report);
+            items[1].files = Some(vec![FileRef {
+                name: "draft.md".into(),
+                path: path.into(),
+            }]);
+            items
+        };
+        let file = Path::new("/t/s.jsonl");
+
+        let chipped = annotated(home.path(), named("/u/draft.md"), None).await;
+        let files: Vec<&str> = chipped[1].files.iter().flatten().map(|file| file.name.as_str()).collect();
+        assert_eq!(files, ["draft.md", "report.md"]);
+        let kept: Vec<&str> = chipped[1].as_transcribed().files.iter().flatten().map(|file| file.name.as_str()).collect();
+        assert_eq!(kept, ["draft.md"]);
+        assert_eq!(fingerprint_chain(file, &chipped), fingerprint_chain(file, &named("/u/draft.md")));
+        assert_ne!(
+            fingerprint_chain(file, &chipped),
+            fingerprint_chain(file, &named("/u/other.md")),
+            "the file it named is the transcript's"
+        );
     }
 }
