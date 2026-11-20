@@ -360,9 +360,9 @@ impl TranscriptSources {
 /// a real CLI counts as speech or as usage is pinned next to its reader.
 #[cfg(test)]
 pub(crate) mod test_reader {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
+    use std::sync::{Arc, LazyLock, Mutex};
 
     use futures_util::future::BoxFuture;
     use serde_json::{Map, Value};
@@ -372,6 +372,19 @@ pub(crate) mod test_reader {
     use crate::util::{num, TranscriptItem};
     use crate::{CliChoice, SessionStatus, SessionSummary, Source};
     use droppen_instance::paths::Paths;
+
+    /// What a parse of a hooked path does instead ([`hook_parse`]).
+    pub(crate) type ParseHook = Arc<dyn Fn() -> BoxFuture<'static, std::io::Result<Vec<TranscriptItem>>> + Send + Sync>;
+
+    /// The paths whose parse a test has hooked. By path, so tests running at
+    /// once each hook their own file and leave every other path alone.
+    static PARSE_HOOKS: LazyLock<Mutex<HashMap<PathBuf, ParseHook>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    /// Make the stand-in's parse of `path` run `hook`, so a test can count,
+    /// delay or fail it. Any other path parses to no items.
+    pub(crate) fn hook_parse(path: &Path, hook: ParseHook) {
+        PARSE_HOOKS.lock().expect("parse hooks poisoned").insert(path.to_path_buf(), hook);
+    }
 
     /// The stand-in, answering for `source`.
     pub(crate) struct TestReader(pub(crate) Source);
@@ -409,8 +422,12 @@ pub(crate) mod test_reader {
             Box::pin(std::future::ready(false))
         }
 
-        fn parse<'a>(&'a self, _paths: &'a Paths, _file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
-            Box::pin(std::future::ready(Ok(Vec::new())))
+        fn parse<'a>(&'a self, _paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
+            let hook = PARSE_HOOKS.lock().expect("parse hooks poisoned").get(file_path).cloned();
+            match hook {
+                Some(hook) => hook(),
+                None => Box::pin(std::future::ready(Ok(Vec::new()))),
+            }
         }
 
         fn cli_choice<'a>(&'a self, _file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
