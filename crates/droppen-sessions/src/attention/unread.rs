@@ -274,7 +274,7 @@ async fn read_forward(reader: &dyn Transcripts, path: &Path, from: u64, fallback
 async fn read_whole(reader: &dyn Transcripts, path: &Path, fallback_at: &str) -> std::io::Result<Ledger> {
     use tokio::io::AsyncBufReadExt;
 
-    let mut text = crate::compressed::open_text(path).await?;
+    let mut text = crate::compressed::open_text(path, crate::compressed::WHOLE_READ).await?;
     let mut stamps = std::collections::VecDeque::new();
     let mut line = Vec::new();
     let mut end = 0u64;

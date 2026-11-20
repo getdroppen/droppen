@@ -613,7 +613,11 @@ impl BackwardLines {
 /// compressed one is decoded only as far as that.
 pub async fn read_head_lines(path: &Path, max_bytes: usize) -> std::io::Result<Vec<String>> {
     let mut buf = Vec::new();
-    compressed::open_text(path).await?.take(max_bytes as u64).read_to_end(&mut buf).await?;
+    compressed::open_text(path, compressed::PART_READ)
+        .await?
+        .take(max_bytes as u64)
+        .read_to_end(&mut buf)
+        .await?;
     let read = buf.len();
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<&str> = text.split('\n').collect();
@@ -644,9 +648,13 @@ impl LossyLines<Box<dyn tokio::io::AsyncBufRead + Send + Unpin>> {
     /// Open `path` for line-by-line lossy reading, in the form it is on disk:
     /// a compressed transcript ([`crate::compressed`]) as the text it decodes
     /// to.
+    ///
+    /// A plain one is read [`compressed::WHOLE_READ`] at a time: what reads a
+    /// transcript line by line reads all of it, and a long one read 8 KiB at a
+    /// time spent most of its parse waiting on the reads.
     pub async fn open(path: &Path) -> std::io::Result<Self> {
         Ok(Self {
-            reader: compressed::open_text(path).await?,
+            reader: compressed::open_text(path, compressed::WHOLE_READ).await?,
             buffer: Vec::new(),
         })
     }
