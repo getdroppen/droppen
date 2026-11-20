@@ -457,6 +457,40 @@ async fn a_chats_deliveries_are_each_matched_once_across_reads() {
     assert_eq!(one.items[0].images, Some(vec![second]));
 }
 
+/// Through the loader: a chat's delivery recorded after its entry was read
+/// (the driver records one after it sends the message) has the next version
+/// read whole, which finds it; while the rows stand still, versions are read
+/// on.
+#[tokio::test]
+async fn a_delivery_recorded_after_its_entry_was_read_has_the_session_read_whole() {
+    use droppen_sessions::loader::{reads_of, resume_from};
+
+    let oracle = Oracle::new();
+    let mut sources = droppen_sessions::TranscriptSources::default();
+    sources.register(Arc::new(super::claude::ClaudeCodeSessions));
+    resume_from(&oracle.path, 0);
+    let load = || async {
+        let sig = droppen_sessions::file_signature(&oracle.path).await.expect("a signature");
+        sources.load(&oracle.paths, Source::Claude, &oracle.path, &sig).await
+    };
+    let image = oracle.paths.uploads_dir().join("u/1.png");
+    std::fs::create_dir_all(image.parent().expect("parent")).expect("uploads");
+    std::fs::write(&image, b"png").expect("upload");
+    let image = image.to_string_lossy().into_owned();
+
+    let chats = droppen_sessions::chats_cwd(&oracle.paths);
+    oracle.append(&line(json!({"type": "user", "cwd": chats, "timestamp": "2999-01-01T00:00:01.000Z", "message": {"content": "look"}})));
+    assert!(load().await.items[0].images.is_none(), "read before its delivery was recorded");
+
+    droppen_sessions::chat_delivery::record(&oracle.paths, Source::Claude, "session", "q-1", "look", std::slice::from_ref(&image), &[]);
+    oracle.append(&line(assistant(2, json!([{"type": "text", "text": "a fine picture"}]))));
+    assert_eq!(load().await.items[0].images, Some(vec![image]), "read whole, the delivery found");
+    oracle.append(&line(assistant(3, json!([{"type": "text", "text": "anything else?"}]))));
+    load().await;
+    let reads = reads_of(&oracle.path);
+    assert_eq!((reads.full, reads.fallback, reads.resumed), (1, 1, 1));
+}
+
 /// Items that are not the parse's own are no place to go on from.
 #[tokio::test]
 async fn items_that_are_not_the_checkpoints_are_refused() {

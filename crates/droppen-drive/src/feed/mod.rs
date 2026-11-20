@@ -2384,4 +2384,50 @@ mod tests {
         assert!(Arc::ptr_eq(&first.attachment.sent, &latest));
         assert!(Arc::ptr_eq(&second.attachment.sent, &latest), "one parse for both");
     }
+
+    /// A watched session whose transcript is read on from its last parse
+    /// sends a client the very frames it sends when every version is read
+    /// whole: the same items, the same fingerprints, the same deltas.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_session_read_on_from_its_last_parse_sends_the_frames_one_read_whole_sends() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = "66666666-6666-4666-8666-666666666666";
+        // One run, read on (from the first byte) or whole: what the frames a
+        // client attached through it is sent say of the transcript (not its
+        // signature, which names when the file was written, nor the state the
+        // snapshot carries beside it); and how the versions were read.
+        let run = |resume: bool| {
+            let dir = dir.path().to_path_buf();
+            async move {
+                let (paths, drive) = crate::fake::drive_resumable(&dir);
+                let file = crate::fake::session(&paths, id, &crate::fake::turns(0, 3));
+                droppen_sessions::loader::forget_transcript(&file);
+                droppen_sessions::loader::resume_from(&file, if resume { 0 } else { u64::MAX });
+                let before = droppen_sessions::loader::reads_of(&file);
+                let registry = FeedRegistry::new();
+                let mut attached = attach_session_feed_with(&registry, &drive, crate::fake::SOURCE, id, None, SESSION_PAGE_SIZE)
+                    .await
+                    .expect("attached");
+                let mut frames: Vec<Value> = vec![serde_json::from_str(&attached.opening[0]).expect("json")];
+                for turn in 3..8 {
+                    append(&file, &crate::fake::turns(turn, 1));
+                    frames.push(next_transcript_frame(&mut attached.attachment).await);
+                }
+                let transcript = ["type", "items", "startIndex", "fromIndex", "endIndex", "totalItems", "hasMoreBefore", "startFp", "prefixFp"];
+                let frames: Vec<Value> = frames
+                    .iter()
+                    .map(|frame| transcript.iter().map(|key| (key.to_string(), frame[*key].clone())).collect())
+                    .collect();
+                let after = droppen_sessions::loader::reads_of(&file);
+                (frames, after.resumed - before.resumed)
+            }
+        };
+        let (read_on, resumed) = run(true).await;
+        assert_eq!(resumed, 5, "every append read on");
+        let (read_whole, resumed) = run(false).await;
+        assert_eq!(resumed, 0, "every version read whole");
+        assert_eq!(read_on, read_whole);
+        assert!(read_on[1..].iter().all(|frame| frame["type"] == "delta"), "{read_on:?}");
+    }
 }

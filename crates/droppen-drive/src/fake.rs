@@ -26,6 +26,8 @@ use droppen_provider::{
     ResidentState, Run, RunHost, SendTo, Sent, SpawnGate, StartAt,
 };
 use droppen_sessions::context::ContextUsage;
+use droppen_sessions::item_log::ItemLog;
+use droppen_sessions::resume::{Resumable, ResumableLines, Resumed};
 use droppen_sessions::util::{ItemKind, Role, TranscriptItem};
 use droppen_sessions::{CliChoice, Injection, SessionStatus, SessionSummary, Source, TranscriptSources, Transcripts};
 use futures_util::future::BoxFuture;
@@ -41,11 +43,21 @@ pub(crate) const SOURCE: Source = Source::Claude;
 /// reader for [`SOURCE`], the accounts on stand-in logins, and no notify
 /// channel: no notify credential, and spawns decorated with nothing.
 pub(crate) fn drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
+    drive_reading(dir, FakeReader { resumable: false })
+}
+
+/// [`drive`], over a reader whose parse goes on from the last one, as a real
+/// CLI's can ([`droppen_sessions::resume::Resumable`]).
+pub(crate) fn drive_resumable(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
+    drive_reading(dir, FakeReader { resumable: true })
+}
+
+fn drive_reading(dir: &Path, reader: FakeReader) -> (Arc<Paths>, Arc<Drive>) {
     let paths = Arc::new(Paths::new(dir.to_path_buf()));
     let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(NoNotify));
     let mut sources = TranscriptSources::default();
-    sources.register(Arc::new(FakeReader));
+    sources.register(Arc::new(reader));
     let drive = Drive::new(paths.clone(), &instance, auth, sources, register, Logins::stand_ins(), droppen_provider::testing::no_decoration());
     (paths, drive)
 }
@@ -129,7 +141,44 @@ impl NotifyCredential for NoNotify {
 
 /// The fake reader: a session is its file under `fake-sessions`, found by
 /// id, owned by this server, each line one user's text.
-struct FakeReader;
+struct FakeReader {
+    /// Whether its parse goes on from the last one ([`drive_resumable`]).
+    resumable: bool,
+}
+
+/// Each line one item, from where `lines` start, after `items`.
+async fn read_on(mut lines: ResumableLines, items: Vec<Arc<TranscriptItem>>) -> std::io::Result<Resumed> {
+    let mut log = ItemLog::resume(items);
+    while let Some(line) = lines.next_line().await? {
+        log.push(item_of(&line));
+    }
+    let (items, changed_from) = log.into_parts();
+    Ok(Resumed {
+        items,
+        changed_from,
+        point: lines.point(),
+        state: Box::new(()),
+    })
+}
+
+/// A line is an item whatever came before it, so a parse keeps nothing to go
+/// on from but where it stopped.
+impl Resumable for FakeReader {
+    fn read<'a>(&'a self, _paths: &'a Paths, _file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, std::io::Result<Resumed>> {
+        Box::pin(read_on(lines, Vec::new()))
+    }
+
+    fn resume<'a>(
+        &'a self,
+        _paths: &'a Paths,
+        _file_path: &'a Path,
+        lines: ResumableLines,
+        items: Vec<Arc<TranscriptItem>>,
+        _state: Box<dyn std::any::Any + Send>,
+    ) -> BoxFuture<'a, std::io::Result<Option<Resumed>>> {
+        Box::pin(async move { read_on(lines, items).await.map(Some) })
+    }
+}
 
 impl FakeReader {
     /// Session `id`'s row, when its file is there.
@@ -177,6 +226,10 @@ impl Transcripts for FakeReader {
             let text = tokio::fs::read_to_string(file_path).await?;
             Ok(text.lines().map(item_of).collect())
         })
+    }
+
+    fn resumable(&self) -> Option<&dyn Resumable> {
+        self.resumable.then_some(self as &dyn Resumable)
     }
 
     // The last line names the model; then a write made pending lands

@@ -15,6 +15,7 @@ use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
 use super::context::ContextUsage;
+use super::resume::Resumable;
 use super::sidecars::{Checklists, Subagents};
 use super::util::TranscriptItem;
 use super::{CliChoice, SessionStatus, SessionSummary, Source};
@@ -128,6 +129,14 @@ pub trait Transcripts: Send + Sync {
 
     /// The task checklists this CLI keeps for its sessions, when it keeps any.
     fn checklists(&self) -> Option<&dyn Checklists> {
+        None
+    }
+
+    /// This CLI's parse as one that can go on from where an earlier one
+    /// stopped, when it can: the loader then reads only what a live
+    /// transcript appended ([`crate::loader`]). `None` by default, and every
+    /// parse reads the file whole ([`Transcripts::parse`]).
+    fn resumable(&self) -> Option<&dyn Resumable> {
         None
     }
 
@@ -369,6 +378,8 @@ pub(crate) mod test_reader {
 
     use super::{TokenUsage, TranscriptSources, Transcripts, UsageFold};
     use crate::context::ContextUsage;
+    use crate::item_log::ItemLog;
+    use crate::resume::{Resumable, ResumableLines, Resumed};
     use crate::util::{num, TranscriptItem};
     use crate::{CliChoice, SessionStatus, SessionSummary, Source};
     use droppen_instance::paths::Paths;
@@ -476,6 +487,144 @@ pub(crate) mod test_reader {
 
         fn usage_fold(&self) -> Box<dyn UsageFold> {
             Box::new(PlainUsage)
+        }
+    }
+
+    /// A stand-in whose parse goes on from the last one: each line of the
+    /// file one item, its text the line. A line `answer <n>` changes item `n`
+    /// too, so a parse that goes on changes an item an earlier one made.
+    ///
+    /// By path, a test can have it refuse to go on, as a reader whose other
+    /// inputs moved does ([`go_stale`]), or go on wrongly ([`lie`]).
+    pub(crate) struct LinesReader;
+
+    static STALE: LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = LazyLock::new(Default::default);
+    static LYING: LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = LazyLock::new(Default::default);
+
+    /// Have [`LinesReader`] refuse to go on from a parse of `path`.
+    pub(crate) fn go_stale(path: &Path) {
+        STALE.lock().expect("stale").insert(path.to_path_buf());
+    }
+
+    /// Have [`LinesReader`] mark every item it makes going on from a parse of
+    /// `path`, which a parse from the start does not.
+    pub(crate) fn lie(path: &Path) {
+        LYING.lock().expect("lying").insert(path.to_path_buf());
+    }
+
+    impl LinesReader {
+        /// The readers a loader test reads through: this one, for claude.
+        pub(crate) fn sources() -> TranscriptSources {
+            let mut sources = TranscriptSources::default();
+            sources.register(Arc::new(LinesReader));
+            sources
+        }
+    }
+
+    /// Read `lines` into `log`, marking each new item when `lying`.
+    async fn read_lines(mut lines: ResumableLines, mut log: ItemLog, lying: bool, path: &Path) -> std::io::Result<Resumed> {
+        while let Some(line) = lines.next_line().await? {
+            if let Some(n) = line.strip_prefix("answer ").and_then(|n| n.parse::<usize>().ok()) {
+                if let Some(item) = log.get_mut(n) {
+                    item.text.push_str(" (answered)");
+                }
+            }
+            let text = if lying { format!("{line} (lied)") } else { line };
+            log.push(crate::util::make_item(crate::util::Role::User, crate::util::ItemKind::Text, &text, None));
+        }
+        let (items, changed_from) = log.into_parts();
+        Ok(Resumed {
+            items,
+            changed_from,
+            point: lines.point(),
+            state: Box::new(path.to_path_buf()),
+        })
+    }
+
+    impl Resumable for LinesReader {
+        fn read<'a>(&'a self, _paths: &'a Paths, file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, std::io::Result<Resumed>> {
+            Box::pin(read_lines(lines, ItemLog::new(), false, file_path))
+        }
+
+        fn can_resume(&self, state: &(dyn std::any::Any + Send)) -> bool {
+            state.downcast_ref::<PathBuf>().is_some_and(|path| !STALE.lock().expect("stale").contains(path))
+        }
+
+        fn resume<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            file_path: &'a Path,
+            lines: ResumableLines,
+            items: Vec<Arc<TranscriptItem>>,
+            _state: Box<dyn std::any::Any + Send>,
+        ) -> BoxFuture<'a, std::io::Result<Option<Resumed>>> {
+            let lying = LYING.lock().expect("lying").contains(file_path);
+            Box::pin(async move { read_lines(lines, ItemLog::resume(items), lying, file_path).await.map(Some) })
+        }
+    }
+
+    impl Transcripts for LinesReader {
+        fn source(&self) -> Source {
+            Source::Claude
+        }
+
+        fn list<'a>(&'a self, _paths: &'a Paths, _bindings: &'a BTreeMap<String, String>) -> BoxFuture<'a, Vec<SessionSummary>> {
+            Box::pin(std::future::ready(Vec::new()))
+        }
+
+        fn find<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn find_root<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, Option<droppen_instance::paths::ClaudeRoot>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn has_own_sessions<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, bool> {
+            Box::pin(std::future::ready(false))
+        }
+
+        fn parse<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
+            Box::pin(async move {
+                let read = self.read(paths, file_path, ResumableLines::open(file_path).await?).await?;
+                Ok(read.items.into_iter().map(Arc::unwrap_or_clone).collect())
+            })
+        }
+
+        fn resumable(&self) -> Option<&dyn Resumable> {
+            Some(self)
+        }
+
+        fn cli_choice<'a>(&'a self, _file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn context<'a>(&'a self, _file_path: &'a Path) -> BoxFuture<'a, Option<ContextUsage>> {
+            Box::pin(std::future::ready(None))
+        }
+
+        fn spoken_texts(&self, _entry: &Map<String, Value>) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn external_reason(&self) -> String {
+            "this session was started elsewhere".to_string()
+        }
+
+        fn live_block(&self, _status: SessionStatus) -> Option<String> {
+            None
+        }
+
+        fn foreign_sessions(&self) -> bool {
+            false
+        }
+
+        fn on_owned<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, ()> {
+            Box::pin(std::future::ready(()))
+        }
+
+        fn watch_dirs<'a>(&'a self, _paths: &'a Paths) -> BoxFuture<'a, Vec<PathBuf>> {
+            Box::pin(std::future::ready(Vec::new()))
         }
     }
 
