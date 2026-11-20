@@ -801,6 +801,11 @@ impl droppen_sessions::Transcripts for ClaudeCodeSessions {
         Some(self)
     }
 
+    // The main chain's parse goes on from the last one (`transcript`).
+    fn resumable(&self) -> Option<&dyn droppen_sessions::resume::Resumable> {
+        Some(self)
+    }
+
     fn checklists(&self) -> Option<&dyn droppen_sessions::sidecars::Checklists> {
         Some(self)
     }

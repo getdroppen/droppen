@@ -23,17 +23,75 @@
 //! back before it appends. A compressed one cannot be read on from a point,
 //! and it does not grow.
 
+use std::any::Any;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
 
 use crate::compressed;
-use crate::util::{line_text, try_parse};
+use crate::util::{line_text, try_parse, TranscriptItem};
+use droppen_instance::paths::Paths;
 
 /// The most of the file's first line, and of its last bytes read, that a
 /// [`ReadPoint`] fingerprints.
 const MARK_MAX: usize = 4096;
+
+/// The most a parse reads on from an earlier one ([`ResumableLines::reopen`]).
+/// More appended than this, and the file is read from its start: a parse of
+/// 32 MiB is a few dozen milliseconds, and the bytes are held whole meanwhile.
+pub const READ_ON_MAX: u64 = 32 * 1024 * 1024;
+
+/// A reader whose parse can go on from where an earlier one stopped
+/// ([`crate::Transcripts::resumable`]).
+///
+/// Its two parses have to agree: whatever parse it went on from, the items
+/// [`Resumable::resume`] makes are the ones [`Resumable::read`] makes of the
+/// whole file. The reader's own tests prove that against a parse from the
+/// start, and the loader can check it as it runs (`DROPPEN_PARSE_ORACLE`).
+pub trait Resumable: Send + Sync {
+    /// A parse of the transcript at `file_path` from its start, reading
+    /// `lines` ([`ResumableLines::open`]).
+    fn read<'a>(&'a self, paths: &'a Paths, file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, io::Result<Resumed>>;
+
+    /// The parse an earlier one, of `items`, which left `state`, makes once
+    /// it reads `lines` too ([`ResumableLines::reopen`]); `None` when it
+    /// cannot go on from it: `state` is not this reader's, `items` are not
+    /// the ones it made, or something besides the transcript that the parse
+    /// read has moved since.
+    fn resume<'a>(
+        &'a self,
+        paths: &'a Paths,
+        file_path: &'a Path,
+        lines: ResumableLines,
+        items: Vec<Arc<TranscriptItem>>,
+        state: Box<dyn Any + Send>,
+    ) -> BoxFuture<'a, io::Result<Option<Resumed>>>;
+
+    /// A fingerprint of what a parse of `file_path` reads besides the
+    /// transcript (a subagent's sidecar, a chat's delivery rows), for the
+    /// check of a parse that went on against a whole one: while it holds
+    /// still, the two read the same. 0 for a reader that reads nothing else.
+    fn inputs<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, u64> {
+        let _ = (paths, file_path);
+        Box::pin(std::future::ready(0))
+    }
+}
+
+/// A parse a later one can go on from.
+pub struct Resumed {
+    /// The items, each shared.
+    pub items: Vec<Arc<TranscriptItem>>,
+    /// The lowest index whose item may differ from the parse this one went on
+    /// from ([`crate::item_log::ItemLog::changed_from`]); 0 from the start.
+    pub changed_from: usize,
+    /// Where it stopped reading.
+    pub point: ReadPoint,
+    /// What the reader keeps of it to go on from, which only it can read.
+    pub state: Box<dyn Any + Send>,
+}
 
 /// A stretch of the file, fingerprinted: `len` bytes and their FNV-1a hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,16 +166,30 @@ impl ResumableLines {
         Ok(Self::at(compressed::open_text(path, compressed::WHOLE_READ).await?, 0, false, None, Vec::new()))
     }
 
+    /// The text of the transcript `path` names, from its start up to `end`:
+    /// what a read that stopped there read, and nothing appended since.
+    pub async fn open_upto(path: &Path, end: u64) -> io::Result<Self> {
+        let text = compressed::open_text(path, compressed::WHOLE_READ).await?;
+        Ok(Self::at(Box::new(text.take(end)), 0, false, None, Vec::new()))
+    }
+
     /// The transcript `path` names, from where the read that left `point`
     /// stopped, when it is that read's file grown; `None` when it cannot be
-    /// shown to be, or is compressed, and has to be read from its start.
-    pub async fn reopen(path: &Path, point: &ReadPoint) -> io::Result<Option<Self>> {
+    /// shown to be, or is compressed, and has to be read from its start, or
+    /// when more than `limit` bytes were appended since, which reading from
+    /// the start costs about as little as reading on.
+    ///
+    /// What was appended is read here, whole, so an error reading the file
+    /// is this call's, and the lines it hands out come from memory: a parse
+    /// that goes on from an earlier one either has every line or has read
+    /// none, and is never left halfway through them.
+    pub async fn reopen(path: &Path, point: &ReadPoint, limit: u64) -> io::Result<Option<Self>> {
         let (found, mut file) = compressed::open(path).await?;
         if compressed::is_compressed(&found) {
             return Ok(None);
         }
         let len = file.metadata().await?.len();
-        if len < point.end {
+        if len < point.end || len - point.end > limit {
             return Ok(None);
         }
         let mut last = Vec::new();
@@ -150,8 +222,17 @@ impl ResumableLines {
                 }
             }
         }
+        // Up to the limit, and a byte past it to tell a file that grew again
+        // meanwhile; what came since the length was looked at is read too.
+        // Sized for what the length says, with room for the read that finds
+        // the end, so the buffer is not grown by doubling to twice that.
         file.seek(io::SeekFrom::Start(point.end)).await?;
-        let reader = Box::new(tokio::io::BufReader::with_capacity(compressed::WHOLE_READ, file));
+        let mut appended = Vec::with_capacity(usize::try_from(len - point.end).unwrap_or(0).saturating_add(64));
+        file.take(limit.saturating_add(1)).read_to_end(&mut appended).await?;
+        if appended.len() as u64 > limit {
+            return Ok(None);
+        }
+        let reader = Box::new(io::Cursor::new(appended));
         Ok(Some(Self::at(reader, point.end, point.open_tail, point.head, last)))
     }
 
@@ -247,11 +328,11 @@ mod tests {
         assert_eq!((point.end(), point.open_tail()), (17, false));
 
         append(&path, b"{\"n\":3}\n");
-        let mut more = ResumableLines::reopen(&path, &point).await.expect("reopen").expect("the same file, grown");
+        let mut more = ResumableLines::reopen(&path, &point, READ_ON_MAX).await.expect("reopen").expect("the same file, grown");
         assert_eq!(all(&mut more).await, ["{\"n\":3}"]);
         assert_eq!(more.point().end(), 25);
 
-        let mut nothing = ResumableLines::reopen(&path, &more.point()).await.expect("reopen").expect("unchanged");
+        let mut nothing = ResumableLines::reopen(&path, &more.point(), READ_ON_MAX).await.expect("reopen").expect("unchanged");
         assert!(all(&mut nothing).await.is_empty());
         assert_eq!(nothing.point(), more.point(), "a read of nothing new leaves the same point");
     }
@@ -269,18 +350,18 @@ mod tests {
         assert_eq!((point.end(), point.open_tail()), (8, false), "the half line is not read");
 
         append(&path, b"2}");
-        let mut whole = ResumableLines::reopen(&path, &point).await.expect("reopen").expect("grown");
+        let mut whole = ResumableLines::reopen(&path, &point, READ_ON_MAX).await.expect("reopen").expect("grown");
         assert_eq!(all(&mut whole).await, ["{\"n\":2}"], "a whole entry, newline or not");
         let open = whole.point();
         assert_eq!((open.end(), open.open_tail()), (15, true));
 
         append(&path, b"\n{\"n\":3}\n");
-        let mut on = ResumableLines::reopen(&path, &open).await.expect("reopen").expect("its newline came");
+        let mut on = ResumableLines::reopen(&path, &open, READ_ON_MAX).await.expect("reopen").expect("its newline came");
         assert_eq!(all(&mut on).await, ["", "{\"n\":3}"], "the newline ends the line already read");
 
         std::fs::write(&path, b"{\"n\":1}\n{\"n\":2}{\"n\":9}\n").expect("rewrite");
         assert!(
-            ResumableLines::reopen(&path, &open).await.expect("reopen").is_none(),
+            ResumableLines::reopen(&path, &open, READ_ON_MAX).await.expect("reopen").is_none(),
             "the line went on past what was read as a whole entry"
         );
     }
@@ -302,7 +383,7 @@ mod tests {
             let point = point.clone();
             async move {
                 std::fs::write(&path, bytes).expect("write");
-                ResumableLines::reopen(&path, &point).await.expect("reopen").is_none()
+                ResumableLines::reopen(&path, &point, READ_ON_MAX).await.expect("reopen").is_none()
             }
         };
         assert!(refused(b"{\"first\":1}\n{\"n\":2}\n").await, "shorter");
@@ -312,9 +393,29 @@ mod tests {
 
         std::fs::remove_file(&path).expect("remove");
         std::fs::write(compressed::compressed_path(&path), compressed::compress(text)).expect("compress");
-        assert!(ResumableLines::reopen(&path, &point).await.expect("reopen").is_none(), "compressed");
+        assert!(ResumableLines::reopen(&path, &point, READ_ON_MAX).await.expect("reopen").is_none(), "compressed");
         let mut decoded = ResumableLines::open(&path).await.expect("open");
         all(&mut decoded).await;
         assert_eq!(decoded.point(), point, "the text read compressed ends where the plain one did");
+    }
+
+    /// More appended than the limit is read from the start instead; and a
+    /// read up to a point reads what the read that stopped there did.
+    #[tokio::test]
+    async fn a_read_on_stops_at_its_limit_and_a_read_up_to_a_point_at_the_point() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("t.jsonl");
+        append(&path, b"{\"n\":1}\n");
+        let mut lines = ResumableLines::open(&path).await.expect("open");
+        all(&mut lines).await;
+        let point = lines.point();
+        append(&path, b"{\"n\":2}\n{\"n\":3}\n");
+        assert!(ResumableLines::reopen(&path, &point, 15).await.expect("reopen").is_none(), "16 bytes appended");
+        let mut on = ResumableLines::reopen(&path, &point, 16).await.expect("reopen").expect("within the limit");
+        assert_eq!(all(&mut on).await, ["{\"n\":2}", "{\"n\":3}"]);
+
+        let mut upto = ResumableLines::open_upto(&path, point.end()).await.expect("open");
+        assert_eq!(all(&mut upto).await, ["{\"n\":1}"]);
+        assert_eq!(upto.point(), point);
     }
 }

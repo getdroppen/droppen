@@ -161,6 +161,23 @@ impl ChatDeliveries {
         }
     }
 
+    /// How many delivery rows the session has, and when the newest was
+    /// written: what moves when a row is recorded or pruned. A parse that
+    /// goes on from an earlier one is only right while it has not moved,
+    /// since an entry read before its row was recorded has no attachments
+    /// and is not read again. `None` when the rows cannot be read.
+    pub fn rows(&self) -> Option<(i64, i64)> {
+        self.db
+            .read(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*), COALESCE(MAX(at_ms), 0) FROM chat_deliveries WHERE source = ?1 AND session_id = ?2",
+                    params![self.source.as_str(), self.session],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            })
+            .ok()
+    }
+
     /// What the user entry whose text block is `text`, written at
     /// `timestamp`, attached.
     ///

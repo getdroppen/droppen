@@ -7,13 +7,14 @@
 //! the CLI is mid-write) is ignored exactly as the TypeScript does.
 //!
 //! A parse can go on from an earlier one rather than read the file from its
-//! start ([`resume_claude_transcript`]): it keeps what reading an entry needs
-//! of the entries before it ([`ClaudeCheckpoint`]), reads only the lines
-//! appended since, and says how far back it changed an item it had made
-//! ([`ClaudeParsed::changed_from`]). Whatever it went on from, the items are
-//! the ones a parse from the start would make; the tests in
+//! start ([`Resumable::resume`]): it keeps what reading an entry needs of the
+//! entries before it (`ClaudeParse`), reads only the lines appended since,
+//! and says how far back it changed an item it had made
+//! ([`Resumed::changed_from`]). Whatever it went on from, the items are the
+//! ones a parse from the start would make; the tests in
 //! `transcript_resume_tests` hold it to that.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,7 +25,7 @@ use serde_json::{Map, Value};
 use droppen_sessions::chat_delivery::{ChatDeliveries, DeliveredAttachments};
 use droppen_sessions::item_log::ItemLog;
 use droppen_sessions::mentions::Mentions;
-use droppen_sessions::resume::{ReadPoint, ResumableLines};
+use droppen_sessions::resume::{Resumable, ResumableLines, Resumed};
 use droppen_sessions::sidecars::{AgentEntry, SubagentMeta, Subagents};
 use droppen_sessions::{chats_cwd, Source};
 use super::claude::tool_display::{display_claude_tool_result, display_claude_tool_use};
@@ -858,7 +859,7 @@ async fn agent_metas_for(file_path: &Path, sidechain: bool) -> Vec<SubagentMeta>
 
 /// A parse of a Claude transcript under way: what reading one entry needs to
 /// know of the entries before it. A parse that goes on from this one takes it
-/// over whole ([`ClaudeCheckpoint`]).
+/// over whole ([`Resumed::state`]).
 struct ClaudeParse {
     /// Whether entries marked `isSidechain` are kept (they are the subagent's
     /// own transcript, browsed separately).
@@ -884,10 +885,16 @@ struct ClaudeParse {
     /// does no database work at all.
     deliveries: Option<ChatDeliveries>,
     deliveries_ready: bool,
+    /// The delivery rows as they stood before the first was looked up
+    /// ([`ChatDeliveries::rows`]): a parse can go on from this one only while
+    /// they still stand so ([`ClaudeParse::current`]).
+    deliveries_rows: Option<(i64, i64)>,
     /// The items the subagents' metas tagged last time, and with which agent.
     tagged: HashMap<usize, String>,
     /// The mentioned-file chips.
     mentions: Mentions,
+    /// How many items the parse made: a parse goes on from those items alone.
+    made: usize,
 }
 
 impl ClaudeParse {
@@ -904,9 +911,20 @@ impl ClaudeParse {
             cwd: None,
             deliveries: None,
             deliveries_ready: false,
+            deliveries_rows: None,
             tagged: HashMap::new(),
             mentions: Mentions::new(),
+            made: 0,
         }
+    }
+
+    /// Whether a parse can go on from this one: a chat's delivery rows are as
+    /// they were before this parse looked any up. A row recorded since may
+    /// belong to an entry already read without it (the driver records a
+    /// delivery after it sends the message), and one pruned since is gone
+    /// from a parse from the start; either way the session is read whole.
+    fn current(&self) -> bool {
+        self.deliveries.as_ref().is_none_or(|deliveries| deliveries.rows() == self.deliveries_rows)
     }
 
     /// Read one line of the transcript into `items`.
@@ -925,7 +943,9 @@ impl ClaudeParse {
             if let Some(cwd) = self.cwd.as_deref() {
                 self.deliveries_ready = true;
                 if !self.sidechain && Path::new(cwd) == chats_cwd(paths) {
-                    self.deliveries = Some(ChatDeliveries::new(paths, Source::Claude, &self.session_id));
+                    let deliveries = ChatDeliveries::new(paths, Source::Claude, &self.session_id);
+                    self.deliveries_rows = deliveries.rows();
+                    self.deliveries = Some(deliveries);
                 }
             }
         }
@@ -1165,36 +1185,6 @@ impl ClaudeParse {
     }
 }
 
-/// Where a parse of a Claude transcript stopped, and all a parse that goes on
-/// from there needs ([`resume_claude_transcript`]).
-pub struct ClaudeCheckpoint {
-    point: ReadPoint,
-    /// How many items the parse made: the items a parse goes on from have to
-    /// be those.
-    items: usize,
-    parse: ClaudeParse,
-}
-
-impl ClaudeCheckpoint {
-    /// Where the read stopped.
-    pub fn point(&self) -> &ReadPoint {
-        &self.point
-    }
-}
-
-/// A parse of a Claude transcript, from its start or on from an earlier one.
-pub struct ClaudeParsed {
-    /// The items, each shared, as a [`droppen_sessions::loader::Transcript`]
-    /// holds them.
-    pub items: Vec<Arc<TranscriptItem>>,
-    /// The lowest index whose item may differ from the parse this one went on
-    /// from: every item below it is the very same one, so the fingerprint
-    /// chain stands up to it. 0 for a parse from the start.
-    pub changed_from: usize,
-    /// What a later parse goes on from.
-    pub checkpoint: ClaudeCheckpoint,
-}
-
 /// Normalize a Claude session transcript into renderable items.
 ///
 /// `sidechain` controls whether entries marked `isSidechain` are kept (they are
@@ -1208,34 +1198,57 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
     Ok(parsed.items.into_iter().map(Arc::unwrap_or_clone).collect())
 }
 
-/// [`parse_claude_transcript`], as shared items, and with what a later parse
-/// goes on from.
-pub async fn read_claude_transcript(paths: &droppen_instance::paths::Paths, file_path: &Path, sidechain: bool) -> std::io::Result<ClaudeParsed> {
+/// [`parse_claude_transcript`], as shared items, with what a later parse goes
+/// on from ([`Resumable::resume`], which goes on from a subagent's own
+/// transcript too: whether the sidechain is kept is in the state).
+pub async fn read_claude_transcript(paths: &droppen_instance::paths::Paths, file_path: &Path, sidechain: bool) -> std::io::Result<Resumed> {
     let lines = ResumableLines::open(file_path).await?;
     run(paths, file_path, lines, ClaudeParse::new(file_path, sidechain), ItemLog::new()).await
 }
 
-/// The parse of `file_path` as it is now, made by going on from an earlier
-/// one, which left `checkpoint` and made `items`: only the lines appended
-/// since are read. `None` when the file is not that parse's file grown
-/// ([`ResumableLines::reopen`]), or `items` are not that parse's, and it has
-/// to be read from its start.
-///
-/// The items are the ones [`read_claude_transcript`] would make now, the
-/// subagents' tags and the mentioned-file chips included.
-pub async fn resume_claude_transcript(
-    paths: &droppen_instance::paths::Paths,
-    file_path: &Path,
-    items: Vec<Arc<TranscriptItem>>,
-    checkpoint: ClaudeCheckpoint,
-) -> std::io::Result<Option<ClaudeParsed>> {
-    if items.len() != checkpoint.items {
-        return Ok(None);
+/// The main chain's parse, which the loader goes on from.
+impl Resumable for super::claude::ClaudeCodeSessions {
+    fn read<'a>(&'a self, paths: &'a droppen_instance::paths::Paths, file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, std::io::Result<Resumed>> {
+        Box::pin(run(paths, file_path, lines, ClaudeParse::new(file_path, false), ItemLog::new()))
     }
-    let Some(lines) = ResumableLines::reopen(file_path, &checkpoint.point).await? else {
-        return Ok(None);
-    };
-    run(paths, file_path, lines, checkpoint.parse, ItemLog::resume(items)).await.map(Some)
+
+    // Not when the items are not the ones the parse made, nor when a chat's
+    // delivery rows moved since it looked them up ([`ClaudeParse::current`]).
+    fn resume<'a>(
+        &'a self,
+        paths: &'a droppen_instance::paths::Paths,
+        file_path: &'a Path,
+        lines: ResumableLines,
+        items: Vec<Arc<TranscriptItem>>,
+        state: Box<dyn Any + Send>,
+    ) -> BoxFuture<'a, std::io::Result<Option<Resumed>>> {
+        Box::pin(async move {
+            let Ok(parse) = state.downcast::<ClaudeParse>() else {
+                return Ok(None);
+            };
+            if items.len() != parse.made || !parse.current() {
+                return Ok(None);
+            }
+            run(paths, file_path, lines, *parse, ItemLog::resume(items)).await.map(Some)
+        })
+    }
+
+    // The subagents' metas, which tag the items, and a chat's delivery rows,
+    // which give its messages their attachments.
+    fn inputs<'a>(&'a self, paths: &'a droppen_instance::paths::Paths, file_path: &'a Path) -> BoxFuture<'a, u64> {
+        Box::pin(async move {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            // Sorted: the metas come in the order a directory lists them.
+            let mut metas: Vec<(String, Option<String>)> =
+                agent_metas_for(file_path, false).await.into_iter().map(|meta| (meta.agent_id, meta.tool_use_id)).collect();
+            metas.sort();
+            metas.hash(&mut hasher);
+            let session = file_path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+            ChatDeliveries::new(paths, Source::Claude, &session).rows().hash(&mut hasher);
+            hasher.finish()
+        })
+    }
 }
 
 /// Read `lines` into `items` with `parse`, and finish.
@@ -1245,21 +1258,19 @@ async fn run(
     mut lines: ResumableLines,
     mut parse: ClaudeParse,
     mut items: ItemLog,
-) -> std::io::Result<ClaudeParsed> {
+) -> std::io::Result<Resumed> {
     while let Some(line) = lines.next_line().await? {
         parse.line(paths, &line, &mut items);
     }
     parse.finish(paths, file_path, &mut items).await;
+    parse.made = items.len();
     let point = lines.point();
     let (items, changed_from) = items.into_parts();
-    Ok(ClaudeParsed {
-        checkpoint: ClaudeCheckpoint {
-            point,
-            items: items.len(),
-            parse,
-        },
+    Ok(Resumed {
         items,
         changed_from,
+        point,
+        state: Box::new(parse),
     })
 }
 
