@@ -227,7 +227,7 @@ struct Checkpoint {
     point: ReadPoint,
     state: Box<dyn Any + Send>,
     resumes: u32,
-    whole_at: std::time::Instant,
+    whole_at: tokio::time::Instant,
 }
 
 /// One remembered parse.
@@ -299,36 +299,56 @@ fn remember_transcript(file_path: &Path, sig: &str, started: u64, transcript: Ar
     }
 }
 
+/// What a parse of `file_path` at `sig` starts from ([`take_base`]).
+enum Base {
+    /// The newest parse remembered, its checkpoint taken, to go on from.
+    Taken(Taken),
+    /// Nothing to go on from: the file is read whole, as `Mode` says.
+    Whole(Mode),
+    /// A parse of a newer version than the one asked for, taken at `sig`:
+    /// the answer, when the file now is that version grown.
+    Newer { sig: String, transcript: Arc<Transcript> },
+}
+
 /// The parse a parse of `file_path` at `sig` can go on from: the newest one
-/// remembered, its checkpoint taken off it; otherwise how the file is read
-/// whole.
+/// remembered, its checkpoint taken off it; otherwise how the file is read.
 ///
 /// Only when the file can be that parse's grown, as far as two signatures
-/// can tell ([`crate::growth`]). One that cannot, and cannot be its older
-/// self either, was rewritten (shorter, or with an older mtime, whatever its
-/// two ends say): its checkpoint is dropped. A caller whose signature is the
-/// older of the two leaves it where it is, for the next. A checkpoint past
-/// either backstop is dropped too, and the file read whole.
-fn take_base(file_path: &Path, sig: &str) -> Result<Taken, Mode> {
+/// can tell ([`crate::growth`]). A caller whose signature is the older of the
+/// two, one that waited behind the parse of a newer version, may be answered
+/// with that parse instead ([`Base::Newer`]). A file that can be neither was
+/// rewritten (shorter, or with an older mtime, whatever its two ends say):
+/// its checkpoint is dropped, and so is one past either backstop, and the
+/// file read whole.
+fn take_base(file_path: &Path, sig: &str) -> Base {
     if DISTRUSTED.lock().expect("distrusted poisoned").remove(file_path) {
         drop_checkpoint(file_path);
-        return Err(Mode::Full);
+        return Base::Whole(Mode::Full);
     }
     let mut cache = TRANSCRIPTS.lock().expect("transcript cache poisoned");
-    let Some(entry) = cache.iter_mut().find(|entry| entry.path == file_path && entry.checkpoint.is_some()) else {
-        return Err(Mode::Full);
+    let Some(entry) = cache.iter_mut().find(|entry| entry.path == file_path) else {
+        return Base::Whole(Mode::Full);
     };
     if crate::growth(&entry.sig, sig).is_none() {
-        if crate::growth(sig, &entry.sig).is_none() {
-            entry.checkpoint = None;
+        if crate::growth(sig, &entry.sig).is_some() {
+            return Base::Newer {
+                sig: entry.sig.clone(),
+                transcript: entry.transcript.clone(),
+            };
         }
-        return Err(Mode::Fallback);
+        let mode = match entry.checkpoint.take() {
+            Some(_) => Mode::Fallback,
+            None => Mode::Full,
+        };
+        return Base::Whole(mode);
     }
-    let checkpoint = entry.checkpoint.take().expect("looked for one");
-    if checkpoint.resumes >= RESUMES_BEFORE_WHOLE || checkpoint.whole_at.elapsed() >= whole_read_every(file_path) {
-        return Err(Mode::Full);
+    let Some(checkpoint) = entry.checkpoint.take() else {
+        return Base::Whole(Mode::Full);
+    };
+    if checkpoint.resumes >= RESUMES_BEFORE_WHOLE || checkpoint.whole_at.elapsed() >= WHOLE_READ_EVERY {
+        return Base::Whole(Mode::Full);
     }
-    Ok(Taken {
+    Base::Taken(Taken {
         file_path: file_path.to_path_buf(),
         base: entry.transcript.clone(),
         checkpoint: Some(checkpoint),
@@ -570,7 +590,7 @@ impl TranscriptSources {
                 // A parse that can go on from another waits its turn in the
                 // file's lane, and keeps it until what it read is remembered.
                 let resumable = self.get(source).is_some_and(|reader| reader.resumable().is_some());
-                let _lane = match resumable {
+                let mut lane = match resumable {
                     true => Some(Lane::enter(file_path).await),
                     false => None,
                 };
@@ -578,8 +598,14 @@ impl TranscriptSources {
                     return Some(transcript);
                 }
                 let began = std::time::Instant::now();
-                match self.read_version(paths, source, file_path, sig).await {
-                    Ok(read) => {
+                match self.read_version(paths, source, file_path, sig, &mut lane).await {
+                    Ok(Version::Newer(transcript)) => {
+                        tracing::debug!(path = %file_path.display(), "a version older than the one remembered, answered with that one");
+                        #[cfg(any(test, feature = "test-support"))]
+                        test_support::count(file_path, |reads| reads.newer += 1);
+                        Some(transcript)
+                    }
+                    Ok(Version::Read(read)) => {
                         tracing::debug!(
                             path = %file_path.display(),
                             mode = read.mode.name(),
@@ -680,21 +706,36 @@ impl TranscriptSources {
     /// keeps it from going on (a file rewritten, more appended than
     /// [`READ_ON_MAX`], a reader whose other inputs moved) is a read of the
     /// whole file instead.
-    async fn read_version(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str) -> std::io::Result<Read> {
+    ///
+    /// A caller asking for an older version than the one remembered (it
+    /// waited behind that one's parse in the file's `lane`) is answered with
+    /// the newer parse, when the file now is that version grown: the parse of
+    /// what the file is now, which a whole read would answer too, without
+    /// the whole read. When it is not, the file is read whole outside the
+    /// lane, so the versions waiting in it do not wait on that.
+    async fn read_version(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str, lane: &mut Option<Lane>) -> std::io::Result<Version> {
         let Some(resumable) = self.get(source).and_then(|reader| reader.resumable()) else {
             let items = self.parse(paths, source, file_path).await?;
-            return Ok(Read {
+            return Ok(Version::Read(Read {
                 transcript: Transcript::parsed(file_path, items),
                 checkpoint: None,
                 mode: Mode::Full,
                 bytes: sig.split_once(':').and_then(|(len, _)| len.parse().ok()).unwrap_or(0),
                 low_water: 0,
                 check: None,
-            });
+            }));
         };
         let mode = match take_base(file_path, sig) {
-            Err(mode) => mode,
-            Ok(mut taken) => {
+            Base::Whole(mode) => mode,
+            Base::Newer { sig: newer, transcript } => {
+                let now = crate::file_signature(file_path).await;
+                if now.is_some_and(|now| crate::growth(&newer, &now).is_some()) {
+                    return Ok(Version::Newer(transcript));
+                }
+                drop(lane.take());
+                Mode::Fallback
+            }
+            Base::Taken(mut taken) => {
                 // A check against the whole file has to know the reader's
                 // other inputs held still: they are looked at before it reads
                 // them.
@@ -724,7 +765,7 @@ impl TranscriptSources {
                                     resumes,
                                     inputs,
                                 });
-                                return Ok(read);
+                                return Ok(Version::Read(read));
                             }
                             None => Mode::Fallback,
                         }
@@ -733,7 +774,7 @@ impl TranscriptSources {
             }
         };
         let read = resumable.read(paths, file_path, ResumableLines::open(file_path).await?).await?;
-        Ok(Read::of(file_path, mode, read, None, 0, std::time::Instant::now(), 0))
+        Ok(Version::Read(Read::of(file_path, mode, read, None, 0, tokio::time::Instant::now(), 0)))
     }
 
     /// Check a parse that went on from the last one against one of the whole
@@ -772,9 +813,9 @@ impl TranscriptSources {
         let handle = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             let file_path = checking.0.clone();
+            #[cfg(any(test, feature = "test-support"))]
+            test_support::pass_blocking(&file_path, "check");
             handle.block_on(async move {
-                #[cfg(any(test, feature = "test-support"))]
-                test_support::pass(&file_path, "check").await;
                 let Some(resumable) = sources.get(source).and_then(|reader| reader.resumable()) else {
                     return;
                 };
@@ -787,7 +828,14 @@ impl TranscriptSources {
                 // Nothing to compare with a file that cannot be read now.
                 let Ok(whole) = whole else { return };
                 if check.inputs != before || before != after {
-                    tracing::debug!(path = %file_path.display(), "what the reader reads besides the transcript moved; the check says nothing");
+                    // Said once per transcript where it shows: a session
+                    // whose subagents keep writing may go unchecked for long.
+                    static SAID: std::sync::LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
+                    if SAID.lock().expect("said poisoned").insert(file_path.clone()) {
+                        tracing::info!(path = %file_path.display(), "what the reader reads besides the transcript moved; the check says nothing, here or next time it does");
+                    } else {
+                        tracing::debug!(path = %file_path.display(), "what the reader reads besides the transcript moved; the check says nothing");
+                    }
                     #[cfg(any(test, feature = "test-support"))]
                     test_support::count(&file_path, |reads| reads.inconclusive += 1);
                     return;
@@ -854,6 +902,15 @@ struct Check {
     inputs: u64,
 }
 
+/// What a parse of a version comes to ([`TranscriptSources::read_version`]).
+enum Version {
+    /// The version, read.
+    Read(Read),
+    /// The parse of a newer version, remembered already, which answers a
+    /// caller of an older one.
+    Newer(Arc<Transcript>),
+}
+
 /// A version of a transcript, read.
 struct Read {
     transcript: Transcript,
@@ -873,7 +930,7 @@ impl Read {
     /// it did; its checkpoint kept when the text is long enough
     /// ([`RESUME_MIN_BYTES`]), counting `resumes` parses in a row that went
     /// on since the file was read whole at `whole_at`.
-    fn of(file_path: &Path, mode: Mode, resumed: Resumed, base: Option<&Transcript>, resumes: u32, whole_at: std::time::Instant, from: u64) -> Self {
+    fn of(file_path: &Path, mode: Mode, resumed: Resumed, base: Option<&Transcript>, resumes: u32, whole_at: tokio::time::Instant, from: u64) -> Self {
         let end = resumed.point.end();
         let low_water = resumed.changed_from;
         let transcript = match base {
@@ -949,16 +1006,6 @@ fn read_on_max(file_path: &Path) -> u64 {
     READ_ON_MAX
 }
 
-/// How long parses of `file_path` may go on before one reads it whole.
-fn whole_read_every(file_path: &Path) -> std::time::Duration {
-    #[cfg(any(test, feature = "test-support"))]
-    if let Some(millis) = test_support::knob(file_path, "whole every") {
-        return std::time::Duration::from_millis(millis);
-    }
-    let _ = file_path;
-    WHOLE_READ_EVERY
-}
-
 /// Knobs, holds and counts for tests of what goes on from what, by path, so
 /// tests running at once each keep to their own file.
 #[cfg(any(test, feature = "test-support"))]
@@ -1007,14 +1054,35 @@ mod test_support {
         gate
     }
 
-    /// Pass the gate held at `at` for `file_path`, if one is.
+    /// Pass the gate held at `at` for `file_path`, if one is; ten seconds
+    /// without a pass, and the parse fails, so the test does too rather
+    /// than hang.
     pub(super) async fn pass(file_path: &Path, at: &'static str) {
         let gate = GATES.lock().expect("gates").get(&(file_path.to_path_buf(), at)).cloned();
         if let Some(gate) = gate {
             gate.reached.add_permits(1);
-            if let Ok(permit) = gate.open.acquire().await {
-                permit.forget();
+            tokio::time::timeout(std::time::Duration::from_secs(10), gate.open.acquire())
+                .await
+                .expect("let through within ten seconds")
+                .expect("a gate is never closed")
+                .forget();
+        }
+    }
+
+    /// [`pass`], on a blocking thread, which no timer of the runtime's may
+    /// wake once a failed test is shutting it down.
+    pub(super) fn pass_blocking(file_path: &Path, at: &'static str) {
+        let gate = GATES.lock().expect("gates").get(&(file_path.to_path_buf(), at)).cloned();
+        if let Some(gate) = gate {
+            gate.reached.add_permits(1);
+            for _ in 0..1000 {
+                if let Ok(permit) = gate.open.try_acquire() {
+                    permit.forget();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
+            panic!("not let through within ten seconds");
         }
     }
 }
@@ -1071,6 +1139,8 @@ pub struct Reads {
     pub inconclusive: u32,
     /// Parses that went on and went unchecked: one was being checked.
     pub skipped: u32,
+    /// Callers of an older version answered with the newer one remembered.
+    pub newer: u32,
 }
 
 /// How the versions of `file_path` were read so far.
@@ -1091,13 +1161,6 @@ pub fn resume_from(file_path: &Path, bytes: u64) {
 #[cfg(any(test, feature = "test-support"))]
 pub fn read_on_at_most(file_path: &Path, bytes: u64) {
     test_support::set_knob(file_path, "read on", bytes);
-}
-
-/// Read `file_path` whole once its last whole read is `every` old, rather
-/// than [`WHOLE_READ_EVERY`].
-#[cfg(any(test, feature = "test-support"))]
-pub fn read_whole_every(file_path: &Path, every: std::time::Duration) {
-    test_support::set_knob(file_path, "whole every", u64::try_from(every.as_millis()).unwrap_or(u64::MAX));
 }
 
 /// Check every parse of `file_path` that goes on against the whole file's,
@@ -1731,22 +1794,87 @@ mod tests {
         assert_eq!((live.reads().full, live.reads().resumed, live.reads().fallback), (1, 1, 1));
     }
 
-    /// Once the last whole read is old enough, the next parse reads the file
-    /// whole, however few went on since.
-    #[tokio::test]
+    /// Once the last whole read is [`WHOLE_READ_EVERY`] old, the next parse
+    /// reads the file whole, however few went on since. On the tests' paused
+    /// clock, so no busy machine can move the line.
+    #[tokio::test(start_paused = true)]
     async fn a_file_last_read_whole_long_enough_ago_is_read_whole() {
         let live = Live::new("a\n");
-        read_whole_every(&live.path, Duration::from_millis(200));
         live.load().await;
         live.append("b\n");
         live.load().await;
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        tokio::time::advance(WHOLE_READ_EVERY - Duration::from_secs(1)).await;
         live.append("c\n");
+        live.load().await;
+        assert_eq!((live.reads().full, live.reads().resumed), (1, 2), "not old enough yet");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        live.append("d\n");
         assert_same(&*live.load().await, &live.whole().await);
-        assert_eq!((live.reads().full, live.reads().resumed), (2, 1));
+        assert_eq!((live.reads().full, live.reads().resumed), (2, 2));
+        live.append("e\n");
+        live.load().await;
+        assert_eq!(live.reads().resumed, 3, "and from there it goes on again");
+    }
+
+    /// A caller of a version older than the one remembered (one that waited
+    /// behind that one's parse) is answered with it while the file is that
+    /// version grown, and nothing is read; when the file is not, it is read
+    /// whole.
+    #[tokio::test]
+    async fn an_older_version_than_the_one_remembered_is_answered_with_it() {
+        let live = Live::new("a\n");
+        live.load().await;
+        live.append("b\n");
+        let older = live.sig().await;
+        live.append("c\n");
+        let newer = live.load().await;
+        let (answer, current) = live.sources.load_checked(&live.paths, Source::Claude, &live.path, &older).await;
+        assert!(current && Arc::ptr_eq(&answer, &newer), "the newer parse");
+        let reads = live.reads();
+        assert_eq!((reads.full, reads.resumed, reads.fallback, reads.newer), (1, 1, 0, 1));
         live.append("d\n");
         live.load().await;
-        assert_eq!(live.reads().resumed, 2, "and from there it goes on again");
+        assert_eq!(live.reads().resumed, 2, "the newer one still goes on");
+
+        let older = live.sig().await;
+        live.append("e\n");
+        live.load().await;
+        std::fs::write(&live.path, "x\n").expect("rewritten, shorter");
+        let (answer, current) = live.sources.load_checked(&live.paths, Source::Claude, &live.path, &older).await;
+        assert!(current);
+        assert_eq!(texts(&answer), ["x"], "not the newer one grown: read whole");
+        assert_eq!(live.reads().fallback, 1);
+    }
+
+    /// A parse already going on when a check finds the last one wrong may
+    /// leave a checkpoint of its own, made on from the wrong one: the next
+    /// parse reads the file whole all the same.
+    #[tokio::test]
+    async fn a_parse_going_on_when_the_check_finds_wrong_is_not_gone_on_from() {
+        let live = Live::new("a\n");
+        check_resumes(&live.path);
+        lie(&live.path);
+        let check = hold(&live.path, "check");
+        let reopen = hold(&live.path, "reopen");
+        live.load().await;
+        live.append("b\n");
+        reopen.open();
+        live.load().await;
+        check.reached().await;
+        live.append("c\n");
+        let (going_on, ()) = tokio::join!(live.load(), async {
+            reopen.reached().await;
+            check.open();
+            live.until(|reads| reads.mismatched == 1).await;
+            reopen.open();
+        });
+        assert_eq!(texts(&going_on), ["a", "b (lied)", "c (lied)"], "it went on, and its checkpoint was remembered");
+        // Its own check is held, so only the first one's finding stands.
+        live.append("d\n");
+        assert_same(&*live.load().await, &live.whole().await);
+        assert_eq!((live.reads().full, live.reads().resumed), (2, 2), "read whole");
+        check.open();
+        live.until(|reads| reads.checked == 2).await;
     }
 
     /// The check of a parse that went on runs one at a time per transcript:

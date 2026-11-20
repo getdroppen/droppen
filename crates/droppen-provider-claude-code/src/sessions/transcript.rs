@@ -1239,9 +1239,11 @@ impl Resumable for super::claude::ClaudeCodeSessions {
         Box::pin(async move {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            for meta in agent_metas_for(file_path, false).await {
-                (meta.agent_id, meta.tool_use_id).hash(&mut hasher);
-            }
+            // Sorted: the metas come in the order a directory lists them.
+            let mut metas: Vec<(String, Option<String>)> =
+                agent_metas_for(file_path, false).await.into_iter().map(|meta| (meta.agent_id, meta.tool_use_id)).collect();
+            metas.sort();
+            metas.hash(&mut hasher);
             let session = file_path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
             ChatDeliveries::new(paths, Source::Claude, &session).rows().hash(&mut hasher);
             hasher.finish()
