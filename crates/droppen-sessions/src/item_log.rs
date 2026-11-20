@@ -7,7 +7,16 @@
 //! from an earlier one ([`crate::resume`]) starts from that parse's items and
 //! has to say which of them it changed, so that the fingerprint chain is made
 //! again from there and not from the start ([`crate::loader`]). [`ItemLog`]
-//! keeps that count itself, so no change a parser makes can go uncounted.
+//! keeps that count itself: the only ways to change an item it holds are
+//! [`ItemLog::get_mut`] and [`ItemLog::last_mut`], and both count.
+//!
+//! What it cannot check is the parser's side of it. A parse that went on is
+//! only right when the parser's own state (what it remembers of the entries
+//! before) leads it to make exactly the changes a parse from the start makes;
+//! that is what the parser's own tests prove against such a parse. Nor does it
+//! move or remove items: a parser that needs to should add those here with a
+//! count of their own, since the chips ([`crate::mentions::Mentions`]) then
+//! have to be walked again from there.
 //!
 //! Each item is behind an `Arc` of its own, as a [`crate::loader::Transcript`]
 //! holds them, so going on from an earlier parse copies one pointer per item,
@@ -73,16 +82,17 @@ impl ItemLog {
 
     /// Add `item` after the others.
     pub fn push(&mut self, item: TranscriptItem) {
-        self.changed_from = self.changed_from.min(self.items.len());
         self.items.push(Arc::new(item));
     }
 
     /// Item `index`, to change: from here on, the items are not the ones the
     /// log started with.
     ///
-    /// Never an item [`crate::mentions`] has annotated: what it keeps of the
-    /// item as written ([`TranscriptItem::as_transcribed`]) would then be the
-    /// item from before the change, and its fingerprint wrong.
+    /// Never an item the annotation could chip (an assistant's text): what it
+    /// keeps of the item as written ([`TranscriptItem::as_transcribed`])
+    /// would then be the item from before the change, its fingerprint wrong,
+    /// and the walk that chipped it not walked again. The check catches only
+    /// an item that already has chips; the rest is the parser's to keep to.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut TranscriptItem> {
         let item = self.items.get_mut(index)?;
         debug_assert!(!item.is_annotated(), "item {index} was changed after it was annotated");
@@ -94,19 +104,6 @@ impl ItemLog {
     pub fn last_mut(&mut self) -> Option<&mut TranscriptItem> {
         let last = self.items.len().checked_sub(1)?;
         self.get_mut(last)
-    }
-
-    /// Take the newest item away.
-    pub fn pop(&mut self) -> Option<TranscriptItem> {
-        let item = self.items.pop()?;
-        self.changed_from = self.changed_from.min(self.items.len());
-        Some(Arc::unwrap_or_clone(item))
-    }
-
-    /// Put `items` in at `index`, moving what is there and after it along.
-    pub fn insert(&mut self, index: usize, items: impl IntoIterator<Item = TranscriptItem>) {
-        self.changed_from = self.changed_from.min(index);
-        self.items.splice(index..index, items.into_iter().map(Arc::new));
     }
 
     /// Item `index`, for the mentioned-file chips alone ([`crate::mentions`]):
@@ -164,16 +161,8 @@ mod tests {
 
         let mut log = ItemLog::resume(earlier.clone());
         log.last_mut().expect("there").text = "D".into();
-        assert_eq!(log.changed_from(), 3);
-
-        let mut log = ItemLog::resume(earlier.clone());
-        assert_eq!(log.pop().map(|item| item.text), Some("d".into()));
         log.push(item("e"));
-        assert_eq!((texts(&log), log.changed_from()), (vec!["a", "b", "c", "e"], 3), "popped, then pushed in its place");
-
-        let mut log = ItemLog::resume(earlier.clone());
-        log.insert(3, [item("x"), item("y")]);
-        assert_eq!((texts(&log), log.changed_from()), (vec!["a", "b", "c", "x", "y", "d"], 3));
+        assert_eq!((texts(&log), log.changed_from()), (vec!["a", "b", "c", "D", "e"], 3));
 
         let mut log = ItemLog::resume(earlier);
         log.annotate_mut(0).text = "chips".into();

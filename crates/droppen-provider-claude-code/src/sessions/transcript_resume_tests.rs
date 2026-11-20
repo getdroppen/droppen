@@ -322,6 +322,21 @@ async fn a_file_written_after_its_mention_was_read_gets_its_chip() {
     assert!(deleted.items[1].files.is_none());
 }
 
+/// A relative path resolves against the session's directory, which a
+/// transcript can name only after a message that mentions one: once it is
+/// named, that message gets its chip, read whole or read on.
+#[tokio::test]
+async fn a_mention_read_before_the_session_named_its_directory_gets_its_chip_once_it_does() {
+    let mut oracle = Oracle::new();
+    oracle.append(&line(assistant(0, json!([{"type": "text", "text": "see `notes.md`"}]))));
+    let before = oracle.step().await;
+    assert!(before.items[0].files.is_none(), "nothing to resolve it against yet");
+    oracle.append(&line(json!({"type": "user", "cwd": oracle.home.join("proj"), "timestamp": at(1), "message": {"content": "go on"}})));
+    let named = oracle.step().await;
+    assert_eq!(named.read, Read::On);
+    assert_eq!(named.items[0].files.as_ref().map(Vec::len), Some(1));
+}
+
 /// The `stat` budget is spent from the first message on, read whole or in
 /// pieces: a message after it is spent gets no chip, until a file an
 /// earlier message named turns up and the walk starts over.

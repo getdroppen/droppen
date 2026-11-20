@@ -193,14 +193,15 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
 /// carries it.
 #[derive(Debug)]
 pub struct Mentions {
-    /// Every path looked at, in the order it was, and whether it was a file.
-    looked: Vec<(PathBuf, bool)>,
-    /// The same, by path.
+    /// Every path looked at, and whether it was a file.
     exists: HashMap<PathBuf, bool>,
     /// How many paths may still be looked at.
     budget: usize,
     /// How many items, from the first, have been annotated.
     upto: usize,
+    /// The directory relative paths were resolved against, which a
+    /// transcript can name only after an item that mentions one.
+    cwd: Option<String>,
 }
 
 impl Default for Mentions {
@@ -213,10 +214,10 @@ impl Mentions {
     /// Nothing looked at: a walk from the first item.
     pub fn new() -> Self {
         Self {
-            looked: Vec::new(),
             exists: HashMap::new(),
             budget: MAX_STATS_PER_TRANSCRIPT,
             upto: 0,
+            cwd: None,
         }
     }
 
@@ -225,23 +226,26 @@ impl Mentions {
     ///
     /// The budget is spent in item order, so an item's chips depend on what
     /// the paths looked at before it turned out to be. While every one of
-    /// them is still what it was, the items annotated already are exactly as
-    /// such a walk leaves them, and it goes on from the first one not yet
-    /// annotated. When one is not (a file a message named was written since,
-    /// or deleted) the walk starts over from the items as written. Either way
-    /// the chain does not move: the chips are not the transcript's.
+    /// them is still what it was, and relative paths resolve against the
+    /// same `cwd`, the items annotated already are exactly as such a walk
+    /// leaves them, and it goes on from the first one not yet annotated.
+    /// Otherwise (a file a message named was written since, or deleted, or
+    /// the transcript has only now said where it runs) the walk starts over
+    /// from the items as written. Either way the chain does not move: the
+    /// chips are not the transcript's.
     ///
     /// A parser never changes an annotatable item after making it
     /// ([`ItemLog::get_mut`]), so the items annotated already are the ones
     /// below where the last walk stopped.
     pub async fn annotate(&mut self, home: &Path, log: &mut ItemLog, cwd: Option<&str>, citations_of: FileCitations) {
-        if self.upto > log.len() || self.answers_moved().await {
+        if self.upto > log.len() || self.cwd.as_deref() != cwd || self.answers_moved().await {
             for index in 0..log.len() {
                 if let Some(written) = log.get(index).filter(|item| item.is_annotated()).map(|item| item.as_transcribed().clone()) {
                     *log.annotate_mut(index) = written;
                 }
             }
             *self = Self::new();
+            self.cwd = cwd.map(str::to_owned);
         }
         for index in self.upto..log.len() {
             let Some(item) = log.get(index) else { break };
@@ -255,21 +259,17 @@ impl Mentions {
     /// Whether any path looked at is not what it was then: one `stat` each,
     /// all on one blocking thread.
     async fn answers_moved(&self) -> bool {
-        if self.looked.is_empty() {
+        if self.exists.is_empty() {
             return false;
         }
-        let paths: Vec<PathBuf> = self.looked.iter().map(|(path, _)| path.clone()).collect();
-        let now = tokio::task::spawn_blocking(move || {
-            paths
+        let looked: Vec<(PathBuf, bool)> = self.exists.iter().map(|(path, was)| (path.clone(), *was)).collect();
+        tokio::task::spawn_blocking(move || {
+            looked
                 .iter()
-                .map(|path| std::fs::metadata(path).map(|meta| meta.is_file()).unwrap_or(false))
-                .collect::<Vec<_>>()
+                .any(|(path, was)| std::fs::metadata(path).map(|meta| meta.is_file()).unwrap_or(false) != *was)
         })
-        .await;
-        match now {
-            Ok(now) => now.iter().zip(&self.looked).any(|(now, (_, then))| now != then),
-            Err(_) => true,
-        }
+        .await
+        .unwrap_or(true)
     }
 
     /// The chips `item` gets, and the citations their labels replace, when it
@@ -303,7 +303,6 @@ impl Mentions {
                     self.budget -= 1;
                     let is_file = tokio::fs::metadata(&absolute).await.map(|m| m.is_file()).unwrap_or(false);
                     self.exists.insert(absolute.clone(), is_file);
-                    self.looked.push((absolute.clone(), is_file));
                     is_file
                 }
             };

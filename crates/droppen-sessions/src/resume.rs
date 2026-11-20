@@ -29,7 +29,7 @@ use std::path::Path;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt};
 
 use crate::compressed;
-use crate::util::try_parse;
+use crate::util::{line_text, try_parse};
 
 /// The most of the file's first line, and of its last bytes read, that a
 /// [`ReadPoint`] fingerprints.
@@ -177,12 +177,7 @@ impl ResumableLines {
             return Ok(None);
         }
         let ended = self.buffer.last() == Some(&b'\n');
-        let mut stop = self.buffer.len() - usize::from(ended);
-        // A file written on Windows keeps the carriage return out of the JSON.
-        if stop > 0 && self.buffer[stop - 1] == b'\r' {
-            stop -= 1;
-        }
-        let text = String::from_utf8_lossy(&self.buffer[..stop]).into_owned();
+        let text = line_text(&self.buffer);
         // No newline after it: the end of the file. Taken only when it is a
         // whole entry, which a reader of the whole file would parse; anything
         // else it would skip, and it is read again once it is a line.
