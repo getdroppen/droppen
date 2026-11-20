@@ -82,7 +82,7 @@ pub struct QuestionEntry {
 }
 
 /// A file the item points at, offered to the UI as a download chip.
-#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 pub struct FileRef {
     /// Base name, shown on the chip.
     pub name: String,

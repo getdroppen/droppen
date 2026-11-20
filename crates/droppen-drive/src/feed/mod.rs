@@ -255,10 +255,11 @@ pub fn live_delta(sent: &Transcript, next: &Transcript) -> Option<usize> {
     Some((reach..from).find(|&i| served_differently(&sent.items[i], &next.items[i])).unwrap_or(from))
 }
 
-/// Whether two items whose fingerprints agree are sent differently: only
-/// their chips can make them, so only an item that has some is compared.
+/// Whether two items whose fingerprints agree are sent differently. Only the
+/// annotation can make them, so only an item it changed is compared, and only
+/// in what it changes: the files, and the text a citation's label replaced.
 fn served_differently(sent: &TranscriptItem, next: &TranscriptItem) -> bool {
-    (sent.is_annotated() || next.is_annotated()) && serde_json::to_vec(sent).ok() != serde_json::to_vec(next).ok()
+    (sent.is_annotated() || next.is_annotated()) && (sent.files != next.files || sent.text != next.text)
 }
 
 /// Whether a client may be served the history page that ends at `before`.
@@ -790,6 +791,17 @@ pub async fn attach_session_feed_with(
             }
         }
     };
+    // At the version the watcher holds, the client holds the watcher's parse:
+    // its own may be a second copy, read after the first left the cache, and
+    // kept alive for as long as the session stays idle.
+    let sent = {
+        let latest = latest.lock().expect("feed latest poisoned");
+        if latest.0 == sig {
+            latest.1.clone()
+        } else {
+            transcript
+        }
+    };
 
     // The handle exists from here on, before anything else is awaited: the
     // client is counted on the feed now, and a caller that gives up on this
@@ -801,7 +813,7 @@ pub async fn attach_session_feed_with(
         rx,
         latest,
         sent_sig: sig,
-        sent: transcript,
+        sent,
         latest_draft,
         owed: None,
     };
@@ -1765,5 +1777,25 @@ mod tests {
             (Some("the third turn"), Some(3)),
             "the snapshot"
         );
+    }
+
+    /// A client attaching at the version the watcher holds shares the
+    /// watcher's parse, even when its own was read again after the first left
+    /// the cache: an idle session is held once, however many are watching.
+    #[tokio::test]
+    async fn a_client_attaching_at_the_watchers_version_shares_its_parse() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = "77777777-7777-4777-8777-777777777777";
+        let (paths, drive) = crate::fake::drive(dir.path());
+        let file = crate::fake::session(&paths, id, "the first turn\n");
+        let registry = FeedRegistry::new();
+        let attach = || attach_session_feed_with(&registry, &drive, crate::fake::SOURCE, id, None, SESSION_PAGE_SIZE);
+
+        let first = attach().await.expect("attached");
+        droppen_sessions::loader::forget_transcript(&file);
+        let second = attach().await.expect("attached");
+        let latest = second.attachment.latest.lock().expect("latest").1.clone();
+        assert!(Arc::ptr_eq(&first.attachment.sent, &latest));
+        assert!(Arc::ptr_eq(&second.attachment.sent, &latest), "one parse for both");
     }
 }
