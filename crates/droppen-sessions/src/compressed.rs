@@ -162,15 +162,36 @@ pub(crate) async fn open(path: &Path) -> io::Result<(PathBuf, tokio::fs::File)> 
     }
 }
 
+/// How much of a plain transcript one read takes from its file, for a reader
+/// that reads the text to its end ([`crate::util::LossyLines`]).
+///
+/// Each read of a [`tokio::fs::File`] is a trip to a blocking thread and back,
+/// and a [`tokio::io::BufReader`] reads 8 KiB at a time unless told otherwise.
+/// A 480 MiB transcript was then 60,000 trips: most of what a whole parse of
+/// it cost (0.7 s of 0.9 s on an M4), and readers reading at once slowed each
+/// other down badly (six took 2.4 s, and 12–15 s of CPU). A MiB at a time is
+/// 480 trips: the same read took 0.2 s, and six at once under half a second.
+/// The buffer is held only while the file is read.
+pub(crate) const WHOLE_READ: usize = 1024 * 1024;
+
+/// How much of a plain transcript one read takes for a reader that stops
+/// early ([`crate::util::read_head_lines`]): tokio's own default, so a head of
+/// a few KiB is not read a MiB at a time.
+pub(crate) const PART_READ: usize = 8 * 1024;
+
 /// The text of the transcript `path` names, as a stream: a plain file as it
 /// is, a compressed one decoded on a blocking thread a chunk at a time, so a
 /// long rollout is never held whole. Opened as [`open`] opens it.
-pub(crate) async fn open_text(path: &Path) -> io::Result<Box<dyn AsyncBufRead + Send + Unpin>> {
+///
+/// `buffer` is how much of a plain file one read takes: [`WHOLE_READ`] for a
+/// reader that goes on to the end, [`PART_READ`] for one that stops early. A
+/// compressed one is handed over a [`CHUNK`] at a time either way.
+pub(crate) async fn open_text(path: &Path, buffer: usize) -> io::Result<Box<dyn AsyncBufRead + Send + Unpin>> {
     let (found, file) = open(path).await?;
     Ok(if is_compressed(&found) {
         Box::new(decoded(file.into_std().await))
     } else {
-        Box::new(tokio::io::BufReader::new(file))
+        Box::new(tokio::io::BufReader::with_capacity(buffer, file))
     })
 }
 
@@ -411,7 +432,7 @@ mod tests {
         let path = dir.join("rollout-1-a.jsonl.zst");
         std::fs::write(&path, bytes)?;
         let mut text = String::new();
-        open_text(&path).await?.read_to_string(&mut text).await?;
+        open_text(&path, WHOLE_READ).await?.read_to_string(&mut text).await?;
         Ok(text)
     }
 
@@ -553,7 +574,7 @@ mod tests {
 
         async fn text(path: &Path) -> io::Result<String> {
             let mut text = String::new();
-            open_text(path).await?.read_to_string(&mut text).await?;
+            open_text(path, WHOLE_READ).await?.read_to_string(&mut text).await?;
             Ok(text)
         }
 
@@ -626,7 +647,7 @@ mod tests {
         let path = dir.path().join("rollout-1-a.jsonl.zst");
         std::fs::write(&path, compress(text.as_bytes())).expect("zst");
 
-        let mut stream = open_text(&path).await.expect("open");
+        let mut stream = open_text(&path, WHOLE_READ).await.expect("open");
         let mut read = Vec::new();
         let mut line = String::new();
         while stream.read_line(&mut line).await.expect("read") > 0 {
