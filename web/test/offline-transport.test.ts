@@ -15,6 +15,7 @@ import {
   offlineTransport,
   PROGRESS_EVERY_MS,
   RefusedSocket,
+  restingRow,
 } from "../src/lib/transport/offline.js";
 import type { MirrorChange, SessionCopy } from "../src/lib/hub/mirror.js";
 import type { FeedCopy, StatusState, SubscriptionProgress } from "../src/lib/hub/streams.js";
@@ -130,6 +131,19 @@ test("the list: newest first, filtered like the machine filters it, and nothing 
   // While the machine is up, its rows are its own word.
   const live = await offlineTransport(source, { ...opts, machineOnline: () => true }).fetch(new Request("http://page/api/sessions"));
   assert.equal(((await live.json()) as { sessions: SessionSummary[] }).sessions[0]!.activity, "working");
+});
+
+test("with the machine off, no row keeps the agent name the copy last saw: no CLI answers to it", async () => {
+  const source = new FakeSource();
+  source.list[0] = summary("a", "2026-10-15T00:00:00.000Z", { agentName: "k8s-configs-24" });
+  const row = (await get(source, "/api/sessions")).body.sessions[0] as SessionSummary;
+  assert.equal(row.id, "a");
+  assert.equal(row.agentName, undefined, "the list's row: nothing to copy from its menu");
+  assert.equal(((await get(source, "/api/sessions/claude/a")).body.summary as SessionSummary).agentName, undefined, "nor the detail's");
+  assert.equal(restingRow(source.list[0]).agentName, undefined, "nor another device's row read from its copy");
+  // While the machine is up, its rows are its own word, the name with them.
+  const live = await offlineTransport(source, { ...opts, machineOnline: () => true }).fetch(new Request("http://page/api/sessions"));
+  assert.equal(((await live.json()) as { sessions: SessionSummary[] }).sessions[0]!.agentName, "k8s-configs-24");
 });
 
 test("a session's detail is the copy's last page, read-only, and its history pages hang off the copy's own window", async () => {

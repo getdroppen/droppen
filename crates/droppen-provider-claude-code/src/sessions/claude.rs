@@ -323,19 +323,29 @@ pub struct LiveClaude {
     /// the same session can be named differently by its next process.
     pub name: Option<String>,
     /// When the CLI says it started, in ms since the epoch; 0 when it does not
-    /// say. What settles two live registrations claiming one session.
+    /// say, or says it in some other unit ([`MIN_STARTED_AT_MS`]). What settles
+    /// two live registrations claiming one session.
     started_at_ms: u64,
 }
 
 /// How much later than its registration says a process may seem to have
 /// started and still be the CLI that wrote it.
 ///
-/// The CLI's own start is never after the time it records, so any slack only
-/// absorbs the platform's clock: Linux dates a process off a boot time it
-/// keeps in whole seconds, and moves when the clock is set. A pid handed to
-/// somebody else is dated after the registration by however long its CLI ran
-/// before it died — almost always far more than this.
+/// Only macOS dates a process at all ([`droppen_base::procs::start_time`]):
+/// its kernel stamps the start at fork, and the CLI reads the same clock for
+/// `startedAt` afterwards, so the real CLI is never later — measured at
+/// 0.13–2.65 s *earlier* over 71 live CLIs, the oldest 32 days old through
+/// sleep and wake. The slack absorbs only the clock being set back in between.
+/// A pid handed to somebody else is dated after the registration by however
+/// long its CLI ran before it died, almost always far more than this.
 const START_SLACK: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The smallest `startedAt` read as milliseconds since the epoch: 2001-09-09.
+///
+/// Anything below is a registration that counts in some other unit — seconds
+/// would put every CLI in 1970 — and is read as saying nothing, so liveness
+/// alone decides rather than every session reading as dead.
+const MIN_STARTED_AT_MS: u64 = 1_000_000_000_000;
 
 /// Every session a live Claude Code process is attached to right now, and that
 /// process' registration.
@@ -382,24 +392,32 @@ async fn collect_live(dir: &Path, out: &mut HashMap<String, LiveClaude>) {
 /// The session a registration names and what it says of its CLI, when that
 /// CLI is still the process at its pid.
 ///
-/// A crashed CLI leaves its file behind, so the pid is checked twice: that it
-/// exists, and that the process there did not start after the registration
-/// says its own did — the pid of a CLI long gone, handed to somebody's build,
-/// is otherwise a live session under a name nothing answers to.
+/// A crashed CLI leaves its file behind, so the pid has to exist. On macOS it
+/// is checked once more: the process there must not have started after the
+/// registration says its own did — the pid of a CLI long gone, handed to
+/// somebody's build, is otherwise a live session under a name nothing answers
+/// to. Linux has no start time a clock step leaves alone, and holding a
+/// registration to one that moved would read a live CLI as dead (and lift the
+/// block on sending into it), so there the pid's liveness is the whole rule.
 fn live_registration(raw: &str) -> Option<(String, LiveClaude)> {
     let Ok(Value::Object(data)) = serde_json::from_str::<Value>(raw) else {
         return None;
     };
     let pid = u32::try_from(data.get("pid").and_then(Value::as_i64)? as i32).ok()?;
     let session_id = data.get("sessionId").and_then(Value::as_str)?;
-    let started_at_ms = data.get("startedAt").and_then(Value::as_u64).unwrap_or(0);
+    let started_at_ms = data
+        .get("startedAt")
+        .and_then(Value::as_u64)
+        .filter(|&ms| ms >= MIN_STARTED_AT_MS)
+        .unwrap_or(0);
     // `exists`, not `alive`: the pid is Claude Code's own, not a child of
     // this server, so pid 1 (Claude as a container's init) counts.
     if !droppen_base::procs::exists(pid) {
         return None;
     }
     // Either side unknown is "cannot tell", which reads as the same process,
-    // as `droppen_base::procs::is_same_process` reads it.
+    // as `droppen_base::procs::is_same_process` reads it. The platform's side
+    // is unknown everywhere but macOS.
     if let Some(started) = droppen_base::procs::start_time(pid).filter(|_| started_at_ms > 0) {
         if started > std::time::UNIX_EPOCH + std::time::Duration::from_millis(started_at_ms) + START_SLACK {
             return None;
@@ -1622,8 +1640,8 @@ mod tests {
 
     /// The name other agents message a session by is its live CLI's, read on
     /// every lookup: present while that CLI is the process at its pid, the new
-    /// one once it is renamed, and gone with a dead pid or a stale file —
-    /// together with the live status, which reads the same registration.
+    /// one once it is renamed, and gone with a dead pid or (on macOS) a stale
+    /// file — together with the live status, which reads the same registration.
     #[tokio::test]
     async fn a_live_cli_s_name_is_the_session_s_agent_name_while_it_lives() {
         let _guard = droppen_sessions::index::exclusive().await;
@@ -1674,11 +1692,28 @@ mod tests {
         let unnamed = read().await;
         assert_eq!((unnamed.agent_name, unnamed.status), (None, SessionStatus::Running));
 
+        // A `startedAt` in seconds, not milliseconds, says nothing: the pid's
+        // liveness decides, on every platform, rather than 1970 making every
+        // live CLI a stranger.
+        register(&paths, ClaudeRoot::Managed, me, id, now_ms() / 1000, Some("droppen-s"));
+        let seconds = read().await;
+        assert_eq!((seconds.agent_name.as_deref(), seconds.status), (Some("droppen-s"), SessionStatus::Running));
+
         // A stale file: the pid is alive, but its process started long after
-        // the CLI that wrote this did — the pid was handed to somebody else.
-        register(&paths, ClaudeRoot::Managed, me, id, 1_000_000_000_000, Some("droppen-e1"));
+        // the CLI that wrote this did (in 2008) — the pid was handed to
+        // somebody else. macOS can tell from the start its kernel stamped.
+        register(&paths, ClaudeRoot::Managed, me, id, 1_200_000_000_000, Some("droppen-e1"));
         let stale = read().await;
+        #[cfg(target_os = "macos")]
         assert_eq!((stale.agent_name, stale.status), (None, SessionStatus::Idle), "not this CLI's pid any more");
+        // Linux cannot without a time a clock step would move, so it holds the
+        // registration to the pid alone: a live pid is a live CLI.
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(
+            (stale.agent_name.as_deref(), stale.status),
+            (Some("droppen-e1"), SessionStatus::Running),
+            "no start-time gating here"
+        );
         std::fs::remove_file(claude_roots::ClaudeRoots::of(&paths).live_dir(ClaudeRoot::Managed).join(format!("{me}.json"))).expect("rm");
 
         // A dead pid, in the user's own root this time.

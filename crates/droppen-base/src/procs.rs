@@ -56,9 +56,15 @@
 //! process started, by the wall clock: Claude Code's live-session registration
 //! does. The same start time as the token, as a [`SystemTime`], is what that
 //! record can be held to: a process at its pid that started *after* the record
-//! says its own did is somebody else. Coarser than the token — Linux dates a
-//! process in clock ticks since a boot it dates in whole seconds — so a caller
-//! compares with a little slack.
+//! says its own did is somebody else.
+//!
+//! Only on macOS, whose kernel stamps the wall-clock start at fork and never
+//! recomputes it. Linux keeps clock ticks since boot, and turning them into a
+//! wall-clock time means adding the boot's own (`btime`), which jumps whenever
+//! the clock is stepped — a VM resumed, NTP's first sync — while the time the
+//! record wrote stays put: one forward step of a few seconds would read every
+//! process started before it as a stranger. So Linux answers `None`, and a
+//! caller falls back to liveness, as it does for a record with no time in it.
 
 use std::time::{Duration, SystemTime};
 
@@ -120,7 +126,9 @@ pub fn start_token(pid: u32) -> Option<String> {
 
 /// When `pid` started, by the wall clock, or `None` if it cannot be read.
 ///
-/// The moment [`start_token`] spells, to the microsecond.
+/// The moment [`start_token`] spells, to the microsecond: stamped at fork by
+/// the clock of that moment, and never recomputed, so a clock set since does
+/// not move it.
 #[cfg(target_os = "macos")]
 pub fn start_time(pid: u32) -> Option<SystemTime> {
     let info = bsd_info(pid)?;
@@ -173,31 +181,18 @@ pub fn start_token(pid: u32) -> Option<String> {
     Some(starttime.to_string())
 }
 
-/// When `pid` started, by the wall clock, or `None` if it cannot be read.
-///
-/// [`start_token`]'s ticks since boot, after the boot's own wall-clock time
-/// (`btime` in `/proc/stat`) — the sum `ps -o lstart` prints. `btime` is whole
-/// seconds, so this can read up to a second early, never late; and it moves
-/// when the clock is set, the start time it is added to does not.
-#[cfg(target_os = "linux")]
-pub fn start_time(pid: u32) -> Option<SystemTime> {
-    let ticks: u64 = start_token(pid)?.parse().ok()?;
-    // SAFETY: `sysconf` reads a configuration value and touches no memory of ours.
-    let hz = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok().filter(|&hz| hz > 0)?;
-    let stat = std::fs::read_to_string("/proc/stat").ok()?;
-    let boot: u64 = stat.lines().find_map(|line| line.strip_prefix("btime "))?.trim().parse().ok()?;
-    let since_boot = Duration::from_secs(ticks / hz) + Duration::from_nanos((ticks % hz) * 1_000_000_000 / hz);
-    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(boot) + since_boot)
-}
-
 /// An opaque token for when `pid` started, or `None` if it cannot be read.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn start_token(_pid: u32) -> Option<String> {
     None
 }
 
-/// When `pid` started, by the wall clock, or `None` if it cannot be read.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// When `pid` started, by the wall clock: never known here.
+///
+/// On Linux the only wall-clock start there is moves with every clock step
+/// (see the module docs), which is worse than none: a caller holding a record
+/// to it would turn a step into a stranger. Elsewhere there is no clock to read.
+#[cfg(not(target_os = "macos"))]
 pub fn start_time(_pid: u32) -> Option<SystemTime> {
     None
 }
@@ -305,17 +300,19 @@ mod tests {
         assert!(is_same_process(me, None));
     }
 
-    /// What a registration written by another program is held to: the process
-    /// at its pid started no later than the registration says its own did.
+    /// What a registration written by another program is held to, on macOS:
+    /// the process at its pid started no later than the registration says its
+    /// own did.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_process_is_dated_by_the_wall_clock() {
-        let me = start_time(std::process::id()).expect("this platform is macOS or Linux, so a start time must be readable");
+        let me = start_time(std::process::id()).expect("macOS dates every process it can describe");
         let now = SystemTime::now();
         assert!(me <= now, "this process started before now");
         assert!(now.duration_since(me).expect("in the past") < Duration::from_secs(24 * 3600), "and recently: {me:?}");
 
-        // A process started after a moment is dated after it — within the
-        // second Linux's whole-second boot time can cost.
+        // A process started after a moment is dated after it, give or take
+        // the clock's own rounding.
         let before = SystemTime::now();
         let mut child = std::process::Command::new("sleep")
             .arg("5")
@@ -328,9 +325,22 @@ mod tests {
         child.kill().expect("kill");
         child.wait().expect("reap");
         let started = started.expect("a live child is dated");
-        assert!(started + Duration::from_secs(1) >= before, "{started:?} is not before {before:?}");
+        assert!(started + Duration::from_secs(2) >= before, "{started:?} is not before {before:?}");
         assert!(start_time(child.id()).is_none(), "a reaped child is not dated at all");
         assert!(start_time(0).is_none());
+    }
+
+    /// Linux has a start in ticks since boot, but no wall-clock start that a
+    /// clock step leaves alone, so it gives none: a record is then held to
+    /// liveness, never to a time that may have jumped.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn no_wall_clock_start_is_offered_where_a_clock_step_would_move_it() {
+        let me = std::process::id();
+        assert!(alive(me));
+        assert!(start_time(me).is_none(), "not even for this live process");
+        #[cfg(target_os = "linux")]
+        assert!(start_token(me).is_some(), "while the exact token is still there for `is_same_process`");
     }
 
     #[test]
