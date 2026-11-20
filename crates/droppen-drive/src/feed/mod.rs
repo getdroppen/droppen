@@ -285,26 +285,33 @@ pub fn history_anchor_holds(transcript: &Transcript, before: usize, fp: &str, si
 /// the parse's fingerprint of those items. An answer that depends on nothing
 /// past that prefix is then the one any parse holding the fingerprint gives,
 /// a fresh one included; a fresh one that no longer holds it is a client whose
-/// window the live feed is already replacing. `holds` is handed the parse's
-/// signature too, for a caller that also bounds how far behind `sig` it may be.
+/// window the live feed is already replacing. `holds` is handed how far the
+/// file has moved on from the parse too, for a caller that bounds it.
 ///
 /// `None` — and the caller loads at `sig` as it always did — when nothing is
 /// cached, when `holds` refuses, or when the signatures show the file was
-/// rewritten rather than appended to ([`droppen_sessions::may_have_grown`]),
-/// which the fingerprint of a parse taken before the rewrite could not. A
-/// parse taken *after* the caller read `sig` — the file grew in between — is
-/// as good as one taken before: refusing it would parse the file again at a
-/// signature already gone, and that parse, started later, would push the newer
-/// one out of the cache.
-pub fn newest_parse_holding(
+/// rewritten rather than appended to ([`droppen_sessions::growth`]), which the
+/// fingerprint of a parse taken before the rewrite could not.
+///
+/// A `sig` behind the parse's own is the one case two signatures cannot
+/// settle. The file may have grown after the caller read `sig`, and the parse
+/// is of the grown file: refusing it would parse a signature already gone and
+/// push the newer parse out of the cache. Or the file may have been replaced
+/// by a shorter copy whose mtime is no later — a `cp -p` restore, a rewrite
+/// within one tick of a coarse clock. So the file is looked at once more, and
+/// the parse is used only when the file now is that parse's file grown.
+pub async fn newest_parse_holding(
     transcripts: &TranscriptSources,
     file_path: &Path,
     sig: &str,
-    holds: impl FnOnce(&str, &Transcript) -> bool,
+    holds: impl FnOnce(droppen_sessions::Growth, &Transcript) -> bool,
 ) -> Option<(String, Arc<Transcript>)> {
     let (cached_sig, transcript) = transcripts.newest_cached(file_path)?;
-    let appended = droppen_sessions::may_have_grown(&cached_sig, sig) || droppen_sessions::may_have_grown(sig, &cached_sig);
-    (appended && holds(&cached_sig, &transcript)).then_some((cached_sig, transcript))
+    let lag = match droppen_sessions::growth(&cached_sig, sig) {
+        Some(lag) => lag,
+        None => droppen_sessions::growth(&cached_sig, &file_signature(file_path).await?)?,
+    };
+    holds(lag, &transcript).then_some((cached_sig, transcript))
 }
 
 /// The state half of a session, without any transcript.

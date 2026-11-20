@@ -1508,11 +1508,15 @@ pub async fn session_history(
     // the same page whenever it holds the client's fingerprint. Its `sig` and
     // `totalItems` are that parse's: a client places the page by `startFp`,
     // and keeps the larger of its own total and the page's.
-    let cached = query.fp.as_deref().and_then(|fp| {
-        feed::newest_parse_holding(&drive.transcripts, &file_path, &sig, |_, transcript| {
-            feed::history_anchor_holds(transcript, before, fp, since)
-        })
-    });
+    let cached = match query.fp.as_deref() {
+        Some(fp) => {
+            feed::newest_parse_holding(&drive.transcripts, &file_path, &sig, |_, transcript| {
+                feed::history_anchor_holds(transcript, before, fp, since)
+            })
+            .await
+        }
+        None => None,
+    };
     let (sig, transcript) = match cached {
         Some(cached) => cached,
         None => {
@@ -1651,7 +1655,7 @@ pub(crate) async fn first_unread_of(
     let file = transcript_file(drive, source, id).await?;
     let after = query.after.as_deref();
     let cached = match (query.since, query.fp.as_deref()) {
-        (Some(since), Some(fp)) => cached_first_unread(drive, &file, since as usize, fp, after),
+        (Some(since), Some(fp)) => cached_first_unread(drive, &file, since as usize, fp, after).await,
         _ => None,
     };
     if let Some(found) = cached {
@@ -1684,8 +1688,10 @@ pub(crate) async fn first_unread_of(
 ///   back at a session it held a window of while nobody re-read it — its
 ///   socket closed, the agent writing on — holds a marker the last visit's
 ///   parse still matches, and that parse is missing everything written since.
-///   Read fresh, it joins the parse the resumed feed has started.
-fn cached_first_unread(
+///   Read fresh, it joins the parse the resumed feed has started. The lag is
+///   measured against the file as it is, looked at again when `file.sig` is
+///   behind the parse ([`feed::newest_parse_holding`]).
+async fn cached_first_unread(
     drive: &crate::Drive,
     file: &TranscriptFile,
     since: usize,
@@ -1693,9 +1699,10 @@ fn cached_first_unread(
     after: Option<&str>,
 ) -> Option<droppen_sessions::attention::FirstUnread> {
     let proven = since.checked_sub(droppen_sessions::loader::RESUME_OVERLAP)?;
-    let (_, transcript) = feed::newest_parse_holding(&drive.transcripts, &file.path, &file.sig, |cached_sig, transcript| {
-        lags_like_a_live_feed(cached_sig, &file.sig) && transcript.len() >= since && feed::history_anchor_holds(transcript, 0, fp, Some(since))
-    })?;
+    let (_, transcript) = feed::newest_parse_holding(&drive.transcripts, &file.path, &file.sig, |lag, transcript| {
+        lags_like_a_live_feed(lag) && transcript.len() >= since && feed::history_anchor_holds(transcript, 0, fp, Some(since))
+    })
+    .await?;
     let found = droppen_sessions::attention::first_unread(&transcript.items, after, &file.mtime);
     found.index.0.is_some_and(|index| index < proven).then_some(found)
 }
@@ -1715,14 +1722,10 @@ const FIRST_UNREAD_MAX_LAG_MS: f64 = 10_000.0;
 /// [`FIRST_UNREAD_MAX_LAG_MS`] of the parse.
 const FIRST_UNREAD_MAX_LAG_BYTES: u64 = 8 << 20;
 
-/// Whether a parse at `cached_sig` is no further behind the file at `sig`
-/// than a watched session's feed would be; one taken after `sig` was read is
-/// not behind at all.
-fn lags_like_a_live_feed(cached_sig: &str, sig: &str) -> bool {
-    match droppen_sessions::growth(cached_sig, sig) {
-        Some(lag) => lag.bytes <= FIRST_UNREAD_MAX_LAG_BYTES && lag.millis <= FIRST_UNREAD_MAX_LAG_MS,
-        None => droppen_sessions::may_have_grown(sig, cached_sig),
-    }
+/// Whether a parse that far behind the file is no further behind than a
+/// watched session's feed would be.
+fn lags_like_a_live_feed(lag: droppen_sessions::Growth) -> bool {
+    lag.bytes <= FIRST_UNREAD_MAX_LAG_BYTES && lag.millis <= FIRST_UNREAD_MAX_LAG_MS
 }
 
 /// Every subagent that ever wrote under a session.
@@ -2978,12 +2981,12 @@ mod tests {
     /// The file last written `secs` from now: what it looks like when the
     /// agent went on writing for that long after the parse held.
     fn written_later(file: &std::path::Path, secs: u64) {
-        std::fs::File::options()
-            .write(true)
-            .open(file)
-            .expect("open")
-            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(secs))
-            .expect("mtime");
+        modified_at(file, std::time::SystemTime::now() + std::time::Duration::from_secs(secs));
+    }
+
+    /// Set the file's mtime to `at`, as `cp -p` or a coarse clock leaves it.
+    fn modified_at(file: &std::path::Path, at: std::time::SystemTime) {
+        std::fs::File::options().write(true).open(file).expect("open").set_modified(at).expect("mtime");
     }
 
     /// A reader back at a session whose socket closed while the agent went on
@@ -3072,10 +3075,74 @@ mod tests {
         append(&file, &lines(300..310));
         let (newer_sig, newer) = parse_now(&drive, &file).await;
 
-        let (sig, transcript) = feed::newest_parse_holding(&drive.transcripts, &file, &read_first, |_, _| true).expect("used");
+        let mut lag = None;
+        let (sig, transcript) = feed::newest_parse_holding(&drive.transcripts, &file, &read_first, |behind, _| {
+            lag = Some(behind);
+            true
+        })
+        .await
+        .expect("used");
         assert_eq!(sig, newer_sig);
         assert!(Arc::ptr_eq(&transcript, &newer));
-        assert!(lags_like_a_live_feed(&newer_sig, &read_first), "not behind at all");
-        assert!(!lags_like_a_live_feed("1:0", &format!("{}:20000", 1 + FIRST_UNREAD_MAX_LAG_BYTES)), "too far behind");
+        assert_eq!(lag, Some(droppen_sessions::Growth { bytes: 0, millis: 0.0 }), "measured against the file as it is now");
+    }
+
+    /// A transcript replaced by a shorter copy with the same mtime (`cp -p`, or
+    /// a rewrite within one tick of a coarse clock), nothing parsed since: its
+    /// signature is behind the parse held, which two signatures cannot tell from
+    /// a file that grew. Looked at again, the file is not that parse's grown, so
+    /// the page is read fresh and refused, as on a fresh read.
+    #[tokio::test]
+    async fn a_shorter_copy_with_the_same_mtime_is_read_again_and_its_page_refused() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, state) = state();
+        let id = "history-shorter-same-mtime";
+        let file = fake::session(&state.paths, id, &lines(0..300));
+        let (_, held) = parse_now(&state.drive, &file).await;
+        let start_fp = held.fp_at(100).expect("in range");
+        let mtime = std::fs::metadata(&file).expect("stat").modified().expect("mtime");
+        std::fs::write(&file, (0..250).map(|i| format!("other {i}\n")).collect::<String>()).expect("rewrite");
+        modified_at(&file, mtime);
+
+        let error = history(&state, id, 100, Some(start_fp), None).await.expect_err("refused");
+        assert_eq!(error.status(), gotcha::axum::http::StatusCode::CONFLICT);
+        assert!(read_again(&state.drive, &file).await);
+    }
+
+    /// The same with an older copy put back an hour behind, for first unread:
+    /// read fresh, in the copy's numbering, not off the parse held.
+    #[tokio::test]
+    async fn a_shorter_older_copy_is_answered_fresh() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, drive) = drive();
+        let id = "first-unread-older-copy";
+        let file = fake::session(&drive.paths, id, &((0..5).map(|i| format!("ahead {i}\n")).collect::<String>() + &with_answers(10, 2, 2, 30)));
+        let (_, held) = parse_now(&drive, &file).await;
+        let marker = (held.len(), held.prefix_fp());
+        std::fs::write(&file, with_answers(10, 2, 2, 30)).expect("put the copy back");
+        modified_at(&file, std::time::SystemTime::now() - std::time::Duration::from_secs(3600));
+
+        let found = first_unread_of(&drive, fake::SOURCE, id, &first_unread_query("2026-10-01T10:01:00.000Z", Some(marker))).await.expect("readable");
+        assert_eq!((found.index.0, found.count), (Some(10), 2), "the copy's numbering");
+        assert!(read_again(&drive, &file).await);
+    }
+
+    /// More text gained over the parse than a watched session's feed lags by,
+    /// all of it within the time bound: read fresh too.
+    #[tokio::test]
+    async fn a_parse_too_many_bytes_behind_is_not_counted_from() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let (_dir, drive) = drive();
+        let id = "first-unread-bytes-behind";
+        let file = fake::session(&drive.paths, id, &with_answers(10, 2, 2, 30));
+        let (held_sig, held) = parse_now(&drive, &file).await;
+        let marker = (held.len(), held.prefix_fp());
+        append(&file, &("x".repeat(FIRST_UNREAD_MAX_LAG_BYTES as usize) + "\nagent@2026-10-01T11:00:00.000Z later\n"));
+        let lag = droppen_sessions::growth(&held_sig, &file_signature(&file).await.expect("sig")).expect("appended");
+        assert!(lag.bytes > FIRST_UNREAD_MAX_LAG_BYTES && lag.millis <= FIRST_UNREAD_MAX_LAG_MS, "{lag:?}");
+
+        let found = first_unread_of(&drive, fake::SOURCE, id, &first_unread_query("2026-10-01T10:01:00.000Z", Some(marker))).await.expect("readable");
+        assert!(read_again(&drive, &file).await, "read fresh");
+        assert_eq!((found.index.0, found.count), (Some(10), 3));
     }
 }
