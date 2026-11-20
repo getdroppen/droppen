@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use super::item_log::ItemLog;
 use super::util::{FileRef, ItemKind, Role, TranscriptItem};
 
 /// How many chips one message may carry.
@@ -174,14 +175,110 @@ pub fn resolve_within_home(home: &Path, candidate: &str, cwd: Option<&Path>) -> 
 /// Each item it changes keeps a copy of itself from before, for its
 /// fingerprint ([`TranscriptItem::as_transcribed`]).
 pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem], cwd: Option<&str>, citations_of: FileCitations) {
-    let cwd = cwd.map(Path::new);
-    let mut exists: HashMap<PathBuf, bool> = HashMap::new();
-    let mut stat_budget = MAX_STATS_PER_TRANSCRIPT;
-
+    let mut mentions = Mentions::new();
     for item in items.iter_mut() {
-        if item.role != Role::Assistant || item.kind != ItemKind::Text || item.text.is_empty() {
-            continue;
+        if let Some(change) = mentions.look(home, item, cwd, citations_of).await {
+            change.apply(item);
         }
+    }
+}
+
+/// What annotating a transcript's items has found out about the filesystem,
+/// kept with a parse so that one going on from it annotates only what is new.
+///
+/// Whatever it keeps, [`Mentions::annotate`] leaves every item as
+/// [`annotate_mentioned_files`] would leave it, walking all of them from the
+/// first, now. So the order the [`MAX_STATS_PER_TRANSCRIPT`] budget is spent
+/// in, and how a walk goes on, are this type's business alone: a parse only
+/// carries it.
+#[derive(Debug)]
+pub struct Mentions {
+    /// Every path looked at, in the order it was, and whether it was a file.
+    looked: Vec<(PathBuf, bool)>,
+    /// The same, by path.
+    exists: HashMap<PathBuf, bool>,
+    /// How many paths may still be looked at.
+    budget: usize,
+    /// How many items, from the first, have been annotated.
+    upto: usize,
+}
+
+impl Default for Mentions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Mentions {
+    /// Nothing looked at: a walk from the first item.
+    pub fn new() -> Self {
+        Self {
+            looked: Vec::new(),
+            exists: HashMap::new(),
+            budget: MAX_STATS_PER_TRANSCRIPT,
+            upto: 0,
+        }
+    }
+
+    /// Annotate the items of `log` that are not yet, so that every item is
+    /// as a walk of all of them from the first, now, would leave it.
+    ///
+    /// The budget is spent in item order, so an item's chips depend on what
+    /// the paths looked at before it turned out to be. While every one of
+    /// them is still what it was, the items annotated already are exactly as
+    /// such a walk leaves them, and it goes on from the first one not yet
+    /// annotated. When one is not (a file a message named was written since,
+    /// or deleted) the walk starts over from the items as written. Either way
+    /// the chain does not move: the chips are not the transcript's.
+    ///
+    /// A parser never changes an annotatable item after making it
+    /// ([`ItemLog::get_mut`]), so the items annotated already are the ones
+    /// below where the last walk stopped.
+    pub async fn annotate(&mut self, home: &Path, log: &mut ItemLog, cwd: Option<&str>, citations_of: FileCitations) {
+        if self.upto > log.len() || self.answers_moved().await {
+            for index in 0..log.len() {
+                if let Some(written) = log.get(index).filter(|item| item.is_annotated()).map(|item| item.as_transcribed().clone()) {
+                    *log.annotate_mut(index) = written;
+                }
+            }
+            *self = Self::new();
+        }
+        for index in self.upto..log.len() {
+            let Some(item) = log.get(index) else { break };
+            if let Some(change) = self.look(home, item, cwd, citations_of).await {
+                change.apply(log.annotate_mut(index));
+            }
+        }
+        self.upto = log.len();
+    }
+
+    /// Whether any path looked at is not what it was then: one `stat` each,
+    /// all on one blocking thread.
+    async fn answers_moved(&self) -> bool {
+        if self.looked.is_empty() {
+            return false;
+        }
+        let paths: Vec<PathBuf> = self.looked.iter().map(|(path, _)| path.clone()).collect();
+        let now = tokio::task::spawn_blocking(move || {
+            paths
+                .iter()
+                .map(|path| std::fs::metadata(path).map(|meta| meta.is_file()).unwrap_or(false))
+                .collect::<Vec<_>>()
+        })
+        .await;
+        match now {
+            Ok(now) => now.iter().zip(&self.looked).any(|(now, (_, then))| now != then),
+            Err(_) => true,
+        }
+    }
+
+    /// The chips `item` gets, and the citations their labels replace, when it
+    /// gets any. The paths it looks at are spent from the budget.
+    async fn look(&mut self, home: &Path, item: &TranscriptItem, cwd: Option<&str>, citations_of: FileCitations) -> Option<Change> {
+        if item.role != Role::Assistant || item.kind != ItemKind::Text || item.text.is_empty() {
+            return None;
+        }
+        let cwd = cwd.map(Path::new);
         let citations = citations_of(&item.text);
         let candidates = candidate_paths_with_citations(&item.text, &citations);
         let mut seen: HashSet<PathBuf> = item.files.iter().flatten().map(|file| PathBuf::from(&file.path)).collect();
@@ -197,15 +294,16 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
             if !seen.insert(absolute.clone()) {
                 continue;
             }
-            let is_file = match exists.get(&absolute) {
+            let is_file = match self.exists.get(&absolute) {
                 Some(known) => *known,
                 None => {
-                    if stat_budget == 0 {
+                    if self.budget == 0 {
                         continue;
                     }
-                    stat_budget -= 1;
+                    self.budget -= 1;
                     let is_file = tokio::fs::metadata(&absolute).await.map(|m| m.is_file()).unwrap_or(false);
-                    exists.insert(absolute.clone(), is_file);
+                    self.exists.insert(absolute.clone(), is_file);
+                    self.looked.push((absolute.clone(), is_file));
                     is_file
                 }
             };
@@ -216,17 +314,14 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
                 });
             }
         }
-        if !found.is_empty() {
-            item.keep_transcribed();
-            item.files.get_or_insert_with(Vec::new).extend(found);
-        }
         // Only replace a directive once its real file has a chip. Missing,
         // out-of-home and over-budget references remain visible, not erased.
+        let mut labels = Vec::new();
         for citation in citations.into_iter().rev() {
             let Some(absolute) = resolve_within_home(home, &citation.path, cwd) else {
                 continue;
             };
-            let Some(file) = item.files.iter().flatten().find(|file| Path::new(&file.path) == absolute) else {
+            let Some(file) = item.files.iter().flatten().chain(&found).find(|file| Path::new(&file.path) == absolute) else {
                 continue;
             };
             let mut label = String::new();
@@ -236,8 +331,28 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
                 }
                 label.push(c);
             }
+            labels.push((citation.range, label));
+        }
+        (!found.is_empty() || !labels.is_empty()).then_some(Change { found, labels })
+    }
+}
+
+/// What the annotation does to one item: the chips it adds, and the citations
+/// their labels replace, the last first.
+struct Change {
+    found: Vec<FileRef>,
+    labels: Vec<(Range<usize>, String)>,
+}
+
+impl Change {
+    fn apply(self, item: &mut TranscriptItem) {
+        if !self.found.is_empty() {
             item.keep_transcribed();
-            item.text.replace_range(citation.range, &label);
+            item.files.get_or_insert_with(Vec::new).extend(self.found);
+        }
+        for (range, label) in self.labels {
+            item.keep_transcribed();
+            item.text.replace_range(range, &label);
         }
     }
 }
@@ -393,6 +508,30 @@ mod tests {
 
         assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &spent));
         assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &items()));
+    }
+
+    /// Annotating a transcript's items a few at a time, as a parse that goes
+    /// on from an earlier one does, leaves every item as one walk of all of
+    /// them leaves it, a file written in between included.
+    #[tokio::test]
+    async fn annotating_on_from_where_the_last_walk_stopped_is_annotating_all_of_it() {
+        let home = tempfile::tempdir().expect("tempdir");
+        std::fs::write(home.path().join("a.md"), "a").expect("write");
+        let texts = ["`~/a.md` and `~/b.md`", "nothing", "`~/b.md` again", "`~/a.md`"];
+        let mut log = ItemLog::new();
+        let mut mentions = Mentions::new();
+        for (n, text) in texts.iter().enumerate() {
+            log.push(make_item(Role::Assistant, ItemKind::Text, text, None));
+            if n == 2 {
+                std::fs::write(home.path().join("b.md"), "b").expect("write");
+            }
+            mentions.annotate(home.path(), &mut log, None, no_citations).await;
+            let mut whole: Vec<TranscriptItem> = log.items().iter().map(|item| item.as_transcribed().clone()).collect();
+            annotate_mentioned_files(home.path(), &mut whole, None, no_citations).await;
+            let served: Vec<&TranscriptItem> = log.items().iter().map(|item| &**item).collect();
+            assert_eq!(serde_json::to_value(served).expect("json"), serde_json::to_value(&whole).expect("json"), "after item {n}");
+        }
+        assert_eq!(log.items()[0].files.as_ref().map(Vec::len), Some(2), "the file written later has its chip");
     }
 
     /// A file the item already named keeps counting, as the transcript's own:
