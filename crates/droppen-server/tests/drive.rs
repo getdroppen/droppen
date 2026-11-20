@@ -166,6 +166,53 @@ async fn an_older_page_of_the_transcript_can_be_paged_back_to() {
     probe.stop().await;
 }
 
+/// Whether a file a message names exists is the filesystem's state, not the
+/// transcript's: creating it, or deleting it, while the session goes on must
+/// not refuse an older page anchored past the mention as `transcript_changed`.
+/// The page offers the chip as the file is when the page is read.
+#[tokio::test]
+async fn a_file_created_or_deleted_under_a_mention_does_not_refuse_an_older_page() {
+    let probe = Probe::start().await;
+    let workspace = probe.workspace();
+    let path = probe.seed_session(&probe.local_root(), SESSION_ID, &workspace);
+    let report = workspace.join("report.md");
+    let say = |text: String| {
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).expect("append");
+        let line = json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}});
+        writeln!(file, "{line}").expect("write");
+    };
+    say(format!("wrote `{}`", report.display()));
+    for index in 0..250 {
+        say(format!("line {index}"));
+    }
+
+    // The newest page is the client's window: [52, 252), proved by the
+    // fingerprint of [0, 52), which covers the mention at 1.
+    let window = probe.get_json(&format!("/api/sessions/claude/{SESSION_ID}/history?before=252")).await;
+    assert_eq!(window["startIndex"], 52);
+    let start_fp = window["startFp"].as_str().expect("startFp").to_string();
+    let older = format!("/api/sessions/claude/{SESSION_ID}/history?before=52&fp={start_fp}");
+    let chips = |page: &Value| page["items"][1]["files"].as_array().map(|files| files.iter().map(|file| file["name"].clone()).collect::<Vec<_>>());
+
+    std::fs::write(&report, "# report").expect("write");
+    say("line 250".into());
+    let (status, body) = probe.get(&older).await;
+    assert_eq!(status, 200, "a created file is no change to the transcript: {body}");
+    let page: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(page["totalItems"], 253, "read again, at the new length");
+    assert_eq!(chips(&page), Some(vec![json!("report.md")]), "the chip is offered now the file exists");
+
+    std::fs::remove_file(&report).expect("remove");
+    say("line 251".into());
+    let (status, body) = probe.get(&older).await;
+    assert_eq!(status, 200, "nor is a deleted one: {body}");
+    let page: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(page["totalItems"], 254);
+    assert_eq!(chips(&page), None, "and withdrawn once it is gone");
+
+    probe.stop().await;
+}
+
 /// A user message that starts with a multi-byte character used to panic the
 /// transcript parser at a byte-2 slice. Every route that reads the transcript
 /// has to serve it.

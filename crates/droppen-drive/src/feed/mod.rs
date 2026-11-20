@@ -40,8 +40,9 @@
 //! ([`FeedAttachment::client_frame`]).
 //!
 //! The fingerprint is a chain: `fp[0]` hashes the file's path, `fp[i + 1]`
-//! hashes `fp[i]` and item `i`'s JSON; 128 bits of SHA-256, base64url on the
-//! wire. It is computed once per parse and kept with it ([`Transcript`]), so
+//! hashes `fp[i]` and item `i`'s JSON as the transcript wrote it, without the
+//! chips of the files it mentions, which say what existed when it was parsed;
+//! 128 bits of SHA-256, base64url on the wire. It is computed once per parse and kept with it ([`Transcript`]), so
 //! any prefix's fingerprint is a lookup and the first difference between two
 //! versions is a binary search ([`common_prefix`]).
 //!
