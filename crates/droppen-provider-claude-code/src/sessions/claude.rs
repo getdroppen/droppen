@@ -405,23 +405,16 @@ fn live_registration(raw: &str) -> Option<(String, LiveClaude)> {
     };
     let pid = u32::try_from(data.get("pid").and_then(Value::as_i64)? as i32).ok()?;
     let session_id = data.get("sessionId").and_then(Value::as_str)?;
-    let started_at_ms = data
-        .get("startedAt")
-        .and_then(Value::as_u64)
-        .filter(|&ms| ms >= MIN_STARTED_AT_MS)
-        .unwrap_or(0);
+    let started_at_ms = known_start_ms(data.get("startedAt").and_then(Value::as_u64).unwrap_or(0));
     // `exists`, not `alive`: the pid is Claude Code's own, not a child of
     // this server, so pid 1 (Claude as a container's init) counts.
     if !droppen_base::procs::exists(pid) {
         return None;
     }
-    // Either side unknown is "cannot tell", which reads as the same process,
-    // as `droppen_base::procs::is_same_process` reads it. The platform's side
-    // is unknown everywhere but macOS.
-    if let Some(started) = droppen_base::procs::start_time(pid).filter(|_| started_at_ms > 0) {
-        if started > std::time::UNIX_EPOCH + std::time::Duration::from_millis(started_at_ms) + START_SLACK {
-            return None;
-        }
+    // The platform's side is unknown everywhere but macOS, and `stale` reads
+    // an unknown as the same process.
+    if stale(droppen_base::procs::start_time(pid), started_at_ms) {
+        return None;
     }
     let name = data
         .get("name")
@@ -430,6 +423,33 @@ fn live_registration(raw: &str) -> Option<(String, LiveClaude)> {
         .filter(|name| !name.is_empty())
         .map(str::to_owned);
     Some((session_id.to_string(), LiveClaude { name, started_at_ms }))
+}
+
+/// A registration's `startedAt` as milliseconds since the epoch, or 0 when it
+/// says nothing usable: absent, or in some other unit ([`MIN_STARTED_AT_MS`]).
+fn known_start_ms(started_at: u64) -> u64 {
+    if started_at >= MIN_STARTED_AT_MS {
+        started_at
+    } else {
+        0
+    }
+}
+
+/// Whether the process now at a registration's pid, which started at
+/// `process_start`, is somebody other than the CLI that wrote it, which says
+/// it started at `started_at_ms`: it started more than [`START_SLACK`] later.
+///
+/// Platform-free, so every CI run holds it to its cases; the start itself is
+/// only ever known on macOS ([`droppen_base::procs::start_time`]). Either side
+/// unknown — no `process_start`, or a `startedAt` [`known_start_ms`] refuses —
+/// is "cannot tell", which reads as the same process, as
+/// `droppen_base::procs::is_same_process` reads it.
+fn stale(process_start: Option<std::time::SystemTime>, started_at_ms: u64) -> bool {
+    let registered = known_start_ms(started_at_ms);
+    match process_start {
+        Some(started) if registered > 0 => started > std::time::UNIX_EPOCH + std::time::Duration::from_millis(registered) + START_SLACK,
+        _ => false,
+    }
 }
 
 /// What one transcript entry says about whether the session is still working.
@@ -1617,6 +1637,30 @@ mod tests {
             "renamed since",
             "a damaged index costs a re-read and nothing else"
         );
+    }
+
+    /// The macOS rule for a stale registration, held to its cases on every
+    /// platform: only the start time feeding it is macOS's own.
+    #[test]
+    fn a_registration_is_stale_only_when_its_pid_started_past_the_slack_after_it() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let written = 1_795_095_850_407; // a real `startedAt`, in ms
+        let at = |ms: u64| Some(UNIX_EPOCH + Duration::from_millis(ms));
+        let slack = START_SLACK.as_millis() as u64;
+
+        assert!(!stale(at(written - 2_650), written), "the CLI itself: started before it wrote the time down");
+        assert!(!stale(at(written), written));
+        assert!(!stale(at(written + slack), written), "a clock set back a little, within the slack");
+        assert!(stale(at(written + slack + 1), written), "past the slack: somebody else has the pid");
+        assert!(stale(at(written + 32 * 24 * 3600 * 1000), written), "a month later");
+
+        // Either side unknown is "cannot tell", never "stale".
+        assert!(!stale(None, written), "no start time: every platform but macOS");
+        assert!(!stale(at(written + 3_600_000), 0), "no `startedAt`");
+        assert!(!stale(at(written + 3_600_000), written / 1000), "a `startedAt` in seconds says nothing");
+        assert!(!stale(at(written + 3_600_000), MIN_STARTED_AT_MS - 1));
+        assert!(stale(at(MIN_STARTED_AT_MS + slack + 1), MIN_STARTED_AT_MS), "the smallest one read as ms is held to it");
+        assert_eq!((known_start_ms(written), known_start_ms(written / 1000), known_start_ms(0)), (written, 0, 0));
     }
 
     /// What a running CLI writes into a root's `sessions/<pid>.json`: the
