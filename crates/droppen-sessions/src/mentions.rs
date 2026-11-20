@@ -65,6 +65,12 @@ impl TranscriptItem {
         self.transcribed.is_some()
     }
 
+    /// Whether the annotation looks at the item for files: an assistant's
+    /// text, and not an empty one.
+    pub(crate) fn is_annotatable(&self) -> bool {
+        self.role == Role::Assistant && self.kind == ItemKind::Text && !self.text.is_empty()
+    }
+
     /// Keep the item as it is, before the annotation's first change to it.
     fn keep_transcribed(&mut self) {
         if self.transcribed.is_none() {
@@ -236,9 +242,20 @@ impl Mentions {
     ///
     /// A parser never changes an annotatable item after making it
     /// ([`ItemLog::get_mut`]), so the items annotated already are the ones
-    /// below where the last walk stopped.
+    /// below where the last walk stopped. One that took items out or put
+    /// some in below there ([`ItemLog::moved_from`]) moved what the walk saw:
+    /// while none of those it took out or moved along could be chipped, the
+    /// walk saw nothing of them, and goes on from the lowest one moved; when
+    /// one could, it starts over.
     pub async fn annotate(&mut self, home: &Path, log: &mut ItemLog, cwd: Option<&str>, citations_of: FileCitations) {
-        if self.upto > log.len() || self.cwd.as_deref() != cwd || self.answers_moved().await {
+        let mut over = false;
+        if log.moved_from() < self.upto {
+            match log.moved_annotatable() {
+                true => over = true,
+                false => self.upto = log.moved_from(),
+            }
+        }
+        if over || self.upto > log.len() || self.cwd.as_deref() != cwd || self.answers_moved().await {
             for index in 0..log.len() {
                 if let Some(written) = log.get(index).filter(|item| item.is_annotated()).map(|item| item.as_transcribed().clone()) {
                     *log.annotate_mut(index) = written;
@@ -275,7 +292,7 @@ impl Mentions {
     /// The chips `item` gets, and the citations their labels replace, when it
     /// gets any. The paths it looks at are spent from the budget.
     async fn look(&mut self, home: &Path, item: &TranscriptItem, cwd: Option<&str>, citations_of: FileCitations) -> Option<Change> {
-        if item.role != Role::Assistant || item.kind != ItemKind::Text || item.text.is_empty() {
+        if !item.is_annotatable() {
             return None;
         }
         let cwd = cwd.map(Path::new);
@@ -531,6 +548,73 @@ mod tests {
             assert_eq!(serde_json::to_value(served).expect("json"), serde_json::to_value(&whole).expect("json"), "after item {n}");
         }
         assert_eq!(log.items()[0].files.as_ref().map(Vec::len), Some(2), "the file written later has its chip");
+    }
+
+    /// Items taken out or put in below where the last walk stopped: a tool
+    /// call's row taken out and a message written in its place is walked
+    /// from there; a message moved along by a row put in ahead of it has the
+    /// walk start over. Either way, as one walk of all of them leaves them.
+    #[tokio::test]
+    async fn items_moved_below_the_last_walk_are_walked_as_a_whole_walk_would() {
+        let home = tempfile::tempdir().expect("tempdir");
+        for file in ["a.md", "b.md"] {
+            std::fs::write(home.path().join(file), "x").expect("write");
+        }
+        let whole = |log: &ItemLog| {
+            let items: Vec<TranscriptItem> = log.items().iter().map(|item| item.as_transcribed().clone()).collect();
+            let home = home.path().to_path_buf();
+            async move {
+                let mut items = items;
+                annotate_mentioned_files(&home, &mut items, None, no_citations).await;
+                serde_json::to_value(items).expect("json")
+            }
+        };
+        let served = |log: &ItemLog| serde_json::to_value(log.items().iter().map(|item| &**item).collect::<Vec<_>>()).expect("json");
+        let said = |text: &str| make_item(Role::Assistant, ItemKind::Text, text, None);
+        let tool = |text: &str| make_item(Role::Assistant, ItemKind::ToolUse, text, None);
+
+        let mut mentions = Mentions::new();
+        let mut log = ItemLog::new();
+        log.push(said("`~/a.md`"));
+        log.push(tool("cell"));
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+        let (items, _) = log.into_parts();
+        let mut log = ItemLog::resume(items);
+        log.pop();
+        log.push(said("`~/b.md`"));
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+        assert_eq!(served(&log), whole(&log).await, "the row's place walked");
+        assert_eq!(log.items()[1].files.as_ref().map(Vec::len), Some(1));
+
+        let (items, _) = log.into_parts();
+        let mut log = ItemLog::resume(items);
+        log.insert(0, [said("`~/b.md` first")]);
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+        assert_eq!(served(&log), whole(&log).await, "started over");
+    }
+
+    /// Where starting over matters: a message that spent the whole budget is
+    /// moved along by one put in ahead of it, which a walk from the first
+    /// item looks at first, with the budget whole. Walking on from where it
+    /// was put in, the budget would be spent already.
+    #[tokio::test]
+    async fn a_message_put_in_ahead_of_the_one_that_spent_the_budget_is_walked_with_it_whole() {
+        let home = tempfile::tempdir().expect("tempdir");
+        std::fs::write(home.path().join("notes.md"), "x").expect("write");
+        let spender: Vec<String> = (0..MAX_STATS_PER_TRANSCRIPT + 100).map(|n| format!("`~/gone{n}.md`")).collect();
+        let mut mentions = Mentions::new();
+        let mut log = ItemLog::new();
+        log.push(make_item(Role::Assistant, ItemKind::Text, &spender.join(" "), None));
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+
+        let (items, _) = log.into_parts();
+        let mut log = ItemLog::resume(items);
+        log.insert(0, [make_item(Role::Assistant, ItemKind::Text, "see `~/notes.md`", None)]);
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+        let mut whole: Vec<TranscriptItem> = log.items().iter().map(|item| item.as_transcribed().clone()).collect();
+        annotate_mentioned_files(home.path(), &mut whole, None, no_citations).await;
+        assert_eq!(whole[0].files.as_ref().map(Vec::len), Some(1), "a walk from the first item chips it");
+        assert_eq!(log.items()[0].files, whole[0].files, "and so does this one");
     }
 
     /// A file the item already named keeps counting, as the transcript's own:

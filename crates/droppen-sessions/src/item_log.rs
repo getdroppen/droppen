@@ -7,16 +7,19 @@
 //! from an earlier one ([`crate::resume`]) starts from that parse's items and
 //! has to say which of them it changed, so that the fingerprint chain is made
 //! again from there and not from the start ([`crate::loader`]). [`ItemLog`]
-//! keeps that count itself: the only ways to change an item it holds are
-//! [`ItemLog::get_mut`] and [`ItemLog::last_mut`], and both count.
+//! keeps that count itself: every way to change, take out or put in an item
+//! counts.
+//!
+//! Taking out or putting in an item also moves the ones after it, which the
+//! mentioned-file chips have walked already ([`crate::mentions::Mentions`]):
+//! the log keeps the lowest index moved ([`ItemLog::moved_from`]), and
+//! whether an item the annotation could chip was among those taken out or
+//! moved, which only a walk from the first item can account for.
 //!
 //! What it cannot check is the parser's side of it. A parse that went on is
 //! only right when the parser's own state (what it remembers of the entries
 //! before) leads it to make exactly the changes a parse from the start makes;
-//! that is what the parser's own tests prove against such a parse. Nor does it
-//! move or remove items: a parser that needs to should add those here with a
-//! count of their own, since the chips ([`crate::mentions::Mentions`]) then
-//! have to be walked again from there.
+//! that is what the parser's own tests prove against such a parse.
 //!
 //! Each item is behind an `Arc` of its own, as a [`crate::loader::Transcript`]
 //! holds them, so going on from an earlier parse copies one pointer per item,
@@ -33,6 +36,13 @@ pub struct ItemLog {
     items: Vec<Arc<TranscriptItem>>,
     /// Every item below it is the very one the log started with.
     changed_from: usize,
+    /// The lowest index an item was taken out at or put in at; how many it
+    /// started with when none was.
+    moved_from: usize,
+    /// Whether an item the annotation could chip was taken out or moved
+    /// along. Counted whether or not it was walked yet: at worst, the walk
+    /// starts over when it need not have.
+    moved_annotatable: bool,
 }
 
 impl ItemLog {
@@ -45,6 +55,8 @@ impl ItemLog {
     pub fn resume(items: Vec<Arc<TranscriptItem>>) -> Self {
         Self {
             changed_from: items.len(),
+            moved_from: items.len(),
+            moved_annotatable: false,
             items,
         }
     }
@@ -106,6 +118,48 @@ impl ItemLog {
         self.get_mut(last)
     }
 
+    /// Put `item` in place of item `index`; see [`ItemLog::get_mut`].
+    pub fn replace(&mut self, index: usize, item: TranscriptItem) {
+        debug_assert!(!item.is_annotatable(), "an item the annotation could chip put in place of item {index}");
+        if let Some(old) = self.get_mut(index) {
+            debug_assert!(!old.is_annotatable(), "item {index}, which the annotation could chip, replaced");
+            *old = item;
+        }
+    }
+
+    /// Take the newest item out. One the annotation could chip has the walk
+    /// start over ([`ItemLog::moved_from`]), so even a chipped one may go.
+    pub fn pop(&mut self) -> Option<TranscriptItem> {
+        let item = self.items.pop()?;
+        let index = self.items.len();
+        self.changed_from = self.changed_from.min(index);
+        self.moved_from = self.moved_from.min(index);
+        self.moved_annotatable |= item.is_annotatable();
+        Some(Arc::unwrap_or_clone(item))
+    }
+
+    /// Put `items` in at `index`, moving what is there and after it along.
+    /// Panics when `index` is past the end.
+    pub fn insert(&mut self, index: usize, items: impl IntoIterator<Item = TranscriptItem>) {
+        self.changed_from = self.changed_from.min(index);
+        self.moved_from = self.moved_from.min(index);
+        self.moved_annotatable |= self.items[index..].iter().any(|item| item.is_annotatable());
+        self.items.splice(index..index, items.into_iter().map(Arc::new));
+    }
+
+    /// The lowest index an item was taken out at or put in at since the log
+    /// started: the items from there on are not where they were. Its length
+    /// then, when none was.
+    pub fn moved_from(&self) -> usize {
+        self.moved_from
+    }
+
+    /// Whether an item the annotation could chip was taken out or moved
+    /// along ([`ItemLog::moved_from`]).
+    pub(crate) fn moved_annotatable(&self) -> bool {
+        self.moved_annotatable
+    }
+
     /// Item `index`, for the mentioned-file chips alone ([`crate::mentions`]):
     /// a change the fingerprint chain leaves out, so the count does not move.
     pub(crate) fn annotate_mut(&mut self, index: usize) -> &mut TranscriptItem {
@@ -164,8 +218,44 @@ mod tests {
         log.push(item("e"));
         assert_eq!((texts(&log), log.changed_from()), (vec!["a", "b", "c", "D", "e"], 3));
 
+        let mut log = ItemLog::resume(["a", "b", "c", "d"].map(|text| Arc::new(tool(text))).into());
+        log.replace(2, tool("C"));
+        assert_eq!((texts(&log), log.changed_from(), log.moved_from()), (vec!["a", "b", "C", "d"], 2, 4), "replaced in place: nothing moved");
+
         let mut log = ItemLog::resume(earlier);
         log.annotate_mut(0).text = "chips".into();
         assert_eq!(log.changed_from(), 4, "the chips are not the transcript's");
+    }
+
+    fn tool(text: &str) -> TranscriptItem {
+        make_item(Role::Assistant, ItemKind::ToolUse, text, None)
+    }
+
+    /// Taking an item out or putting some in counts as a change from there,
+    /// and as a move; and whether an item the annotation could chip was
+    /// taken out or moved along is kept.
+    #[test]
+    fn taking_out_and_putting_in_count_as_moves() {
+        let earlier: Vec<Arc<TranscriptItem>> = vec![Arc::new(item("said")), Arc::new(tool("call")), Arc::new(tool("cell"))];
+
+        let mut log = ItemLog::resume(earlier.clone());
+        assert_eq!(log.pop().map(|item| item.text), Some("cell".into()));
+        log.push(tool("ran"));
+        assert_eq!((texts(&log), log.changed_from(), log.moved_from()), (vec!["said", "call", "ran"], 2, 2));
+        assert!(!log.moved_annotatable(), "a tool call is not chipped");
+
+        let mut log = ItemLog::resume(earlier.clone());
+        log.insert(2, [tool("x"), item("y")]);
+        assert_eq!((texts(&log), log.changed_from(), log.moved_from()), (vec!["said", "call", "x", "y", "cell"], 2, 2));
+        assert!(!log.moved_annotatable(), "only the cell's row moved along; what was put in is new");
+
+        let mut log = ItemLog::resume(earlier.clone());
+        log.insert(0, [tool("first")]);
+        assert!(log.moved_annotatable(), "the message moved along");
+
+        let mut log = ItemLog::resume(vec![Arc::new(tool("call")), Arc::new(item("said"))]);
+        log.pop();
+        assert!(log.moved_annotatable(), "the message taken out");
+        assert_eq!(ItemLog::resume(earlier).moved_from(), 3, "nothing moved");
     }
 }
