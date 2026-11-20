@@ -669,7 +669,11 @@ mod tests {
         sources.load_checked(&paths, Source::Claude, file, "300:3").await;
         parses.failing.store(true, SeqCst);
         sources.load_checked(&paths, Source::Claude, file, "200:2").await;
-        assert_eq!((parses.count(), warnings.load(SeqCst)), (6, 3), "and an old one again, after a read that worked");
+        assert_eq!(
+            (parses.count(), warnings.load(SeqCst)),
+            (6, 3),
+            "and an old one again, after a read that worked"
+        );
     }
 
     /// The caller running the parse can go away mid-parse (a client that

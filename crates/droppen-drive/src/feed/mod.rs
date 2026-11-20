@@ -1080,10 +1080,7 @@ async fn watch_session(target: WatchTarget, last_sig: String, tx: broadcast::Sen
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     poll.tick().await; // the first tick is immediate
     let mut last_state_json = String::new();
-    let mut seen = Seen {
-        sig: last_sig,
-        failed: None,
-    };
+    let mut seen = Seen { sig: last_sig, failed: None };
     // The session's draft, for a claude session. A change arms a send at most
     // [`DRAFT_THROTTLE`] after the last one, and the send reads whatever the
     // draft is by then: the `watch` keeps only the latest value, so a burst of
@@ -1887,7 +1884,16 @@ mod tests {
 
         /// A poll, or a file event.
         async fn refresh(&mut self) -> Option<bool> {
-            refresh_items(&self.drive.paths, &self.drive.transcripts, crate::fake::SOURCE, &self.file, &self.tx, &self.latest, &mut self.seen).await
+            refresh_items(
+                &self.drive.paths,
+                &self.drive.transcripts,
+                crate::fake::SOURCE,
+                &self.file,
+                &self.tx,
+                &self.latest,
+                &mut self.seen,
+            )
+            .await
         }
 
         /// The version sent since the last look, if one was, with its items' texts.
@@ -1945,7 +1951,10 @@ mod tests {
         assert_eq!(feed.refresh().await, Some(false), "not read before the wait is over");
         tokio::time::advance(FAILED_READ_MAX_DELAY).await;
         assert_eq!(feed.refresh().await, Some(true));
-        assert_eq!(feed.sent(), Some((newer.clone(), vec!["the first turn".into(), "the second turn".into()])));
+        assert_eq!(
+            feed.sent(),
+            Some((newer.clone(), vec!["the first turn".into(), "the second turn".into()]))
+        );
         assert!(feed.seen.sig == newer && feed.seen.failed.is_none());
     }
 
@@ -1969,7 +1978,11 @@ mod tests {
         let newest = file_signature(&feed.file).await.expect("sig");
         let now = tokio::time::Instant::now();
         assert_eq!(feed.refresh().await, Some(false));
-        assert_eq!(feed.failed(), (newest.as_str(), STATE_INTERVAL, now + STATE_INTERVAL), "read at once, and waits a poll");
+        assert_eq!(
+            feed.failed(),
+            (newest.as_str(), STATE_INTERVAL, now + STATE_INTERVAL),
+            "read at once, and waits a poll"
+        );
 
         readable(&feed.file, true);
         tokio::time::advance(STATE_INTERVAL).await;
