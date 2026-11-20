@@ -108,13 +108,13 @@ impl ListedSession for Listed {
         Box::pin(droppen_sessions::file_signature(Path::new(&self.summary.file_path)))
     }
 
-    fn transcript<'a>(&'a self, sig: &'a str) -> BoxFuture<'a, Arc<dyn Transcript>> {
+    fn transcript<'a>(&'a self, sig: &'a str) -> BoxFuture<'a, Option<Arc<dyn Transcript>>> {
         Box::pin(async move {
-            let transcript = self
+            let (transcript, current) = self
                 .transcripts
-                .load(&self.paths, self.summary.source, Path::new(&self.summary.file_path), sig)
+                .load_checked(&self.paths, self.summary.source, Path::new(&self.summary.file_path), sig)
                 .await;
-            Arc::new(LoadedTranscript(transcript)) as Arc<dyn Transcript>
+            current.then(|| Arc::new(LoadedTranscript(transcript)) as Arc<dyn Transcript>)
         })
     }
 
@@ -232,5 +232,47 @@ mod tests {
         };
         same(&loaded, &stand_in);
         same(&*loaded.prefix(3), &*stand_in.prefix(3));
+    }
+
+    /// A transcript that cannot be read is no transcript to the streams, not
+    /// the last good parse the cache answers it with: a copy brought up to
+    /// that would take it for the version on disk, and not read the file
+    /// again until it changed once more. The next round that reads it gets
+    /// that version, though the file has not changed since.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_transcript_that_cannot_be_read_is_none_and_read_again_next_time() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("session.jsonl");
+        let line = |text: &str| serde_json::json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}).to_string() + "\n";
+        std::fs::write(&file, line("one")).expect("seed");
+        let summary: SessionSummary = serde_json::from_value(serde_json::json!({
+            "pinned": false, "id": "s", "source": "claude", "scope": "owned", "server": "s", "title": "t",
+            "cwd": null, "repoKey": null, "gitBranch": null, "updatedAt": "", "createdAt": "",
+            "sizeBytes": 1, "filePath": file.to_string_lossy(), "status": "idle", "activity": "idle", "resident": null,
+            "claudeRoot": null, "accountId": null, "attentionAt": null, "unread": false, "unreadCount": 0,
+        }))
+        .unwrap_or_else(|error| panic!("a session row: {error}"));
+        let listed = Listed {
+            summary,
+            paths: Arc::new(Paths::new(dir.path().to_path_buf())),
+            transcripts: crate::app::transcript_sources(),
+        };
+        let older = listed.signature().await.expect("sig");
+        assert_eq!(listed.transcript(&older).await.map(|transcript| transcript.len()), Some(1));
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .and_then(|mut handle| std::io::Write::write_all(&mut handle, line("two").as_bytes()))
+            .expect("append");
+        let newer = listed.signature().await.expect("sig");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).expect("unreadable");
+        assert!(listed.transcript(&newer).await.is_none(), "not the last good parse");
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).expect("readable again");
+        assert_eq!(listed.signature().await.as_ref(), Some(&newer), "the file has not changed since");
+        assert_eq!(listed.transcript(&newer).await.map(|transcript| transcript.len()), Some(2));
     }
 }

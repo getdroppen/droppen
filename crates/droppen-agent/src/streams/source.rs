@@ -87,9 +87,12 @@ pub trait ListedSession: SessionRow {
     /// cannot be read. A copy compares it to skip a session that did not change.
     fn signature(&self) -> BoxFuture<'_, Option<String>>;
 
-    /// Its transcript at `sig`, through the parse cache the live feeds share.
-    /// A read that fails answers the last good parse, or no items.
-    fn transcript<'a>(&'a self, sig: &'a str) -> BoxFuture<'a, Arc<dyn Transcript>>;
+    /// Its transcript at `sig`, through the parse cache the live feeds share;
+    /// `None` when it cannot be read. What the cache answers a failed read
+    /// with, the last good parse or no items, is not the version at `sig`: a
+    /// copy brought up to it would take it for that version, and not read the
+    /// file again until it changed once more.
+    fn transcript<'a>(&'a self, sig: &'a str) -> BoxFuture<'a, Option<Arc<dyn Transcript>>>;
 
     /// Its transcript read now, past that cache and without filling it, so a
     /// first copy of many sessions does not push out the parses the live

@@ -141,6 +141,9 @@ impl Compaction {
 }
 /// A marked session the list does not name is tried again after this.
 const GONE_RETRY: Duration = Duration::from_secs(60);
+/// A stream whose re-encryption failed otherwise (a transcript that cannot be
+/// read) is tried again after this, not at the next round a few seconds on.
+const REENCRYPT_RETRY: Duration = Duration::from_secs(30);
 /// Drafts to live readers: at most one frame per stream this often.
 pub const DRAFT_EVERY: Duration = Duration::from_millis(300);
 /// Where `streams.db` keeps the account's plan.
@@ -1190,7 +1193,7 @@ impl Sync {
         let row = self.row(stream, Kind::Session, summary.source(), summary.id(), Some(target));
         self.names.insert(stream, (summary.source().to_string(), summary.id().to_string()));
         let sig = summary.signature().await.ok_or("unreadable")?;
-        let transcript = summary.transcript(&sig).await;
+        let transcript = summary.transcript(&sig).await.ok_or("unreadable")?;
         self.rebuild_session(&row, &*transcript, &sig, 0, true)
     }
 
@@ -1316,7 +1319,7 @@ impl Sync {
         let transcript: Arc<dyn Transcript> = if fresh {
             summary.read_transcript().await.ok_or("unreadable")?
         } else {
-            summary.transcript(sig).await
+            summary.transcript(sig).await.ok_or("unreadable")?
         };
         let chain = transcript.chain();
         let len = transcript.len();
@@ -1423,7 +1426,7 @@ impl Sync {
                     .find(|s| s.source() == source && s.id() == row.id)
                     .ok_or("the session is gone")?;
                 let sig = summary.signature().await.ok_or("unreadable")?;
-                let transcript = summary.transcript(&sig).await;
+                let transcript = summary.transcript(&sig).await.ok_or("unreadable")?;
                 self.rebuild_session(&row, &*transcript, &sig, upto, true)
             }
         }
@@ -1434,12 +1437,17 @@ impl Sync {
     /// session no longer in the list is not deleted for it — the list may be
     /// short — but kept, marked, and tried again later; the window round
     /// deletes its copy once that has not been written for the whole window.
+    /// Any other failure is tried again after [`REENCRYPT_RETRY`]: a session
+    /// whose transcript stays unreadable is not parsed again every round.
     async fn reencrypt_stream(&mut self, row: &Row) -> Result<(), String> {
         let result = self.rebuild(&row.stream, row.next_seq + 1).await;
         if let Err(error) = &result {
             if error.contains("the session is gone") {
                 tracing::info!(stream = %short(&row.stream), "a session not in the list: keeping its copy, to re-encrypt once it is back");
                 self.retry_at.insert(row.stream, Instant::now() + GONE_RETRY);
+            } else {
+                tracing::debug!(stream = %short(&row.stream), %error, "cannot re-encrypt a stream yet");
+                self.retry_at.insert(row.stream, Instant::now() + REENCRYPT_RETRY);
             }
         }
         result
@@ -1646,7 +1654,7 @@ impl Sync {
             .find(|s| s.source() == source && s.id() == row.id)
             .ok_or("the session is gone")?;
         let sig = summary.signature().await.ok_or("unreadable")?;
-        let transcript = summary.transcript(&sig).await;
+        let transcript = summary.transcript(&sig).await.ok_or("unreadable")?;
         let cursor = SessionCursor::parse(&row.cursor).ok_or("no cursor")?;
         // The pages must be exactly what the records fold to: the transcript
         // still agrees with the copy through its end, and the pages stop there.

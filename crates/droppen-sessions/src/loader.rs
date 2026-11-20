@@ -167,7 +167,8 @@ static PARSES_STARTED: AtomicU64 = AtomicU64::new(0);
 ///   change, a disk error must not be reported as *a transcript with no items*:
 ///   every attached client would repaint an empty session over a perfectly good
 ///   one. The last good parse is answered instead — at whatever signature it
-///   was taken — and the refresh that follows corrects it.
+///   was taken — and a reader that remembers versions is told it is not the
+///   one it asked for ([`TranscriptSources::load_checked`]), so it asks again.
 ///
 /// Most recently used last, like the `Map` insertion order the TypeScript's own
 /// LRU leans on.
@@ -280,6 +281,22 @@ impl Drop for FlightTicket {
     }
 }
 
+/// The signature each transcript last failed to read at, until a read of it
+/// works.
+///
+/// A reader that remembers versions tries one that failed again, later and
+/// later (the feed's watcher), and a file that stays unreadable would
+/// otherwise say so at every try. It is warned about once per version, and
+/// logged at debug level after that.
+static FAILED_READS: std::sync::LazyLock<Mutex<HashMap<PathBuf, String>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Note that `file_path` could not be read at `sig`: whether it is the first
+/// time for that version since the last read of the file that worked.
+fn first_failure(file_path: &Path, sig: &str) -> bool {
+    let mut failed = FAILED_READS.lock().expect("failed reads poisoned");
+    failed.insert(file_path.to_path_buf(), sig.to_string()).as_deref() != Some(sig)
+}
+
 impl TranscriptSources {
     /// Normalize a transcript for the feed and for the history route.
     ///
@@ -299,8 +316,20 @@ impl TranscriptSources {
     /// Callers asking at the same `sig` while it is being parsed wait for that
     /// one parse rather than making their own.
     pub async fn load(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str) -> Arc<Transcript> {
+        self.load_checked(paths, source, file_path, sig).await.0
+    }
+
+    /// [`TranscriptSources::load`], and whether what it answers is the parse
+    /// at `sig`: `false` when the read failed and the answer is the last good
+    /// parse, of another version, or no items.
+    ///
+    /// For a reader that remembers which version it was last handed. What a
+    /// failed read answers is not the version at `sig`, and taken for it,
+    /// `sig` would not be read again until the file changed once more: for a
+    /// session gone quiet, never.
+    pub async fn load_checked(&self, paths: &Paths, source: Source, file_path: &Path, sig: &str) -> (Arc<Transcript>, bool) {
         if let Some(transcript) = cached_transcript(file_path, Some(sig)) {
-            return transcript;
+            return (transcript, true);
         }
         let ticket = FlightTicket::join(file_path, sig);
         // Whoever runs this is the one parse; everyone else on the ticket
@@ -319,10 +348,15 @@ impl TranscriptSources {
                     Ok(items) => {
                         let transcript = Arc::new(Transcript::new(file_path, Arc::new(items)));
                         remember_transcript(file_path, sig, flight.started, transcript.clone());
+                        FAILED_READS.lock().expect("failed reads poisoned").remove(file_path);
                         Some(transcript)
                     }
-                    Err(error) => {
+                    Err(error) if first_failure(file_path, sig) => {
                         tracing::warn!(path = %file_path.display(), %error, "cannot read transcript; keeping the last good items");
+                        None
+                    }
+                    Err(error) => {
+                        tracing::debug!(path = %file_path.display(), %error, "still cannot read transcript; keeping the last good items");
                         None
                     }
                 }
@@ -332,7 +366,20 @@ impl TranscriptSources {
         drop(ticket);
         // The fallback is looked up by each caller once the parse is over,
         // so it is the last good parse as of now.
-        parsed.unwrap_or_else(|| cached_transcript(file_path, None).unwrap_or_else(|| Arc::new(Transcript::new(file_path, Arc::default()))))
+        match parsed {
+            Some(transcript) => (transcript, true),
+            None => {
+                let fallback = cached_transcript(file_path, None).unwrap_or_else(|| Arc::new(Transcript::new(file_path, Arc::default())));
+                (fallback, false)
+            }
+        }
+    }
+
+    /// The parse of `file_path` at `sig`, when one is remembered. Never a
+    /// read: for a reader waiting to try a version again that it could not
+    /// read, which another reader may have read since.
+    pub fn cached(&self, file_path: &Path, sig: &str) -> Option<Arc<Transcript>> {
+        cached_transcript(file_path, Some(sig))
     }
 
     /// A transcript read now, past the cache and without filling it: for a
@@ -567,6 +614,90 @@ mod tests {
         forget_transcript(file);
         let nothing = sources.load(&paths, Source::Claude, file, "200:2").await;
         assert!(nothing.is_empty(), "with nothing good to fall back on, no items");
+    }
+
+    /// What a failed read answers says it is not the version asked for, so
+    /// a reader that remembers versions asks again; each ask is one read,
+    /// however long the file stays unreadable. The first that reads it is
+    /// the parse at that signature.
+    #[tokio::test(start_paused = true)]
+    async fn a_fallback_says_it_is_not_the_version_asked_for() {
+        let file = Path::new("/loader-test/checked.jsonl");
+        let (parses, sources) = hooked(file, &[]);
+        let paths = paths();
+        let (good, current) = sources.load_checked(&paths, Source::Claude, file, "100:1").await;
+        assert!(current, "a parse at the signature asked for");
+
+        parses.failing.store(true, SeqCst);
+        for ask in 1..=3 {
+            let (answer, current) = sources.load_checked(&paths, Source::Claude, file, "200:2").await;
+            assert!(Arc::ptr_eq(&answer, &good), "ask {ask}: the last good parse");
+            assert!(!current, "ask {ask}: said to be another version");
+            assert_eq!(parses.count(), 1 + ask, "ask {ask}: one read each");
+        }
+        let (kept, current) = sources.load_checked(&paths, Source::Claude, file, "100:1").await;
+        assert!(Arc::ptr_eq(&kept, &good) && current, "asked for by its own signature, it is that version");
+
+        parses.failing.store(false, SeqCst);
+        let (fresh, current) = sources.load_checked(&paths, Source::Claude, file, "200:2").await;
+        assert!(current);
+        assert_eq!(made_by(&fresh), "parse 5");
+
+        forget_transcript(file);
+        parses.failing.store(true, SeqCst);
+        let (nothing, current) = sources.load_checked(&paths, Source::Claude, file, "300:3").await;
+        assert!(nothing.is_empty() && !current, "and no items is no version either");
+    }
+
+    /// Counts the warnings logged on the thread it is set on.
+    struct Warnings(Arc<AtomicUsize>);
+
+    impl tracing::Subscriber for Warnings {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, SeqCst);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// A read that keeps failing at one signature is warned about once, and
+    /// logged at debug level after that. Another signature is warned about
+    /// again, and so is an old one once a read worked in between.
+    #[tokio::test(start_paused = true)]
+    async fn a_read_that_keeps_failing_is_warned_about_once_per_version() {
+        let warnings = Arc::new(AtomicUsize::new(0));
+        let _counting = tracing::subscriber::set_default(Warnings(warnings.clone()));
+        let file = Path::new("/loader-test/warned.jsonl");
+        let (parses, sources) = hooked(file, &[]);
+        let paths = paths();
+
+        parses.failing.store(true, SeqCst);
+        for _ in 0..3 {
+            sources.load_checked(&paths, Source::Claude, file, "100:1").await;
+        }
+        assert_eq!((parses.count(), warnings.load(SeqCst)), (3, 1), "three reads, one warning");
+        sources.load_checked(&paths, Source::Claude, file, "200:2").await;
+        assert_eq!(warnings.load(SeqCst), 2, "a new version is warned about");
+
+        parses.failing.store(false, SeqCst);
+        sources.load_checked(&paths, Source::Claude, file, "300:3").await;
+        parses.failing.store(true, SeqCst);
+        sources.load_checked(&paths, Source::Claude, file, "200:2").await;
+        assert_eq!(
+            (parses.count(), warnings.load(SeqCst)),
+            (6, 3),
+            "and an old one again, after a read that worked"
+        );
     }
 
     /// The caller running the parse can go away mid-parse (a client that
