@@ -42,10 +42,12 @@ use super::codex_tools::{CodexTools, Context};
 use droppen_instance::paths::Paths;
 use droppen_base::time::{iso8601, mtime_ms, now_ms};
 use droppen_sessions::context::ContextUsage;
-use droppen_sessions::mentions::FileCitation;
+use droppen_sessions::item_log::ItemLog;
+use droppen_sessions::mentions::{FileCitation, Mentions};
+use droppen_sessions::resume::{Resumable, ResumableLines, Resumed};
 use droppen_sessions::sources::{TokenUsage, UsageFile, UsageFold};
 use droppen_sessions::util::{
-    date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, LossyLines, Role,
+    date_of, is_jsonl, make_item, num, read_head_lines, read_tail_lines, title_line, try_parse, FileCache, ItemKind, Role,
     TranscriptItem,
 };
 use droppen_sessions::{owned_sessions, CliChoice, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
@@ -869,6 +871,11 @@ impl droppen_sessions::Transcripts for CodexSessions {
         Box::pin(parse_codex_transcript(paths, file_path))
     }
 
+    // A rollout's parse goes on from the last one ([`read_codex_transcript`]).
+    fn resumable(&self) -> Option<&dyn Resumable> {
+        Some(self)
+    }
+
     fn cli_choice<'a>(&'a self, file_path: &'a Path) -> BoxFuture<'a, Option<CliChoice>> {
         Box::pin(read_codex_cli_choice(file_path))
     }
@@ -1188,66 +1195,136 @@ fn permission_of_turn(payload: &serde_json::Map<String, Value>) -> Option<String
 /// calls, which [`CodexTools`] pairs with their outputs and, in code mode, with
 /// the `item_completed` events that say what a cell actually ran.
 pub async fn parse_codex_transcript(paths: &Paths, file_path: &Path) -> std::io::Result<Vec<TranscriptItem>> {
-    let mut lines = LossyLines::open(file_path).await?;
-    let mut items: Vec<TranscriptItem> = Vec::new();
-    let mut tools = CodexTools::new();
-    let mut cwd = None;
-    // The model the turn being read runs on. Codex names it once, in the
-    // `turn_context` that opens each turn, so every item below one belongs to it
-    // until the next one says otherwise — which is the only record of a silent
-    // downgrade mid-session. `None` before the first one: the rollout has not
-    // said yet, and guessing would attribute a turn to the wrong model.
-    let mut model: Option<String> = None;
+    let parsed = read_codex_transcript(paths, file_path).await?;
+    Ok(parsed.items.into_iter().map(std::sync::Arc::unwrap_or_clone).collect())
+}
 
-    while let Some(line) = lines.next_line().await? {
+/// [`parse_codex_transcript`], as shared items, with what a later parse goes
+/// on from ([`Resumable::resume`]).
+pub async fn read_codex_transcript(paths: &Paths, file_path: &Path) -> std::io::Result<Resumed> {
+    let lines = ResumableLines::open(file_path).await?;
+    run(paths, lines, CodexParse::default(), ItemLog::new()).await
+}
+
+/// A parse of a Codex rollout under way: what reading one line needs to know
+/// of the lines before it. A parse that goes on from this one takes it over
+/// whole ([`Resumed::state`]).
+#[derive(Default)]
+struct CodexParse {
+    /// The calls waiting for their outputs, and the cell open.
+    tools: CodexTools,
+    /// The session's directory, from its `session_meta`.
+    cwd: Option<String>,
+    /// The model the turn being read runs on. Codex names it once, in the
+    /// `turn_context` that opens each turn, so every item below one belongs
+    /// to it until the next one says otherwise — which is the only record of
+    /// a silent downgrade mid-session. `None` before the first one: the
+    /// rollout has not said yet, and guessing would attribute a turn to the
+    /// wrong model.
+    model: Option<String>,
+    /// The mentioned-file chips.
+    mentions: Mentions,
+    /// How many items the parse made: a parse goes on from those items alone.
+    made: usize,
+}
+
+impl CodexParse {
+    /// Read one line of the rollout into `items`.
+    fn line(&mut self, paths: &Paths, line: &str, items: &mut ItemLog) {
         if line.trim().is_empty() {
-            continue;
+            return;
         }
-        let Some(entry) = try_parse(&line) else { continue };
+        let Some(entry) = try_parse(line) else { return };
         if entry.get("type").and_then(Value::as_str) == Some("session_meta") {
-            cwd = entry.get("payload").and_then(|p| p.get("cwd")).and_then(Value::as_str).map(str::to_owned);
-            continue;
+            self.cwd = entry.get("payload").and_then(|p| p.get("cwd")).and_then(Value::as_str).map(str::to_owned);
+            return;
         }
         if entry.get("type").and_then(Value::as_str) == Some("turn_context") {
-            model = entry
+            self.model = entry
                 .get("payload")
                 .and_then(Value::as_object)
                 .and_then(|payload| payload.get("model"))
                 .and_then(Value::as_str)
                 .filter(|model| !model.trim().is_empty())
                 .map(str::to_owned);
-            continue;
+            return;
         }
         let Some(payload) = entry.get("payload").and_then(Value::as_object) else {
-            continue;
+            return;
         };
         let timestamp = entry.get("timestamp").and_then(Value::as_str);
-        let model = model.as_deref();
+        let model = self.model.as_deref();
         let context = Context {
             home: &paths.home,
-            cwd: cwd.as_deref(),
+            cwd: self.cwd.as_deref(),
         };
+        let tools = &mut self.tools;
 
         match entry.get("type").and_then(Value::as_str) {
             // Every other `event_msg` echoes a response item, or is bookkeeping.
             Some("event_msg") if payload.get("type").and_then(Value::as_str) == Some("item_completed") => {
-                tools.item_completed(&mut items, payload, timestamp, model, context);
+                tools.item_completed(items, payload, timestamp, model, context);
             }
             Some("response_item") => match payload.get("type").and_then(Value::as_str) {
-                Some("message") => push_message(&mut items, payload, timestamp, model),
-                Some("reasoning") => push_reasoning(&mut items, payload, timestamp, model),
+                Some("message") => push_message(items, payload, timestamp, model),
+                Some("reasoning") => push_reasoning(items, payload, timestamp, model),
                 Some("custom_tool_call") | Some("function_call") | Some("local_shell_call") => {
-                    tools.call(&mut items, payload, timestamp, model);
+                    tools.call(items, payload, timestamp, model);
                 }
-                Some("function_call_output") | Some("custom_tool_call_output") => tools.output(&mut items, payload, timestamp, context),
-                Some("web_search_call") => tools.web_search_call(&mut items, payload, timestamp, model),
+                Some("function_call_output") | Some("custom_tool_call_output") => tools.output(items, payload, timestamp, context),
+                Some("web_search_call") => tools.web_search_call(items, payload, timestamp, model),
                 _ => {}
             },
             _ => {}
         }
     }
-    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref(), file_citations).await;
-    Ok(items)
+}
+
+/// Codex's parse, which the loader goes on from. It reads nothing besides
+/// the rollout ([`Resumable::inputs`] is the default): a thumbnail is a path
+/// resolved where it is written, and the mentioned-file chips, the one thing
+/// that looks at the filesystem, are left out of what a check compares.
+impl Resumable for CodexSessions {
+    fn read<'a>(&'a self, paths: &'a Paths, _file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, std::io::Result<Resumed>> {
+        Box::pin(run(paths, lines, CodexParse::default(), ItemLog::new()))
+    }
+
+    // Not when the items are not the ones the parse made.
+    fn resume<'a>(
+        &'a self,
+        paths: &'a Paths,
+        _file_path: &'a Path,
+        lines: ResumableLines,
+        items: Vec<std::sync::Arc<TranscriptItem>>,
+        state: Box<dyn std::any::Any + Send>,
+    ) -> BoxFuture<'a, std::io::Result<Option<Resumed>>> {
+        Box::pin(async move {
+            let Ok(parse) = state.downcast::<CodexParse>() else {
+                return Ok(None);
+            };
+            if items.len() != parse.made {
+                return Ok(None);
+            }
+            run(paths, lines, *parse, ItemLog::resume(items)).await.map(Some)
+        })
+    }
+}
+
+/// Read `lines` into `items` with `parse`, and annotate the files named.
+async fn run(paths: &Paths, mut lines: ResumableLines, mut parse: CodexParse, mut items: ItemLog) -> std::io::Result<Resumed> {
+    while let Some(line) = lines.next_line().await? {
+        parse.line(paths, &line, &mut items);
+    }
+    parse.mentions.annotate(&paths.home, &mut items, parse.cwd.as_deref(), file_citations).await;
+    parse.made = items.len();
+    let point = lines.point();
+    let (items, changed_from) = items.into_parts();
+    Ok(Resumed {
+        items,
+        changed_from,
+        point,
+        state: Box::new(parse),
+    })
 }
 
 /// Attribute an agent-produced item to the model of the turn it came from.
@@ -1257,7 +1334,7 @@ fn by_model(mut item: TranscriptItem, model: Option<&str>) -> TranscriptItem {
 }
 
 /// A user or assistant message, one item per non-empty text part.
-fn push_message(items: &mut Vec<TranscriptItem>, payload: &serde_json::Map<String, Value>, timestamp: Option<&str>, model: Option<&str>) {
+fn push_message(items: &mut ItemLog, payload: &serde_json::Map<String, Value>, timestamp: Option<&str>, model: Option<&str>) {
     // system/developer messages carry injected instructions; skip them.
     let role = match payload.get("role").and_then(Value::as_str) {
         Some("user") => Role::User,
@@ -1281,7 +1358,7 @@ fn push_message(items: &mut Vec<TranscriptItem>, payload: &serde_json::Map<Strin
 }
 
 /// Extended thinking, which Codex re-emits cumulatively.
-fn push_reasoning(items: &mut Vec<TranscriptItem>, payload: &serde_json::Map<String, Value>, timestamp: Option<&str>, model: Option<&str>) {
+fn push_reasoning(items: &mut ItemLog, payload: &serde_json::Map<String, Value>, timestamp: Option<&str>, model: Option<&str>) {
     let summaries = payload.get("summary").and_then(Value::as_array).cloned().unwrap_or_default();
     let text = summaries
         .iter()
@@ -1300,7 +1377,7 @@ fn push_reasoning(items: &mut Vec<TranscriptItem>, payload: &serde_json::Map<Str
         if previous.kind == ItemKind::Thinking && (text.starts_with(&previous.text) || previous.text.starts_with(text)) {
             if text.len() > previous.text.len() {
                 let index = items.len() - 1;
-                items[index] = by_model(make_item(Role::Assistant, ItemKind::Thinking, text, timestamp), model);
+                items.replace(index, by_model(make_item(Role::Assistant, ItemKind::Thinking, text, timestamp), model));
             }
             return;
         }

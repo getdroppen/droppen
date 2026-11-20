@@ -62,6 +62,7 @@ use std::sync::OnceLock;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use droppen_sessions::item_log::ItemLog;
 use droppen_sessions::mentions::resolve_within_home;
 use droppen_sessions::tool_display::{
     as_display_string, compact, diff_of, pick_preferred, pretty, redact_encrypted, shorten_tool_name, ChecklistLinesExt, QuestionLinesExt,
@@ -1585,7 +1586,7 @@ impl CodexTools {
     }
 
     /// A `function_call`, `custom_tool_call` or `local_shell_call`.
-    pub fn call(&mut self, items: &mut Vec<TranscriptItem>, payload: &Json, timestamp: Option<&str>, model: Option<&str>) {
+    pub fn call(&mut self, items: &mut ItemLog, payload: &Json, timestamp: Option<&str>, model: Option<&str>) {
         let call_id = str_of(payload, "call_id").or_else(|| str_of(payload, "id")).map(str::to_owned);
         let name = str_of(payload, "name").unwrap_or("tool");
         let display = match payload.get("type").and_then(Value::as_str) {
@@ -1659,7 +1660,7 @@ impl CodexTools {
     /// names none, and the caller shows the envelope as it is.
     fn patch_rows(
         &mut self,
-        items: &mut Vec<TranscriptItem>,
+        items: &mut ItemLog,
         call_id: Option<&str>,
         envelope: &str,
         timestamp: Option<&str>,
@@ -1679,7 +1680,7 @@ impl CodexTools {
     }
 
     /// A `function_call_output` or `custom_tool_call_output`.
-    pub fn output(&mut self, items: &mut Vec<TranscriptItem>, payload: &Json, timestamp: Option<&str>, context: Context<'_>) {
+    pub fn output(&mut self, items: &mut ItemLog, payload: &Json, timestamp: Option<&str>, context: Context<'_>) {
         let call_id = str_of(payload, "call_id").map(str::to_owned);
         let outcome = read_output(payload.get("output"));
 
@@ -1761,7 +1762,7 @@ impl CodexTools {
     /// An `event_msg` `item_completed`: the record of a call a cell made.
     pub fn item_completed(
         &mut self,
-        items: &mut Vec<TranscriptItem>,
+        items: &mut ItemLog,
         event: &Json,
         timestamp: Option<&str>,
         model: Option<&str>,
@@ -1823,7 +1824,7 @@ impl CodexTools {
             // Ahead of the cell's own row, which stays the newest item.
             Some(cell) => {
                 let count = rows.len();
-                items.splice(cell.index..cell.index, rows);
+                items.insert(cell.index, rows);
                 cell.index += count;
                 if ours {
                     cell.inner += 1;
@@ -1835,14 +1836,16 @@ impl CodexTools {
             // What finishes now is news in its own right, at the end.
             None => {
                 self.cell = None;
-                items.extend(rows);
+                for row in rows {
+                    items.push(row);
+                }
             }
         }
     }
 
     /// A `web_search_call` response item: the hosted search, which has no output
     /// of its own to pair with.
-    pub fn web_search_call(&mut self, items: &mut Vec<TranscriptItem>, payload: &Json, timestamp: Option<&str>, model: Option<&str>) {
+    pub fn web_search_call(&mut self, items: &mut ItemLog, payload: &Json, timestamp: Option<&str>, model: Option<&str>) {
         // Pairing is by id, so a search the CLI wrote without one still gets
         // one of its own.
         let id = str_of(payload, "id")
@@ -1939,11 +1942,11 @@ fn still_running(source: &str, done: &[String], count: usize) -> Option<Vec<(Str
 }
 
 /// Whether the open cell's own row is still the newest item.
-fn is_last_row(items: &[TranscriptItem], cell: &OpenCell) -> bool {
-    cell.index + 1 == items.len() && items[cell.index].tool_use_id.as_deref() == Some(cell.call_id.as_str())
+fn is_last_row(items: &ItemLog, cell: &OpenCell) -> bool {
+    cell.index + 1 == items.len() && items.get(cell.index).is_some_and(|row| row.tool_use_id.as_deref() == Some(cell.call_id.as_str()))
 }
 
-fn push_call(items: &mut Vec<TranscriptItem>, display: ToolDisplay, id: Option<String>, timestamp: Option<&str>, model: Option<&str>) {
+fn push_call(items: &mut ItemLog, display: ToolDisplay, id: Option<String>, timestamp: Option<&str>, model: Option<&str>) {
     let mut item = make_tool_item(Role::Assistant, ItemKind::ToolUse, display, timestamp);
     item.tool_use_id = id;
     item.model = model.map(str::to_owned);
