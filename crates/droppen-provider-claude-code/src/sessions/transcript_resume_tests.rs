@@ -1,21 +1,36 @@
-//! The oracle for a parse that goes on from an earlier one
-//! ([`resume_claude_transcript`]): after every append, and every change to
-//! what a parse reads besides the transcript, it has to be the parse of the
-//! whole file from its start, item for item, chips and fingerprints included,
-//! and every item below where it says it changed has to be the very one it
-//! went on from.
+//! The oracle for a parse that goes on from an earlier one, through the very
+//! path the loader takes ([`Resumable::resume`] after
+//! [`ResumableLines::reopen`]): after every append, and every change to what
+//! a parse reads besides the transcript, it has to be the parse of the whole
+//! file from its start, item for item, chips and fingerprints included, and
+//! every item below where it says it changed has to be the very one it went
+//! on from.
 
+use std::any::Any;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::transcript::{read_claude_transcript, resume_claude_transcript, subagent_dir, ClaudeCheckpoint};
+use super::claude::ClaudeCodeSessions;
+use super::transcript::{read_claude_transcript, subagent_dir};
 use droppen_instance::paths::Paths;
 use droppen_sessions::loader::fingerprint_chain;
+use droppen_sessions::resume::{ReadPoint, Resumable, ResumableLines, Resumed, READ_ON_MAX};
 use droppen_sessions::util::{ItemKind, TranscriptItem};
 use droppen_sessions::Source;
+
+/// What a step left to go on from: its items, where it stopped, its state.
+type Held = (Vec<Arc<TranscriptItem>>, ReadPoint, Box<dyn Any + Send>);
+
+/// Go on from `held` as the loader does: reopen the file at its point, and
+/// hand the reader the items and the state; `None` when either refuses.
+async fn resume(paths: &Paths, path: &std::path::Path, held: Held) -> Option<Resumed> {
+    let (items, point, state) = held;
+    let lines = ResumableLines::reopen(path, &point, READ_ON_MAX).await.expect("reopen")?;
+    ClaudeCodeSessions.resume(paths, path, lines, items, state).await.expect("resume")
+}
 
 /// How a step was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +48,7 @@ struct Oracle {
     path: PathBuf,
     paths: Paths,
     sidechain: bool,
-    held: Option<(Vec<Arc<TranscriptItem>>, ClaudeCheckpoint)>,
+    held: Option<Held>,
 }
 
 /// What one step read.
@@ -77,25 +92,27 @@ impl Oracle {
     /// Read on from the last step, and hold it to a parse of the whole file.
     async fn step(&mut self) -> Step {
         let whole = read_claude_transcript(&self.paths, &self.path, self.sidechain).await.expect("whole");
-        let (parsed, read) = match self.held.take() {
-            Some((before, checkpoint)) => match resume_claude_transcript(&self.paths, &self.path, before.clone(), checkpoint).await.expect("resume") {
-                Some(parsed) => {
-                    assert!(parsed.changed_from <= before.len(), "nothing past the end can be the same");
-                    // Below it, an item is the one it went on from, or that
-                    // item with other chips: what the chain hashes is the same.
-                    for (index, (then, now)) in before.iter().zip(&parsed.items).take(parsed.changed_from).enumerate() {
-                        assert!(
-                            Arc::ptr_eq(then, now)
-                                || ((now.is_annotated() || then.is_annotated())
-                                    && serde_json::to_value(then.as_transcribed()).expect("json") == serde_json::to_value(now.as_transcribed()).expect("json")),
-                            "item {index}, below where it says it changed, is not the one it went on from"
-                        );
-                    }
-                    (parsed, Read::On)
+        let before = self.held.as_ref().map(|(items, _, _)| items.clone());
+        let resumed = match self.held.take() {
+            Some(held) => resume(&self.paths, &self.path, held).await,
+            None => None,
+        };
+        let (parsed, read) = match (resumed, before) {
+            (Some(parsed), Some(before)) => {
+                assert!(parsed.changed_from <= before.len(), "nothing past the end can be the same");
+                // Below it, an item is the one it went on from, or that item
+                // with other chips: what the chain hashes is the same.
+                for (index, (then, now)) in before.iter().zip(&parsed.items).take(parsed.changed_from).enumerate() {
+                    assert!(
+                        Arc::ptr_eq(then, now)
+                            || ((now.is_annotated() || then.is_annotated())
+                                && serde_json::to_value(then.as_transcribed()).expect("json") == serde_json::to_value(now.as_transcribed()).expect("json")),
+                        "item {index}, below where it says it changed, is not the one it went on from"
+                    );
                 }
-                None => (read_claude_transcript(&self.paths, &self.path, self.sidechain).await.expect("whole"), Read::Whole),
-            },
-            None => (read_claude_transcript(&self.paths, &self.path, self.sidechain).await.expect("whole"), Read::Whole),
+                (parsed, Read::On)
+            }
+            _ => (read_claude_transcript(&self.paths, &self.path, self.sidechain).await.expect("whole"), Read::Whole),
         };
         assert_eq!(json(&parsed.items), json(&whole.items), "the items, chips included");
         assert_eq!(
@@ -103,14 +120,14 @@ impl Oracle {
             fingerprint_chain(&self.path, &whole.items),
             "the fingerprints"
         );
-        let (end, open) = (parsed.checkpoint.point().end(), parsed.checkpoint.point().open_tail());
-        assert_eq!((end, open), (whole.checkpoint.point().end(), whole.checkpoint.point().open_tail()), "where it stopped");
+        let (end, open) = (parsed.point.end(), parsed.point.open_tail());
+        assert_eq!((end, open), (whole.point.end(), whole.point.open_tail()), "where it stopped");
         let step = Step {
             read,
             items: parsed.items.clone(),
             changed_from: parsed.changed_from,
         };
-        self.held = Some((parsed.items, parsed.checkpoint));
+        self.held = Some((parsed.items, parsed.point, parsed.state));
         step
     }
 }
@@ -491,17 +508,49 @@ async fn a_delivery_recorded_after_its_entry_was_read_has_the_session_read_whole
     assert_eq!((reads.full, reads.fallback, reads.resumed), (1, 1, 1));
 }
 
-/// Items that are not the parse's own are no place to go on from.
+/// Through the loader: a delivery pruned after its entry was read (its
+/// upload gone) has the next version read whole, which no longer finds it.
 #[tokio::test]
-async fn items_that_are_not_the_checkpoints_are_refused() {
+async fn a_delivery_pruned_after_its_entry_was_read_has_the_session_read_whole() {
+    use droppen_sessions::loader::{reads_of, resume_from};
+
+    let oracle = Oracle::new();
+    let mut sources = droppen_sessions::TranscriptSources::default();
+    sources.register(Arc::new(super::claude::ClaudeCodeSessions));
+    resume_from(&oracle.path, 0);
+    let load = || async {
+        let sig = droppen_sessions::file_signature(&oracle.path).await.expect("a signature");
+        sources.load(&oracle.paths, Source::Claude, &oracle.path, &sig).await
+    };
+    let image = oracle.paths.uploads_dir().join("u/1.png");
+    std::fs::create_dir_all(image.parent().expect("parent")).expect("uploads");
+    std::fs::write(&image, b"png").expect("upload");
+    droppen_sessions::chat_delivery::record(&oracle.paths, Source::Claude, "session", "q-1", "look", &[image.to_string_lossy().into_owned()], &[]);
+
+    let chats = droppen_sessions::chats_cwd(&oracle.paths);
+    oracle.append(&line(json!({"type": "user", "cwd": chats, "timestamp": "2999-01-01T00:00:01.000Z", "message": {"content": "look"}})));
+    assert!(load().await.items[0].images.is_some(), "its delivery found");
+
+    std::fs::remove_file(&image).expect("the upload gone");
+    droppen_sessions::chat_delivery::prune_missing(&oracle.paths);
+    oracle.append(&line(assistant(2, json!([{"type": "text", "text": "a fine picture"}]))));
+    assert!(load().await.items[0].images.is_none(), "read whole, the delivery gone");
+    let reads = reads_of(&oracle.path);
+    assert_eq!((reads.full, reads.fallback, reads.resumed), (1, 1, 0));
+}
+
+/// Items that are not the parse's own are no place to go on from, nor is a
+/// state that is not this reader's.
+#[tokio::test]
+async fn items_or_a_state_that_are_not_the_parses_are_refused() {
     let mut oracle = Oracle::new();
     let lines = fixture(&oracle);
     oracle.append(&lines[..5].concat());
     oracle.step().await;
-    let (mut items, checkpoint) = oracle.held.take().expect("held");
+    let (mut items, point, state) = oracle.held.take().expect("held");
     items.pop();
-    let refused = resume_claude_transcript(&oracle.paths, &oracle.path, items, checkpoint).await.expect("resume");
-    assert!(refused.is_none());
+    assert!(resume(&oracle.paths, &oracle.path, (items.clone(), point.clone(), state)).await.is_none(), "an item short");
+    assert!(resume(&oracle.paths, &oracle.path, (items, point, Box::new(()))).await.is_none(), "another reader's state");
 }
 
 /// The fixture reads as it should from the start, so the oracle's steps

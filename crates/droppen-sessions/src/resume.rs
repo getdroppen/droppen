@@ -56,17 +56,11 @@ pub trait Resumable: Send + Sync {
     /// `lines` ([`ResumableLines::open`]).
     fn read<'a>(&'a self, paths: &'a Paths, file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, io::Result<Resumed>>;
 
-    /// Whether the parse that left `state` can still be gone on from as far
-    /// as anything besides the transcript goes; asked before the file is
-    /// read. True unless the reader reads something else that can change.
-    fn can_resume(&self, state: &(dyn Any + Send)) -> bool {
-        let _ = state;
-        true
-    }
-
     /// The parse an earlier one, of `items`, which left `state`, makes once
-    /// it reads `lines` too ([`ResumableLines::reopen`]); `None` when `state`
-    /// is not this reader's.
+    /// it reads `lines` too ([`ResumableLines::reopen`]); `None` when it
+    /// cannot go on from it: `state` is not this reader's, `items` are not
+    /// the ones it made, or something besides the transcript that the parse
+    /// read has moved since.
     fn resume<'a>(
         &'a self,
         paths: &'a Paths,
@@ -75,6 +69,15 @@ pub trait Resumable: Send + Sync {
         items: Vec<Arc<TranscriptItem>>,
         state: Box<dyn Any + Send>,
     ) -> BoxFuture<'a, io::Result<Option<Resumed>>>;
+
+    /// A fingerprint of what a parse of `file_path` reads besides the
+    /// transcript (a subagent's sidecar, a chat's delivery rows), for the
+    /// check of a parse that went on against a whole one: while it holds
+    /// still, the two read the same. 0 for a reader that reads nothing else.
+    fn inputs<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, u64> {
+        let _ = (paths, file_path);
+        Box::pin(std::future::ready(0))
+    }
 }
 
 /// A parse a later one can go on from.
@@ -221,8 +224,10 @@ impl ResumableLines {
         }
         // Up to the limit, and a byte past it to tell a file that grew again
         // meanwhile; what came since the length was looked at is read too.
+        // Sized for what the length says, with room for the read that finds
+        // the end, so the buffer is not grown by doubling to twice that.
         file.seek(io::SeekFrom::Start(point.end)).await?;
-        let mut appended = Vec::new();
+        let mut appended = Vec::with_capacity(usize::try_from(len - point.end).unwrap_or(0).saturating_add(64));
         file.take(limit.saturating_add(1)).read_to_end(&mut appended).await?;
         if appended.len() as u64 > limit {
             return Ok(None);

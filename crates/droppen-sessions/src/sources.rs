@@ -495,11 +495,18 @@ pub(crate) mod test_reader {
     /// too, so a parse that goes on changes an item an earlier one made.
     ///
     /// By path, a test can have it refuse to go on, as a reader whose other
-    /// inputs moved does ([`go_stale`]), or go on wrongly ([`lie`]).
+    /// inputs moved does ([`go_stale`]), go on wrongly ([`lie`]), or say its
+    /// other inputs moved ([`move_inputs`]).
     pub(crate) struct LinesReader;
 
     static STALE: LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = LazyLock::new(Default::default);
     static LYING: LazyLock<Mutex<std::collections::HashSet<PathBuf>>> = LazyLock::new(Default::default);
+    static INPUTS: LazyLock<Mutex<HashMap<PathBuf, u64>>> = LazyLock::new(Default::default);
+
+    /// Have [`LinesReader`] say what it reads besides `path` moved.
+    pub(crate) fn move_inputs(path: &Path) {
+        *INPUTS.lock().expect("inputs").entry(path.to_path_buf()).or_default() += 1;
+    }
 
     /// Have [`LinesReader`] refuse to go on from a parse of `path`.
     pub(crate) fn go_stale(path: &Path) {
@@ -546,20 +553,26 @@ pub(crate) mod test_reader {
             Box::pin(read_lines(lines, ItemLog::new(), false, file_path))
         }
 
-        fn can_resume(&self, state: &(dyn std::any::Any + Send)) -> bool {
-            state.downcast_ref::<PathBuf>().is_some_and(|path| !STALE.lock().expect("stale").contains(path))
-        }
-
         fn resume<'a>(
             &'a self,
             _paths: &'a Paths,
             file_path: &'a Path,
             lines: ResumableLines,
             items: Vec<Arc<TranscriptItem>>,
-            _state: Box<dyn std::any::Any + Send>,
+            state: Box<dyn std::any::Any + Send>,
         ) -> BoxFuture<'a, std::io::Result<Option<Resumed>>> {
             let lying = LYING.lock().expect("lying").contains(file_path);
-            Box::pin(async move { read_lines(lines, ItemLog::resume(items), lying, file_path).await.map(Some) })
+            let stale = STALE.lock().expect("stale").contains(file_path);
+            Box::pin(async move {
+                if stale || !state.is::<PathBuf>() {
+                    return Ok(None);
+                }
+                read_lines(lines, ItemLog::resume(items), lying, file_path).await.map(Some)
+            })
+        }
+
+        fn inputs<'a>(&'a self, _paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, u64> {
+            Box::pin(std::future::ready(INPUTS.lock().expect("inputs").get(file_path).copied().unwrap_or(0)))
         }
     }
 
