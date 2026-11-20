@@ -5,20 +5,32 @@
 //! `serde_json::Value`, so an unknown block type is skipped rather than failing
 //! the file, and a line that does not parse at all (a half-written tail while
 //! the CLI is mid-write) is ignored exactly as the TypeScript does.
+//!
+//! A parse can go on from an earlier one rather than read the file from its
+//! start ([`resume_claude_transcript`]): it keeps what reading an entry needs
+//! of the entries before it ([`ClaudeCheckpoint`]), reads only the lines
+//! appended since, and says how far back it changed an item it had made
+//! ([`ClaudeParsed::changed_from`]). Whatever it went on from, the items are
+//! the ones a parse from the start would make; the tests in
+//! `transcript_resume_tests` hold it to that.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
 
 use droppen_sessions::chat_delivery::{ChatDeliveries, DeliveredAttachments};
+use droppen_sessions::item_log::ItemLog;
+use droppen_sessions::mentions::Mentions;
+use droppen_sessions::resume::{ReadPoint, ResumableLines};
 use droppen_sessions::sidecars::{AgentEntry, SubagentMeta, Subagents};
 use droppen_sessions::{chats_cwd, Source};
 use super::claude::tool_display::{display_claude_tool_result, display_claude_tool_use};
 use droppen_sessions::tool_display::{extract_questions, shorten_tool_name};
 use droppen_sessions::util::{
-    clip, is_renderable_image, make_item, make_tool_item, try_parse, ItemKind, LossyLines, PatchHunk, Role, ToolDisplay, TranscriptItem, DETAIL_LIMIT,
+    clip, is_renderable_image, make_item, make_tool_item, try_parse, ItemKind, PatchHunk, Role, ToolDisplay, TranscriptItem, DETAIL_LIMIT,
 };
 use droppen_http::openapi_ext::Nullable;
 
@@ -247,9 +259,9 @@ fn model_fallback_item(block: &Json, timestamp: Option<&str>) -> TranscriptItem 
 ///
 /// Only compares timestamps written the same way (UTC, `Z`-suffixed), which is
 /// the only shape Claude Code writes; anything else is left exactly as it came.
-fn clamped_timestamp(items: &[TranscriptItem], timestamp: Option<&str>) -> Option<String> {
+fn clamped_timestamp(items: &ItemLog, timestamp: Option<&str>) -> Option<String> {
     let utc = |value: &str| value.ends_with('Z');
-    let previous = items.iter().rev().find_map(|item| item.timestamp.as_ref()).filter(|value| utc(value));
+    let previous = items.items().iter().rev().find_map(|item| item.timestamp.as_ref()).filter(|value| utc(value));
     match (timestamp, previous) {
         (Some(now), Some(before)) if utc(now) && now < before.as_str() => Some(before.clone()),
         (now, _) => now.map(str::to_owned),
@@ -263,7 +275,7 @@ fn clamped_timestamp(items: &[TranscriptItem], timestamp: Option<&str>) -> Optio
 /// typed — which is how a compact used to arrive as an unexplained wall of
 /// English. Falls back to a boundary of its own when the real one is not in
 /// this window, because dropping it would lose the summary entirely.
-fn attach_compact_summary(items: &mut [TranscriptItem], summary: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
+fn attach_compact_summary(items: &mut ItemLog, summary: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
     if items.attach_detail(ItemKind::Compact, summary) {
         return None;
     }
@@ -290,13 +302,15 @@ trait AttachDetailExt {
     fn attach_detail(&mut self, kind: ItemKind, body: &str) -> bool;
 }
 
-impl AttachDetailExt for [TranscriptItem] {
+impl AttachDetailExt for ItemLog {
+    // Looked at before it is touched: only an item the body lands on counts
+    // as changed.
     fn attach_detail(&mut self, kind: ItemKind, body: &str) -> bool {
-        let (detail, truncated) = clip(body.trim(), DETAIL_LIMIT);
-        let Some(last) = self.last_mut() else { return false };
-        if last.kind != kind || last.detail.0.is_some() {
+        if self.last().is_none_or(|last| last.kind != kind || last.detail.0.is_some()) {
             return false;
         }
+        let (detail, truncated) = clip(body.trim(), DETAIL_LIMIT);
+        let Some(last) = self.last_mut() else { return false };
         last.detail = Nullable(Some(detail));
         last.truncated = truncated;
         true
@@ -317,7 +331,7 @@ enum UserLine {
 ///
 /// Two items would put the output on a row that never says which command
 /// printed it; folded into the command's own chip it reads as one event.
-fn attach_command_output(items: &mut [TranscriptItem], body: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
+fn attach_command_output(items: &mut ItemLog, body: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
     if items.attach_detail(ItemKind::Command, body) {
         return None;
     }
@@ -842,54 +856,76 @@ async fn agent_metas_for(file_path: &Path, sidechain: bool) -> Vec<SubagentMeta>
         .collect()
 }
 
-/// Normalize a Claude session transcript into renderable items.
-///
-/// `sidechain` controls whether entries marked `isSidechain` are kept (they are
-/// the subagent's own transcript, browsed separately).
-///
-/// `paths` is threaded through for the mentioned-file annotation, which resolves
-/// relative paths against the session's own `cwd` and refuses anything outside
-/// the home directory.
-pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, file_path: &Path, sidechain: bool) -> std::io::Result<Vec<TranscriptItem>> {
-    let mut lines = LossyLines::open(file_path).await?;
+/// A parse of a Claude transcript under way: what reading one entry needs to
+/// know of the entries before it. A parse that goes on from this one takes it
+/// over whole ([`ClaudeCheckpoint`]).
+struct ClaudeParse {
+    /// Whether entries marked `isSidechain` are kept (they are the subagent's
+    /// own transcript, browsed separately).
+    sidechain: bool,
+    /// The session's id, which a chat's delivery records are filed under.
+    session_id: String,
+    /// tool_use id -> the tool's short name, which its result is labelled with.
+    tool_names: HashMap<String, String>,
+    /// tool_use id -> index of its item, so subagent metas can tag their spawning Task call.
+    tool_items: HashMap<String, usize>,
+    /// The same, for the result that answers it: a subagent's verdict is a
+    /// `tool_result` like any other and would otherwise fold into a step group.
+    result_items: HashMap<String, usize>,
+    /// Question items stay interactive until their tool_result arrives.
+    pending_questions: HashMap<String, usize>,
+    /// tool_use id -> the file it named, so a result that came back as an image
+    /// can offer that file as a thumbnail. See `result_images`.
+    tool_paths: HashMap<String, String>,
+    /// Session cwd resolves relative file mentions in assistant output.
+    cwd: Option<String>,
+    /// A chat turn's attachment links are read from the delivery rows the
+    /// driver wrote; an ordinary session never constructs this, so parsing one
+    /// does no database work at all.
+    deliveries: Option<ChatDeliveries>,
+    deliveries_ready: bool,
+    /// The items the subagents' metas tagged last time, and with which agent.
+    tagged: HashMap<usize, String>,
+    /// The mentioned-file chips.
+    mentions: Mentions,
+}
 
-    let mut items: Vec<TranscriptItem> = Vec::new();
-    let mut tool_names: HashMap<String, String> = HashMap::new();
-    // tool_use id -> index of its item, so subagent metas can tag their spawning Task call.
-    let mut tool_items: HashMap<String, usize> = HashMap::new();
-    // The same, for the result that answers it: a subagent's verdict is a
-    // `tool_result` like any other and would otherwise fold into a step group.
-    let mut result_items: HashMap<String, usize> = HashMap::new();
-    // Question items stay interactive until their tool_result arrives.
-    let mut pending_questions: HashMap<String, usize> = HashMap::new();
-    // tool_use id -> the file it named, so a result that came back as an image
-    // can offer that file as a thumbnail. See `result_images`.
-    let mut tool_paths: HashMap<String, String> = HashMap::new();
-    // Session cwd resolves relative file mentions in assistant output.
-    let mut cwd: Option<String> = None;
-    // A chat turn's attachment links are read from the delivery rows the
-    // driver wrote; an ordinary session never constructs this, so parsing one
-    // does no database work at all.
-    let session_id = file_path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-    let mut deliveries: Option<ChatDeliveries> = None;
-    let mut deliveries_ready = false;
+impl ClaudeParse {
+    /// Nothing read yet.
+    fn new(file_path: &Path, sidechain: bool) -> Self {
+        Self {
+            sidechain,
+            session_id: file_path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default(),
+            tool_names: HashMap::new(),
+            tool_items: HashMap::new(),
+            result_items: HashMap::new(),
+            pending_questions: HashMap::new(),
+            tool_paths: HashMap::new(),
+            cwd: None,
+            deliveries: None,
+            deliveries_ready: false,
+            tagged: HashMap::new(),
+            mentions: Mentions::new(),
+        }
+    }
 
-    while let Some(line) = lines.next_line().await? {
+    /// Read one line of the transcript into `items`.
+    fn line(&mut self, paths: &droppen_instance::paths::Paths, line: &str, items: &mut ItemLog) {
         if line.trim().is_empty() {
-            continue;
+            return;
         }
-        let Some(entry) = try_parse(&line) else { continue };
-        if entry.get("isSidechain") == Some(&Value::Bool(true)) && !sidechain {
-            continue;
+        let Some(entry) = try_parse(line) else { return };
+        if entry.get("isSidechain") == Some(&Value::Bool(true)) && !self.sidechain {
+            return;
         }
-        if cwd.is_none() {
-            cwd = entry.get("cwd").and_then(Value::as_str).map(str::to_owned);
+        if self.cwd.is_none() {
+            self.cwd = entry.get("cwd").and_then(Value::as_str).map(str::to_owned);
         }
-        if !deliveries_ready {
-            if let Some(cwd) = cwd.as_deref() {
-                deliveries_ready = true;
-                if !sidechain && Path::new(cwd) == chats_cwd(paths) {
-                    deliveries = Some(ChatDeliveries::new(paths, Source::Claude, &session_id));
+        if !self.deliveries_ready {
+            if let Some(cwd) = self.cwd.as_deref() {
+                self.deliveries_ready = true;
+                if !self.sidechain && Path::new(cwd) == chats_cwd(paths) {
+                    self.deliveries = Some(ChatDeliveries::new(paths, Source::Claude, &self.session_id));
                 }
             }
         }
@@ -901,7 +937,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             // The one `system` subtype with anything to show; the rest is
             // routing chatter the CLI keeps for itself.
             if entry.get("subtype").and_then(Value::as_str) == Some("compact_boundary") {
-                let at = clamped_timestamp(&items, timestamp);
+                let at = clamped_timestamp(items, timestamp);
                 items.push(compact_boundary_item(&entry, at.as_deref()));
             }
         } else if entry_type == "assistant" {
@@ -956,7 +992,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                         let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
                         let id = block.get("id").and_then(Value::as_str).map(str::to_owned);
                         if let Some(id) = &id {
-                            tool_names.insert(id.clone(), shorten_tool_name(&name));
+                            self.tool_names.insert(id.clone(), shorten_tool_name(&name));
                         }
                         let input = block.get("input").and_then(Value::as_object).cloned().unwrap_or_default();
                         if let Some(id) = &id {
@@ -965,7 +1001,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                                 .find_map(|key| input.get(*key).and_then(Value::as_str))
                                 .filter(|path| !path.trim().is_empty())
                             {
-                                tool_paths.insert(id.clone(), named.to_string());
+                                self.tool_paths.insert(id.clone(), named.to_string());
                             }
                         }
                         let display = display_claude_tool_use(&name, &input);
@@ -978,11 +1014,11 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                         if name == "AskUserQuestion" {
                             item.question = Nullable(extract_questions(&input));
                             if let Some(id) = &id {
-                                pending_questions.insert(id.clone(), items.len());
+                                self.pending_questions.insert(id.clone(), items.len());
                             }
                         }
                         if let Some(id) = &id {
-                            tool_items.insert(id.clone(), items.len());
+                            self.tool_items.insert(id.clone(), items.len());
                         }
                         item.tool_use_id = id;
                         items.push(mark(item));
@@ -996,11 +1032,11 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             if entry.get("isCompactSummary") == Some(&Value::Bool(true)) {
                 let summary = content_blocks(entry.get("message")).iter().map(block_text).collect::<Vec<_>>().join("\n");
                 if !summary.trim().is_empty() {
-                    if let Some(item) = attach_compact_summary(&mut items, &summary, timestamp) {
+                    if let Some(item) = attach_compact_summary(items, &summary, timestamp) {
                         items.push(item);
                     }
                 }
-                continue;
+                return;
             }
             let blocks = content_blocks(entry.get("message"));
             // A chat turn's attachment links come from the delivery record the
@@ -1015,7 +1051,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             let delivery = if joined.is_empty() {
                 None
             } else {
-                deliveries.as_mut().and_then(|deliveries| deliveries.lookup(&joined, timestamp))
+                self.deliveries.as_mut().and_then(|deliveries| deliveries.lookup(&joined, timestamp))
             };
             let results = blocks
                 .iter()
@@ -1028,7 +1064,7 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                     Some("text") => match claude_user_item(&block_text(&block), timestamp, delivery.as_ref()) {
                         Some(UserLine::Item(item)) => items.push(*item),
                         Some(UserLine::CommandOutput(body)) => {
-                            if let Some(item) = attach_command_output(&mut items, &body, timestamp) {
+                            if let Some(item) = attach_command_output(items, &body, timestamp) {
                                 items.push(item);
                             }
                         }
@@ -1036,9 +1072,9 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                     },
                     Some("tool_result") => {
                         let tool_use_id = block.get("tool_use_id").and_then(Value::as_str).map(str::to_owned);
-                        let name = tool_use_id.as_ref().and_then(|id| tool_names.get(id)).cloned();
+                        let name = tool_use_id.as_ref().and_then(|id| self.tool_names.get(id)).cloned();
                         if let Some(id) = &tool_use_id {
-                            if let Some(index) = pending_questions.remove(id) {
+                            if let Some(index) = self.pending_questions.remove(id) {
                                 if let Some(asked) = items.get_mut(index) {
                                     asked.question = Nullable(None); // answered: back to plain display
                                 }
@@ -1048,9 +1084,9 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
                         let mut display = display_claude_tool_result(block.get("content"), is_error);
                         display.tool_name = name;
                         let mut item = make_tool_item(Role::User, ItemKind::ToolResult, display, timestamp);
-                        item.images = result_images(block.get("content"), tool_use_id.as_deref(), &tool_paths, &paths.home, cwd.as_deref());
+                        item.images = result_images(block.get("content"), tool_use_id.as_deref(), &self.tool_paths, &paths.home, self.cwd.as_deref());
                         if let Some(id) = &tool_use_id {
-                            result_items.insert(id.clone(), items.len());
+                            self.result_items.insert(id.clone(), items.len());
                         }
                         item.result_of = tool_use_id;
                         item.structured_patch = patch.clone();
@@ -1063,10 +1099,10 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
             // Almost every attachment is a reminder the CLI wrote to itself, but
             // one shape — a queued command absorbed into a running turn — is the
             // only record of something the user said. See `queued_command_line`.
-            match queued_command_line(&entry, deliveries.as_mut(), timestamp) {
+            match queued_command_line(&entry, self.deliveries.as_mut(), timestamp) {
                 Some(UserLine::Item(item)) => items.push(*item),
                 Some(UserLine::CommandOutput(body)) => {
-                    if let Some(item) = attach_command_output(&mut items, &body, timestamp) {
+                    if let Some(item) = attach_command_output(items, &body, timestamp) {
                         items.push(item);
                     }
                 }
@@ -1075,34 +1111,156 @@ pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, fil
         }
     }
 
-    // Tag Task tool_use items with the subagent they spawned, so the UI can
-    // offer the drill-down. Metas land on disk right when the agent starts.
-    //
-    // The *result* is tagged too. It is the child's verdict — the one line that
-    // says how the whole delegated job went — and untagged it is an anonymous
-    // `tool_result` that a renderer folds into the step group of whatever ran
-    // next, so the end of a subagent had no marker anywhere while its launch had
-    // one. Same id on both ends, which is also what pairs them.
-    //
-    // A subagent's own transcript gets the same treatment, against the children
-    // that name *it* as their parent. Those metas sit in the same directory as
-    // the agent's own file and their `toolUseId` points into this transcript
-    // rather than the session's, which is why looking for them in the main file
-    // finds nothing: without this, a grandchild — 116 of them in one recorded
-    // session — has no entry point anywhere in the UI.
-    for meta in agent_metas_for(file_path, sidechain).await {
-        let Some(tool_use_id) = meta.tool_use_id else { continue };
-        for index in [tool_items.get(&tool_use_id), result_items.get(&tool_use_id)].into_iter().flatten() {
-            if let Some(item) = items.get_mut(*index) {
-                item.agent = Some(meta.agent_id.clone());
+    /// What a parse adds once the lines are read, from more than the
+    /// transcript: the subagents' tags and the mentioned-file chips. Done
+    /// again whenever a parse goes on, since either can change with no line
+    /// written, and left as a parse from the start would leave them.
+    async fn finish(&mut self, paths: &droppen_instance::paths::Paths, file_path: &Path, items: &mut ItemLog) {
+        // Tag Task tool_use items with the subagent they spawned, so the UI can
+        // offer the drill-down. Metas land on disk right when the agent starts.
+        //
+        // The *result* is tagged too. It is the child's verdict — the one line that
+        // says how the whole delegated job went — and untagged it is an anonymous
+        // `tool_result` that a renderer folds into the step group of whatever ran
+        // next, so the end of a subagent had no marker anywhere while its launch had
+        // one. Same id on both ends, which is also what pairs them.
+        //
+        // A subagent's own transcript gets the same treatment, against the children
+        // that name *it* as their parent. Those metas sit in the same directory as
+        // the agent's own file and their `toolUseId` points into this transcript
+        // rather than the session's, which is why looking for them in the main file
+        // finds nothing: without this, a grandchild — 116 of them in one recorded
+        // session — has no entry point anywhere in the UI.
+        let mut tags: HashMap<usize, String> = HashMap::new();
+        for meta in agent_metas_for(file_path, self.sidechain).await {
+            let Some(tool_use_id) = meta.tool_use_id else { continue };
+            for index in [self.tool_items.get(&tool_use_id), self.result_items.get(&tool_use_id)].into_iter().flatten() {
+                tags.insert(*index, meta.agent_id.clone());
             }
         }
-    }
+        // Nothing else writes a tag, so the items tagged are exactly these:
+        // one whose meta went, or names another agent now, is put right, and
+        // only an item whose tag moves counts as changed.
+        for (index, agent) in &tags {
+            if items.get(*index).is_some_and(|item| item.agent.as_deref() != Some(agent.as_str())) {
+                if let Some(item) = items.get_mut(*index) {
+                    item.agent = Some(agent.clone());
+                }
+            }
+        }
+        for index in self.tagged.keys().filter(|index| !tags.contains_key(*index)) {
+            if items.get(*index).is_some_and(|item| item.agent.is_some()) {
+                if let Some(item) = items.get_mut(*index) {
+                    item.agent = None;
+                }
+            }
+        }
+        self.tagged = tags;
 
-    // Claude Code has no file markup of its own: every file it names is found
-    // in its prose.
-    droppen_sessions::mentions::annotate_mentioned_files(&paths.home, &mut items, cwd.as_deref(), droppen_sessions::mentions::no_citations).await;
-    Ok(items)
+        // Claude Code has no file markup of its own: every file it names is
+        // found in its prose.
+        self.mentions
+            .annotate(&paths.home, items, self.cwd.as_deref(), droppen_sessions::mentions::no_citations)
+            .await;
+    }
+}
+
+/// Where a parse of a Claude transcript stopped, and all a parse that goes on
+/// from there needs ([`resume_claude_transcript`]).
+pub struct ClaudeCheckpoint {
+    point: ReadPoint,
+    /// How many items the parse made: the items a parse goes on from have to
+    /// be those.
+    items: usize,
+    parse: ClaudeParse,
+}
+
+impl ClaudeCheckpoint {
+    /// Where the read stopped.
+    pub fn point(&self) -> &ReadPoint {
+        &self.point
+    }
+}
+
+/// A parse of a Claude transcript, from its start or on from an earlier one.
+pub struct ClaudeParsed {
+    /// The items, each shared, as a [`droppen_sessions::loader::Transcript`]
+    /// holds them.
+    pub items: Vec<Arc<TranscriptItem>>,
+    /// The lowest index whose item may differ from the parse this one went on
+    /// from: every item below it is the very same one, so the fingerprint
+    /// chain stands up to it. 0 for a parse from the start.
+    pub changed_from: usize,
+    /// What a later parse goes on from.
+    pub checkpoint: ClaudeCheckpoint,
+}
+
+/// Normalize a Claude session transcript into renderable items.
+///
+/// `sidechain` controls whether entries marked `isSidechain` are kept (they are
+/// the subagent's own transcript, browsed separately).
+///
+/// `paths` is threaded through for the mentioned-file annotation, which resolves
+/// relative paths against the session's own `cwd` and refuses anything outside
+/// the home directory.
+pub async fn parse_claude_transcript(paths: &droppen_instance::paths::Paths, file_path: &Path, sidechain: bool) -> std::io::Result<Vec<TranscriptItem>> {
+    let parsed = read_claude_transcript(paths, file_path, sidechain).await?;
+    Ok(parsed.items.into_iter().map(Arc::unwrap_or_clone).collect())
+}
+
+/// [`parse_claude_transcript`], as shared items, and with what a later parse
+/// goes on from.
+pub async fn read_claude_transcript(paths: &droppen_instance::paths::Paths, file_path: &Path, sidechain: bool) -> std::io::Result<ClaudeParsed> {
+    let lines = ResumableLines::open(file_path).await?;
+    run(paths, file_path, lines, ClaudeParse::new(file_path, sidechain), ItemLog::new()).await
+}
+
+/// The parse of `file_path` as it is now, made by going on from an earlier
+/// one, which left `checkpoint` and made `items`: only the lines appended
+/// since are read. `None` when the file is not that parse's file grown
+/// ([`ResumableLines::reopen`]), or `items` are not that parse's, and it has
+/// to be read from its start.
+///
+/// The items are the ones [`read_claude_transcript`] would make now, the
+/// subagents' tags and the mentioned-file chips included.
+pub async fn resume_claude_transcript(
+    paths: &droppen_instance::paths::Paths,
+    file_path: &Path,
+    items: Vec<Arc<TranscriptItem>>,
+    checkpoint: ClaudeCheckpoint,
+) -> std::io::Result<Option<ClaudeParsed>> {
+    if items.len() != checkpoint.items {
+        return Ok(None);
+    }
+    let Some(lines) = ResumableLines::reopen(file_path, &checkpoint.point).await? else {
+        return Ok(None);
+    };
+    run(paths, file_path, lines, checkpoint.parse, ItemLog::resume(items)).await.map(Some)
+}
+
+/// Read `lines` into `items` with `parse`, and finish.
+async fn run(
+    paths: &droppen_instance::paths::Paths,
+    file_path: &Path,
+    mut lines: ResumableLines,
+    mut parse: ClaudeParse,
+    mut items: ItemLog,
+) -> std::io::Result<ClaudeParsed> {
+    while let Some(line) = lines.next_line().await? {
+        parse.line(paths, &line, &mut items);
+    }
+    parse.finish(paths, file_path, &mut items).await;
+    let point = lines.point();
+    let (items, changed_from) = items.into_parts();
+    Ok(ClaudeParsed {
+        checkpoint: ClaudeCheckpoint {
+            point,
+            items: items.len(),
+            parse,
+        },
+        items,
+        changed_from,
+    })
 }
 
 /// Plain user-typed text, ignoring command wrappers and injected reminders.

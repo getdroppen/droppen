@@ -6,3 +6,5 @@ pub mod checklist;
 pub mod claude;
 pub mod subagents;
 pub mod transcript;
+#[cfg(test)]
+mod transcript_resume_tests;

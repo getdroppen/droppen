@@ -677,16 +677,22 @@ impl<R: tokio::io::AsyncBufRead + Unpin> LossyLines<R> {
         if self.reader.read_until(b'\n', &mut self.buffer).await? == 0 {
             return Ok(None);
         }
-        let mut end = self.buffer.len();
-        if end > 0 && self.buffer[end - 1] == b'\n' {
-            end -= 1;
-        }
-        // A file written on Windows keeps the carriage return out of the JSON.
-        if end > 0 && self.buffer[end - 1] == b'\r' {
-            end -= 1;
-        }
-        Ok(Some(String::from_utf8_lossy(&self.buffer[..end]).into_owned()))
+        Ok(Some(line_text(&self.buffer)))
     }
+}
+
+/// A line as read, its terminator included if it has one, as text: without
+/// the terminator, and decoded lossily ([`LossyLines`]).
+pub(crate) fn line_text(raw: &[u8]) -> String {
+    let mut end = raw.len();
+    if end > 0 && raw[end - 1] == b'\n' {
+        end -= 1;
+    }
+    // A file written on Windows keeps the carriage return out of the JSON.
+    if end > 0 && raw[end - 1] == b'\r' {
+        end -= 1;
+    }
+    String::from_utf8_lossy(&raw[..end]).into_owned()
 }
 
 /// A finite JSON number, or zero — Node's `typeof v === "number" && isFinite(v)`.
