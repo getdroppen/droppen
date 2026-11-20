@@ -543,6 +543,7 @@ export function SessionDetailInner({
     jumpToItem: search.jumpToItem,
     cancelJump: search.cancelJump,
     itemPaging: search.itemPaging,
+    window: data,
   });
   useReportSeen(session, { attentive: seat?.attentive ?? true, atBottom, onArrival: firstUnread.onArrival });
 

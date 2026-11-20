@@ -6,8 +6,9 @@
 //!
 //! A fake session is a file under the data directory's `fake-sessions`, one
 //! line per transcript item: each line is read back as a user's text
-//! ([`TranscriptItem::user_text`]), and the last one names the model, as a
-//! CLI's newest entry names what it runs.
+//! ([`TranscriptItem::user_text`]), or, written `agent@<timestamp> <text>`, as
+//! an agent's message stamped `<timestamp>`; and the last one names the
+//! model, as a CLI's newest entry names what it runs.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ use droppen_provider::{
     ResidentState, Run, RunHost, SendTo, Sent, SpawnGate, StartAt,
 };
 use droppen_sessions::context::ContextUsage;
-use droppen_sessions::util::TranscriptItem;
+use droppen_sessions::util::{ItemKind, Role, TranscriptItem};
 use droppen_sessions::{CliChoice, Injection, SessionStatus, SessionSummary, Source, TranscriptSources, Transcripts};
 use futures_util::future::BoxFuture;
 use serde_json::{Map, Value};
@@ -100,6 +101,14 @@ pub(crate) fn turns(from: usize, turns: usize) -> String {
     out
 }
 
+/// One line of a fake transcript as its item; see the module docs.
+fn item_of(line: &str) -> TranscriptItem {
+    match line.strip_prefix("agent@").and_then(|rest| rest.split_once(' ')) {
+        Some((at, text)) => droppen_sessions::util::make_item(Role::Assistant, ItemKind::Text, text, Some(at)),
+        None => TranscriptItem::user_text(line, None),
+    }
+}
+
 /// The notify channel's credential, for a server that has none.
 struct NoNotify;
 
@@ -166,7 +175,7 @@ impl Transcripts for FakeReader {
     fn parse<'a>(&'a self, _paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, std::io::Result<Vec<TranscriptItem>>> {
         Box::pin(async move {
             let text = tokio::fs::read_to_string(file_path).await?;
-            Ok(text.lines().map(|line| TranscriptItem::user_text(line, None)).collect())
+            Ok(text.lines().map(item_of).collect())
         })
     }
 

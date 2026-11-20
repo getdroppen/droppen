@@ -91,7 +91,10 @@ pub struct FirstUnread {
     pub index: Nullable<usize>,
     /// How many agent messages are newer than `after`, which is what the
     /// client's button says. Not capped at 99 like `unreadCount`: this walks the
-    /// whole transcript. Zero exactly when `index` is `null`.
+    /// whole of the parse it is read off — the transcript as it is now or, when
+    /// the client sent its resume marker, a parse the file was last written at
+    /// most a few seconds after, which may not hold the messages of those
+    /// seconds yet. Zero exactly when `index` is `null`.
     pub count: usize,
 }
 

@@ -18,6 +18,7 @@ import {
   targetOf,
   type FirstUnreadView,
 } from "./first-unread";
+import type { TranscriptWindow } from "./session-feed-state";
 import type { JumpOutcome } from "./session-search-view";
 import { useApi, useMachine } from "@/lib/machines/context";
 import { sessionKey } from "@/lib/machines/key";
@@ -55,6 +56,8 @@ export function useFirstUnread(input: {
   cancelJump: () => void;
   /** The search's progress for that jump. */
   itemPaging: { loaded: number; total: number } | null;
+  /** The window the feed holds, whose resume marker goes with the question. */
+  window: Pick<TranscriptWindow, "endIndex" | "prefixFp"> | null;
 }): FirstUnreadJump {
   const api = useApi();
   const machine = useMachine();
@@ -62,6 +65,11 @@ export function useFirstUnread(input: {
   const [state, dispatch] = useReducer(firstUnreadReducer, FIRST_UNREAD_IDLE);
   const seq = useRef(0);
   const request = useRef<AbortController | null>(null);
+  // Read when an arrival asks: the window moving is no reason to re-create `onArrival`.
+  const windowRef = useRef(input.window);
+  useLayoutEffect(() => {
+    windowRef.current = input.window;
+  });
 
   // Another session in the same view: nothing up is about it, and an answer
   // still on its way is about the last one.
@@ -92,7 +100,7 @@ export function useFirstUnread(input: {
       };
       api
         .GET("/api/sessions/{source}/{id}/first-unread", {
-          params: { path: { source, id }, query: firstUnreadQuery(previousReadAt) },
+          params: { path: { source, id }, query: firstUnreadQuery(previousReadAt, windowRef.current) },
           signal: controller.signal,
         })
         .then((res) => settle(res.data), () => settle());

@@ -2455,7 +2455,7 @@
         "description": "Where the messages a visit has not read yet begin.",
         "properties": {
           "count": {
-            "description": "How many agent messages are newer than `after`, which is what the\nclient's button says. Not capped at 99 like `unreadCount`: this walks the\nwhole transcript. Zero exactly when `index` is `null`.",
+            "description": "How many agent messages are newer than `after`, which is what the\nclient's button says. Not capped at 99 like `unreadCount`: this walks the\nwhole of the parse it is read off — the transcript as it is now or, when\nthe client sent its resume marker, a parse the file was last written at\nmost a few seconds after, which may not hold the messages of those\nseconds yet. Zero exactly when `index` is `null`.",
             "type": "integer"
           },
           "index": {
@@ -5357,7 +5357,7 @@
             "type": "array"
           },
           "sig": {
-            "description": "The transcript signature the page was read at.",
+            "description": "The transcript signature the page was read at: with `fp` in the\nquery, possibly an older one than the file has now, since a page that\nfingerprint proves is the same in every parse holding it.",
             "type": "string"
           },
           "startFp": {
@@ -5369,7 +5369,7 @@
             "type": "integer"
           },
           "totalItems": {
-            "description": "Total item count of the transcript.",
+            "description": "Total item count of the transcript at `sig`.",
             "type": "integer"
           }
         },
@@ -12373,7 +12373,7 @@
     "/api/sessions/{source}/{id}/first-unread": {
       "get": {
         "deprecated": false,
-        "description": "Where the messages a visit has not read yet begin.\n\nThe client asks once per arrival at a session, with the read marker its\narrival's seen report replaced (`previousReadAt` on that report's answer) —\nso the answer is about what was unread *before* the reader got there, and\nno later report can move it. Read-only and ungated like search, and answered\nover the same cached parse, so the index is one the history route can page\nto. See `sessions::attention::first_unread`.",
+        "description": "Where the messages a visit has not read yet begin.\n\nThe client asks once per arrival at a session, with the read marker its\narrival's seen report replaced (`previousReadAt` on that report's answer) —\nso the answer is about what was unread *before* the reader got there, and\nno later report can move it. Read-only and ungated like search, and answered\nover the same cached parse, so the index is one the history route can page\nto. With the client's resume marker (`since`, `fp`) that may be an older\nparse than the file now has, when it provably gives the same index.\nSee `sessions::attention::first_unread`.",
         "operationId": "session_first_unread",
         "parameters": [
           {
@@ -12408,6 +12408,40 @@
                 }
               ],
               "description": "The read marker to count from: the `previousReadAt` the reader's\narrival report answered with. Omitted for a session never read, which\ncounts from the start."
+            }
+          },
+          {
+            "description": "The `endIndex` of the client's window, when `fp` is its resume marker.",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `endIndex` of the client's window, when `fp` is its resume marker."
+            }
+          },
+          {
+            "description": "The resume marker the session feed last sent the client (`prefixFp`):\nits fingerprint of items `[0, since - 3)`. With `since`, it lets the\nanswer come from the newest parse the server already holds instead of a\nfresh read of the transcript, when that parse holds the client's whole\nwindow, the first unread message lies inside the part the marker\nproves, and the file was last written no more than 10 seconds (and 8\nMiB) after that parse. `count` then counts through the end of that\nparse, which is at least the client's window; messages written in\nthose few seconds reach the client through the feed. Without them, or\nwhen the parse cannot be proven, the transcript is read as it is now.",
+            "in": "query",
+            "name": "fp",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The resume marker the session feed last sent the client (`prefixFp`):\nits fingerprint of items `[0, since - 3)`. With `since`, it lets the\nanswer come from the newest parse the server already holds instead of a\nfresh read of the transcript, when that parse holds the client's whole\nwindow, the first unread message lies inside the part the marker\nproves, and the file was last written no more than 10 seconds (and 8\nMiB) after that parse. `count` then counts through the end of that\nparse, which is at least the client's window; messages written in\nthose few seconds reach the client through the feed. Without them, or\nwhen the parse cannot be proven, the transcript is read as it is now."
             }
           }
         ],
