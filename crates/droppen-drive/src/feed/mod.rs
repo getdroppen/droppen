@@ -1018,7 +1018,7 @@ struct WatchTarget {
 }
 
 /// The one task per session that watches the file and pushes frames.
-async fn watch_session(target: WatchTarget, mut last_sig: String, tx: broadcast::Sender<Broadcast>, cancel: CancellationToken) {
+async fn watch_session(target: WatchTarget, last_sig: String, tx: broadcast::Sender<Broadcast>, cancel: CancellationToken) {
     let WatchTarget {
         drive,
         registry,
@@ -1037,6 +1037,10 @@ async fn watch_session(target: WatchTarget, mut last_sig: String, tx: broadcast:
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     poll.tick().await; // the first tick is immediate
     let mut last_state_json = String::new();
+    let mut seen = Seen {
+        sig: last_sig,
+        failed: None,
+    };
     // The session's draft, for a claude session. A change arms a send at most
     // [`DRAFT_THROTTLE`] after the last one, and the send reads whatever the
     // draft is by then: the `watch` keeps only the latest value, so a burst of
@@ -1085,7 +1089,7 @@ async fn watch_session(target: WatchTarget, mut last_sig: String, tx: broadcast:
             }
         }
 
-        match refresh_items(&drive.paths, &drive.transcripts, source, &file_path, &tx, &latest, &mut last_sig).await {
+        match refresh_items(&drive.paths, &drive.transcripts, source, &file_path, &tx, &latest, &mut seen).await {
             None => break,
             Some(true) => {
                 // What landed may be a steered message claude folded into its
@@ -1155,6 +1159,36 @@ fn push_draft(draft: &Draft, tx: &broadcast::Sender<Broadcast>, latest_draft: &L
     let _ = tx.send(Broadcast::Draft(frame));
 }
 
+/// The longest the watcher waits before reading again a version of the
+/// transcript it could not read ([`FailedRead`]).
+const FAILED_READ_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What the watcher has made of the transcript.
+#[derive(Debug, Default)]
+struct Seen {
+    /// The signature of the version it last sent.
+    sig: String,
+    /// A newer version it could not read, while it waits to read it again.
+    failed: Option<FailedRead>,
+}
+
+/// A version of the transcript the watcher could not read, and when it reads
+/// it again.
+///
+/// The first retry waits a poll ([`STATE_INTERVAL`]), and each one after that
+/// waits twice as long, up to [`FAILED_READ_MAX_DELAY`]. A transcript that
+/// stays unreadable is not worth a parse every poll: a 500 MiB one damaged at
+/// its end costs over a second of CPU per try, and the watcher sends no state
+/// or draft frame meanwhile. The retry is on a clock, not on a file event: a
+/// disk error that cleared or a permission put back changes neither the
+/// length nor the mtime. A new version is read at once.
+#[derive(Debug)]
+struct FailedRead {
+    sig: String,
+    delay: std::time::Duration,
+    retry_at: tokio::time::Instant,
+}
+
 /// Read the transcript again if it changed: `Some(true)` when it did and
 /// everyone has been told, `Some(false)` when it had not or could not be read,
 /// and `None` once it is gone and the feed should close.
@@ -1165,19 +1199,29 @@ async fn refresh_items(
     file_path: &Path,
     tx: &broadcast::Sender<Broadcast>,
     latest: &Latest,
-    last_sig: &mut String,
+    seen: &mut Seen,
 ) -> Option<bool> {
     let sig = file_signature(file_path).await?;
-    if sig == *last_sig {
+    if sig == seen.sig {
+        return Some(false);
+    }
+    let waiting = |failed: &FailedRead| failed.sig == sig && tokio::time::Instant::now() < failed.retry_at;
+    if seen.failed.as_ref().is_some_and(waiting) {
         return Some(false);
     }
     let (transcript, current) = transcripts.load_checked(paths, source, file_path, &sig).await;
     if !current {
         // The read failed, and what came back is the last good parse (or no
         // items), not the version at `sig`. Nothing is sent and `sig` is not
-        // taken as seen, so the next poll reads the file again — one read per
-        // poll for as long as it fails — rather than leave every client on the
-        // old items until the file next changes.
+        // taken as seen, so it is read again once the wait is over, rather
+        // than leave every client on the old items until the file next
+        // changes.
+        let delay = match seen.failed.take() {
+            Some(failed) if failed.sig == sig => (failed.delay * 2).min(FAILED_READ_MAX_DELAY),
+            _ => STATE_INTERVAL,
+        };
+        let retry_at = tokio::time::Instant::now() + delay;
+        seen.failed = Some(FailedRead { sig, delay, retry_at });
         return Some(false);
     }
     // Fingerprinted here, once, rather than by whichever client gets to it
@@ -1186,7 +1230,8 @@ async fn refresh_items(
     // that shrank or was rewritten shows up there as an early first
     // difference, and a different file as no common prefix at all.
     transcript.chain();
-    *last_sig = sig.clone();
+    seen.sig = sig.clone();
+    seen.failed = None;
     *latest.lock().expect("feed latest poisoned") = (sig.clone(), transcript.clone());
     let _ = tx.send(Broadcast::Transcript { sig, transcript });
     Some(true)
@@ -1683,46 +1728,128 @@ mod tests {
         std::fs::set_permissions(file, std::fs::Permissions::from_mode(mode)).expect("chmod");
     }
 
+    /// A session's watcher driven by hand: [`refresh_items`] over a fake
+    /// session's transcript, and what it sent.
+    struct PolledFeed {
+        drive: Arc<Drive>,
+        file: PathBuf,
+        tx: broadcast::Sender<Broadcast>,
+        rx: broadcast::Receiver<Broadcast>,
+        latest: Latest,
+        seen: Seen,
+    }
+
+    impl PolledFeed {
+        /// Fake session `id` under `dir`, written with `lines`, its first
+        /// version read and sent.
+        async fn new(dir: &Path, id: &str, lines: &str) -> Self {
+            let (paths, drive) = crate::fake::drive(dir);
+            let file = crate::fake::session(&paths, id, lines);
+            let (tx, rx) = broadcast::channel(8);
+            let mut feed = Self {
+                drive,
+                file,
+                tx,
+                rx,
+                latest: Arc::new(Mutex::new((String::new(), Arc::new(transcript_at("/t/none.jsonl", vec![]))))),
+                seen: Seen::default(),
+            };
+            assert_eq!(feed.refresh().await, Some(true));
+            feed.sent().expect("the first version is sent");
+            feed
+        }
+
+        /// A poll, or a file event.
+        async fn refresh(&mut self) -> Option<bool> {
+            refresh_items(&self.drive.paths, &self.drive.transcripts, crate::fake::SOURCE, &self.file, &self.tx, &self.latest, &mut self.seen).await
+        }
+
+        /// The version sent since the last look, if one was, with its items' texts.
+        fn sent(&mut self) -> Option<(String, Vec<String>)> {
+            match self.rx.try_recv() {
+                Ok(Broadcast::Transcript { sig, transcript }) => Some((sig, transcript.items.iter().map(|item| item.text.clone()).collect())),
+                _ => None,
+            }
+        }
+
+        /// The version it could not read, how long it waits to read it again,
+        /// and until when.
+        fn failed(&self) -> (&str, std::time::Duration, tokio::time::Instant) {
+            let failed = self.seen.failed.as_ref().expect("a version it could not read");
+            (failed.sig.as_str(), failed.delay, failed.retry_at)
+        }
+    }
+
     /// A read that fails answers the last good parse, which is not the
     /// version on disk: the watcher sends nothing and does not take that
-    /// version as seen. Each poll reads it again, once, and is answered as an
-    /// unchanged file is for as long as the read fails; the first poll that
-    /// reads it sends the new items, though the file has not changed since.
+    /// version as seen. It reads it again a poll later, then twice as long
+    /// after each failure, up to [`FAILED_READ_MAX_DELAY`], and not at all in
+    /// between. A permission put back changes neither the length nor the
+    /// mtime, so it is the clock that brings the read back: the first one
+    /// after the wait sends the new items, though the file has not changed.
     #[cfg(unix)]
-    #[tokio::test]
-    async fn a_failed_read_is_read_again_at_the_next_poll() {
+    #[tokio::test(start_paused = true)]
+    async fn a_read_that_keeps_failing_is_tried_again_less_and_less_often() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (paths, drive) = crate::fake::drive(dir.path());
-        let file = crate::fake::session(&paths, "77777777-7777-4777-8777-777777777777", "the first turn\n");
-        let (tx, mut rx) = broadcast::channel(8);
-        let latest: Latest = Arc::new(Mutex::new((String::new(), Arc::new(transcript_at("/t/none.jsonl", vec![])))));
-        let mut last_sig = String::new();
-        let older = file_signature(&file).await.expect("sig");
-        let refreshed = refresh_items(&drive.paths, &drive.transcripts, crate::fake::SOURCE, &file, &tx, &latest, &mut last_sig).await;
-        assert_eq!((refreshed, last_sig.as_str()), (Some(true), older.as_str()));
-        rx.try_recv().expect("the first version is sent");
+        let mut feed = PolledFeed::new(dir.path(), "77777777-7777-4777-8777-777777777777", "the first turn\n").await;
+        let older = feed.seen.sig.clone();
+        append(&feed.file, "the second turn\n");
+        let newer = file_signature(&feed.file).await.expect("sig");
+        readable(&feed.file, false);
+        assert_eq!(feed.refresh().await, Some(false), "answered as an unchanged file is");
 
-        append(&file, "the second turn\n");
-        let newer = file_signature(&file).await.expect("sig");
-        readable(&file, false);
-        for poll in 1..=3 {
-            let refreshed = refresh_items(&drive.paths, &drive.transcripts, crate::fake::SOURCE, &file, &tx, &latest, &mut last_sig).await;
-            assert_eq!(refreshed, Some(false), "poll {poll}: answered as an unchanged file is");
-            assert_eq!(last_sig, older, "poll {poll}: the version on disk is not taken as seen");
-            assert!(rx.try_recv().is_err(), "poll {poll}: and nothing is sent");
+        let mut waits = Vec::new();
+        for _ in 0..6 {
+            let (sig, delay, retry_at) = feed.failed();
+            assert_eq!(sig, newer);
+            waits.push(delay.as_secs());
+            tokio::time::advance(delay - std::time::Duration::from_millis(1)).await;
+            assert_eq!(feed.refresh().await, Some(false));
+            assert_eq!(feed.failed().2, retry_at, "not read again inside the wait");
+            tokio::time::advance(std::time::Duration::from_millis(1)).await;
+            assert_eq!(feed.refresh().await, Some(false));
+            assert!(feed.failed().2 > retry_at, "read again once it is over, and failed again");
+            assert_eq!(feed.seen.sig, older, "the version on disk is never taken as seen");
+            assert_eq!(feed.sent(), None, "and nothing is sent");
         }
-        assert_eq!(latest.lock().expect("latest").0, older, "a lapped client is caught up to what was sent");
+        assert_eq!(waits, [2, 4, 8, 16, 30, 30]);
 
-        readable(&file, true);
-        assert_eq!(file_signature(&file).await.as_ref(), Some(&newer), "the file has not changed since");
-        let refreshed = refresh_items(&drive.paths, &drive.transcripts, crate::fake::SOURCE, &file, &tx, &latest, &mut last_sig).await;
-        assert_eq!((refreshed, last_sig.as_str()), (Some(true), newer.as_str()));
-        let Ok(Broadcast::Transcript { sig, transcript }) = rx.try_recv() else {
-            panic!("the new version is sent");
-        };
-        assert_eq!(sig, newer);
-        let texts: Vec<&str> = transcript.items.iter().map(|item| item.text.as_str()).collect();
-        assert_eq!(texts, ["the first turn", "the second turn"]);
+        readable(&feed.file, true);
+        assert_eq!(file_signature(&feed.file).await.as_ref(), Some(&newer), "the file has not changed since");
+        assert_eq!(feed.refresh().await, Some(false), "not read before the wait is over");
+        tokio::time::advance(FAILED_READ_MAX_DELAY).await;
+        assert_eq!(feed.refresh().await, Some(true));
+        assert_eq!(feed.sent(), Some((newer.clone(), vec!["the first turn".into(), "the second turn".into()])));
+        assert!(feed.seen.sig == newer && feed.seen.failed.is_none());
+    }
+
+    /// A new version is read at once, however long the watcher was waiting
+    /// to read an older one, and a failed read of it waits a poll again.
+    #[cfg(unix)]
+    #[tokio::test(start_paused = true)]
+    async fn a_new_version_is_read_at_once_while_an_older_one_waits() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut feed = PolledFeed::new(dir.path(), "99999999-9999-4999-8999-999999999999", "the first turn\n").await;
+        append(&feed.file, "the second turn\n");
+        readable(&feed.file, false);
+        feed.refresh().await;
+        tokio::time::advance(STATE_INTERVAL).await;
+        feed.refresh().await;
+        assert_eq!(feed.failed().1, 2 * STATE_INTERVAL, "waiting longer for the second version");
+
+        readable(&feed.file, true);
+        append(&feed.file, "the third turn\n");
+        readable(&feed.file, false);
+        let newest = file_signature(&feed.file).await.expect("sig");
+        let now = tokio::time::Instant::now();
+        assert_eq!(feed.refresh().await, Some(false));
+        assert_eq!(feed.failed(), (newest.as_str(), STATE_INTERVAL, now + STATE_INTERVAL), "read at once, and waits a poll");
+
+        readable(&feed.file, true);
+        tokio::time::advance(STATE_INTERVAL).await;
+        assert_eq!(feed.refresh().await, Some(true));
+        let (sig, texts) = feed.sent().expect("the newest version is sent");
+        assert_eq!((sig, texts.len()), (newest, 3));
     }
 
     /// The same when the read that fails is the one a client attaches with:
