@@ -440,8 +440,10 @@ struct StateAndTranscript {
     /// The signature `transcript` is the parse at; empty when the read failed
     /// and it is the last good parse, or no items
     /// ([`TranscriptSources::load_checked`]). Empty names no version of the
-    /// file, so neither the watcher nor a client takes it for the one on
-    /// disk, and the watcher's next read of that one is sent.
+    /// file: a watcher started from it reads the one on disk at its next poll,
+    /// a client joining a watcher that has read one opens with that instead
+    /// ([`attach_session_feed_with`]), and a client polling the REST detail is
+    /// not told that the one on disk is the one it holds.
     sig: String,
     transcript: Arc<Transcript>,
 }
@@ -731,11 +733,6 @@ pub async fn attach_session_feed_with(
         transcript,
     } = StateAndTranscript::read(drive, source, id).await?;
 
-    // A resumed client is sent what it is missing and nothing else; its state
-    // arrives in the replay below, as it would on any `state` frame.
-    let opening = resume
-        .and_then(|resume| resume_frame(&sig, &transcript, resume))
-        .unwrap_or_else(|| snapshot_frame(&sig, &state, &transcript, page_size));
     // The registry is this process' own memory, so the key carries the server:
     // see `droppen_sessions::SessionRef::scoped_key`. Nothing here is written
     // down or sent anywhere — the frames a socket receives never contain it.
@@ -798,15 +795,24 @@ pub async fn attach_session_feed_with(
     };
     // At the version the watcher holds, the client holds the watcher's parse:
     // its own may be a second copy, read after the first left the cache, and
-    // kept alive for as long as the session stays idle.
-    let sent = {
+    // kept alive for as long as the session stays idle. A read that failed
+    // (`sig` is empty) is no version at all: opened with it, the client would
+    // wait for the watcher to send the version on disk, which a watcher that
+    // has read it already never sends again. It opens with what the watcher
+    // holds instead, which for a feed this attach started is that same read.
+    let (sig, transcript) = {
         let latest = latest.lock().expect("feed latest poisoned");
-        if latest.0 == sig {
-            latest.1.clone()
+        if sig.is_empty() || latest.0 == sig {
+            latest.clone()
         } else {
-            transcript
+            (sig, transcript)
         }
     };
+    // A resumed client is sent what it is missing and nothing else; its state
+    // arrives in the replay below, as it would on any `state` frame.
+    let opening = resume
+        .and_then(|resume| resume_frame(&sig, &transcript, resume))
+        .unwrap_or_else(|| snapshot_frame(&sig, &state, &transcript, page_size));
 
     // The handle exists from here on, before anything else is awaited: the
     // client is counted on the feed now, and a caller that gives up on this
@@ -818,7 +824,7 @@ pub async fn attach_session_feed_with(
         rx,
         latest,
         sent_sig: sig,
-        sent,
+        sent: transcript,
         latest_draft,
         owed: None,
     };
@@ -1848,6 +1854,7 @@ mod tests {
 
     /// A session's watcher driven by hand: [`refresh_items`] over a fake
     /// session's transcript, and what it sent.
+    #[cfg(unix)]
     struct PolledFeed {
         drive: Arc<Drive>,
         file: PathBuf,
@@ -1857,6 +1864,7 @@ mod tests {
         seen: Seen,
     }
 
+    #[cfg(unix)]
     impl PolledFeed {
         /// Fake session `id` under `dir`, written with `lines`, its first
         /// version read and sent.
@@ -2003,20 +2011,68 @@ mod tests {
         );
 
         readable(&file, true);
-        let frame = loop {
-            let frame = tokio::time::timeout(5 * STATE_INTERVAL, attached.attachment.next_frame())
-                .await
-                .expect("caught up at the watcher's next read")
-                .expect("a frame");
-            let frame: Value = serde_json::from_str(&frame).expect("json");
-            if frame["type"] != "state" {
-                break frame;
-            }
-        };
+        let frame = next_transcript_frame(&mut attached.attachment).await;
         assert_eq!(frame["type"], "delta", "{frame}");
         assert_eq!((frame["sig"].as_str(), frame["fromIndex"].as_u64()), (Some(newer.as_str()), Some(1)));
         assert_eq!(frame["items"][0]["text"], "the second turn");
         assert_eq!(frame["totalItems"], 2);
+    }
+
+    /// The next frame `attachment` is sent that is not a state frame, within
+    /// a few polls.
+    #[cfg(unix)]
+    async fn next_transcript_frame(attachment: &mut FeedAttachment) -> Value {
+        loop {
+            let frame = tokio::time::timeout(5 * STATE_INTERVAL, attachment.next_frame())
+                .await
+                .expect("a frame within a few polls")
+                .expect("a frame");
+            let frame: Value = serde_json::from_str(&frame).expect("json");
+            if frame["type"] != "state" {
+                return frame;
+            }
+        }
+    }
+
+    /// A client joining a feed whose own read fails opens with the version
+    /// the watcher holds, not with what the read answered: the watcher has
+    /// read that version already and would not send it again, though the
+    /// file reads once more. Here the parse has left the cache, so the
+    /// failed read answers no items at all.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_client_joining_a_feed_on_a_failed_read_opens_with_the_watchers_version() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let (paths, drive) = crate::fake::drive(dir.path());
+        let file = crate::fake::session(&paths, id, "the first turn\n");
+        let sig = file_signature(&file).await.expect("sig");
+        let registry = FeedRegistry::new();
+        let attach = || attach_session_feed_with(&registry, &drive, crate::fake::SOURCE, id, None, SESSION_PAGE_SIZE);
+
+        let mut first = attach().await.expect("attached");
+        droppen_sessions::loader::forget_transcript(&file);
+        readable(&file, false);
+        let mut second = attach().await.expect("attached");
+        readable(&file, true);
+        let snapshot: Value = serde_json::from_str(&second.opening[0]).expect("json");
+        assert_eq!(
+            (snapshot["sig"].as_str(), snapshot["totalItems"].as_u64()),
+            (Some(sig.as_str()), Some(1)),
+            "{snapshot}"
+        );
+        assert_eq!(snapshot["items"][0]["text"], "the first turn");
+
+        // And it follows the feed from there, as the first client does.
+        append(&file, "the second turn\n");
+        for attached in [&mut first, &mut second] {
+            let frame = next_transcript_frame(&mut attached.attachment).await;
+            assert_eq!(
+                (frame["type"].as_str(), frame["fromIndex"].as_u64(), frame["totalItems"].as_u64()),
+                (Some("delta"), Some(1), Some(2)),
+                "{frame}"
+            );
+        }
     }
 
     /// A client attaching at the version the watcher holds shares the
