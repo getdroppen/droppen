@@ -87,8 +87,12 @@ pub struct Transcript {
 }
 
 impl Transcript {
-    /// A parse of `file_path`, of items already shared.
-    pub fn new(file_path: &Path, items: Arc<Vec<Arc<TranscriptItem>>>) -> Self {
+    /// A parse of `file_path`, of items already shared, in a vector with no
+    /// room to spare.
+    ///
+    /// Private, so that holds: a vector made with `collect` from a reader's
+    /// own can keep that reader's buffer ([`Transcript::parsed`]).
+    fn new(file_path: &Path, items: Arc<Vec<Arc<TranscriptItem>>>) -> Self {
         Self {
             items,
             file_path: file_path.to_path_buf(),
