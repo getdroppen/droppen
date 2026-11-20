@@ -3934,7 +3934,10 @@ export interface components {
             /**
              * @description How many agent messages are newer than `after`, which is what the
              *     client's button says. Not capped at 99 like `unreadCount`: this walks the
-             *     whole transcript. Zero exactly when `index` is `null`.
+             *     whole of the parse it is read off — the transcript as it is now or, when
+             *     the client sent its resume marker, a parse the file was last written at
+             *     most a few seconds after, which may not hold the messages of those
+             *     seconds yet. Zero exactly when `index` is `null`.
              */
             count: number;
             /**
@@ -10342,11 +10345,12 @@ export interface operations {
                  *     its fingerprint of items `[0, since - 3)`. With `since`, it lets the
                  *     answer come from the newest parse the server already holds instead of a
                  *     fresh read of the transcript, when that parse holds the client's whole
-                 *     window and the first unread message lies inside the part the marker
-                 *     proves. `count` then counts through the end of that parse, which is at
-                 *     least the client's window; messages written after it reach the client
-                 *     through the feed. Without them, or when the parse cannot be proven, the
-                 *     transcript is read as it is now.
+                 *     window, the first unread message lies inside the part the marker
+                 *     proves, and the file was last written no more than 10 seconds (and 8
+                 *     MiB) after that parse. `count` then counts through the end of that
+                 *     parse, which is at least the client's window; messages written in
+                 *     those few seconds reach the client through the feed. Without them, or
+                 *     when the parse cannot be proven, the transcript is read as it is now.
                  */
                 fp?: string | null;
             };

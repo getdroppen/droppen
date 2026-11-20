@@ -353,9 +353,10 @@ impl TranscriptSources {
         }
     }
 
-    /// The newest parse of `file_path` the cache holds — of those remembered,
-    /// the one that started last ([`PARSES_STARTED`]) — whatever signature it
-    /// was taken at, and that signature; `None` with none. Never a read.
+    /// The parse of `file_path` the cache holds — it keeps one per path, and
+    /// never one that started before the one it replaces ([`PARSES_STARTED`])
+    /// — whatever signature it was taken at, and that signature; `None` with
+    /// none. Never a read.
     ///
     /// For a reader that proves for itself how much of an older parse still
     /// stands — the history route does, against its client's fingerprint — so

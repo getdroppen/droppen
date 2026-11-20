@@ -2455,7 +2455,7 @@
         "description": "Where the messages a visit has not read yet begin.",
         "properties": {
           "count": {
-            "description": "How many agent messages are newer than `after`, which is what the\nclient's button says. Not capped at 99 like `unreadCount`: this walks the\nwhole transcript. Zero exactly when `index` is `null`.",
+            "description": "How many agent messages are newer than `after`, which is what the\nclient's button says. Not capped at 99 like `unreadCount`: this walks the\nwhole of the parse it is read off — the transcript as it is now or, when\nthe client sent its resume marker, a parse the file was last written at\nmost a few seconds after, which may not hold the messages of those\nseconds yet. Zero exactly when `index` is `null`.",
             "type": "integer"
           },
           "index": {
@@ -12428,7 +12428,7 @@
             }
           },
           {
-            "description": "The resume marker the session feed last sent the client (`prefixFp`):\nits fingerprint of items `[0, since - 3)`. With `since`, it lets the\nanswer come from the newest parse the server already holds instead of a\nfresh read of the transcript, when that parse holds the client's whole\nwindow and the first unread message lies inside the part the marker\nproves. `count` then counts through the end of that parse, which is at\nleast the client's window; messages written after it reach the client\nthrough the feed. Without them, or when the parse cannot be proven, the\ntranscript is read as it is now.",
+            "description": "The resume marker the session feed last sent the client (`prefixFp`):\nits fingerprint of items `[0, since - 3)`. With `since`, it lets the\nanswer come from the newest parse the server already holds instead of a\nfresh read of the transcript, when that parse holds the client's whole\nwindow, the first unread message lies inside the part the marker\nproves, and the file was last written no more than 10 seconds (and 8\nMiB) after that parse. `count` then counts through the end of that\nparse, which is at least the client's window; messages written in\nthose few seconds reach the client through the feed. Without them, or\nwhen the parse cannot be proven, the transcript is read as it is now.",
             "in": "query",
             "name": "fp",
             "required": false,
@@ -12441,7 +12441,7 @@
                   "type": "null"
                 }
               ],
-              "description": "The resume marker the session feed last sent the client (`prefixFp`):\nits fingerprint of items `[0, since - 3)`. With `since`, it lets the\nanswer come from the newest parse the server already holds instead of a\nfresh read of the transcript, when that parse holds the client's whole\nwindow and the first unread message lies inside the part the marker\nproves. `count` then counts through the end of that parse, which is at\nleast the client's window; messages written after it reach the client\nthrough the feed. Without them, or when the parse cannot be proven, the\ntranscript is read as it is now."
+              "description": "The resume marker the session feed last sent the client (`prefixFp`):\nits fingerprint of items `[0, since - 3)`. With `since`, it lets the\nanswer come from the newest parse the server already holds instead of a\nfresh read of the transcript, when that parse holds the client's whole\nwindow, the first unread message lies inside the part the marker\nproves, and the file was last written no more than 10 seconds (and 8\nMiB) after that parse. `count` then counts through the end of that\nparse, which is at least the client's window; messages written in\nthose few seconds reach the client through the feed. Without them, or\nwhen the parse cannot be proven, the transcript is read as it is now."
             }
           }
         ],

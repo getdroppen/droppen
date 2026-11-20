@@ -285,19 +285,26 @@ pub fn history_anchor_holds(transcript: &Transcript, before: usize, fp: &str, si
 /// the parse's fingerprint of those items. An answer that depends on nothing
 /// past that prefix is then the one any parse holding the fingerprint gives,
 /// a fresh one included; a fresh one that no longer holds it is a client whose
-/// window the live feed is already replacing. `None` — and the caller loads at
-/// `sig` as it always did — when nothing is cached, when `holds` refuses, or
-/// when the signature shows the file was rewritten rather than appended to
-/// ([`droppen_sessions::may_have_grown`]), which the fingerprint of a parse
-/// taken before the rewrite could not.
+/// window the live feed is already replacing. `holds` is handed the parse's
+/// signature too, for a caller that also bounds how far behind `sig` it may be.
+///
+/// `None` — and the caller loads at `sig` as it always did — when nothing is
+/// cached, when `holds` refuses, or when the signatures show the file was
+/// rewritten rather than appended to ([`droppen_sessions::may_have_grown`]),
+/// which the fingerprint of a parse taken before the rewrite could not. A
+/// parse taken *after* the caller read `sig` — the file grew in between — is
+/// as good as one taken before: refusing it would parse the file again at a
+/// signature already gone, and that parse, started later, would push the newer
+/// one out of the cache.
 pub fn newest_parse_holding(
     transcripts: &TranscriptSources,
     file_path: &Path,
     sig: &str,
-    holds: impl FnOnce(&Transcript) -> bool,
+    holds: impl FnOnce(&str, &Transcript) -> bool,
 ) -> Option<(String, Arc<Transcript>)> {
     let (cached_sig, transcript) = transcripts.newest_cached(file_path)?;
-    (droppen_sessions::may_have_grown(&cached_sig, sig) && holds(&transcript)).then_some((cached_sig, transcript))
+    let appended = droppen_sessions::may_have_grown(&cached_sig, sig) || droppen_sessions::may_have_grown(sig, &cached_sig);
+    (appended && holds(&cached_sig, &transcript)).then_some((cached_sig, transcript))
 }
 
 /// The state half of a session, without any transcript.

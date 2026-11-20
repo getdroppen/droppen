@@ -1128,23 +1128,40 @@ pub async fn file_signature(path: &Path) -> Option<String> {
     Some(format!("{}:{}", compressed::content_len(&found, &metadata).await, mtime_ms(&metadata)))
 }
 
-/// Whether a transcript whose [`file_signature`] is `now` can be the one read
-/// at `then` with lines appended since: its text no shorter, its mtime no
-/// earlier.
+/// How far a transcript moved on between two of its [`file_signature`]s; see
+/// [`growth`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Growth {
+    /// How much longer its text is.
+    pub bytes: u64,
+    /// How much later it was last written, in milliseconds.
+    pub millis: f64,
+}
+
+/// How far a transcript whose [`file_signature`] is `now` moved on from the
+/// one read at `then`, when it can be that one with lines appended since: its
+/// text no shorter, its mtime no earlier. `None` when it cannot, or when either
+/// signature does not read as one.
 ///
 /// A cheap refusal, not a proof. A file truncated, or replaced by a shorter or
-/// an older copy, fails it; one rewritten into something longer passes, and only
-/// a fingerprint can tell that one apart. A signature that does not read as one
-/// fails it too.
-pub fn may_have_grown(then: &str, now: &str) -> bool {
+/// an older copy, fails it; one rewritten into something longer passes, and
+/// only a fingerprint can tell that one apart.
+pub fn growth(then: &str, now: &str) -> Option<Growth> {
     fn read(sig: &str) -> Option<(u64, f64)> {
         let (len, mtime) = sig.split_once(':')?;
         Some((len.parse().ok()?, mtime.parse().ok()?))
     }
-    match (read(then), read(now)) {
-        (Some((then_len, then_at)), Some((now_len, now_at))) => now_len >= then_len && now_at >= then_at,
-        _ => false,
-    }
+    let ((then_len, then_at), (now_len, now_at)) = (read(then)?, read(now)?);
+    (now_len >= then_len && now_at >= then_at).then(|| Growth {
+        bytes: now_len - then_len,
+        millis: now_at - then_at,
+    })
+}
+
+/// Whether a transcript at signature `now` can be the one read at `then` with
+/// lines appended since; [`growth`] without the distance.
+pub fn may_have_grown(then: &str, now: &str) -> bool {
+    growth(then, now).is_some()
 }
 
 #[cfg(test)]
@@ -1172,6 +1189,9 @@ mod tests {
 
         assert!(!may_have_grown("10:2000.5", "12:1000.25"), "an older copy");
         assert!(may_have_grown("10:1000.25", "12:2000.5"));
+        assert_eq!(growth("10:1000.25", "12:2000.5"), Some(Growth { bytes: 2, millis: 1000.25 }));
+        assert_eq!(growth("10:1000", "10:1000"), Some(Growth { bytes: 0, millis: 0.0 }));
+        assert_eq!(growth("12:2000", "10:1000"), None);
         assert!(!may_have_grown("", "12:2000.5"), "no signature to compare");
         assert!(!may_have_grown("10:1000", "garbage"));
     }
