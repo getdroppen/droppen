@@ -5663,6 +5663,10 @@
             "$ref": "#/components/schemas/SessionActivity",
             "description": "Whether anything is in flight, and if not, what is holding it up.\n\nThe field a list row should render \"busy\" from. Unlike `status` it can\ntell a queued message from an idle session, and background work from\nnothing at all."
           },
+          "agentName": {
+            "description": "The name other agent sessions message this one by (Claude Code's\n`ListAgents` and `SendMessage`), while its CLI is running; absent\notherwise, and always for codex and acp.\n\nRead off the live CLI's registration (`<root>/sessions/<pid>.json`) by\nthe overlay that reads its live status, on every listing, and never\ncached with the row: the CLI picks the name when it starts, so a\nresident this server restarts can come back under another. The `[ref]`\n`ListAgents` adds to tell two agents of one name apart is not in the\nregistration, and not here.",
+            "type": "string"
+          },
           "asking": {
             "description": "Whether the agent has stopped to ask the user something, and cannot go\non without an answer.\n\nMuch narrower than `status: waiting`, which only says a live process\nfinished its turn — and this server keeps a finished session's process\nalive, so that is true of nearly every session it drives. For a session\nthis server drives it is the resident's own word ([`ResidentInfo::asking`]):\ntrue from the moment claude's `AskUserQuestion` arrives until it is\nanswered, dismissed or withdrawn — mid-turn, so while `activity` says\n`working`. For any other live claude it is read off the transcript: a\ntail ending on an `AskUserQuestion` no result has answered yet, and never\nwhile [`apply_driver`] knows a turn is in flight. Always false for codex:\nit runs with approvals off, and every interactive request its app server\nmakes is refused, so it has no way to stop and ask.\n\n`#[serde(default)]` for the summaries `sessions::index` cached before\nthis field existed; the live overlay fills it in.",
             "type": "boolean"

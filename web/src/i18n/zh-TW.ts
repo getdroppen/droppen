@@ -153,6 +153,8 @@ export const zhTW: Record<string, string> = {
   "contains a failed tool call": "包含失敗的工具呼叫",
   "context compacted": "上下文已壓縮",
   "copy session id": "複製工作階段 ID",
+  "copy agent name": "複製 agent 名稱",
+  "other agent sessions can message this session by this name": "其他 agent 工作階段可以用這個名稱傳訊息給這個工作階段",
   "dark": "深色",
   "default model": "預設模型",
   "delete chat": "刪除聊天",

@@ -825,6 +825,7 @@ async fn summary_of(paths: &Paths, agent: &str, file_path: &Path, id: &str, titl
         resident: Nullable(None),
         claude_root: None,
         acp_agent: Some(agent.to_string()),
+        agent_name: None,
         account_id: None,
         attention_at: Nullable(None),
         unread: false,

@@ -886,7 +886,12 @@ const COPY_ROW = {
   source: "claude", id: COPY_SESSION, title: "Make the relay's idle timeout follow the heartbeat", cwd: "/home/studio/droppen", filePath: "/home/studio/.claude/projects/droppen/7c1e2a90.jsonl",
   gitBranch: "main", repoKey: null, createdAt: "2026-11-08T09:12:00Z", updatedAt: "2026-11-08T09:19:00Z", sizeBytes: 48_213, scope: "owned",
   status: "idle", activity: "idle", attentionAt: null, unread: false, unreadCount: 0, resident: null, claudeRoot: "managed",
+  // The name its CLI had when the copy was written: a process since gone,
+  // which the header must not offer while it shows the copy.
+  agentName: "droppen-gone",
 };
+/** The name other agents message the session by, as its running CLI registered it: the machine's state says it. */
+const COPY_AGENT_NAME = "droppen-e1";
 /** The account the session runs on, which only the machine's state names. */
 const COPY_ACCOUNT = { id: "5d0c6f3e-8a41-4b7e-9f12-3c6e0a9b2d74", label: "work" };
 /** A login's two quota windows, by what is left of each. */
@@ -897,10 +902,10 @@ const copyQuota = (fiveHours: number, week: number) => [
 /**
  * The machine's own state for the session (`&state=live`), not the defaults:
  * it last ran sonnet at low effort in plan mode, on the account, with its
- * context 42% full.
+ * context 42% full, its CLI running under the name other agents message it by.
  */
 const COPY_LIVE_STATE = {
-  summary: COPY_ROW,
+  summary: { ...COPY_ROW, agentName: COPY_AGENT_NAME },
   canSend: true,
   sendBlockReason: null,
   cliChoice: { model: "sonnet", effort: "low", permission: "plan", at: "2026-11-08T09:18:00Z" },

@@ -93,9 +93,19 @@ export function machineOffline(message: string): Response {
   return json(503, { error: "machine_offline", message, hint: message });
 }
 
-/** A row as an offline machine has it: nothing can be running on it. */
+/**
+ * A row as an offline machine has it: nothing can be running on it, so no CLI
+ * answers to the agent name the copy last saw either.
+ */
 export function restingRow(row: SessionSummary): SessionSummary {
-  return { ...row, activity: "idle", status: "idle", asking: false, resident: null as unknown as SessionSummary["resident"] };
+  return {
+    ...row,
+    activity: "idle",
+    status: "idle",
+    asking: false,
+    resident: null as unknown as SessionSummary["resident"],
+    agentName: undefined,
+  };
 }
 
 function rowOf(source: OfflineSource, opts: OfflineOptions, s: string, id: string): SessionSummary | undefined {

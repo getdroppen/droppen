@@ -619,6 +619,7 @@ fn row_to_summary(row: &ThreadRow, size_bytes: u64) -> (SessionSummary, i64) {
         resident: Nullable(None),
         claude_root: None,
         acp_agent: None,
+        agent_name: None,
         account_id: None,
         // All filled in by `droppen_sessions::attention::apply`, once per changed file.
         attention_at: Nullable(None),
@@ -661,6 +662,7 @@ fn meta_to_summary(meta: &FileMeta, names: &HashMap<String, String>) -> SessionS
         resident: Nullable(None),
         claude_root: None,
         acp_agent: None,
+        agent_name: None,
         account_id: None,
         attention_at: Nullable(None),
         unread: false,

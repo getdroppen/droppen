@@ -3,7 +3,7 @@
 //! Port of the discovery half of the former TypeScript server's `claude.ts`: scan
 //! `~/.claude/projects/*/<uuid>.jsonl`, derive a title/cwd/branch from the head
 //! (plus the newest `custom-title` in the tail), then overlay live-process
-//! status from `~/.claude/sessions/*.json`.
+//! status and the agent name from `~/.claude/sessions/*.json`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -84,7 +84,7 @@ pub(super) async fn mark_owned(paths: &Paths, summaries: &mut [SessionSummary]) 
 
 /// The overlays a listing and a single-row lookup both apply to Claude rows.
 trait FinishExt {
-    /// Apply live status, the user's own title and ownership.
+    /// Apply live status and agent name, the user's own title and ownership.
     ///
     /// None of them is in the cached row, because each can change without the
     /// transcript moving at all — which is why the list and the detail view must
@@ -98,13 +98,17 @@ impl FinishExt for [SessionSummary] {
         if self.is_empty() {
             return;
         }
-        let live = live_claude_session_ids(paths).await;
+        let live = live_claude_sessions(paths).await;
         let titles = droppen_sessions::custom_titles(paths, Source::Claude).await;
         for summary in self.iter_mut() {
-            if live.contains(&summary.id) {
+            let cli = live.get(&summary.id);
+            if cli.is_some() {
                 let activity = claude_activity(Path::new(&summary.file_path)).await;
                 (summary.status, summary.asking) = (activity.status, activity.asking);
             }
+            // Set on every row, live or not, so a name never outlives the
+            // registration it was read from.
+            summary.agent_name = cli.and_then(|cli| cli.name.clone());
             if let Some(custom) = titles.get(&summary.id) {
                 summary.title = custom.clone();
             }
@@ -283,6 +287,9 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
         resident: Nullable(None),
         claude_root: Some(root),
         acp_agent: None,
+        // The live CLI's, applied by the callers below with `status`: a name
+        // lasts as long as the process that picked it, not the transcript.
+        agent_name: None,
         account_id: None,
         // Filled in by `droppen_sessions::attention::apply`, which memoises the transcript
         // read this cache would otherwise repeat for it.
@@ -305,19 +312,58 @@ pub async fn summarize_file(file_path: &Path, id: &str, root: ClaudeRoot) -> std
     Ok(summary)
 }
 
-/// Session ids that have a live Claude Code process attached right now.
+/// A Claude Code CLI running right now, as its registration in a root's
+/// `sessions/<pid>.json` describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveClaude {
+    /// The name other agent sessions message it by (`ListAgents`,
+    /// `SendMessage`), when the registration has one.
+    ///
+    /// The CLI's own pick (`nameSource: "derived"`), made when it starts, so
+    /// the same session can be named differently by its next process.
+    pub name: Option<String>,
+    /// When the CLI says it started, in ms since the epoch; 0 when it does not
+    /// say, or says it in some other unit ([`MIN_STARTED_AT_MS`]). What settles
+    /// two live registrations claiming one session.
+    started_at_ms: u64,
+}
+
+/// How much later than its registration says a process may seem to have
+/// started and still be the CLI that wrote it.
+///
+/// Only macOS dates a process at all ([`droppen_base::procs::start_time`]):
+/// its kernel stamps the start at fork, and the CLI reads the same clock for
+/// `startedAt` afterwards, so the real CLI is never later — measured at
+/// 0.13–2.65 s *earlier* over 71 live CLIs, the oldest 32 days old through
+/// sleep and wake. The slack absorbs only the clock being set back in between.
+/// A pid handed to somebody else is dated after the registration by however
+/// long its CLI ran before it died, almost always far more than this.
+const START_SLACK: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The smallest `startedAt` read as milliseconds since the epoch: 2001-09-09.
+///
+/// Anything below is a registration that counts in some other unit — seconds
+/// would put every CLI in 1970 — and is read as saying nothing, so liveness
+/// alone decides rather than every session reading as dead.
+const MIN_STARTED_AT_MS: u64 = 1_000_000_000_000;
+
+/// Every session a live Claude Code process is attached to right now, and that
+/// process' registration.
 ///
 /// Both roots are scanned: a managed session registers its pid under the managed
 /// root, and a client that cannot see it would happily send into a live CLI.
-pub async fn live_claude_session_ids(paths: &Paths) -> HashSet<String> {
-    let mut out = HashSet::new();
+/// Only these two: a stored account's own directory (`<data>/accounts/<id>/claude`)
+/// is where its usage and model probes run, which are no session of anybody's;
+/// the sessions run on an account live in the managed root.
+pub async fn live_claude_sessions(paths: &Paths) -> HashMap<String, LiveClaude> {
+    let mut out = HashMap::new();
     for root in ClaudeRoot::ALL {
-        collect_live_ids(&claude_roots::ClaudeRoots::of(paths).live_dir(root), &mut out).await;
+        collect_live(&claude_roots::ClaudeRoots::of(paths).live_dir(root), &mut out).await;
     }
     out
 }
 
-async fn collect_live_ids(dir: &Path, out: &mut HashSet<String>) {
+async fn collect_live(dir: &Path, out: &mut HashMap<String, LiveClaude>) {
     let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
         return;
     };
@@ -329,17 +375,80 @@ async fn collect_live_ids(dir: &Path, out: &mut HashSet<String>) {
         let Ok(raw) = tokio::fs::read_to_string(entry.path()).await else {
             continue;
         };
-        let Ok(Value::Object(data)) = serde_json::from_str::<Value>(&raw) else {
+        let Some((session_id, cli)) = live_registration(&raw) else {
             continue;
         };
-        let (Some(pid), Some(session_id)) = (data.get("pid").and_then(Value::as_i64), data.get("sessionId").and_then(Value::as_str)) else {
-            continue;
-        };
-        // `exists`, not `alive`: the pid is Claude Code's own, not a child of
-        // this server, so pid 1 (Claude as a container's init) counts.
-        if u32::try_from(pid as i32).is_ok_and(droppen_base::procs::exists) {
-            out.insert(session_id.to_string());
+        // Two live CLIs on one session is one resuming what the other has
+        // not let go of yet; the one that started last is the one answering.
+        match out.get(&session_id) {
+            Some(held) if held.started_at_ms > cli.started_at_ms => {}
+            _ => {
+                out.insert(session_id, cli);
+            }
         }
+    }
+}
+
+/// The session a registration names and what it says of its CLI, when that
+/// CLI is still the process at its pid.
+///
+/// A crashed CLI leaves its file behind, so the pid has to exist. On macOS it
+/// is checked once more: the process there must not have started after the
+/// registration says its own did — the pid of a CLI long gone, handed to
+/// somebody's build, is otherwise a live session under a name nothing answers
+/// to. Linux has no start time a clock step leaves alone, and holding a
+/// registration to one that moved would read a live CLI as dead (and lift the
+/// block on sending into it), so there the pid's liveness is the whole rule.
+fn live_registration(raw: &str) -> Option<(String, LiveClaude)> {
+    let Ok(Value::Object(data)) = serde_json::from_str::<Value>(raw) else {
+        return None;
+    };
+    let pid = u32::try_from(data.get("pid").and_then(Value::as_i64)? as i32).ok()?;
+    let session_id = data.get("sessionId").and_then(Value::as_str)?;
+    let started_at_ms = known_start_ms(data.get("startedAt").and_then(Value::as_u64).unwrap_or(0));
+    // `exists`, not `alive`: the pid is Claude Code's own, not a child of
+    // this server, so pid 1 (Claude as a container's init) counts.
+    if !droppen_base::procs::exists(pid) {
+        return None;
+    }
+    // The platform's side is unknown everywhere but macOS, and `stale` reads
+    // an unknown as the same process.
+    if stale(droppen_base::procs::start_time(pid), started_at_ms) {
+        return None;
+    }
+    let name = data
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned);
+    Some((session_id.to_string(), LiveClaude { name, started_at_ms }))
+}
+
+/// A registration's `startedAt` as milliseconds since the epoch, or 0 when it
+/// says nothing usable: absent, or in some other unit ([`MIN_STARTED_AT_MS`]).
+fn known_start_ms(started_at: u64) -> u64 {
+    if started_at >= MIN_STARTED_AT_MS {
+        started_at
+    } else {
+        0
+    }
+}
+
+/// Whether the process now at a registration's pid, which started at
+/// `process_start`, is somebody other than the CLI that wrote it, which says
+/// it started at `started_at_ms`: it started more than [`START_SLACK`] later.
+///
+/// Platform-free, so every CI run holds it to its cases; the start itself is
+/// only ever known on macOS ([`droppen_base::procs::start_time`]). Either side
+/// unknown — no `process_start`, or a `startedAt` [`known_start_ms`] refuses —
+/// is "cannot tell", which reads as the same process, as
+/// `droppen_base::procs::is_same_process` reads it.
+fn stale(process_start: Option<std::time::SystemTime>, started_at_ms: u64) -> bool {
+    let registered = known_start_ms(started_at_ms);
+    match process_start {
+        Some(started) if registered > 0 => started > std::time::UNIX_EPOCH + std::time::Duration::from_millis(registered) + START_SLACK,
+        _ => false,
     }
 }
 
@@ -1528,6 +1637,164 @@ mod tests {
             "renamed since",
             "a damaged index costs a re-read and nothing else"
         );
+    }
+
+    /// The macOS rule for a stale registration, held to its cases on every
+    /// platform: only the start time feeding it is macOS's own.
+    #[test]
+    fn a_registration_is_stale_only_when_its_pid_started_past_the_slack_after_it() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let written = 1_795_095_850_407; // a real `startedAt`, in ms
+        let at = |ms: u64| Some(UNIX_EPOCH + Duration::from_millis(ms));
+        let slack = START_SLACK.as_millis() as u64;
+
+        assert!(!stale(at(written - 2_650), written), "the CLI itself: started before it wrote the time down");
+        assert!(!stale(at(written), written));
+        assert!(!stale(at(written + slack), written), "a clock set back a little, within the slack");
+        assert!(stale(at(written + slack + 1), written), "past the slack: somebody else has the pid");
+        assert!(stale(at(written + 32 * 24 * 3600 * 1000), written), "a month later");
+
+        // Either side unknown is "cannot tell", never "stale".
+        assert!(!stale(None, written), "no start time: every platform but macOS");
+        assert!(!stale(at(written + 3_600_000), 0), "no `startedAt`");
+        assert!(!stale(at(written + 3_600_000), written / 1000), "a `startedAt` in seconds says nothing");
+        assert!(!stale(at(written + 3_600_000), MIN_STARTED_AT_MS - 1));
+        assert!(stale(at(MIN_STARTED_AT_MS + slack + 1), MIN_STARTED_AT_MS), "the smallest one read as ms is held to it");
+        assert_eq!((known_start_ms(written), known_start_ms(written / 1000), known_start_ms(0)), (written, 0, 0));
+    }
+
+    /// What a running CLI writes into a root's `sessions/<pid>.json`: the
+    /// fields read here, and a few that are not.
+    fn register(paths: &Paths, root: ClaudeRoot, pid: u32, session: &str, started_at_ms: u64, name: Option<&str>) {
+        let dir = claude_roots::ClaudeRoots::of(paths).live_dir(root);
+        std::fs::create_dir_all(&dir).expect("sessions dir");
+        let mut registration = serde_json::json!({
+            "pid": pid, "sessionId": session, "cwd": "/w", "startedAt": started_at_ms, "kind": "interactive", "status": "idle",
+        });
+        if let Some(name) = name {
+            registration["name"] = name.into();
+            registration["nameSource"] = "derived".into();
+        }
+        std::fs::write(dir.join(format!("{pid}.json")), registration.to_string()).expect("registration");
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("after the epoch").as_millis() as u64
+    }
+
+    /// The name other agents message a session by is its live CLI's, read on
+    /// every lookup: present while that CLI is the process at its pid, the new
+    /// one once it is renamed, and gone with a dead pid or (on macOS) a stale
+    /// file — together with the live status, which reads the same registration.
+    #[tokio::test]
+    async fn a_live_cli_s_name_is_the_session_s_agent_name_while_it_lives() {
+        let _guard = droppen_sessions::index::exclusive().await;
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::for_instance(home.path().to_path_buf(), "alice");
+        let id = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d";
+        let project = claude_roots::ClaudeRoots::of(&paths).projects_dir(ClaudeRoot::Managed).join("-w");
+        std::fs::create_dir_all(&project).expect("project dir");
+        // A user spoke last, so a live session reads as running and one with
+        // no CLI keeps the row's idle.
+        std::fs::write(
+            project.join(format!("{id}.jsonl")),
+            "{\"type\":\"user\",\"cwd\":\"/w\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
+        )
+        .expect("transcript");
+        let me = std::process::id();
+        let read = || async {
+            let row = load_claude_summary(&paths, id).await.expect("the row");
+            let listed = list_claude_sessions(&paths, &BTreeMap::new()).await.into_iter().find(|row| row.id == id).expect("listed");
+            assert_eq!(listed.agent_name, row.agent_name, "the list and the detail agree");
+            assert_eq!(listed.status, row.status);
+            row
+        };
+
+        let none = read().await;
+        assert_eq!((none.agent_name, none.status), (None, SessionStatus::Idle), "no CLI, no name");
+        let wire = serde_json::to_value(load_claude_summary(&paths, id).await.expect("the row")).expect("JSON");
+        assert!(wire.get("agentName").is_none(), "absent from the wire, not null: {wire}");
+
+        register(&paths, ClaudeRoot::Managed, me, id, now_ms(), Some("droppen-e1"));
+        let live = read().await;
+        assert_eq!(live.agent_name.as_deref(), Some("droppen-e1"));
+        assert_eq!(live.status, SessionStatus::Running, "the same registration says it is live");
+        let wire = serde_json::to_value(&live).expect("JSON");
+        assert_eq!(wire["agentName"], "droppen-e1");
+        assert_eq!(
+            summarize_file(Path::new(&live.file_path), id, ClaudeRoot::Managed).await.expect("summarize").agent_name,
+            None,
+            "the cached row never holds it"
+        );
+
+        // A resident restarted is a new CLI, which picks a name of its own.
+        register(&paths, ClaudeRoot::Managed, me, id, now_ms(), Some("droppen-7f"));
+        assert_eq!(read().await.agent_name.as_deref(), Some("droppen-7f"), "the new name, at once");
+
+        // A registration with no name is still a live CLI.
+        register(&paths, ClaudeRoot::Managed, me, id, now_ms(), None);
+        let unnamed = read().await;
+        assert_eq!((unnamed.agent_name, unnamed.status), (None, SessionStatus::Running));
+
+        // A `startedAt` in seconds, not milliseconds, says nothing: the pid's
+        // liveness decides, on every platform, rather than 1970 making every
+        // live CLI a stranger.
+        register(&paths, ClaudeRoot::Managed, me, id, now_ms() / 1000, Some("droppen-s"));
+        let seconds = read().await;
+        assert_eq!((seconds.agent_name.as_deref(), seconds.status), (Some("droppen-s"), SessionStatus::Running));
+
+        // A stale file: the pid is alive, but its process started long after
+        // the CLI that wrote this did (in 2008) — the pid was handed to
+        // somebody else. macOS can tell from the start its kernel stamped.
+        register(&paths, ClaudeRoot::Managed, me, id, 1_200_000_000_000, Some("droppen-e1"));
+        let stale = read().await;
+        #[cfg(target_os = "macos")]
+        assert_eq!((stale.agent_name, stale.status), (None, SessionStatus::Idle), "not this CLI's pid any more");
+        // Linux cannot without a time a clock step would move, so it holds the
+        // registration to the pid alone: a live pid is a live CLI.
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(
+            (stale.agent_name.as_deref(), stale.status),
+            (Some("droppen-e1"), SessionStatus::Running),
+            "no start-time gating here"
+        );
+        std::fs::remove_file(claude_roots::ClaudeRoots::of(&paths).live_dir(ClaudeRoot::Managed).join(format!("{me}.json"))).expect("rm");
+
+        // A dead pid, in the user's own root this time.
+        let mut child = std::process::Command::new("/bin/sh").args(["-c", "exit 0"]).spawn().expect("spawn");
+        let dead = child.id();
+        child.wait().expect("reap");
+        register(&paths, ClaudeRoot::Local, dead, id, now_ms(), Some("droppen-e1"));
+        let gone = read().await;
+        assert_eq!((gone.agent_name, gone.status), (None, SessionStatus::Idle), "a dead CLI answers to nothing");
+    }
+
+    /// Two live CLIs on one session — a resume racing the process it replaces —
+    /// is the newer one's, and the older one's again once the newer is gone.
+    #[tokio::test]
+    async fn the_cli_that_started_last_names_a_session_two_claim() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        let id = "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e";
+        let older = now_ms();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn");
+        // Taken after the spawn, as a CLI takes it after it starts.
+        let newer = now_ms();
+        register(&paths, ClaudeRoot::Managed, std::process::id(), id, older, Some("droppen-old"));
+        register(&paths, ClaudeRoot::Managed, child.id(), id, newer, Some("droppen-new"));
+        let name = |live: HashMap<String, LiveClaude>| live.get(id).and_then(|cli| cli.name.clone());
+
+        assert_eq!(name(live_claude_sessions(&paths).await).as_deref(), Some("droppen-new"));
+        child.kill().expect("kill");
+        child.wait().expect("reap");
+        assert_eq!(name(live_claude_sessions(&paths).await).as_deref(), Some("droppen-old"));
     }
 
     /// Discovery hides what the archive holds: it reads the table

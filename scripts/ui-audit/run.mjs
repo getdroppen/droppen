@@ -1326,6 +1326,12 @@ const COPY_OWN_WORDS = ["sonnet", "low", "plan", "37%", "21%", "42%"];
 /** The account the session runs on, which only the machine's state names, and what the header's badge says of a session bound to none. */
 const COPY_ACCOUNT_WORDS = "work";
 const COPY_UNBOUND_WORDS = { en: "no account", "zh-CN": "无账号" };
+/** The name other agents message the session by, which only the machine's state says, and the chip's tooltip. */
+const COPY_AGENT_NAME = "droppen-e1";
+const COPY_AGENT_HINT = {
+  en: "other agent sessions can message this session by this name",
+  "zh-CN": "其他 agent 会话可以用这个名称给这个会话发消息",
+};
 
 /**
  * droppen.app on the machine itself, opening a session from the device's copy
@@ -1338,10 +1344,12 @@ const COPY_UNBOUND_WORDS = { en: "no account", "zh-CN": "无账号" };
  * the session, not that the session is busy. Nothing the machine's state
  * alone can say is shown in the meantime: no model, effort or permission
  * picker, no quota and no context in the composer's row, and no account in
- * the header. Then the same session once the machine has answered
- * (`&state=live`): the banner gone, and those showing the session's own
- * values. How far the composer and the header's metadata moved between the
- * two is in measurements.json (`shift`). And the same session with the
+ * the header — nor the agent name the copy's row still holds. Then the same
+ * session once the machine has answered (`&state=live`): the banner gone,
+ * and those showing the session's own values, the agent name its running CLI
+ * goes by on a 20px mono chip in the header's metadata row, whole, with the
+ * tooltip that says what it is for. How far the composer and the header's
+ * metadata moved between the two is in measurements.json (`shift`). And the same session with the
  * machine away and the page on its copy (`&state=offline`): the transcript
  * the copy serves, the composer read-only with the copy's reason, and again
  * nothing only the machine's state can say — no model, effort or permission
@@ -1438,7 +1446,25 @@ async function auditSessionFromCopyState(page, theme, view, lang, variant, fail)
     const chips = composerBox?.lastElementChild ?? null;
     // The header's second row: the session's source, account, branch, model drift and size.
     const metadata = document.querySelector("[data-session-view] header")?.children[1] ?? null;
+    // The chip that copies the name other agents message the session by.
+    const chip = document.querySelector("[data-session-view] header [data-agent-name]");
+    let agentName = null;
+    if (chip) {
+      const s = getComputedStyle(chip);
+      const name = chip.querySelector("span");
+      agentName = {
+        text: (chip.textContent ?? "").trim(),
+        title: chip.getAttribute("title"),
+        rect: rect(chip),
+        size: s.fontSize,
+        font: s.fontFamily,
+        radius: s.borderRadius,
+        inRow: !!metadata?.contains(chip),
+        cut: !name || name.scrollWidth > name.clientWidth,
+      };
+    }
     return {
+      agentName,
       banner: words,
       composer: box ? { placeholder: box.getAttribute("placeholder"), editable: !box.disabled, send: send ? !send.disabled : null } : null,
       composerBox: rect(composerBox),
@@ -1474,6 +1500,26 @@ async function auditSessionFromCopyState(page, theme, view, lang, variant, fail)
   const c = state.composer;
   const chipWords = state.chips?.text ?? "";
   const header = state.metadata?.text ?? "";
+  // The agent name: the live machine's, on a 20px mono 11px chip in the
+  // metadata row, whole, square, with its tooltip; never the copy's.
+  const name = state.agentName;
+  if (live) {
+    if (
+      !name ||
+      name.text !== COPY_AGENT_NAME ||
+      name.title !== COPY_AGENT_HINT[lang] ||
+      !name.inRow ||
+      name.size !== "11px" ||
+      !/mono/i.test(name.font) ||
+      Math.abs(name.rect.h - 20) > 0.5 ||
+      parseFloat(name.radius) !== 0 ||
+      name.cut
+    ) {
+      fail("session-from-copy.live-agent-name", { ...where, agentName: name }, `"${COPY_AGENT_NAME}" whole on a square 20px chip in the metadata row, mono 11px, titled "${COPY_AGENT_HINT[lang]}"`);
+    }
+  } else if (name) {
+    fail("session-from-copy.agent-name", { ...where, agentName: name }, "no agent name while the header shows the copy: its CLI may be long gone");
+  }
   if (variant === "offline") {
     if (!c || c.placeholder !== COPY_OFFLINE_WORDS[lang] || c.editable || c.send !== false) {
       fail("session-from-copy.offline-composer", { ...where, composer: c }, `a read-only box saying "${COPY_OFFLINE_WORDS[lang]}", its send button disabled`);

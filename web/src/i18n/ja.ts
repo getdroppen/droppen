@@ -153,6 +153,8 @@ export const ja: Record<string, string> = {
   "contains a failed tool call": "失敗したツール呼び出しを含みます",
   "context compacted": "コンテキストを圧縮しました",
   "copy session id": "セッション ID をコピー",
+  "copy agent name": "エージェント名をコピー",
+  "other agent sessions can message this session by this name": "ほかのエージェントのセッションは、この名前でこのセッションにメッセージを送れます",
   "dark": "ダーク",
   "default model": "デフォルトモデル",
   "delete chat": "チャットを削除",

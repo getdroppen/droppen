@@ -2,9 +2,10 @@
 // device's offline copy of the session (`features/sessions/feed-from-copy.ts`)
 // before the machine's own state has come. The header says nothing only that
 // state can: the account the session runs on (a session bound to one would
-// read "no account", in the warning colour), and whether the model it ran is
-// the one asked for. They come in with the machine's state, as the composer's
-// choice, quota and context do (`composer-from-copy.test.tsx`).
+// read "no account", in the warning colour), whether the model it ran is the
+// one asked for, and the name other agents message it by (the copy's is a CLI
+// that may be long gone). They come in with the machine's state, as the
+// composer's choice, quota and context do (`composer-from-copy.test.tsx`).
 //
 // So on the copy itself, the machine away: the real offline transport serves
 // the session (`lib/transport/offline.ts`), and the header names no account
@@ -255,6 +256,64 @@ test("drawn from the copy, the header names no account and no model drift until 
   assert.doesNotMatch(metadataWords(), /no account/);
   await until("the model drift the machine's state shows", () => drift() !== null);
   assert.equal(drift()!.getAttribute("aria-label"), "requested opus, actually running claude-sonnet-5");
+  assert.deepEqual(errors, []);
+});
+
+/** The chip in the header's metadata row that copies the name other agents message the session by. */
+const agentChip = () => (metadata()?.querySelector("[data-agent-name]") as HTMLButtonElement | null | undefined) ?? null;
+
+test("the agent name comes with the machine's state, follows the CLI it names, and copies", async (t) => {
+  // The copy's row holds the name its CLI had when the copy was written: a
+  // process that may be long gone, which no agent could reach by it.
+  Object.assign(row, { agentName: "from-the-copy" });
+  t.after(() => void delete (row as { agentName?: string }).agentName);
+  const written: string[] = [];
+  Object.defineProperty(globalThis.navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: async (text: string) => void written.push(text) },
+  });
+  // A machine of its own: each test here opens one, as a page does once.
+  const NAMED = "named-mac";
+  const sockets: FakeSocket[] = [];
+  const info: MachineInfo = { ...INFO, key: NAMED, name: NAMED };
+  registry.openMachine(NAMED, device(sockets), driver(info));
+  registry.setShell("hub", NAMED);
+  registry.setCurrentShell({
+    ...shell,
+    home: NAMED,
+    machines: () => constantStore<readonly MachineInfo[]>([info]),
+    machine: (key: string | null | undefined) => (key === NAMED ? { mirror, transport: { current: "live" } } : null),
+  } as unknown as AppShell);
+  localStorage.clear();
+  const { page, errors } = await render(NAMED);
+  t.after(() => page.unmount());
+  await until("the copy's transcript", () => (container.textContent ?? "").includes("item 2"));
+  await settle(150);
+  assert.equal(agentChip(), null, "no name while the header shows the copy");
+
+  const hub = sockets.find((s) => s.url.startsWith("/api/events"))!;
+  await React.act(async () => hub.open());
+  await until("the session's subscription", () => hub.sent.some((m) => m.type === "sub"));
+  const sub = (hub.sent.find((m) => m.type === "sub")!.feeds as { sub: number }[])[0]!.sub;
+  const named = (agentName?: string) => ({ sub, ...stateFrame, summary: { ...row, agentName } });
+  await React.act(async () => {
+    hub.frame({ type: "hello" });
+    hub.frame({ sub, type: "delta", sig: "live:1", fromIndex: 3, items: [], endIndex: 3, totalItems: 3, prefixFp: "fp0" });
+    hub.frame(named("k8s-configs-24"));
+  });
+  await until("the name the machine's state says", () => agentChip()?.textContent === "k8s-configs-24");
+  assert.equal(agentChip()!.title, "other agent sessions can message this session by this name");
+
+  await React.act(async () => void agentChip()!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+  await until("the copy said", () => agentChip()?.title === "copied");
+  assert.deepEqual(written, ["k8s-configs-24"], "the name, not the session id");
+
+  // The resident restarted: its new CLI picked a name of its own.
+  await React.act(async () => hub.frame(named("k8s-configs-fc")));
+  await until("the new name", () => agentChip()?.textContent === "k8s-configs-fc");
+  // And the CLI gone: nothing answers to a name any more.
+  await React.act(async () => hub.frame(named(undefined)));
+  await until("no name", () => agentChip() === null);
   assert.deepEqual(errors, []);
 });
 
