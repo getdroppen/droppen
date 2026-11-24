@@ -199,7 +199,12 @@ fn a2a_server(
         .ok_or_else(|| GotchaError::message("the A2A sessions' inbox was taken already"))?;
     let store = droppen_a2a::store::Store::new(droppen_instance::db::at(paths.instance_db()));
     let settings = droppen_a2a::Settings::from_env(droppen_http::SERVER_VERSION, config.app.a2a.public_base());
-    Ok(droppen_a2a::A2a::new(store, sessions.clone(), inbox, settings, cancel))
+    let a2a = droppen_a2a::A2a::new(store, sessions.clone(), inbox, settings, cancel);
+    // Every status change and artifact goes to the callers' webhooks from
+    // here on; what an earlier run left undelivered goes at `A2a::resume`,
+    // which only the instance's owner calls.
+    droppen_a2a::push::Pusher::attach(&a2a);
+    Ok(a2a)
 }
 
 /// The instance claims [`Prepared::claim_for_process`] keeps. A static is never

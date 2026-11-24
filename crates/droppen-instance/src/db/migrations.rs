@@ -469,6 +469,12 @@ pub const SCHEMA: &[&str] = &[
          created_ms       INTEGER NOT NULL,
          PRIMARY KEY (task_id, id)
      ) STRICT, WITHOUT ROWID",
+    // 13 — where each A2A push configuration's delivery stands
+    // (`droppen_a2a::push`): the number of the last event of its task it was
+    // told of, or gave up on. Delivery goes on from it after a restart, so a
+    // webhook is told every status change and artifact at least once. A row
+    // an older binary writes reads 0: it is told its task from the start.
+    "ALTER TABLE a2a_push_configs ADD COLUMN delivered_seq INTEGER NOT NULL DEFAULT 0",
 ];
 
 /// Bring `conn` up to the newest step, and say nothing if it is already there.
@@ -806,6 +812,28 @@ mod tests {
             })
             .expect("the new tables exist");
         assert_eq!(counts, vec![0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    /// Step 13 gives the push configurations a step 12 database holds their
+    /// delivery cursor, at 0: each is told its task from the first event.
+    #[test]
+    fn a_database_at_step_twelve_gains_the_push_cursor() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.db");
+        {
+            let conn = database_at(&path, 12);
+            conn.execute(
+                "INSERT INTO a2a_push_configs (task_id, id, url, created_ms) VALUES ('t', 'p', 'https://hooks.example.com/a2a', 1)",
+                [],
+            )
+            .expect("a push configuration step 12 wrote");
+        }
+        let db = Db::open(&path);
+        assert_eq!(db.user_version(), SCHEMA.len() as i64);
+        let cursor: i64 = db
+            .read(|conn| conn.query_row("SELECT delivered_seq FROM a2a_push_configs WHERE task_id = 't'", [], |row| row.get(0)))
+            .expect("the new column");
+        assert_eq!(cursor, 0);
     }
 
     /// The release gate: the binary this one replaces must still work against

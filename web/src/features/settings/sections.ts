@@ -2,9 +2,11 @@
  * The settings tabs, in the order the panel lists them. "access" is this
  * device's identity — its local login and, on the computer's own page, its
  * Droppen link (`access-section.tsx`). "desktop app" is the app's own window
- * only (`desktop-app-section.tsx`).
+ * only (`desktop-app-section.tsx`). "a2a" is the A2A server's entries, tokens
+ * and tasks (`a2a-section.tsx`, `docs/a2a.md`), beside the scheduled tasks:
+ * both start sessions on this device without anyone at it.
  */
-export const ALL_SECTIONS = ["general", "accounts", "access", "plugins", "scheduled tasks", "desktop app"] as const;
+export const ALL_SECTIONS = ["general", "accounts", "access", "plugins", "scheduled tasks", "a2a", "desktop app"] as const;
 export type SectionId = (typeof ALL_SECTIONS)[number];
 
 /**
@@ -18,6 +20,7 @@ export const SECTION_LABEL: Record<SectionId, string> = {
   access: "access",
   plugins: "plugins",
   "scheduled tasks": "scheduled tasks",
+  a2a: "A2A",
   "desktop app": "Desktop app",
 };
 

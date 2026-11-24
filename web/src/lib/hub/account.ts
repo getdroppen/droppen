@@ -183,6 +183,7 @@ import {
 } from "./keyring";
 import { type Candidate, completePairing } from "./pairing";
 import {
+  type A2aAcceptChange,
   type AcceptChange,
   type ChainReplay,
   type ChainReplayHooks,
@@ -198,6 +199,8 @@ import {
   NO_COURIER,
   NO_DEVICE_ROLE_HINT,
   NothingToWrite,
+  a2aExposures,
+  a2aHostsOf,
   acceptChange,
   acceptNames,
   admits,
@@ -230,6 +233,8 @@ import {
 } from "./chain-policy";
 export {
   NO_DEVICE_ROLE_HINT,
+  a2aExposures,
+  a2aHostsOf,
   acceptChange,
   admits,
   assuredRenewalAfter,
@@ -257,6 +262,7 @@ export {
   verifyBatch,
 } from "./chain-policy";
 export type {
+  A2aAcceptChange,
   AcceptChange,
   Exposure,
   KeptDispute,
@@ -2756,6 +2762,13 @@ export class CloudAccount {
     if (!chain.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
     let accept: Accept = from;
     if (from.type === "devices") {
+      // An A2A proxy controls nothing: the chain refuses a list naming one (docs/a2a.md §7.1), and so does this, first.
+      const proxies = from.ids.filter((id) => chain.device(id)?.a2a);
+      if (proxies.length) {
+        throw new AccountError("invalidEntry", "{{ids}} is an A2A proxy: it controls no device, so no accept list names it", undefined, RULES.a2aNotController, {
+          ids: proxies.join(", "),
+        });
+      }
       // Ascending by bytes, no repeats, never the host itself; none named is the default.
       const ids = [...new Set(from.ids)].filter((id) => id !== host).sort((a, b) => compareBytes(utf8(a), utf8(b)));
       accept = ids.length ? { type: "devices", ids } : { type: "admins" };
@@ -2792,6 +2805,38 @@ export class CloudAccount {
       }
     }
     return { narrowed: false, admitted, shutOut };
+  }
+
+  /**
+   * Which A2A proxies host `host` takes A2A calls from (`setA2aAccept`, chain
+   * v3 only; docs/a2a.md §7.1): `ids`, written ascending by UTF-8 bytes, each
+   * once (whom it may name — current A2A proxies — is the chain's to judge).
+   * Nothing is written when it equals the list now. A list that drops a proxy
+   * (a narrowing) is written with the host's next machine key epoch in the
+   * same call (`[setA2aAccept, keyEpochs]`, the chain's `hostKeyNext` rule, as
+   * `setAccept`'s): a session the proxy started there could have read the
+   * host's keys off the disk. The new key is put into the keyring, sealed to
+   * the devices the host lets control it (never a proxy) and handed to the
+   * agent (`courier`); without one, a narrowing is refused before anything is
+   * signed. A list that only adds is written alone: a proxy is sealed nothing.
+   */
+  async setA2aAccept(host: string, ids: readonly string[], courier: MachineKeyCourier = NO_COURIER): Promise<A2aAcceptChange> {
+    const chain = this.requireAdmin();
+    this.requireUpgraded(chain);
+    if (!chain.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
+    const list = [...new Set(ids)].sort((a, b) => compareBytes(utf8(a), utf8(b)));
+    const now = chain.a2aAccept(host);
+    if (list.join("\n") === now.join("\n")) return { narrowed: false, admitted: [], dropped: [] };
+    const admitted = list.filter((id) => !now.includes(id));
+    const dropped = now.filter((id) => !list.includes(id));
+    const entry: Action = { type: "setA2aAccept", host, devices: list };
+    if (dropped.length) {
+      if (courier === NO_COURIER) throw new AccountError("invalidEntry", "taking an A2A proxy off the list hands the device that runs AI a new key: say how", undefined, RULES.hostKeyNext);
+      const issued = await this.issueMachineKey(host, courier, false, [entry]);
+      return { narrowed: true, admitted, dropped, mkEpoch: issued.mkEpoch, result: issued.result, hostKeysTo: issued.hostKeysTo, ...(issued.userKey ? { userKey: issued.userKey } : {}) };
+    }
+    await this.append(entry);
+    return { narrowed: false, admitted, dropped };
   }
 
   /**
@@ -2835,8 +2880,9 @@ export class CloudAccount {
         const removal: Action = { type: "removeDevice3", id };
         // It ever held the user key (review 1: by the chain's history, not its flags now): everything rotates.
         if (this.heldUserKey(id)) return this.rotate(courier, reencrypt, [removal]);
-        // One that could control a host may have its key: the machine keys rotate whatever was asked (review D2).
-        if (opts.rotateMachineKeys === false && !this.controlsAHost(id)) {
+        // One that could control a host may have its key: the machine keys rotate whatever was asked (review D2). So do
+        // they for an A2A proxy a host takes calls from: a session it started there could read the key off the disk.
+        if (opts.rotateMachineKeys === false && !this.controlsAHost(id) && this.a2aHostsOf(id).length === 0) {
           this.requireAdmin();
           await this.append(removal);
           return none;
@@ -2976,6 +3022,24 @@ export class CloudAccount {
     const chain = this.state;
     if (!chain) return false;
     return chain.hosts().some((h) => h.status.type === "active" && h.info.id !== id && admits(chain, h.info.id, id));
+  }
+
+  /**
+   * The current hosts whose A2A list names A2A proxy `id` ({@link a2aHostsOf}, docs/a2a.md §7.1): each is exposed to
+   * it — a session it starts there can read any file that host's user can, its identity key and content keys
+   * included — so removing it rotates the content keys whatever was asked, and the removal says which hosts.
+   */
+  a2aHostsOf(id: string): string[] {
+    return this.state ? a2aHostsOf(this.state, id) : [];
+  }
+
+  /**
+   * The current hosts an A2A proxy that could call them no longer can, each proxy with the seq it left at
+   * ({@link a2aExposures}): renewing the host's identity key (or removing and adding it again) is suggested on its
+   * row, never done by itself.
+   */
+  a2aExposures(): Map<string, Map<string, number>> {
+    return this.state ? a2aExposures(this.state) : new Map();
   }
 
   // ------------------------------------------------------------ identity key renewal (docs/host-identity-rotation.md)

@@ -137,7 +137,7 @@
         },
         {
           "name": "droppen-a2a",
-          "about": "The A2A server: the protocol, its two bindings, Agent Cards, A2A tokens, the task store; owns the SessionBackend port.",
+          "about": "The A2A server: the protocol, its two bindings, Agent Cards, A2A tokens, the task store, push delivery to the callers' webhooks; owns the SessionBackend port.",
           "mayUse": [],
           "notes": [
             "Runs no session itself: the entry implements its SessionBackend port on the providers and wires it in."

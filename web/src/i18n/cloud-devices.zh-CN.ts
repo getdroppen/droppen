@@ -561,6 +561,12 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "{{by}} let the A2A proxies {{ids}} call the A2A of {{host}}": "{{by}} 允许 A2A 代理 {{ids}} 调用 {{host}} 的 A2A",
   "{{by}} set {{host}} to take A2A calls from no A2A proxy": "{{by}} 把 {{host}} 设为不接受任何 A2A 代理的调用",
   "an A2A proxy can be neither a full device nor a device that runs AI": "A2A 代理不能成为完整设备，也不能运行 AI",
+  "It loses access at once. It never held a key, but it is an A2A proxy that devices that run AI take calls from: the content keys are rotated. What it already copied cannot be taken back.": "它会立即失去访问权。它从未持有密钥，但它是可运行 AI 的设备接受调用的 A2A 代理：内容密钥会轮换。它已复制走的内容无法收回。",
+  "{{device}} is an A2A proxy that could call the A2A of {{hosts}}. A session it started there could read any file the user can read on that device, its identity key included, so treat {{hosts}} as exposed: their content keys are rotated now, and renewing their identity key (or removing and adding them again) is suggested.": "{{device}} 是 A2A 代理，能调用 {{hosts}} 的 A2A。它在那里开的会话能读到那台设备上用户能读的任何文件，包括身份密钥，所以要把 {{hosts}} 当作已暴露：现在会轮换它们的内容密钥，并建议更换它们的身份密钥（或移除后重新添加）。",
+  "also rotate the content keys (always, for an A2A proxy a device took calls from)": "同时轮换内容密钥（有设备接受其调用的 A2A 代理一律轮换）",
+  "{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Renewing its identity key is suggested.": "能调用它的 A2A 的 A2A 代理 {{ids}} 已被移除或不再被接受：它们开的会话可能读到过它的身份密钥。建议更换它的身份密钥。",
+  "{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Removing it and adding it again is suggested.": "能调用它的 A2A 的 A2A 代理 {{ids}} 已被移除或不再被接受：它们开的会话可能读到过它的身份密钥。建议把它移除后重新添加。",
+  "{{ids}} is an A2A proxy: it controls no device, so no accept list names it": "{{ids}} 是 A2A 代理：它不控制任何设备，所以控制名单里不能有它",
   "{{id}} ran AI before, and its agent kept its key in a file: it cannot be a full device. Add a new browser or phone instead.": "{{id}} 运行过 AI，它的 agent 把钥匙存在了文件里：它不能成为完整设备。请改为添加一个新的浏览器或手机。",
   // The account's settings (account-settings.tsx) and joining with a passkey (passkey-join.tsx).
   "my account": "我的账户",

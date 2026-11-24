@@ -101,18 +101,6 @@ impl A2aEntry {
     pub fn template(&self) -> &str {
         self.template.0.as_deref().unwrap_or(DEFAULT_TEMPLATE)
     }
-
-    /// Whether a push to `url` is one this entry allows: an `https` URL whose
-    /// origin it lists. Delivery checks the address it resolves to as well
-    /// (§6); this is the check a configuration is refused by up front.
-    ///
-    /// `tck`: this is a `tck` entry in an instance started with
-    /// `DROPPEN_A2A_TCK=1`, which may also list `http://127.0.0.1[:port]` and
-    /// `http://localhost[:port]` — the TCK's own webhook receiver. No other
-    /// entry may, ever.
-    pub fn allows_push_to(&self, url: &str, tck: bool) -> bool {
-        origin_of(url, tck).is_some_and(|origin| self.push_origins.contains(&origin))
-    }
 }
 
 /// The body of `POST /api/a2a/entries`.
@@ -309,20 +297,20 @@ pub fn clean_template(template: Option<&str>) -> Result<Option<String>, String> 
     Ok(Some(template.to_string()))
 }
 
-/// The push origins, each `https://host[:port]`, lower-cased and without a
-/// default port, or why one is not. `tck` lets a `tck` entry of a TCK
-/// instance list the loopback `http` origins as well
-/// ([`A2aEntry::allows_push_to`]).
-pub fn clean_origins(origins: &[String], tck: bool) -> Result<Vec<String>, String> {
+/// The push origins an entry of `source` lists, each as
+/// [`crate::push::guard::listed_origin`] writes it (`https://host[:port]`,
+/// lower-case, no default port), or why one is not one. On a server whose
+/// `DROPPEN_A2A_TCK` is `tck`, a `tck` entry may list the loopback `http`
+/// origins of the TCK's webhook as well
+/// ([`crate::push::guard::tck_exception`]). The rule is the one every push
+/// URL is held to ([`crate::push::guard::push_target`]).
+pub fn clean_origins(origins: &[String], source: EntrySource, tck: bool) -> Result<Vec<String>, String> {
     if origins.len() > MAX_ORIGINS {
         return Err(format!("at most {MAX_ORIGINS} push origins"));
     }
     let mut clean = Vec::new();
     for origin in origins {
-        let trimmed = origin.trim().trim_end_matches('/');
-        let normal =
-            origin_of(trimmed, tck).filter(|normal| normal.eq_ignore_ascii_case(trimmed) || format!("{normal}:443").eq_ignore_ascii_case(trimmed));
-        let Some(normal) = normal else {
+        let Some(normal) = crate::push::guard::listed_origin(origin, source, tck) else {
             return Err(format!("{origin} is not an origin of the form https://host[:port]"));
         };
         if !clean.contains(&normal) {
@@ -349,67 +337,6 @@ pub fn clean_devices(devices: &[String]) -> Result<Vec<String>, String> {
         }
     }
     Ok(clean)
-}
-
-/// [`push_origin_of`], and for a TCK entry ([`A2aEntry::allows_push_to`])
-/// the origin of an `http` URL on `127.0.0.1` or `localhost` too.
-fn origin_of(url: &str, tck: bool) -> Option<String> {
-    push_origin_of(url).or_else(|| tck.then(|| loopback_http_origin(url)).flatten())
-}
-
-/// The `http://127.0.0.1[:port]` or `http://localhost[:port]` origin of an
-/// `http` URL on this device's loopback.
-fn loopback_http_origin(url: &str) -> Option<String> {
-    let rest = url.get(..7).filter(|scheme| scheme.eq_ignore_ascii_case("http://")).map(|_| &url[7..])?;
-    let authority = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (authority.as_str(), None),
-    };
-    if host != "127.0.0.1" && host != "localhost" {
-        return None;
-    }
-    match port {
-        None | Some("80") => Some(format!("http://{host}")),
-        Some(port) if port.parse::<u16>().is_ok() && port.bytes().all(|b| b.is_ascii_digit()) => Some(format!("http://{host}:{port}")),
-        _ => None,
-    }
-}
-
-/// The `https://host[:port]` origin of an `https` URL, lower-cased, without
-/// the default port; `None` for anything else, a URL with credentials in it
-/// included.
-pub fn push_origin_of(url: &str) -> Option<String> {
-    let rest = url.get(..8).filter(|scheme| scheme.eq_ignore_ascii_case("https://")).map(|_| &url[8..])?;
-    let authority = rest.split(['/', '?', '#']).next()?;
-    if authority.is_empty() || authority.contains('@') {
-        return None;
-    }
-    let authority = authority.to_ascii_lowercase();
-    let (host, port) = if let Some(v6) = authority.strip_prefix('[') {
-        let (address, after) = v6.split_once(']')?;
-        let port = match after {
-            "" => None,
-            port => Some(port.strip_prefix(':')?),
-        };
-        (format!("[{address}]"), port)
-    } else {
-        match authority.rsplit_once(':') {
-            Some((host, port)) => (host.to_string(), Some(port)),
-            None => (authority.clone(), None),
-        }
-    };
-    let host_ok = host.starts_with('[') || (!host.is_empty() && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'));
-    if !host_ok {
-        return None;
-    }
-    match port {
-        None | Some("443") => Some(format!("https://{host}")),
-        Some(port) if !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok() => {
-            Some(format!("https://{host}:{port}"))
-        }
-        _ => None,
-    }
 }
 
 /// A fence for one wrapping: random, so no request can know it in advance.
@@ -465,33 +392,40 @@ mod tests {
     }
 
     #[test]
-    fn a_push_origin_is_https_and_nothing_else() {
+    fn push_origins_are_https_origins_and_the_tcks_loopback_ones() {
+        let clean = |origins: &[&str], source, tck| clean_origins(&origins.iter().map(|o| o.to_string()).collect::<Vec<_>>(), source, tck);
         assert_eq!(
-            push_origin_of("https://Hooks.Example.com/a2a?x=1").as_deref(),
-            Some("https://hooks.example.com")
+            clean(
+                &["https://Hooks.Example.com/", "https://hooks.example.com:443"],
+                EntrySource::Claude,
+                false
+            ),
+            Ok(vec!["https://hooks.example.com".into()])
         );
-        assert_eq!(push_origin_of("https://example.com:443/x").as_deref(), Some("https://example.com"));
-        assert_eq!(push_origin_of("https://example.com:8443").as_deref(), Some("https://example.com:8443"));
-        assert_eq!(push_origin_of("https://[::1]:8443/x").as_deref(), Some("https://[::1]:8443"));
-        assert_eq!(push_origin_of("http://example.com"), None);
-        assert_eq!(push_origin_of("https://user:pw@example.com"), None);
-        assert_eq!(push_origin_of("https://example.com:99999"), None);
         assert_eq!(
-            clean_origins(&["https://example.com/".into()], false),
-            Ok(vec!["https://example.com".into()])
+            clean(&["https://example.com:8443", "https://[::1]:8443"], EntrySource::Claude, false),
+            Ok(vec!["https://example.com:8443".into(), "https://[::1]:8443".into()])
         );
-        assert!(clean_origins(&["https://example.com/path".into()], false).is_err());
+        for not_one in [
+            "https://example.com/path",
+            "https://user:pw@example.com",
+            "https://example.com:99999",
+            "http://example.com",
+        ] {
+            assert!(clean(&[not_one], EntrySource::Claude, false).is_err(), "{not_one}");
+        }
         assert!(
-            clean_origins(&["http://127.0.0.1:9000".into()], false).is_err(),
+            clean(&["http://127.0.0.1:9000"], EntrySource::Tck, false).is_err(),
             "plain http is never an origin"
         );
         assert_eq!(
-            clean_origins(&["http://127.0.0.1:9000".into()], true),
-            Ok(vec!["http://127.0.0.1:9000".into()]),
+            clean(&["http://127.0.0.1:9000", "http://localhost"], EntrySource::Tck, true),
+            Ok(vec!["http://127.0.0.1:9000".into(), "http://localhost".into()]),
             "but for the TCK's entry"
         );
-        assert!(clean_origins(&["http://example.com".into()], true).is_err(), "and only on loopback");
-        assert!(clean_origins(&["http://127.0.0.1.evil.net".into()], true).is_err());
+        assert!(clean(&["http://127.0.0.1:9000"], EntrySource::Claude, true).is_err(), "and no other");
+        assert!(clean(&["http://example.com"], EntrySource::Tck, true).is_err(), "and only on loopback");
+        assert!(clean(&["http://127.0.0.1.evil.net"], EntrySource::Tck, true).is_err());
     }
 
     #[test]
