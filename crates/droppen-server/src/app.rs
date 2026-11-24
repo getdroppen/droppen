@@ -143,16 +143,21 @@ impl RemoteHandApp {
         // two feeds that would otherwise only notice on their next poll.
         let refresh = droppen_http::refresh::Refresh::new(global.clone());
         drive.injections.host.attach_listeners(feeds.clone(), refresh.clone());
-        drive.injections.host.attach_alerts(Arc::new(PushAlerts {
+        // The sessions behind the A2A server (`docs/a2a.md` §5) hear of every
+        // turn's end and question first; the push alerts go on as before.
+        let cloud = droppen_cloud::Cloud::new(paths.as_ref().clone());
+        let a2a_sessions = crate::a2a_backend::A2aSessions::new(&drive, &global, &refresh, &cloud);
+        drive.injections.host.attach_alerts(Arc::new(a2a_sessions.alerts(PushAlerts {
             transcripts: drive.transcripts.clone(),
-        }));
+        })));
         // Found once, here: an entry that registers no ACP provider fails
         // to start rather than on the first request for an agent.
         let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(drive.providers.clone())
             .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
         Ok(AppState {
             acp_agents,
-            cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
+            cloud,
+            a2a_sessions,
             // Touches nothing yet: the installed packages are read by the
             // first status, the instance database by the first switch or
             // store, and `boot` below.
@@ -433,6 +438,9 @@ impl RemoteHandApp {
                 droppen_accounts::quota::spawn_fallback_ticker(state.drive.quota.clone(), state.drive.accounts.clone(), state.cancel.clone());
             }
         }
+        // The boot has adopted the runs it could (one without the lock adopts
+        // none): an A2A task resumed from now on is read against them.
+        state.a2a_sessions.adopted();
         let cancel = state.cancel.clone();
         let desktop_app = state.desktop_app;
         let auth_for_link = state.drive.auth.clone();

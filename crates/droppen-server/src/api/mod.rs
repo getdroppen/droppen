@@ -143,6 +143,10 @@ pub struct AppState {
     /// ([`droppen_cloud::control`]). Inert in a server that does not own its
     /// instance.
     pub cloud: Arc<droppen_cloud::Cloud>,
+    /// The sessions behind the A2A server (`docs/a2a.md` §5): the real
+    /// `SessionBackend`, which the protocol side takes with its events'
+    /// inbox ([`crate::a2a_backend::A2aSessions::take_inbox`]).
+    pub a2a_sessions: Arc<crate::a2a_backend::A2aSessions>,
     /// Whether the Droppen desktop app runs this server (`DROPPEN_DESKTOP_APP`,
     /// see [`crate::desktop_app`]): no self-upgrade, and the app owns the login.
     pub desktop_app: bool,
