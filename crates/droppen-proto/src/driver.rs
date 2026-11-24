@@ -23,7 +23,7 @@
 //! so on a slow link an answer waits behind a fraction of a second of bulk,
 //! not behind the whole window.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -255,7 +255,7 @@ impl Channel {
         let task = Task {
             session,
             cmd_tx: cmd_tx.clone(),
-            streams: HashMap::new(),
+            streams: BTreeMap::new(),
             send_window: SendWindow::new(),
             recv_window: RecvWindow::new(),
             outbound,
@@ -326,7 +326,9 @@ impl Channel {
 struct Task {
     session: Session,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
-    streams: HashMap<u32, Slot>,
+    /// The streams open, by id: in order, so what happens to several at once
+    /// (a sweep's closes) happens the same way every time.
+    streams: BTreeMap<u32, Slot>,
     send_window: SendWindow,
     recv_window: RecvWindow,
     outbound: mpsc::UnboundedSender<Frame>,
@@ -390,7 +392,14 @@ impl Task {
                 let soon = now_us() + DRAIN_POLL_US;
                 deadline = Some(deadline.map_or(soon, |d| d.min(soon)));
             }
+            // In a fixed order, so the same inputs at the same moment are
+            // handled the same way every time (a random pick otherwise). Each
+            // source is bounded (the hub window, the peer's sending, the
+            // streams' send budgets), so none keeps the others waiting: a
+            // timer that is due first, then what came in, then the commands.
             tokio::select! {
+                biased;
+                () = until(deadline, now_us()) => self.session.tick(now_us()),
                 frame = inbound.recv() => match frame {
                     None => break End::Gone,
                     Some(Frame::Data { payload, .. }) => {
@@ -412,13 +421,6 @@ impl Task {
                     Some(Frame::Close { code, .. }) => break End::Peer(code),
                     Some(_) => {}
                 },
-                Some(cmd) = cmds.recv() => {
-                    if let Cmd::End { code, reason } = cmd {
-                        let _ = self.outbound.send(Frame::Close { ch: self.session.ch(), code, reason });
-                        break End::Local(code);
-                    }
-                    self.on_cmd(cmd);
-                }
                 message = recv_direct(&mut self.direct) => match message {
                     Some(message) => match self.session.receive_direct(&message, now_us()) {
                         Ok(events) => events.into_iter().for_each(|e| self.on_event(e)),
@@ -427,7 +429,13 @@ impl Task {
                     // The DataChannel is gone: fall back to the hub.
                     None => self.session.detach_direct(DownReason::Failed, true),
                 },
-                () = until(deadline, now_us()) => self.session.tick(now_us()),
+                Some(cmd) = cmds.recv() => {
+                    if let Cmd::End { code, reason } = cmd {
+                        let _ = self.outbound.send(Frame::Close { ch: self.session.ch(), code, reason });
+                        break End::Local(code);
+                    }
+                    self.on_cmd(cmd);
+                }
             }
             self.paths_changed();
             self.sweep();
@@ -452,7 +460,7 @@ impl Task {
                 reason: "channel error".into(),
             });
         }
-        for (_, slot) in self.streams.drain() {
+        for (_, slot) in std::mem::take(&mut self.streams) {
             let _ = slot.tx.send(StreamEvent::Closed(code));
             slot.budget.close();
         }
