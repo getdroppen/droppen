@@ -667,8 +667,14 @@ once the code is proved, what proved it:
   `deviceFingerprint(sign_key, dh_key)` before it adds the proxy
   (`[AddDevice3{a2a}, SetA2aAccept …]`).
 
-A hub from before A2A proxies answers without `kind` and `claims` (and,
-once proved, without `expires_ms`).
+A proxy the page does not add (the fingerprint does not match, or `claims`
+is more than 1) stays out of the chain: its session reads the chain and
+nothing else, and the hub deletes its row a day after the claim, as it does
+any device that never joined. Until then `GET /v1/me` lists it in `devices`
+with `kind: "a2a"`; it counts neither towards the day's registrations nor
+as waiting (`POST /v1/devices`).
+
+A hub from before A2A proxies answers without `kind` and `claims`.
 Errors: `400 bad_request`, `404 not_found` (another account's, or none).
 
 ### `POST /v1/mailbox` — requires a current admin device (but see purpose 4)

@@ -178,7 +178,8 @@ and `/v1/client` (websocket.md). Every other route answers its session
 relay tickets: nothing else") — `GET /v1/me`, `POST /v1/devices`,
 `/v1/keys*`, `/v1/mailbox*`, stream pages, `/v1/pairings*`,
 `/v1/main-device`, `PATCH /v1/relays/prefs`, `/v1/enrollments*`,
-`/v1/passkeys*`, `/v1/password`, `/v1/rotations*`, `DELETE /v1/account`,
+`/v1/passkeys*`, `/v1/password`, `GET /v1/rotations`,
+`PUT`/`DELETE /v1/rotations/{host}`, `DELETE /v1/account`,
 `POST /v1/email/resend` and `POST /v1/logout` included; http.md does not
 repeat it per route. No mail goes to it either (`403 a2a_device`, http.md
 `POST /v1/mailbox`): it holds no key and reads no mailbox.
