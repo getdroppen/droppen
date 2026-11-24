@@ -9292,6 +9292,17 @@
       "machine": "m-1",
       "proof": "9febe843e3881132cb2da2ac42010518cf7709dce3bf0b708f9010b8c8a0375c"
     },
+    "enrollA2a": {
+      "code": "DA1-2HN2WFONA3AKH6ZJG7T3DKG7IY-UG2EMC66NFXPTG3HKCOWSBCP7U",
+      "secret": "a1b4460bde696ef99b67509d69044ffd",
+      "token": "bc4a6d2f6fc6bf754538329279fbdc41",
+      "account": "acct-1",
+      "device": "a2a-1",
+      "signKey": "1b81a22796201d6f416d00659928cf31d50fc0158e2cdc997f39a52123d18abf",
+      "dhKey": "9f81211d9c639ad7f71f28cc94efbded13faad0703ce93fc7f0b7f7e82820846",
+      "proof": "38cf710aeacfa755f281f4e968202726a4d54052d0a7252750ae1f90b9956116",
+      "machineLabelProof": "ebb056eb903b16fbfff9bdf03e3b0e106b949060958d490a6f4cbb9bf516192d"
+    },
     "hubLogin": {
       "role": "agent",
       "account": "acct-1",

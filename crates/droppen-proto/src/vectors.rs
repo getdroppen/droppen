@@ -22,7 +22,7 @@ use crate::chain::{
 };
 use crate::frame::Frame;
 use crate::handshake::{HelloBody, ReplyBody, ReplyStatus};
-use crate::identity::{fingerprint, fingerprint_text, EnrollCode, MachineIdentity};
+use crate::identity::{fingerprint, fingerprint_text, A2aEnrollCode, EnrollCode, MachineIdentity};
 use crate::keys::{ed25519_key, x25519_is_low_order, DhKeypair};
 use crate::mux::{scheduling_scenario, MuxFrame, StreamClass};
 use crate::noise::{Binding, Initiator, RekeyPolicy, Responder};
@@ -3426,6 +3426,16 @@ fn identity_vectors() -> Value {
     let id = MachineIdentity::from_seed(&bytes32(50));
     let code = EnrollCode::generate(fingerprint(&fixture().ak.verifying_key().to_bytes()), &mut rng(51));
     let proof = code.proof("acct-1", "m-1", &id.sign_public(), &id.dh_public());
+    // An A2A proxy's code (`DA1-`, docs/a2a.md §7.2): the same token, its own proof label.
+    let a2a_code = A2aEnrollCode::generate(fingerprint(&fixture().ak.verifying_key().to_bytes()), &mut rng(55));
+    let a2a_id = MachineIdentity::from_seed(&bytes32(56));
+    let a2a_proof = a2a_code.proof("acct-1", "a2a-1", &a2a_id.sign_public(), &a2a_id.dh_public());
+    // What a machine's label gives for the same secret, device and keys: never the A2A proof.
+    let machine_label_proof = EnrollCode {
+        account_fingerprint: a2a_code.account_fingerprint,
+        secret: a2a_code.secret,
+    }
+    .proof("acct-1", "a2a-1", &a2a_id.sign_public(), &a2a_id.dh_public());
     let login = crate::sig::HubLogin {
         role: crate::sig::LoginRole::Agent,
         account: "acct-1".into(),
@@ -3457,6 +3467,11 @@ fn identity_vectors() -> Value {
             // The same code with the newer prefix, which readers accept too (nothing writes it yet).
             "codeDr": code.to_string().replacen("RH1-", "DR1-", 1),
             "secret": h(&code.secret), "token": h(&code.token()), "account": "acct-1", "machine": "m-1", "proof": h(&proof),
+        },
+        "enrollA2a": {
+            "code": a2a_code.to_string(), "secret": h(&a2a_code.secret), "token": h(&a2a_code.token()), "account": "acct-1", "device": "a2a-1",
+            "signKey": h(&a2a_id.sign_public()), "dhKey": h(&a2a_id.dh_public()), "proof": h(&a2a_proof),
+            "machineLabelProof": h(&machine_label_proof),
         },
         "hubLogin": {
             "role": "agent", "account": "acct-1", "id": "m-1", "hub": "wss://hub.example", "nonce": h(&login.nonce), "timeMs": login.time_ms,
@@ -3654,6 +3669,14 @@ fn rust_vector_dr_prefixed_texts_parse_to_the_same_values() {
     assert_eq!(dr.parse::<EnrollCode>(), Ok(code.clone()));
     assert_eq!(hex::encode(&code.secret), e["secret"].as_str().unwrap());
     assert_eq!(hex::encode(&code.token()), e["token"].as_str().unwrap());
+    // An A2A proxy's code reads as its own kind only, and its proof is its label's.
+    let a = &v["identity"]["enrollA2a"];
+    let a2a: A2aEnrollCode = a["code"].as_str().unwrap().parse().unwrap();
+    assert!(a["code"].as_str().unwrap().parse::<EnrollCode>().is_err());
+    assert_eq!(hex::encode(&a2a.token()), a["token"].as_str().unwrap());
+    let (sign, dh) = (arr32(&a["signKey"]), arr32(&a["dhKey"]));
+    assert!(a2a.verify_proof("acct-1", "a2a-1", &sign, &dh, &arr32(&a["proof"])));
+    assert!(!a2a.verify_proof("acct-1", "a2a-1", &sign, &dh, &arr32(&a["machineLabelProof"])));
     let o = &v["pairing"]["offer"];
     let (written, dr) = (o["text"].as_str().unwrap(), o["textDr"].as_str().unwrap());
     assert!(written.starts_with("RHP1-") && dr.starts_with("DRP1-") && written[5..] == dr[5..]);

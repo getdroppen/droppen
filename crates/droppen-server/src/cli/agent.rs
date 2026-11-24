@@ -346,6 +346,13 @@ pub(crate) mod tests {
         ] {
             assert_eq!(parse(&argv).unwrap_err().kind(), expected, "{argv:?}");
         }
+        let a2a = droppen_proto::identity::A2aEnrollCode {
+            account_fingerprint: [1; 16],
+            secret: [2; 16],
+        }
+        .to_string();
+        let a2a_refused = a2a.parse::<EnrollCode>().unwrap_err().to_string();
+        assert!(a2a_refused.contains("A2A proxy"), "{a2a_refused}");
         // The refusals of a parsed command line, before any file or network work.
         for (argv, expected) in [
             (vec!["enroll".into(), code.clone(), "--hub=".into()], hub::origin("").unwrap_err()),
@@ -354,6 +361,8 @@ pub(crate) mod tests {
                 "nonsense".parse::<EnrollCode>().unwrap_err().to_string(),
             ),
             (args(&["enroll", "nonsense"]), "nonsense".parse::<EnrollCode>().unwrap_err().to_string()),
+            // An A2A proxy's code joins a proxy, never this computer.
+            (vec!["enroll".into(), a2a.clone(), "--hub".into(), "wss://hub.example".into()], a2a_refused.clone()),
             (args(&["enroll", "-", "--hub", "ftp://hub.example"]), hub::origin("ftp://hub.example").unwrap_err()),
             (args(&["enroll", "-", "--hub", "http://hub.example"]), hub::origin("http://hub.example").unwrap_err()),
         ] {
