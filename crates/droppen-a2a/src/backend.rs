@@ -80,6 +80,21 @@ pub enum Isolation {
     Worktree,
 }
 
+/// Which account a session runs under, as `NewSession.accountId` says it:
+/// absent, `null`, or an id.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, gotcha::Schematic)]
+#[serde(tag = "kind", content = "id", rename_all = "lowercase")]
+pub enum RunAccount {
+    /// The instance's default account, as a session started from the page
+    /// gets without naming one.
+    #[default]
+    Default,
+    /// The CLI's own login on this machine.
+    Local,
+    /// A stored account, by its id.
+    Id(String),
+}
+
 /// How a session of an entry runs: everything of the entry the backend needs,
 /// and nothing the message could have set (§0: what runs is decided here).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,8 +105,8 @@ pub struct RunSpec {
     pub acp_agent: Option<String>,
     /// The entry's directory, absolute.
     pub cwd: String,
-    /// The stored account to run under; `None` is the CLI's own login.
-    pub account_id: Option<String>,
+    /// The account to run under.
+    pub account: RunAccount,
     /// `--model`, or the CLI's default.
     pub model: Option<String>,
     /// Reasoning effort, or the CLI's default.
@@ -306,6 +321,8 @@ pub enum TurnOutcome {
     Completed(TurnResult),
     /// It failed, crashed, or could not start: `FAILED`, with why.
     Failed(String),
+    /// A person stopped it in Droppen itself: `CANCELED`, with what to say.
+    Canceled(String),
     /// The entry's settings could not run it (the directory is unusable, the
     /// worktree could not be made): `REJECTED`.
     Rejected {
@@ -448,6 +465,11 @@ pub enum BackendError {
     QuestionClosed,
     /// The context's session is gone. The task is `FAILED`.
     Gone(String),
+    /// What was asked is not one the backend takes — an answer that does not
+    /// fit the question's options, say. The caller gets an invalid-params
+    /// error and the task stays as it is (an answer's task still waits); a
+    /// start or a new turn so refused is `REJECTED`.
+    Invalid(String),
     /// Anything else. A start or a new turn is `FAILED`; the caller of an
     /// answer, an append or a cancel gets an internal error.
     Failed(String),
@@ -456,7 +478,9 @@ pub enum BackendError {
 impl std::fmt::Display for BackendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BackendError::Rejected { message, .. } | BackendError::Gone(message) | BackendError::Failed(message) => f.write_str(message),
+            BackendError::Rejected { message, .. } | BackendError::Gone(message) | BackendError::Invalid(message) | BackendError::Failed(message) => {
+                f.write_str(message)
+            }
             BackendError::QuestionClosed => f.write_str("the question was already answered or withdrawn"),
         }
     }

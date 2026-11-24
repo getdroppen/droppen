@@ -4,10 +4,9 @@
       "A2aEntry": {
         "description": "One A2A agent.",
         "properties": {
-          "accountId": {
-            "description": "The stored account it runs under; `null` is the CLI's own login.",
-            "nullable": true,
-            "type": "string"
+          "account": {
+            "$ref": "#/components/schemas/RunAccount",
+            "description": "The account it runs under: `{\"kind\": \"default\"}` (the instance's\ndefault account), `{\"kind\": \"local\"}` (the CLI's own login) or\n`{\"kind\": \"id\", \"id\": \"…\"}`."
           },
           "acpAgent": {
             "description": "The configured ACP agent it runs, for `acp`.",
@@ -101,7 +100,7 @@
           "source",
           "acpAgent",
           "cwd",
-          "accountId",
+          "account",
           "model",
           "effort",
           "permission",
@@ -119,9 +118,9 @@
       "A2aEntryCreate": {
         "description": "The body of `POST /api/a2a/entries`.",
         "properties": {
-          "accountId": {
-            "description": "The stored account to run under.",
-            "type": "string"
+          "account": {
+            "$ref": "#/components/schemas/RunAccount",
+            "description": "The account to run under; the instance's default when not said."
           },
           "acpAgent": {
             "description": "The ACP agent, required for `acp`.",
@@ -223,11 +222,11 @@
         "type": "object"
       },
       "A2aEntryUpdate": {
-        "description": "The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty\nstring in a nullable field (`acpAgent`, `accountId`, `model`, `effort`,\n`permission`, `template`) sets it back to `null`.",
+        "description": "The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty\nstring in a nullable field (`acpAgent`, `model`, `effort`, `permission`,\n`template`) sets it back to `null`.",
         "properties": {
-          "accountId": {
-            "description": "The account; `\"\"` clears it.",
-            "type": "string"
+          "account": {
+            "$ref": "#/components/schemas/RunAccount",
+            "description": "The account to run under."
           },
           "acpAgent": {
             "description": "The ACP agent; `\"\"` clears it.",
@@ -4900,6 +4899,66 @@
         ],
         "type": "string"
       },
+      "RunAccount": {
+        "description": "Which account a session runs under, as `NewSession.accountId` says it:\nabsent, `null`, or an id.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "description": "The instance's default account, as a session started from the page\ngets without naming one.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "default"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "default",
+            "type": "object"
+          },
+          {
+            "description": "The CLI's own login on this machine.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "local"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "local",
+            "type": "object"
+          },
+          {
+            "description": "A stored account, by its id.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "id"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "title": "id",
+            "type": "object"
+          }
+        ]
+      },
       "ScheduledTask": {
         "description": "One scheduled task.",
         "properties": {
@@ -7831,7 +7890,7 @@
               }
             }
           },
-          "description": "The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty\nstring in a nullable field (`acpAgent`, `accountId`, `model`, `effort`,\n`permission`, `template`) sets it back to `null`.",
+          "description": "The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty\nstring in a nullable field (`acpAgent`, `model`, `effort`, `permission`,\n`template`) sets it back to `null`.",
           "required": true
         },
         "responses": {

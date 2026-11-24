@@ -2771,8 +2771,12 @@ export interface components {
     schemas: {
         /** @description One A2A agent. */
         A2aEntry: {
-            /** @description The stored account it runs under; `null` is the CLI's own login. */
-            accountId: string | null;
+            /**
+             * @description The account it runs under: `{"kind": "default"}` (the instance's
+             *     default account), `{"kind": "local"}` (the CLI's own login) or
+             *     `{"kind": "id", "id": "…"}`.
+             */
+            account: components["schemas"]["RunAccount"];
             /** @description The configured ACP agent it runs, for `acp`. */
             acpAgent: string | null;
             /** @description Whether a task's question may be answered over A2A. */
@@ -2824,8 +2828,8 @@ export interface components {
         };
         /** @description The body of `POST /api/a2a/entries`. */
         A2aEntryCreate: {
-            /** @description The stored account to run under. */
-            accountId?: string;
+            /** @description The account to run under; the instance's default when not said. */
+            account?: components["schemas"]["RunAccount"];
             /** @description The ACP agent, required for `acp`. */
             acpAgent?: string;
             /** @description `true` when not said. */
@@ -2868,12 +2872,12 @@ export interface components {
         };
         /**
          * @description The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty
-         *     string in a nullable field (`acpAgent`, `accountId`, `model`, `effort`,
-         *     `permission`, `template`) sets it back to `null`.
+         *     string in a nullable field (`acpAgent`, `model`, `effort`, `permission`,
+         *     `template`) sets it back to `null`.
          */
         A2aEntryUpdate: {
-            /** @description The account; `""` clears it. */
-            accountId?: string;
+            /** @description The account to run under. */
+            account?: components["schemas"]["RunAccount"];
             /** @description The ACP agent; `""` clears it. */
             acpAgent?: string;
             /** @description Whether questions may be answered over A2A. */
@@ -5301,6 +5305,21 @@ export interface components {
          * @enum {string}
          */
         Role: "user" | "assistant" | "system";
+        /**
+         * @description Which account a session runs under, as `NewSession.accountId` says it:
+         *     absent, `null`, or an id.
+         */
+        RunAccount: {
+            /** @enum {string} */
+            kind: "default";
+        } | {
+            /** @enum {string} */
+            kind: "local";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "id";
+        };
         /** @description One scheduled task. */
         ScheduledTask: {
             /** @description When it was created, ISO-8601. */
@@ -7047,8 +7066,8 @@ export interface operations {
         };
         /**
          * @description The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty
-         *     string in a nullable field (`acpAgent`, `accountId`, `model`, `effort`,
-         *     `permission`, `template`) sets it back to `null`.
+         *     string in a nullable field (`acpAgent`, `model`, `effort`, `permission`,
+         *     `template`) sets it back to `null`.
          */
         requestBody: {
             content: {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use droppen_http::openapi_ext::{Nullable, Optional};
 
-use crate::backend::{EntrySource, Isolation, RunSpec};
+use crate::backend::{EntrySource, Isolation, RunAccount, RunSpec};
 
 /// The prompt a task's request is wrapped in when the entry sets none (§5).
 /// The fence keeps the request, which may come from a third party, apart
@@ -50,8 +50,10 @@ pub struct A2aEntry {
     pub acp_agent: Nullable<String>,
     /// The directory its sessions start in, absolute.
     pub cwd: String,
-    /// The stored account it runs under; `null` is the CLI's own login.
-    pub account_id: Nullable<String>,
+    /// The account it runs under: `{"kind": "default"}` (the instance's
+    /// default account), `{"kind": "local"}` (the CLI's own login) or
+    /// `{"kind": "id", "id": "…"}`.
+    pub account: RunAccount,
     /// `--model`, or `null` for the CLI's default.
     pub model: Nullable<String>,
     /// Reasoning effort, or `null`.
@@ -87,7 +89,7 @@ impl A2aEntry {
             source: self.source,
             acp_agent: self.acp_agent.0.clone(),
             cwd: self.cwd.clone(),
-            account_id: self.account_id.0.clone(),
+            account: self.account.clone(),
             model: self.model.0.clone(),
             effort: self.effort.0.clone(),
             permission: self.permission.0.clone(),
@@ -130,9 +132,9 @@ pub struct A2aEntryCreate {
     /// The directory, absolute; not needed for `tck`.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub cwd: Optional<String>,
-    /// The stored account to run under.
+    /// The account to run under; the instance's default when not said.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub account_id: Optional<String>,
+    pub account: Optional<RunAccount>,
     /// `--model`.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub model: Optional<String>,
@@ -163,8 +165,8 @@ pub struct A2aEntryCreate {
 }
 
 /// The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty
-/// string in a nullable field (`acpAgent`, `accountId`, `model`, `effort`,
-/// `permission`, `template`) sets it back to `null`.
+/// string in a nullable field (`acpAgent`, `model`, `effort`, `permission`,
+/// `template`) sets it back to `null`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct A2aEntryUpdate {
@@ -186,9 +188,9 @@ pub struct A2aEntryUpdate {
     /// The directory.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub cwd: Optional<String>,
-    /// The account; `""` clears it.
+    /// The account to run under.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
-    pub account_id: Optional<String>,
+    pub account: Optional<RunAccount>,
     /// `--model`; `""` clears it.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub model: Optional<String>,
@@ -249,7 +251,17 @@ pub fn clean_description(description: &str) -> Result<String, String> {
     Ok(description.to_string())
 }
 
-/// A flag value (`model`, `effort`, `permission`, `accountId`, `acpAgent`) by
+/// The account, its id checked by shape like a flag.
+pub fn clean_account(account: RunAccount) -> Result<RunAccount, String> {
+    match account {
+        RunAccount::Id(id) => clean_flag("account.id", Some(&id))?
+            .map(RunAccount::Id)
+            .ok_or_else(|| "account.id is required".to_string()),
+        other => Ok(other),
+    }
+}
+
+/// A flag value (`model`, `effort`, `permission`, `account.id`, `acpAgent`) by
 /// its shape: blank is none, and a value goes into an argument vector, so it
 /// may not read as a flag nor hold a space or a control character. Whether
 /// the CLI takes it is the backend's check ([`crate::SessionBackend::check_entry`]).

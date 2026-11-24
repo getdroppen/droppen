@@ -20,8 +20,8 @@ use droppen_http::SendResult;
 use crate::backend::{EntrySource, Isolation};
 use crate::engine::{iso_ms, A2a};
 use crate::entry::{
-    clean_cwd, clean_description, clean_devices, clean_flag, clean_name, clean_origins, clean_template, valid_id, A2aEntry, A2aEntryCreate,
-    A2aEntryUpdate, DEFAULT_TEMPLATE, MAX_CONCURRENT,
+    clean_account, clean_cwd, clean_description, clean_devices, clean_flag, clean_name, clean_origins, clean_template, valid_id, A2aEntry,
+    A2aEntryCreate, A2aEntryUpdate, DEFAULT_TEMPLATE, MAX_CONCURRENT,
 };
 use crate::store::{TaskFilter, TokenRow};
 use crate::wire::TaskState;
@@ -202,7 +202,7 @@ impl A2a {
             source: body.source,
             acp_agent: Nullable(clean_flag("acpAgent", body.acp_agent.as_deref()).map_err(bad)?),
             cwd: clean_cwd(body.source, body.cwd.as_deref()).map_err(bad)?,
-            account_id: Nullable(clean_flag("accountId", body.account_id.as_deref()).map_err(bad)?),
+            account: clean_account(body.account.0.unwrap_or_default()).map_err(bad)?,
             model: Nullable(clean_flag("model", body.model.as_deref()).map_err(bad)?),
             effort: Nullable(clean_flag("effort", body.effort.as_deref()).map_err(bad)?),
             permission: Nullable(clean_flag("permission", body.permission.as_deref()).map_err(bad)?),
@@ -248,7 +248,9 @@ impl A2a {
         if body.cwd.0.is_some() || body.source.0.is_some() {
             entry.cwd = clean_cwd(entry.source, Some(body.cwd.as_deref().unwrap_or(&entry.cwd))).map_err(bad)?;
         }
-        entry.account_id = nullable("accountId", &entry.account_id, body.account_id.as_deref())?;
+        if let Some(account) = body.account.0.clone() {
+            entry.account = clean_account(account).map_err(bad)?;
+        }
         entry.model = nullable("model", &entry.model, body.model.as_deref())?;
         entry.effort = nullable("effort", &entry.effort, body.effort.as_deref())?;
         entry.permission = nullable("permission", &entry.permission, body.permission.as_deref())?;

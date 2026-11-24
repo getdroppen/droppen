@@ -938,6 +938,7 @@ impl A2a {
                 }
             }
             TurnOutcome::Failed(message) => self.end(task_id, TaskState::Failed, &message, None),
+            TurnOutcome::Canceled(message) => self.end(task_id, TaskState::Canceled, &message, None),
             TurnOutcome::Rejected { code, message } => self.end(task_id, TaskState::Rejected, &message, code),
         }
     }
@@ -1102,6 +1103,7 @@ impl A2a {
         match outcome {
             Ok(()) => {}
             Err(BackendError::Rejected { code, message }) => self.end(&task_id, TaskState::Rejected, &message, code),
+            Err(BackendError::Invalid(message)) => self.end(&task_id, TaskState::Rejected, &message, None),
             Err(other) => self.end(&task_id, TaskState::Failed, &other.to_string(), None),
         }
     }
@@ -1361,6 +1363,10 @@ impl A2a {
                 self.store.release_message(&who.caller, &message.message_id);
                 return Err(A2aError::unsupported("the question was already answered or withdrawn"));
             }
+            Err(BackendError::Invalid(reason)) => {
+                self.store.release_message(&who.caller, &message.message_id);
+                return Err(A2aError::invalid(reason));
+            }
             Err(other) => {
                 self.store.release_message(&who.caller, &message.message_id);
                 return Err(A2aError::internal(other.to_string()));
@@ -1414,6 +1420,10 @@ impl A2a {
                     });
                 }
                 Err(BackendError::Gone(reason)) => self.end(&task.id, TaskState::Failed, &reason, None),
+                Err(BackendError::Invalid(reason)) => {
+                    self.store.release_message(&who.caller, &message.message_id);
+                    return Err(A2aError::invalid(reason));
+                }
                 Err(other) => {
                     self.store.release_message(&who.caller, &message.message_id);
                     return Err(A2aError::internal(other.to_string()));

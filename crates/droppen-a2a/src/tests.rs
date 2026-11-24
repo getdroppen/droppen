@@ -1336,3 +1336,67 @@ async fn a_tck_entry_needs_the_tck_switch() {
         .unwrap_err();
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
 }
+
+/* ── what the backend may say back ───────────────────────────────────── */
+
+#[tokio::test]
+async fn a_turn_stopped_in_droppen_is_canceled() {
+    let h = harness().await;
+    let (task, _) = h.working("m-1").await;
+    h.fake.stopped_in_droppen(&task);
+    h.wait_state(&task, TaskState::Canceled).await;
+    let got = h.rpc("GetTask", json!({"id": task})).await;
+    assert_eq!(got["result"]["status"]["message"]["parts"][0]["text"], "stopped in Droppen");
+}
+
+#[tokio::test]
+async fn an_answer_the_backend_will_not_take_leaves_the_task_waiting() {
+    let h = harness().await;
+    let task = h.asking("m-1").await;
+    h.fake
+        .next_answer(Err(BackendError::Invalid("\"blue\" is not an option of \"Which branch?\"".into())));
+    let answer = json!({"messageId": "a-1", "taskId": task, "role": "ROLE_USER", "parts": [{"data": {"answers": {"Which branch?": "blue"}}}]});
+    let refused = h.rpc("SendMessage", json!({"message": answer.clone()})).await;
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+    assert!(refused["error"]["message"].as_str().unwrap().contains("blue"));
+    assert_eq!(h.state(&task).await, TaskState::InputRequired, "the task still waits; it never fails");
+
+    let fixed = json!({"messageId": "a-1", "taskId": task, "role": "ROLE_USER", "parts": [{"data": {"answers": {"Which branch?": "main"}}}]});
+    let taken = h
+        .rpc("SendMessage", json!({"message": fixed, "configuration": {"returnImmediately": true}}))
+        .await;
+    assert_eq!(
+        taken["result"]["task"]["status"]["state"], "TASK_STATE_WORKING",
+        "the refused message id may be sent again: {taken}"
+    );
+}
+
+#[tokio::test]
+async fn an_entry_runs_under_the_default_account_unless_it_names_another() {
+    let h = harness_with(json!({"maxConcurrent": 4})).await;
+    let (task, _) = h.new_task("m-1").await;
+    let Call::Start(start) = h.started(&task).await else { unreachable!() };
+    assert_eq!(start.run.account, crate::backend::RunAccount::Default);
+
+    for (account, expected) in [
+        (json!({"kind": "local"}), crate::backend::RunAccount::Local),
+        (json!({"kind": "id", "id": "acc-1"}), crate::backend::RunAccount::Id("acc-1".into())),
+        (json!({"kind": "default"}), crate::backend::RunAccount::Default),
+    ] {
+        let entry = h
+            .a2a
+            .update_entry("main", serde_json::from_value(json!({"account": account})).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(entry.account, expected);
+        assert_eq!(serde_json::to_value(&entry).unwrap()["account"], account, "written as it was given");
+    }
+    let refused = h
+        .a2a
+        .update_entry(
+            "main",
+            serde_json::from_value(json!({"account": {"kind": "id", "id": "--flag"}})).unwrap(),
+        )
+        .await;
+    assert!(refused.is_err(), "an account id is checked like a flag");
+}

@@ -9,8 +9,8 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 
 use crate::backend::{
-    Answer, BackendError, BackendEvent, Events, Question, ResultData, Resumed, RunSpec, SendToSession, SessionBackend, StartSession,
-    Started, TaskRef, TurnOutcome, TurnResult,
+    Answer, BackendError, BackendEvent, Events, Question, ResultData, Resumed, RunSpec, SendToSession, SessionBackend, StartSession, Started,
+    TaskRef, TurnOutcome, TurnResult,
 };
 
 /// One call the backend was asked to make.
@@ -173,6 +173,14 @@ impl FakeBackend {
         self.report(BackendEvent::TurnEnded {
             task_id: task_id.into(),
             outcome: TurnOutcome::Failed(message.into()),
+        });
+    }
+
+    /// A person stopped the task's turn in Droppen.
+    pub fn stopped_in_droppen(&self, task_id: &str) {
+        self.report(BackendEvent::TurnEnded {
+            task_id: task_id.into(),
+            outcome: TurnOutcome::Canceled("stopped in Droppen".into()),
         });
     }
 
