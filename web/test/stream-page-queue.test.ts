@@ -4,13 +4,16 @@
 // the download, and the stream starts over only once none of the old
 // download's fetches is still running; a session somebody waits on goes
 // ahead of every machine's background, which asks the browser for low
-// priority; and each download says in the connection log how it went.
+// priority; a page that stalls fails its download into the stream's backoff;
+// a machine's index and status follow the lane they are given; and each
+// download says in the connection log how it went.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { connLog, maskId } from "../src/lib/connection-log.js";
 import { type Bytes, FMT_FEED_V1, hex, streamId } from "../src/lib/e2e/index.js";
 import { PageQueue } from "../src/lib/hub/page-queue.js";
-import { feedFold, type PageFetch, StreamClient, type StreamClientOptions } from "../src/lib/hub/streams.js";
+import { HubCopySource } from "../src/lib/hub/copy-source.js";
+import { feedFold, type PageFetch, StreamClient, type StreamClientOptions, type StreamSubscription } from "../src/lib/hub/streams.js";
 import { FakeStreamLink, flush, type Machine, makeMachine, StreamWriter, until } from "./stream-fixtures.js";
 
 const item = (n: number) => ({ kind: "user", text: `item ${n}` });
@@ -183,5 +186,58 @@ test("a checkpoint download says its start and end in the connection log: pages,
   const bytes = [...cp.pages.values()].reduce((n, p) => n + p.length, 0);
   assert.deepEqual({ ...done.fields, ms: 0 }, { device: maskId(id), kind: "session", state: "done", done: 3, total: 3, bytes, ms: 0 });
   assert.ok(!JSON.stringify(connLog.events().filter((e) => e.seq > mark)).includes(id));
+  c.close();
+});
+
+test("a page that stalls fails its download, which starts over through the stream's backoff", async () => {
+  const machine = await makeMachine();
+  const link = new FakeStreamLink();
+  const { stream, cp } = await session(machine, "stalls", 3);
+  const fetches = new Fetches(cp.pages);
+  const errors: unknown[] = [];
+  const delays: number[] = [];
+  const queue = new PageQueue({ limits: { fg: 1, bg: 1 }, stallMs: 40, log: false });
+  const c = client(machine, link, fetches, {
+    pageQueue: queue,
+    retryDelay: (attempt) => (delays.push(attempt), 0),
+  });
+  c.subscribe(stream, feedFold, { onError: (e) => errors.push(e) });
+  await until(() => link.subs().length === 1);
+  const mark = since();
+  link.deliver({ type: "checkpoint", ch: subOf(link, stream).ch, stream, uptoSeq: cp.upto, manifest: cp.manifest });
+  // The first page's answer never comes.
+  await until(() => fetches.asked.length === 1);
+  await until(() => link.subs().length === 2, 2_000);
+  assert.equal(fetches.asked[0]!.opts.signal?.aborted, true, "given up on: its fetch aborted");
+  assert.equal(fetches.asked.length, 1, "nothing more of the stalled download was fetched");
+  assert.equal((errors[0] as DOMException).name, "TimeoutError");
+  assert.deepEqual(delays, [0], "the stream's own backoff decides when it is asked again");
+  const done = logged(mark, "stream.done").at(-1)!;
+  assert.deepEqual({ state: done.fields.state, errName: done.fields.errName, error: done.fields.error }, { state: "failed", errName: "TimeoutError", error: "the page stalled" });
+  c.close();
+});
+
+test("a machine's index and status are fetched in the lane they are given, the names followed later too", async () => {
+  const machine = await makeMachine();
+  const link = new FakeStreamLink();
+  const fetches = new Fetches(new Map());
+  const c = client(machine, link, fetches);
+  const subs: StreamSubscription<unknown>[] = [];
+  const subscribe = c.subscribe.bind(c);
+  c.subscribe = ((...args: Parameters<typeof c.subscribe>) => {
+    const sub = subscribe(...args);
+    subs.push(sub as StreamSubscription<unknown>);
+    return sub;
+  }) as typeof c.subscribe;
+  const source = HubCopySource.over({ mk: machine.mk, client: c });
+  const places = await source.places({ kind: "index" });
+  const follow = source.follow({ kind: "index" }, places, { at: 0, from: null }, { onState: () => undefined })!;
+  assert.ok(subs.length >= 1);
+  assert.ok(subs.every((s) => s.lane === "bg"), "background by default");
+  follow.setForeground!(true);
+  assert.ok(subs.every((s) => s.lane === "fg"));
+  follow.setForeground!(false);
+  assert.ok(subs.every((s) => s.lane === "bg"));
+  follow.close();
   c.close();
 });

@@ -377,7 +377,7 @@ const OWN_WORDS: readonly RegExp[] = [
   /^(?:tunnel: the answer did not start with a head|aborted|The operation was aborted\.|signal is aborted without reason)$/,
   /^the request body is larger than \d{1,12} bytes$/,
   // A page download let go of (`lib/hub/streams.ts`, `page-queue.ts`): the request aborted, in the program's words.
-  /^(?:the subscription was closed|another page of its download failed|the page queue is closed)$/,
+  /^(?:the subscription was closed|another page of its download failed|the page queue is closed|the page stalled)$/,
   // The browser's words for a request that never got an answer (`fetch`'s own TypeError).
   /^(?:Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.|Network request failed|The network connection was lost\.)$/,
   // The log's own words for why it says something.

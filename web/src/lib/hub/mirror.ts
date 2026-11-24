@@ -695,6 +695,8 @@ export class MachineMirror {
   private started = false;
   /** See {@link MirrorOptions.followSessions}. */
   private followingSessions: boolean;
+  /** What the page shows of the machine ({@link setView}): in view on its copy or not, and the session open there (`source/id`). */
+  private view: { onCopy: boolean; session: string | null } = { onCopy: false, session: null };
 
   constructor(private readonly opts: MirrorOptions) {
     this.transact = opts.transact ?? deviceTransact;
@@ -840,6 +842,7 @@ export class MachineMirror {
     if (status.saved) this.emit({ kind: "status" });
     this.indexFollow = this.followNewest(this.index, { kind: "index" }, indexPlaces, index);
     this.statusFollow = this.followNewest(this.status, { kind: "status" }, statusPlaces, status);
+    this.relaneCopies();
     this.offRoom = source.onRoom?.(() => this.reconcile()) ?? null;
     this.reconcile();
     // Other accounts' copies on this device are not ours to keep (the
@@ -877,6 +880,7 @@ export class MachineMirror {
           slot.freshestMs = change.freshestMs;
           slot.missing = false;
           this.scheduleSave(slot);
+          this.relaneCopies();
           this.emit({ kind: slot.kind as "index" | "status" });
           if (slot.kind === "index") {
             this.reconcile();
@@ -1007,6 +1011,8 @@ export class MachineMirror {
           slot.freshestMs = change.freshestMs;
           slot.missing = false;
           this.scheduleSave(slot);
+          // The copy is in: whatever it fetches next is background, looked at or not.
+          this.relane(slot);
           onUpdate(change);
         },
         onSynced: (exists) => {
@@ -1106,13 +1112,42 @@ export class MachineMirror {
   }
 
   /**
-   * A session's pages are fetched in the foreground while a reader waits on
-   * its copy — it is being opened, and the copy is not on the device yet —
-   * and in the background otherwise (`PageQueue`): a warm session kept ready
-   * gives way to live traffic, one somebody is waiting for does not.
+   * A session's pages are fetched in the foreground while somebody wants its
+   * copy and it has none — a reader waits on it ({@link session}), or it is
+   * the one open in view on the machine's copy ({@link setView}) — and in the
+   * background otherwise (`PageQueue`): a warm session kept ready gives way to
+   * live traffic, one somebody is looking at does not.
    */
   private relane(slot: SessionSlot): void {
-    slot.sub?.setForeground?.(slot.waiters.size > 0);
+    const looked = this.view.onCopy && this.view.session === slot.key && slot.state === null;
+    slot.sub?.setForeground?.(slot.waiters.size > 0 || looked);
+  }
+
+  /** The index and the status in the foreground while the machine is in view on its copy and has none of them. */
+  private relaneCopies(): void {
+    this.indexFollow?.setForeground?.(this.view.onCopy && !this.index?.state);
+    this.statusFollow?.setForeground?.(this.view.onCopy && !this.status?.state);
+  }
+
+  /**
+   * What the page shows of this machine (`HubMachine`): `onCopy`, it is in
+   * view and shown from its copy (the machine is not live); `session`, the
+   * one of its sessions open there, if any. While so, what the person is
+   * looking at and has no copy of — that session, the index and the status —
+   * is fetched in the foreground, however long it takes: not only while a
+   * reader waits ({@link session}'s wait gives up after a while; the person
+   * is still looking). Out of view, or live, it is all background again.
+   */
+  setView(view: { onCopy: boolean; session: { source: string; id: string } | null }): void {
+    const next = { onCopy: view.onCopy, session: view.session ? `${view.session.source}/${view.session.id}` : null };
+    const before = this.view;
+    if (before.onCopy === next.onCopy && before.session === next.session) return;
+    this.view = next;
+    for (const key of new Set([before.session, next.session])) {
+      const slot = key ? this.sessions.get(key) : undefined;
+      if (slot) this.relane(slot);
+    }
+    this.relaneCopies();
   }
 
   /**
@@ -1287,7 +1322,8 @@ export class MachineMirror {
     }
     const opened = new Set(this.opened.map((o) => `${o.source}/${o.id}`));
     for (const [key, slot] of this.sessions) {
-      if (want.has(key) || slot.waiters.size > 0) continue;
+      // One somebody waits on, or is looking at on the copy, is never let go of under them.
+      if (want.has(key) || slot.waiters.size > 0 || (this.view.onCopy && this.view.session === key)) continue;
       const followed = slot.sub !== null;
       slot.sub?.close();
       slot.sub = null;

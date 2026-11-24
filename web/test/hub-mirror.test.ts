@@ -322,7 +322,7 @@ test("a session's pages are fetched in the foreground while a reader waits on it
   const asked = mirror.session("claude", "opened");
   await settle();
   assert.deepEqual(source.session("opened")!.lanes.at(-1), true, "being opened, with no copy here: ahead of the background");
-  source.session("opened")!.events.onState({ state: { started: true, startIndex: 0, endIndex: 1, items: [{ kind: "user", text: "hi" }], fp: null, prefixFp: null }, at: { mark: "m", seq: 1, timeMs: 1 }, reset: true, bodies: [], freshestMs: 1 });
+  source.session("opened")!.events.onState({ state: arrivedCopy, at: { mark: "m", seq: 1, timeMs: 1 }, reset: true, bodies: [], freshestMs: 1 });
   await asked;
   assert.equal(source.session("opened")!.lanes.at(-1), false, "the copy is in: whatever it fetches next is background");
   // Followed on as one opened here, with its copy in: nobody waits on it, so it stays in the background.
@@ -331,6 +331,53 @@ test("a session's pages are fetched in the foreground while a reader waits on it
   await settle();
   assert.equal(source.session("opened")!.lanes.at(-1), false);
   mirror.setFollowSessions(false);
+  mirror.close();
+});
+
+const arrivedCopy = { started: true, startIndex: 0, endIndex: 1, items: [{ kind: "user", text: "hi" }], fp: null, prefixFp: null };
+
+test("a session open in view on the copy stays in the foreground after the reader's wait gives up, until its copy is in or the view leaves", async (t) => {
+  const { source, mirror } = await handWorld();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  mirror.setView({ onCopy: true, session: { source: "claude", id: "big" } });
+  let answered: unknown = "waiting";
+  void mirror.session("claude", "big").then((copy) => (answered = copy));
+  await settle();
+  const big = source.session("big")!;
+  assert.equal(big.lanes.at(-1), true);
+  t.mock.timers.tick(SESSION_WAIT_MS);
+  await settle();
+  assert.equal(answered, null, "the reader gave up waiting: no copy, for now");
+  assert.equal(big.lanes.at(-1), true, "the person is still looking at it: still ahead of the background");
+  mirror.setFollowSessions(true);
+  mirror.setFollowSessions(false);
+  assert.equal(big.closed, false, "nor let go of under them");
+  big.events.onState({ state: arrivedCopy, at: { mark: "m", seq: 1, timeMs: 1 }, reset: true, bodies: [], freshestMs: 1 });
+  assert.equal(big.lanes.at(-1), false, "the copy is in: background from here on");
+
+  // Another one open in view, then the view leaves: the machine goes live, or out of view.
+  mirror.setView({ onCopy: true, session: { source: "claude", id: "other" } });
+  void mirror.session("claude", "other");
+  await settle();
+  t.mock.timers.tick(SESSION_WAIT_MS);
+  await settle();
+  assert.equal(source.session("other")!.lanes.at(-1), true);
+  mirror.setView({ onCopy: false, session: null });
+  assert.equal(source.session("other")!.lanes.at(-1), false);
+  mirror.close();
+});
+
+test("a machine in view on its copy fetches its index and status ahead of the background while it has none of them", async () => {
+  const { source, mirror } = await handWorld();
+  const index = source.follows.find((f) => f.name.kind === "index")!;
+  const status = source.follows.find((f) => f.name.kind === "status")!;
+  assert.deepEqual([index.lanes.at(-1), status.lanes.at(-1)], [false, false], "out of view: background");
+  mirror.setView({ onCopy: true, session: null });
+  assert.deepEqual([index.lanes.at(-1), status.lanes.at(-1)], [true, true], "in view on its copy, with no list and no status");
+  index.events.onState({ state: { rows: {}, asOf: 1 }, at: { mark: "m", seq: 1, timeMs: 1 }, reset: true, bodies: [], freshestMs: 1 });
+  assert.deepEqual([index.lanes.at(-1), status.lanes.at(-1)], [false, true], "the list is in; the status is still owed");
+  mirror.setView({ onCopy: false, session: null });
+  assert.equal(status.lanes.at(-1), false, "live, or out of view: background");
   mirror.close();
 });
 

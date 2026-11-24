@@ -155,8 +155,10 @@ class CountedPipe implements Pipe {
 function countingOpener(channel: MachineChannel, open: Set<Pipe>, pages: PageQueue | null): PipeOpener {
   return {
     open(kind, meta) {
+      // Held only once there is a pipe to let go of it: one that cannot be opened (it throws) holds nothing.
+      const inner = channel.open(kind, meta);
       const release = meta.method !== undefined ? (pages?.hold("live") ?? null) : null;
-      const pipe: Pipe = new CountedPipe(channel.open(kind, meta), () => {
+      const pipe: Pipe = new CountedPipe(inner, () => {
         open.delete(pipe);
         release?.();
       });
@@ -211,6 +213,8 @@ export class HubMachine implements MachineDriver {
   private wanted = false;
   /** It is the machine in view ({@link setInView}): never let go of. */
   private inView = false;
+  /** The session of it open in view, as the app's address says ({@link viewSession}). */
+  private viewed: { source: string; id: string } | null = null;
   /**
    * How many things on the page are using it ({@link hold}): a pane showing
    * one of its sessions or its terminal, one of its pages, the new-session
@@ -322,7 +326,10 @@ export class HubMachine implements MachineDriver {
         const held = this.path;
         if (next?.kind !== held.info?.kind || next?.relay !== held.info?.relay || now() - held.at >= PATH_EVERY_MS) refresh();
       }),
-      this.transport.onMode(refresh),
+      this.transport.onMode(() => {
+        this.showView();
+        refresh();
+      }),
       this.mirror.onChange((change) => {
         if (change.kind !== "session") refresh();
       }),
@@ -442,10 +449,28 @@ export class HubMachine implements MachineDriver {
   setInView(on: boolean): void {
     if (this.disposed) return;
     this.inView = on;
+    this.showView();
     this.mirror.setFollowSessions(this.inUse);
     if (on) return this.ensureLive();
     if (this.inUse) return;
     if (this.wanted || this.channel.status === "open") this.idleAfter(this.opts.idleMs ?? IDLE_MS);
+  }
+
+  /** The session of it the app's address names (`null`: none, or the address is about another machine). */
+  viewSession(session: { source: string; id: string } | null): void {
+    if (this.disposed || (this.viewed?.source === session?.source && this.viewed?.id === session?.id)) return;
+    this.viewed = session;
+    this.showView();
+  }
+
+  /**
+   * Tell the copy what the page shows of the machine: in view on its copy
+   * (not live), and which session — what it has no copy of then is fetched
+   * ahead of the background (`MachineMirror.setView`).
+   */
+  private showView(): void {
+    const onCopy = this.inView && this.transport.current === "offline";
+    this.mirror.setView({ onCopy, session: onCopy ? this.viewed : null });
   }
 
   private idleAfter(ms: number): void {
@@ -562,6 +587,16 @@ export function addressOn(key: MachineKey, address: string, home: MachineKey): s
   if ((machine ?? home) === key) return machine === null || key !== home ? address : `${path}${search}`;
   const section = switchPath(path);
   return machinePath(key, section.startsWith("/p/") ? "/sessions" : section, home);
+}
+
+/**
+ * The session an address of the app shows (`/sessions/<source>/<id>`, and
+ * its agents' pages under it, on any machine: `/m/<machine>/sessions/…`), as
+ * the router has it (decoded); `null` for any other page.
+ */
+export function sessionOfAddress(pathname: string): { source: string; id: string } | null {
+  const m = /^\/sessions\/([^/]+)\/([^/]+)(?:\/|$)/.exec(splitMachinePath(pathname).path);
+  return m ? { source: m[1]!, id: m[2]! } : null;
 }
 
 /** The app's page of one session (`/sessions/$source/$id`). */
@@ -1055,6 +1090,16 @@ export class HubShell implements AppShell {
    * writes are queued. A router mounted again under an address it has not
    * loaded yet renders nothing until it has: `app/root-layout.tsx`.)
    */
+  /**
+   * The app's address names `session` of machine `key` (`null`: no session
+   * page): that machine's copy hears it, every other machine's that none of
+   * its sessions is open (`HubMachine.viewSession`).
+   */
+  viewSession(key: MachineKey, session: { source: string; id: string } | null): void {
+    if (this.stopped) return;
+    for (const [k, machine] of this.held) machine.viewSession(k === key ? session : null);
+  }
+
   follow(key: MachineKey): void {
     if (this.stopped || this.focused.get() === null || this.focused.get() === key || !this.held.has(key)) return;
     rememberSelected(this.opts.account.account, key);

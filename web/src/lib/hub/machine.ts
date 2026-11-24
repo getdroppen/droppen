@@ -786,13 +786,24 @@ export class MachineChannel implements PipeOpener {
   }
 
   open(kind: PipeKind, meta: PipeMeta): Pipe {
+    // A head that cannot be written (a path over 64 KiB) throws here, before anything is counted.
+    const head = encodeRequestHead({ method: meta.method ?? "GET", path: meta.path, headers: (meta.headers ?? []).slice(0, 48) });
     const pipe = new BridgePipe(kind, meta, () => {
       this.pipesOpen = Math.max(0, this.pipesOpen - 1);
     });
     this.pipesOpen += 1;
-    const head = encodeRequestHead({ method: meta.method ?? "GET", path: meta.path, headers: (meta.headers ?? []).slice(0, 48) });
     this.ensure().then(
-      (driver) => pipe.attach(driver.open(kind, head)),
+      (driver) => {
+        // The channel refusing the stream (a head over `MAX_META`, every stream in use) fails the pipe: never one left waiting.
+        let stream: ReturnType<ChannelDriver["open"]>;
+        try {
+          stream = driver.open(kind, head);
+        } catch {
+          queueMicrotask(() => pipe.fail(4502));
+          return;
+        }
+        pipe.attach(stream);
+      },
       () => queueMicrotask(() => pipe.fail(4502)),
     );
     return pipe;

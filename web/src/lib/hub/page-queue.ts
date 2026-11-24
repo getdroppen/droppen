@@ -12,12 +12,14 @@
  * worth it while somebody is using the device live: the copy is what the page
  * shows when the device is *not* there.
  *
- * - Two lanes. Foreground (`fg`): a session a reader is waiting on, because
- *   it is being opened and its copy is not on this device yet
- *   (`MachineMirror.session`). It goes first and is never paused. Background
- *   (`bg`): everything else — the warm sessions kept ready, the index, the
- *   status. A job's lane is asked when its turn comes, so a download that
- *   becomes foreground half-way moves ahead with the pages it still needs.
+ * - Two lanes. Foreground (`fg`): a copy somebody is looking at and does not
+ *   have — a session being opened, or open in view on its copy, with no copy
+ *   on this device yet; a machine's index and status while it is in view on
+ *   its copy with none (`MachineMirror`). It goes first and is never paused.
+ *   Background (`bg`): everything else — the warm sessions kept ready, the
+ *   other machines' index and status. A job's lane is asked when its turn
+ *   comes, so a download that becomes foreground half-way moves ahead with
+ *   the pages it still needs.
  * - Limits by link ({@link PageQueue.limits}). A slow link — `saveData`, 3g
  *   or slower, a downlink under {@link SLOW_DOWNLINK_MBPS} or a round trip of
  *   {@link SLOW_RTT_MS} or more as `navigator.connection` says it, or, where
@@ -32,8 +34,18 @@
  *   already finishes. A pause that lasts {@link TRICKLE_MS} lets one page
  *   through each {@link TRICKLE_MS}, so a copy still moves under a page that
  *   is never quiet.
+ * - A page that stalls — {@link STALL_MS} with not a byte of it arriving — is
+ *   aborted and stops counting against the limits at once: on a slow link
+ *   one background page at a time means one hung connection would otherwise
+ *   hold every machine's copy back for as long as the browser takes to give
+ *   up on it (minutes, for an HTTP/2 connection the radio dropped silently).
+ *   The download it belongs to fails and starts over through its own
+ *   backoff (`StreamSubscription`).
  * - Cancelled: a job whose signal aborts before its turn is dropped and never
- *   fetched; one already running is handed the signal, for its fetch.
+ *   fetched; one already running is handed the abort, for its fetch.
+ *
+ * Every time the queue keeps is monotonic (`performance.now`): a wall clock
+ * stepping back must not hold background back for as long as it stepped.
  *
  * It only decides when a page is fetched. What is fetched, and every check of
  * it against the manifest the machine signed, is the caller's.
@@ -76,12 +88,34 @@ export const COOLDOWN_MS = 2_000;
 export const OPENED_MS = 10_000;
 /** A pause this long lets one background page through, and one more each time again. */
 export const TRICKLE_MS = 15_000;
+/**
+ * A page with nothing of it arriving for this long — not its head, not a
+ * byte of its body — is given up on. On the slowest link that is still up
+ * (slow-2g, some 50 kbps and a two-second round trip) a page's bytes arrive
+ * a fraction of a second apart once they flow, and its head within a few
+ * round trips; behind a congested queue on a lossy radio link, where TCP
+ * backs off 1, 2, 4, 8 s between retransmissions, the v0.2.141 log's worst
+ * live request still answered in 14 s. Thirty seconds of silence is not a
+ * slow page but a dead connection, which the browser itself may not notice
+ * for minutes.
+ */
+export const STALL_MS = 30_000;
 /** Pages measured before a measured throughput decides the link. */
 const MEASURED_MIN = 3;
-/** How much body time the measurement remembers (ms): the last few seconds of downloading. */
-const MEASURE_WINDOW_MS = 10_000;
-/** A page whose head came sooner than this (ms) came from the browser's cache, not the link: not measured. */
-const CACHED_HEAD_MS = 10;
+/** The pages a measured throughput is the median of: the last few. */
+const MEASURED_KEEP = 8;
+/**
+ * The least time a page's body is taken to have lasted (ms): a page the
+ * browser's cache served, or a hub next door, arrives in no time, and counts
+ * as a fast link (at most some 49 Mbps for a full page) rather than as none.
+ */
+const BODY_FLOOR_MS = 10;
+/**
+ * The most a gap between two pieces of a body counts for (ms): a body that
+ * stalls and then goes on, or hangs until the stall watchdog, says the link
+ * dropped, not that it is slow — its silence does not drag the throughput down.
+ */
+const BODY_GAP_MS = 2_000;
 
 /** Whether `link` is a slow one ({@link SLOW_DOWNLINK_MBPS}, {@link SLOW_RTT_MS}). */
 export function slowLink(link: LinkInfo): boolean {
@@ -106,15 +140,16 @@ function browserLink(): LinkInfo | undefined {
   }
 }
 
-/** The time and timers the queue runs on (a test's own, for a simulated link). */
+/** The time and timers the queue runs on (a test's own, for a simulated link). `now` must never go back. */
 export interface PageClock {
   now(): number;
   setTimeout(fn: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
 }
 
-const realClock: PageClock = {
-  now: () => Date.now(),
+/** The page's monotonic clock, and its timers. */
+export const realClock: PageClock = {
+  now: () => (typeof performance !== "undefined" ? performance.now() : Date.now()),
   setTimeout: (fn, ms) => {
     const timer = setTimeout(fn, ms);
     // Nothing waits on the queue's timers to exit (a test runner).
@@ -133,18 +168,22 @@ export interface PageQueueOptions {
   cooldownMs?: number;
   openedMs?: number;
   trickleMs?: number;
+  /** How long a page may go with nothing arriving (default {@link STALL_MS}). */
+  stallMs?: number;
   /** Say its pauses, resumes and limits in the connection log (`pages.*`; default yes). */
   log?: boolean;
 }
 
 /** What a job is told as it starts. */
 export interface PageJob {
-  /** Aborted when whoever asked for the page lets go of it: hand it to the fetch. */
+  /** Aborted when whoever asked for the page lets go of it, or when it stalls: hand it to the fetch. */
   readonly signal: AbortSignal;
   /** The lane it started in: a background fetch asks the browser for low priority. */
   readonly lane: PageLane;
   /** Say when the answer's head is in: the body's time, not the round trip, is what measures the link. */
   head(): void;
+  /** Say that `n` more bytes of the body came: the page is not stalled, and the link's throughput is measured by them. */
+  bytes(n: number): void;
 }
 
 /** How the queue's limits were decided: given, from what the browser says, from what was measured, or nothing measured yet. */
@@ -152,11 +191,18 @@ export type LimitBasis = "fixed" | "connection" | "measured" | "unmeasured";
 
 interface Queued {
   lane: () => PageLane;
-  start: (lane: PageLane) => void;
+  /** Run it now; `false`: it was let go of meanwhile (its signal aborted while the abort was still being told), and nothing ran. */
+  start: (lane: PageLane) => boolean;
   cancel: (reason: unknown) => void;
 }
 
-const NEVER = new AbortController().signal;
+/** A page in flight, as its body is timed. */
+interface Running {
+  headAt: number | null;
+  lastAt: number;
+  bodyMs: number;
+  bytes: number;
+}
 
 /** Why an aborted signal was aborted (an `AbortError`, as `fetch` rejects with). */
 export function abortReason(signal: AbortSignal): unknown {
@@ -165,19 +211,24 @@ export function abortReason(signal: AbortSignal): unknown {
 
 export class PageQueue {
   private readonly queue: Queued[] = [];
+  /** Pages counted against the limits: in flight and not given up on. */
   private running = 0;
   private runningBg = 0;
+  /** Pages whose body is coming, for the measurement's share of the link. */
+  private readonly inBody = new Set<Running>();
   private readonly holds: Record<PauseCause, number> = { live: 0, opened: 0 };
   private readonly until: Record<PauseCause, number> = { live: 0, opened: 0 };
-  /** The pause under way: since when, and whether it held anything back (then it was said, and its end is too). */
-  private pause: { cause: PauseCause; since: number; said: boolean } | null = null;
+  /**
+   * The pause under way: since when, until when as it stood at the last look
+   * (`Infinity` while a hold is on), and whether it held anything back (then
+   * it was said, and its end is too).
+   */
+  private pause: { cause: PauseCause; since: number; until: number; said: boolean } | null = null;
   private lastBgStart = Number.NEGATIVE_INFINITY;
   private timer: unknown = undefined;
   private timerAt = Number.POSITIVE_INFINITY;
-  /** Body time and bytes of the pages measured ({@link measuredBps}). */
-  private bodies = 0;
-  private bodyMark = 0;
-  private measured = { bytes: 0, ms: 0, pages: 0 };
+  /** The last pages' measured throughputs (bits/s), oldest first ({@link measuredBps}). */
+  private readonly samples: number[] = [];
   /** The limits last said in the log. */
   private limitsSaid = "";
   private closed = false;
@@ -191,7 +242,8 @@ export class PageQueue {
    * Fetch one page through the queue: `job` runs when its turn comes (its
    * lane — asked then — and the limits allowing), and gets a signal for its
    * fetch. `signal` aborting before then drops it unrun; the promise rejects
-   * with the signal's reason.
+   * with the signal's reason. A page that stalls ({@link STALL_MS}) is
+   * aborted with a `TimeoutError`.
    */
   run(lane: PageLane | (() => PageLane), job: (ctx: PageJob) => Promise<Uint8Array>, signal?: AbortSignal): Promise<Uint8Array> {
     if (this.closed) return Promise.reject(new DOMException("the page queue is closed", "AbortError"));
@@ -211,51 +263,115 @@ export class PageQueue {
         },
         start: (started) => {
           signal?.removeEventListener("abort", onAbort);
-          this.running += 1;
-          if (started === "bg") {
-            this.runningBg += 1;
-            this.lastBgStart = this.clock.now();
+          if (signal?.aborted) {
+            reject(abortReason(signal));
+            return false;
           }
-          const startedAt = this.clock.now();
-          let headAt: number | null = null;
-          const ctx: PageJob = {
-            signal: signal ?? NEVER,
-            lane: started,
-            head: () => {
-              if (headAt !== null) return;
-              headAt = this.clock.now();
-              if (headAt - startedAt >= CACHED_HEAD_MS) this.bodyStarted(headAt);
-            },
-          };
-          const measuring = () => headAt !== null && headAt - startedAt >= CACHED_HEAD_MS;
-          let run: Promise<Uint8Array>;
-          try {
-            run = job(ctx);
-          } catch (error) {
-            run = Promise.reject(error);
-          }
-          run
-            .then(
-              (bytes) => {
-                if (measuring()) this.bodyEnded(bytes.length);
-                resolve(bytes);
-              },
-              (error: unknown) => {
-                if (measuring()) this.bodyEnded(null);
-                reject(error);
-              },
-            )
-            .finally(() => {
-              this.running -= 1;
-              if (started === "bg") this.runningBg -= 1;
-              this.pump();
-            });
+          this.begin(started, job, signal, resolve, reject);
+          return true;
         },
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       this.queue.push(entry);
       this.pump();
     });
+  }
+
+  /**
+   * Run `job` now in `lane`: counted until it ends or stalls, timed, and
+   * watched for a stall. Its caller hears how it ended before anything else
+   * starts in its place: a download a failed page ends lets go of its other
+   * pages first.
+   */
+  private begin(
+    lane: PageLane,
+    job: (ctx: PageJob) => Promise<Uint8Array>,
+    outer: AbortSignal | undefined,
+    resolve: (body: Uint8Array) => void,
+    reject: (error: unknown) => void,
+  ): void {
+    const now = this.clock.now();
+    this.running += 1;
+    if (lane === "bg") {
+      this.runningBg += 1;
+      this.lastBgStart = now;
+    }
+    // Its own signal: the caller's abort, or the watchdog's.
+    const stop = new AbortController();
+    const letGo = () => stop.abort(abortReason(outer!));
+    if (outer) outer.addEventListener("abort", letGo, { once: true });
+    const page: Running = { headAt: null, lastAt: now, bodyMs: 0, bytes: 0 };
+    // Its caller hears once: how the job ended, or that it stalled — whichever comes first.
+    let told = false;
+    const tell = (fn: () => void) => {
+      if (told) return;
+      told = true;
+      fn();
+    };
+    let counted = true;
+    const uncount = () => {
+      if (!counted) return;
+      counted = false;
+      this.running -= 1;
+      if (lane === "bg") this.runningBg -= 1;
+      this.inBody.delete(page);
+    };
+    const stallMs = this.opts.stallMs ?? STALL_MS;
+    let watchdog: unknown;
+    const watch = (wait: number) => {
+      watchdog = this.clock.setTimeout(() => {
+        if (!counted) return;
+        const quiet = this.clock.now() - page.lastAt;
+        if (quiet < stallMs) return watch(stallMs - quiet);
+        // Given up on: aborted, its caller told, and no longer in anybody's
+        // way — even if its fetch takes a while to notice the abort.
+        const stalled = new DOMException("the page stalled", "TimeoutError");
+        stop.abort(stalled);
+        tell(() => reject(stalled));
+        uncount();
+        // After its caller has heard: a download it ends lets go of its other pages before one of them could start.
+        queueMicrotask(() => this.pump());
+      }, wait);
+    };
+    watch(stallMs);
+    const ctx: PageJob = {
+      signal: stop.signal,
+      lane,
+      head: () => {
+        if (page.headAt !== null) return;
+        const at = this.clock.now();
+        page.headAt = at;
+        page.lastAt = at;
+        if (counted) this.inBody.add(page);
+      },
+      bytes: (n) => {
+        if (page.headAt === null) ctx.head();
+        const at = this.clock.now();
+        page.bodyMs += Math.min(at - page.lastAt, BODY_GAP_MS);
+        page.lastAt = at;
+        page.bytes += n;
+      },
+    };
+    let run: Promise<Uint8Array>;
+    try {
+      run = job(ctx);
+    } catch (error) {
+      run = Promise.reject(error);
+    }
+    void run
+      .then(
+        (body) => {
+          if (counted && page.headAt !== null) this.measure(page, body.length);
+          tell(() => resolve(body));
+        },
+        (error: unknown) => tell(() => reject(error)),
+      )
+      .finally(() => {
+        this.clock.clearTimeout(watchdog);
+        outer?.removeEventListener("abort", letGo);
+        uncount();
+        this.pump();
+      });
   }
 
   /**
@@ -292,15 +408,16 @@ export class PageQueue {
     return this.queue.length;
   }
 
-  /** Pages in flight. */
+  /** Pages in flight, and not given up on. */
   get inFlight(): number {
     return this.running;
   }
 
-  /** The link's throughput as the pages measured it (bits/s; `null`: too few measured yet). */
+  /** The link's throughput as the last pages measured it (bits/s, their median; `null`: too few measured yet). */
   get measuredBps(): number | null {
-    const m = this.measured;
-    return m.pages >= MEASURED_MIN && m.ms > 0 ? (m.bytes * 8 * 1000) / m.ms : null;
+    if (this.samples.length < MEASURED_MIN) return null;
+    const sorted = [...this.samples].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)]!;
   }
 
   /** The limits now, whether the link is slow, and how that was decided. */
@@ -322,7 +439,7 @@ export class PageQueue {
     return { limits: slow ? SLOW_LIMITS : FAST_LIMITS, slow, basis: "measured" };
   }
 
-  /** A waiting page's lane may have changed (a reader started or stopped waiting on its session): look again. */
+  /** A waiting page's lane may have changed (a reader started or stopped looking at its copy): look again. */
   relane(): void {
     this.pump();
   }
@@ -371,9 +488,9 @@ export class PageQueue {
         this.withheld();
         break;
       }
-      this.take(0).start("bg");
+      if (!this.take(0).start("bg")) continue;
     }
-    this.schedule(now, cause);
+    this.schedule(now);
   }
 
   private take(at: number): Queued {
@@ -386,15 +503,22 @@ export class PageQueue {
     return this.runningBg === 0 && this.pause !== null && now - this.pause.since >= trickle && now - this.lastBgStart >= trickle;
   }
 
+  /**
+   * Keep the pause under way in step with `cause`, the one now. A pause whose
+   * end has passed unseen — it ran out while nothing was waiting, and no
+   * timer was set for it — ended then: it is closed at that end, and a pause
+   * starting now is a new one, not its continuation.
+   */
   private notePause(cause: PauseCause | null, now: number): void {
-    if (cause !== null) {
-      this.pause ??= { cause, since: now, said: false };
-      return;
-    }
     const pause = this.pause;
-    if (!pause) return;
-    this.pause = null;
-    if (pause.said && this.opts.log !== false) connLog.emit("pages.resume", { cause: pause.cause, pausedMs: now - pause.since, queued: this.queue.length, inFlight: this.running });
+    if (pause && (cause === null || pause.until < now)) {
+      this.pause = null;
+      const end = Math.min(now, pause.until);
+      if (pause.said && this.opts.log !== false) connLog.emit("pages.resume", { cause: pause.cause, pausedMs: end - pause.since, queued: this.queue.length, inFlight: this.running });
+    }
+    if (cause === null) return;
+    this.pause ??= { cause, since: now, until: now, said: false };
+    this.pause.until = this.pauseEnds(now);
   }
 
   /** A background page was held back by the pause: said once a pause. */
@@ -417,16 +541,17 @@ export class PageQueue {
     return limits;
   }
 
-  /** Wake when the pause ends, or when it has lasted long enough to trickle — while background is waiting, or a pause was said. */
-  private schedule(now: number, cause: PauseCause | null): void {
+  /** Wake when the pause under way ends (it is closed then, whatever waits), or when it has lasted long enough to trickle. */
+  private schedule(now: number): void {
     let at = Number.POSITIVE_INFINITY;
-    if (cause !== null && (this.queue.length > 0 || this.pause?.said)) {
-      at = this.pauseEnds(now);
-      if (this.queue.length > 0 && this.pause && this.runningBg === 0) {
+    const pause = this.pause;
+    if (pause) {
+      at = pause.until;
+      if (this.queue.length > 0 && this.runningBg === 0) {
         // Due already, yet nothing started: the pages in flight are what
         // holds it back, and the end of one pumps again.
         const trickle = this.opts.trickleMs ?? TRICKLE_MS;
-        const due = Math.max(this.pause.since + trickle, this.lastBgStart + trickle);
+        const due = Math.max(pause.since + trickle, this.lastBgStart + trickle);
         if (due > now) at = Math.min(at, due);
       }
     }
@@ -445,29 +570,18 @@ export class PageQueue {
     );
   }
 
-  /** Count body time while any measured page's body is coming: the union, so pages in parallel are not counted twice. */
-  private tick(now: number): void {
-    if (this.bodies > 0) this.measured.ms += Math.max(0, now - this.bodyMark);
-    this.bodyMark = now;
-  }
-
-  private bodyStarted(now: number): void {
-    this.tick(now);
-    this.bodies += 1;
-  }
-
-  /** A measured page's body ended: with its bytes, or (`null`) failed. */
-  private bodyEnded(bytes: number | null): void {
-    this.tick(this.clock.now());
-    this.bodies = Math.max(0, this.bodies - 1);
-    const m = this.measured;
-    if (bytes !== null) {
-      m.bytes += bytes;
-      m.pages += 1;
-    }
-    if (m.ms > MEASURE_WINDOW_MS) {
-      m.bytes *= MEASURE_WINDOW_MS / m.ms;
-      m.ms = MEASURE_WINDOW_MS;
-    }
+  /**
+   * One page measured: its bytes over its body's time (gaps capped at
+   * {@link BODY_GAP_MS}, at least {@link BODY_FLOOR_MS}), times the pages
+   * whose bodies shared the link with it as it ended. A job that never said
+   * its bytes is timed from its head to its end.
+   */
+  private measure(page: Running, length: number): void {
+    const now = this.clock.now();
+    const sharing = Math.max(1, this.inBody.size);
+    const bodyMs = page.bytes > 0 ? page.bodyMs + Math.min(now - page.lastAt, BODY_GAP_MS) : now - (page.headAt ?? now);
+    const bytes = page.bytes > 0 ? page.bytes : length;
+    this.samples.push(((bytes * 8 * 1000) / Math.max(bodyMs, BODY_FLOOR_MS)) * sharing);
+    if (this.samples.length > MEASURED_KEEP) this.samples.shift();
   }
 }

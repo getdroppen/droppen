@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { CaretUpDownIcon, CheckIcon, CloudSlashIcon, KeyIcon, SignOutIcon, SquaresFourIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { BlobTransfers } from "@/components/blob-transfers";
@@ -44,7 +44,7 @@ import { storageFullText, useMe } from "./plan";
 import { CompatBadge } from "./browser-support";
 import { storageView } from "@/lib/hub/plan";
 import { SignOutChoice } from "./sign-out-dialog";
-import { addressOn, type HubMachine, type HubShell } from "./hub-shell";
+import { addressOn, type HubMachine, type HubShell, sessionOfAddress } from "./hub-shell";
 import { hubShell, useFocusedMachine, useShellMachines } from "@/features/machines/shells";
 import { openAddDevice } from "./onboarding";
 import { AddDeviceHint, useAddDeviceHint } from "./onboarding-hints";
@@ -75,6 +75,11 @@ export function CloudBar() {
   useEffect(() => {
     shell?.follow(routeMachine);
   }, [shell, routeMachine]);
+  // The session the address shows, if any: its copy, if it has none, comes ahead of the background.
+  const viewed = sessionOfAddress(useRouterState({ select: (s) => s.location.pathname }));
+  useEffect(() => {
+    shell?.viewSession(routeMachine, viewed ? { source: viewed.source, id: viewed.id } : null);
+  }, [shell, routeMachine, viewed?.source, viewed?.id]);
   const machine = shell?.machine(routeMachine) ?? shell?.machine(focus) ?? null;
   if (!shell || !machine) return null;
   return <Bar shell={shell} machine={machine} />;

@@ -1023,7 +1023,8 @@ export class HubApi {
    *
    * `opts` (the page queue's, `PageFetch`): `signal` aborts the request and
    * its body, `priority` is the browser's (`low` for a background download),
-   * and `onHead` hears when the answer's head is in.
+   * `onHead` hears when the answer's head is in, and `onBytes` each piece of
+   * the body as it comes.
    */
   async streamPage(token: string, stream: Uint8Array, page: Uint8Array, opts: PageFetch = {}): Promise<Bytes> {
     const res = await this.send("GET", `/v1/streams/${hex(stream)}/pages/${hex(page)}`, { token, signal: opts.signal, priority: opts.priority });
@@ -1041,6 +1042,7 @@ export class HubApi {
         const { done, value } = await reader.read();
         if (done) break;
         total += value.length;
+        opts.onBytes?.(value.length);
         if (total > MAX_PAGE_LEN) {
           await reader.cancel().catch(() => undefined);
           throw tooLarge();

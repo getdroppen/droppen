@@ -71,7 +71,7 @@ import {
 import { connLog, errorFields } from "@/lib/connection-log";
 import type { CopyKind } from "./copy-source";
 import type { LinkState } from "./link";
-import { abortReason, type PageLane, PageQueue } from "./page-queue";
+import { abortReason, type PageLane, PageQueue, realClock } from "./page-queue";
 
 type SessionSummary = components["schemas"]["SessionSummary"];
 type TranscriptItem = components["schemas"]["TranscriptItem"];
@@ -426,6 +426,8 @@ export interface PageFetch {
   priority?: RequestPriority;
   /** The answer's head is in (what times the link: `PageQueue`). */
   onHead?: () => void;
+  /** `n` more bytes of the body came: the page is not stalled, and they time the link (`PageQueue`). */
+  onBytes?: (n: number) => void;
 }
 
 /** How often a checkpoint download says how far it is in the connection log (`stream.progress`), at most. */
@@ -443,7 +445,7 @@ export const PROGRESS_LOG_MS = 10_000;
 class DownloadLog {
   private done = 0;
   private bytes = 0;
-  private readonly startedAt = Date.now();
+  private readonly startedAt = realClock.now();
   private saidAt = this.startedAt;
 
   constructor(
@@ -458,7 +460,7 @@ class DownloadLog {
   page(bytes: number): void {
     this.done += 1;
     this.bytes += bytes;
-    const now = Date.now();
+    const now = realClock.now();
     if (now - this.saidAt < PROGRESS_LOG_MS || this.done >= this.total) return;
     this.saidAt = now;
     connLog.emit("stream.progress", { ...this.fields, done: this.done, total: this.total, bytes: this.bytes, ms: now - this.startedAt });
@@ -468,7 +470,7 @@ class DownloadLog {
     const failed = state === "failed";
     connLog.emit(
       "stream.done",
-      { ...this.fields, state, done: this.done, total: this.total, bytes: this.bytes, ms: Date.now() - this.startedAt, ...(failed ? errorFields(error) : {}) },
+      { ...this.fields, state, done: this.done, total: this.total, bytes: this.bytes, ms: realClock.now() - this.startedAt, ...(failed ? errorFields(error) : {}) },
       failed ? "warn" : undefined,
     );
   }
@@ -1051,6 +1053,7 @@ export class StreamClient {
                   signal: job.signal,
                   ...(job.lane === "bg" ? { priority: "low" as const } : {}),
                   onHead: job.head,
+                  onBytes: job.bytes,
                 });
                 const key = reader.keyFor(decodePage(encoded).epoch);
                 if (!key) throw new RecordError("noKey", `no key for page ${i}'s epoch`);
@@ -1615,6 +1618,8 @@ export class NewestStream<S> {
   private shown: number;
   private readonly subs = new Map<string, { at: NamedStream; sub: StreamSubscription<S>; synced: boolean; exists: boolean }>();
   private closed = false;
+  /** The lane every name's checkpoint pages are fetched in ({@link setLane}). */
+  private lane: PageLane = "bg";
 
   constructor(
     private readonly client: StreamClient,
@@ -1636,6 +1641,12 @@ export class NewestStream<S> {
   /** How many of the names are subscribed right now: the shown one, and every newer one still watched. */
   get followed(): number {
     return this.subs.size;
+  }
+
+  /** Fetch every name's checkpoint pages in `lane` from now on, the names followed later too (`StreamSubscription.setLane`). */
+  setLane(lane: PageLane): void {
+    this.lane = lane;
+    for (const { sub } of this.subs.values()) sub.setLane(lane);
   }
 
   /** The machine's names under every epoch held now (more epochs came): the newer ones are followed too. */
@@ -1677,6 +1688,7 @@ export class NewestStream<S> {
       },
       saved,
     );
+    entry.sub.setLane(this.lane);
   }
 
   /** A newer name has something: show it, and let go of the older ones. */
