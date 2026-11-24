@@ -468,3 +468,180 @@ async fn unenrolling_keeps_an_undelivered_dispute_statement() {
     assert_eq!(left, vec![statement.file_name().unwrap().to_os_string()], "everything else in agent/ is gone");
     assert!(!files.has_state());
 }
+
+/// `docs/a2a.md` §7.3, this server's side end to end short of the channel:
+/// the running link's verified chain decides which A2A proxies the A2A server
+/// takes (`a2a_backend::LinkDevices`), and lists them with their
+/// fingerprints; the chain moving so that this device no longer takes calls
+/// from one (`SetA2aAccept`, then its key epoch) takes back its tasks there,
+/// through the link's chain-change signal; with the link stopped, no proxy
+/// is taken at all.
+#[tokio::test]
+async fn the_links_chain_decides_which_a2a_proxies_the_a2a_server_takes() {
+    use droppen_a2a::backend::event_channel;
+    use droppen_a2a::testing::FakeBackend;
+    use droppen_http::identity::BridgedDevice;
+    use droppen_proto::chain::{genesis_draft, Action, ChainClock, ChainState, DeviceInfo, DeviceV3, Flags, KeyCommit, KeyCommits, Signer};
+    use gotcha::axum::body::Body;
+    use serde_json::{json, Value};
+    use tower_service::Service as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::for_instance(dir.path().to_path_buf(), "ctla2a");
+    let control = Control::new(paths.clone());
+    let machine = control.identity().unwrap();
+    let ak = MachineIdentity::from_seed(&[1; 32]);
+    let admin = MachineIdentity::from_seed(&[2; 32]);
+    let proxy = |seed: u8| MachineIdentity::from_seed(&[seed; 32]);
+    let genesis = genesis_draft(
+        "a-1",
+        ak.sign_public(),
+        DeviceInfo {
+            id: "d-1".into(),
+            sign_key: admin.sign_public(),
+            dh_key: admin.dh_public(),
+            full: true,
+        },
+        None,
+        1_000,
+    )
+    .sign(ak.signing_key());
+    let mut chain = ChainState::verify(std::slice::from_ref(&genesis), None, &mut ChainClock::history()).unwrap();
+    let mut entries = vec![genesis];
+    let sign = |chain: &mut ChainState, action: Action| {
+        let e = chain.draft(Signer::Device("d-1".into()), action, 2_000).sign(admin.signing_key());
+        chain.apply(&e, &mut ChainClock::history()).unwrap();
+        e
+    };
+    let add_proxy = |id: &str, keys: &MachineIdentity| {
+        Action::AddDevice3(DeviceV3 {
+            id: id.into(),
+            sign_key: keys.sign_public(),
+            dh_key: keys.dh_public(),
+            flags: Flags::A2A_DEVICE,
+        })
+    };
+    for action in [
+        Action::AddMachine(machine.info("m-1")),
+        add_proxy("p-1", &proxy(11)),
+        add_proxy("p-2", &proxy(12)),
+        Action::SetA2aAccept {
+            host: "m-1".into(),
+            devices: vec!["p-1".into()],
+        },
+    ] {
+        entries.push(sign(&mut chain, action));
+    }
+    let hub = format!("ws://127.0.0.1:{}", closed_port());
+    let mut st = AgentState::enrolling(&hub, "a-1", "m-1", droppen_proto::identity::fingerprint(&ak.sign_public()), 5_000);
+    assert!(st.absorb(&entries, 5_000).error.is_none());
+    st.save(&AgentFiles::of(&paths)).unwrap();
+
+    // Before the link runs: no proxy.
+    assert!(!control.takes_a2a_calls_from("p-1"));
+    control.attach(link_env(&paths));
+    assert!(control.start_if_enrolled().await);
+    assert!(control.takes_a2a_calls_from("p-1"));
+    assert!(!control.takes_a2a_calls_from("p-2"), "m-1 takes no calls from p-2");
+    assert!(!control.takes_a2a_calls_from("d-1"), "an admin is no A2A proxy");
+    let p1 = proxy(11);
+    assert_eq!(
+        control.a2a_callers(),
+        [(
+            "p-1".to_string(),
+            droppen_proto::identity::device_fingerprint_text(&p1.sign_public(), &p1.dh_public())
+        )]
+    );
+
+    // The A2A server, over a fake backend, asking the link.
+    let db = std::sync::Arc::new(droppen_instance::db::Db::open(dir.path().join("a2a.db")));
+    let (events, inbox) = event_channel();
+    let fake = FakeBackend::new(events);
+    let settings = droppen_a2a::Settings::from_env("0.0.0-test", None);
+    let a2a = droppen_a2a::A2a::new(
+        droppen_a2a::store::Store::new(db),
+        fake.clone(),
+        crate::a2a_backend::LinkDevices::new(control.clone()),
+        inbox,
+        settings,
+        tokio_util::sync::CancellationToken::new(),
+    );
+    let entry = json!({"id": "main", "name": "Main", "source": "claude", "cwd": "/work", "enabled": true, "isolation": "none", "allowedDevices": ["p-1", "p-2"]});
+    a2a.create_entry(serde_json::from_value(entry).unwrap()).await.unwrap();
+    assert_eq!(a2a.admitted_devices().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["p-1"]);
+    let mut router = droppen_a2a::protocol::router(a2a.clone());
+    /// One `SendMessage` from A2A proxy `device`, bridged in: the status and answer.
+    async fn send_as(router: &mut gotcha::axum::Router, device: &str, id: &str) -> (u16, Value) {
+        let body = json!({"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+            "params": {"message": {"messageId": id, "role": "ROLE_USER", "parts": [{"text": "go"}]}, "configuration": {"returnImmediately": true}}});
+        let mut request = gotcha::axum::http::Request::post("/agents/main/jsonrpc")
+            .header("a2a-version", "1.0")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        request.extensions_mut().insert(gotcha::axum::extract::ConnectInfo(
+            "127.0.0.1:40000".parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        request.extensions_mut().insert(BridgedDevice {
+            id: device.into(),
+            a2a: true,
+        });
+        let response = router.call(request).await.unwrap();
+        let status = response.status().as_u16();
+        let bytes = gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+    let (status, answer) = send_as(&mut router, "p-1", "m-1").await;
+    assert_eq!(status, 200, "{answer}");
+    let task = answer["result"]["task"]["id"].as_str().expect("a task").to_string();
+    assert_eq!(send_as(&mut router, "p-2", "m-2").await.0, 401, "the chain does not admit p-2");
+
+    // The chain moves: m-1 takes A2A calls from no proxy, and turns its key over.
+    let narrowed = vec![
+        sign(
+            &mut chain,
+            Action::SetA2aAccept {
+                host: "m-1".into(),
+                devices: vec![],
+            },
+        ),
+        sign(
+            &mut chain,
+            Action::KeyEpochs(KeyCommits {
+                user: None,
+                machines: vec![(
+                    "m-1".into(),
+                    KeyCommit {
+                        epoch: 0,
+                        hash: droppen_proto::chain::machine_key_commit("a-1", "m-1", 0, &[7; 32]),
+                    },
+                )],
+            }),
+        ),
+    ];
+    assert!(control.running_link().as_ref().unwrap().take_entries(&narrowed));
+    assert!(!control.takes_a2a_calls_from("p-1"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while a2a.store().task(&task).unwrap().state != droppen_a2a::wire::TaskState::Canceled {
+        assert!(std::time::Instant::now() < deadline, "the chain change takes back p-1's task");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let code = a2a.store().task(&task).unwrap().status_message.unwrap().metadata.unwrap()["errorInfo"]["metadata"]["code"].clone();
+    assert_eq!(code, "droppen.revoked");
+    assert_eq!(send_as(&mut router, "p-1", "m-3").await.0, 401, "nor is it taken again");
+    assert!(a2a.admitted_devices().is_empty());
+
+    // Taken again, then the link stops: none.
+    let widened = vec![sign(
+        &mut chain,
+        Action::SetA2aAccept {
+            host: "m-1".into(),
+            devices: vec!["p-1".into()],
+        },
+    )];
+    assert!(control.running_link().as_ref().unwrap().take_entries(&widened));
+    assert!(control.takes_a2a_calls_from("p-1"));
+    control.stop().await;
+    assert!(!control.takes_a2a_calls_from("p-1"), "no running link, no proxy");
+    assert!(control.a2a_callers().is_empty());
+}

@@ -1,6 +1,8 @@
 //! The A2A server (`droppen_a2a`) behind the guards the server puts in front
-//! of it: `/a2a/*` answers to an A2A token from loopback and to nothing else,
-//! a login included, and `/api/a2a/*` to a login.
+//! of it: `/a2a/*` answers to an A2A token from loopback, or an A2A proxy
+//! bridged in that the Droppen link's chain admits (`docs/a2a.md` §7.3), and
+//! to nothing else, a login and any other bridged device included; and
+//! `/api/a2a/*` to a login.
 
 use gotcha::axum::body::Body;
 use gotcha::axum::extract::ConnectInfo;
@@ -113,6 +115,29 @@ async fn a_device_bridged_in_reaches_no_a2a_route() {
     assert_eq!(status, 403, "not even with a token");
 }
 
+/// An A2A proxy bridged in reaches the A2A server, which asks the Droppen
+/// link's chain about it: a server that is not linked admits none, a token
+/// beside it notwithstanding. (That a linked one does is
+/// `cloud_control::the_links_chain_decides_which_a2a_proxies_the_a2a_server_takes`.)
+#[tokio::test]
+async fn an_a2a_proxy_on_a_server_not_linked_is_nobody() {
+    let (_home, state, mut router, token, _login) = server().await;
+    let credential = state.drive.auth.internal_credential().to_string();
+    let proxy = [
+        (droppen_http::bridge::CREDENTIAL_HEADER, credential.as_str()),
+        (droppen_http::bridge::DEVICE_HEADER, "p-1"),
+        (droppen_http::bridge::KIND_HEADER, droppen_http::bridge::A2A_KIND),
+    ];
+    let list = json!({"jsonrpc": "2.0", "id": 1, "method": "ListTasks", "params": {}});
+    for credential in [None, Some(token.as_str())] {
+        let (status, body) = send(&mut router, "POST", "/a2a/agents/main/jsonrpc", credential, Some(list.clone()), &proxy).await;
+        assert_eq!(status, 401, "{body}");
+        assert_eq!(body["error"]["status"], "UNAUTHENTICATED", "the A2A server answered: {body}");
+    }
+    let (status, _) = send(&mut router, "GET", "/api/a2a/tasks", None, None, &proxy).await;
+    assert_eq!(status, 403, "and an A2A proxy reaches nothing else");
+}
+
 #[tokio::test]
 async fn the_management_routes_answer_a_login_only() {
     let (_home, _state, mut router, token, login) = server().await;
@@ -150,4 +175,10 @@ async fn the_management_routes_answer_a_login_only() {
     assert_eq!(status, 400);
     let (status, _) = send(&mut router, "GET", "/api/a2a/contexts", Some(&token), None, &[]).await;
     assert_eq!(status, 401, "an A2A token opens no management route");
+    // The A2A proxies this device takes calls from: none, on a server not
+    // linked to Droppen.
+    let (status, _) = send(&mut router, "GET", "/api/a2a/devices", None, None, &[]).await;
+    assert_eq!(status, 401);
+    let (status, devices) = send(&mut router, "GET", "/api/a2a/devices", Some(&login), None, &[]).await;
+    assert_eq!((status, devices), (200, json!({"devices": []})));
 }

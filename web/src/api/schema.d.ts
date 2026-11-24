@@ -24,6 +24,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/a2a/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the A2A proxies this device takes calls from
+         * @description The A2A proxies this device takes A2A calls from, as its device chain
+         *     says now: what an entry's `allowedDevices` may usefully name. None on a
+         *     device not linked to Droppen.
+         */
+        get: operations["list_a2a_devices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/a2a/entries": {
         parameters: {
             query?: never;
@@ -2816,6 +2838,23 @@ export interface components {
             /** @description Its session's CLI. */
             source: components["schemas"]["EntrySource"];
         };
+        /**
+         * @description An A2A proxy this device takes A2A calls from, as the entry form's
+         *     `allowedDevices` picker lists it (`GET /api/a2a/devices`).
+         */
+        A2aDevice: {
+            /** @description Its fingerprint, as "My devices" shows it. */
+            fingerprint: string;
+            /** @description Its device id: what `allowedDevices` holds. */
+            id: string;
+            /** @description What the account calls it, when this device knows. */
+            name: string | null;
+        };
+        /** @description The current A2A proxies this device takes A2A calls from. */
+        A2aDeviceList: {
+            /** @description Every one, by id; none on a device not linked to Droppen. */
+            devices: components["schemas"]["A2aDevice"][];
+        };
         /** @description One A2A agent. */
         A2aEntry: {
             /**
@@ -2830,7 +2869,8 @@ export interface components {
             allowRemoteAnswers: boolean;
             /**
              * @description The a2a devices (§7) that may call it, by device id. Taking one out
-             *     cancels its unfinished tasks here. Callers are tokens only until M2.
+             *     cancels its unfinished tasks here. An entry that lists any runs in no
+             *     bypass permission mode (§6, [`BYPASS_PERMISSIONS`]).
              */
             allowedDevices: string[];
             /** @description When it was made, ISO-8601. */
@@ -2973,7 +3013,10 @@ export interface components {
         A2aTaskSummary: {
             /** @description The worktree's branch. */
             branch: string | null;
-            /** @description Who sent it: `a2a:token:<token id>`. */
+            /**
+             * @description Who sent it: `a2a:token:<token id>`, or an A2A proxy's
+             *     `a2a:device:<device id>`.
+             */
             caller: string;
             /** @description The name of the token it came with, while that token is on file. */
             callerName: string | null;
@@ -7014,6 +7057,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_a2a_devices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The A2A proxies, by id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aDeviceList"];
                 };
             };
         };

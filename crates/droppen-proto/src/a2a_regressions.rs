@@ -479,7 +479,8 @@ fn a6_an_a2a_device_controls_nothing_and_is_sealed_no_machine_key() {
     push(&mut s, by0(), k0, Action::RemoveDevice3("a-1".into())).unwrap();
     assert_eq!(s.host_key_due(), None);
 
-    // An agent refuses its channel: not control, and no `A2aOnly` here yet.
+    // `accept` refuses its channel: it is not control (`accept_with_a2a` lets
+    // it in `A2aOnly`, `handshake::tests`).
     let now = 5_000;
     let att = Attestation::create(&state, "dev-0", k0, now);
     let a1 = proxy_keys(0);

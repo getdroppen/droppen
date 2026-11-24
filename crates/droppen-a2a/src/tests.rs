@@ -19,7 +19,7 @@ use droppen_instance::db::Db;
 use crate::backend::{event_channel, BackendError, Question, QuestionItem, QuestionOption, Resumed, SendKind, TurnOutcome};
 use crate::engine::{A2a, Settings};
 use crate::store::Store;
-use crate::testing::{Call, FakeBackend};
+use crate::testing::{Call, FakeBackend, FakeDevices};
 use crate::wire::TaskState;
 
 const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
@@ -48,7 +48,8 @@ fn server(dir: &std::path::Path) -> (Arc<A2a>, Arc<FakeBackend>, CancellationTok
     let (events, inbox) = event_channel();
     let fake = FakeBackend::new(events);
     let cancel = CancellationToken::new();
-    let a2a = A2a::new(Store::new(db), fake.clone(), inbox, settings(), cancel.clone());
+    let devices = FakeDevices::admitting(&["d-1", "d-2"]);
+    let a2a = A2a::new(Store::new(db), fake.clone(), devices, inbox, settings(), cancel.clone());
     (a2a, fake, cancel)
 }
 
@@ -109,16 +110,16 @@ fn request(method: Method, uri: &str, token: Option<&str>, body: Option<Value>) 
     request
 }
 
-async fn call(router: &Router, request: Request<Body>) -> Response {
+pub(crate) async fn call(router: &Router, request: Request<Body>) -> Response {
     tower_service::Service::call(&mut router.clone(), request).await.expect("infallible")
 }
 
-async fn json_of(response: Response) -> Value {
+pub(crate) async fn json_of(response: Response) -> Value {
     let bytes = gotcha::axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&bytes).unwrap_or(Value::Null)
 }
 
-fn message(id: &str, text: &str) -> Value {
+pub(crate) fn message(id: &str, text: &str) -> Value {
     json!({"messageId": id, "role": "ROLE_USER", "parts": [{"text": text, "mediaType": "text/plain"}]})
 }
 
@@ -237,20 +238,20 @@ impl Harness {
 }
 
 /// An SSE answer, read event by event.
-struct Events {
+pub(crate) struct Events {
     body: gotcha::axum::body::BodyDataStream,
     buf: String,
 }
 
 impl Events {
-    fn of(response: Response) -> Self {
+    pub(crate) fn of(response: Response) -> Self {
         Events {
             body: response.into_body().into_data_stream(),
             buf: String::new(),
         }
     }
 
-    async fn next(&mut self) -> Option<Value> {
+    pub(crate) async fn next(&mut self) -> Option<Value> {
         loop {
             if let Some(at) = self.buf.find("\n\n") {
                 let block: String = self.buf.drain(..at + 2).collect();
@@ -287,14 +288,14 @@ fn kind(item: &Value) -> &str {
         .unwrap_or("?")
 }
 
-fn state_of(item: &Value) -> &str {
+pub(crate) fn state_of(item: &Value) -> &str {
     item["statusUpdate"]["status"]["state"]
         .as_str()
         .or_else(|| item["task"]["status"]["state"].as_str())
         .unwrap_or("")
 }
 
-fn calls_of<T>(fake: &FakeBackend, pick: impl Fn(&Call) -> Option<T>) -> Vec<T> {
+pub(crate) fn calls_of<T>(fake: &FakeBackend, pick: impl Fn(&Call) -> Option<T>) -> Vec<T> {
     fake.calls().iter().filter_map(pick).collect()
 }
 
@@ -1362,6 +1363,7 @@ async fn a_tck_entry_needs_the_tck_switch() {
     let a2a = A2a::new(
         Store::new(db),
         FakeBackend::new(events),
+        Arc::new(crate::devices::NoDevices::new()),
         inbox,
         Settings { tck: false, ..settings() },
         CancellationToken::new(),

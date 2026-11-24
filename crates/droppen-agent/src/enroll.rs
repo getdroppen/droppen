@@ -213,7 +213,7 @@ impl AgentFiles {
             &mut sink,
             &AgentToHub::AgentInfo {
                 version: droppen_http::SERVER_VERSION.into(),
-                features: vec![super::CHAIN_V3_FEATURE.into(), super::POLICY_FEATURE.into()],
+                features: vec![super::CHAIN_V3_FEATURE.into(), super::POLICY_FEATURE.into(), super::A2A_FEATURE.into()],
             },
         )
         .await?;
@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(
             heard[2..],
             [
-                json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::super::CHAIN_V3_FEATURE, super::super::POLICY_FEATURE]}),
+                json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::super::CHAIN_V3_FEATURE, super::super::POLICY_FEATURE, super::super::A2A_FEATURE]}),
                 json!({"t": "chain_sub", "from": 0}),
             ]
         );

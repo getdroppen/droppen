@@ -15,6 +15,7 @@ use droppen_proto::chain::{
     KeyCommits, Signer,
 };
 use droppen_proto::frame::Frame;
+use droppen_proto::handshake::Access;
 use droppen_proto::identity::{fingerprint, MachineIdentity};
 use droppen_proto::keys::DhKeypair;
 use droppen_proto::sig::{HubLogin, LoginRole};
@@ -854,7 +855,7 @@ async fn a_hub_that_does_not_offer_rotate_gets_no_staging() {
     assert!(info[0]["features"].as_array().unwrap().iter().any(|f| f == "rotate/1"), "{info:?}");
     assert_eq!(
         info[0],
-        json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::CHAIN_V3_FEATURE, super::POLICY_FEATURE, super::ROTATE_FEATURE]})
+        json!({"t": "agent_info", "version": droppen_http::SERVER_VERSION, "features": [super::CHAIN_V3_FEATURE, super::POLICY_FEATURE, super::ROTATE_FEATURE, super::A2A_FEATURE]})
     );
     // Signed in and asking for the chain past what it holds, each in its shape.
     assert_eq!(
@@ -1737,7 +1738,10 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
     let shared = a.shared("ws://127.0.0.1:9", &Arc::default());
     let (tx, rx) = mpsc::unbounded_channel();
     std::mem::forget(rx);
-    let mut routes: link::Routes = std::collections::HashMap::from([(1, ("h-2".to_string(), h2_old.dh_public(), tx.clone())), (2, ("d-1".to_string(), admin().dh_public(), tx))]);
+    let mut routes: link::Routes = std::collections::HashMap::from([
+        (1, ("h-2".to_string(), h2_old.dh_public(), tx.clone(), Access::Full)),
+        (2, ("d-1".to_string(), admin().dh_public(), tx, Access::Full)),
+    ]);
     let (out, mut closed) = mpsc::unbounded_channel();
     link::drop_removed(&shared, &mut routes, &out);
     assert_eq!(routes.len(), 2, "nothing to close yet");

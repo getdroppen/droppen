@@ -36,8 +36,8 @@
   - 本机登录身份（本机账号、`local:owner`、`cloud:<设备>`）都不算 A2A 调用方；调用方只有 token 和 §7 的 a2a 设备。
 - **Agent Card**：`name`/`description` 取自入口；`version` 是 Droppen 版本；`supportedInterfaces` 依次是 JSONRPC、HTTP+JSON，`protocolVersion: "1.0"`；`capabilities {streaming: true, pushNotifications: true, extendedAgentCard: false}`；`securitySchemes {bearer: {httpAuthSecurityScheme: {scheme: "Bearer"}}}`；`defaultInputModes ["text/plain", "application/json", "image/png", "image/jpeg"]`；`defaultOutputModes ["text/plain", "text/markdown", "application/json"]`；一个 skill `coding_session`。卡里不写目录、仓库名。
   - 接口 URL 的基址：实例设置 `a2a.publicBase`（可选）；没设时用请求的 `Host`，协议 `http`。§7 的代理会改写成它自己的地址。
-- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`（列表另带 `publicBase`，即 `[a2a] public_base`，没设为 `null`）、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务）、`GET /api/a2a/contexts`（未关闭的 context：`contextId`、`entry`、`caller`、`callerName`、`source`、`sessionId`，新的在前，`pageSize`（1–500，默认 500）/`pageToken` 分页，回 `nextPageToken`；给会话列表打「来自 A2A」的标记）。进 OpenAPI。
-- **bridge 分类**（`crates/droppen-agent/src/bridge.rs`）：`/a2a/*` 为 `Never`（§7 之前，远端设备一律不能经通道碰 A2A 路由）；`/api/a2a/*` 为 `Posture`，只有 `GET /api/a2a/tasks` 与 `GET /api/a2a/contexts` 是 `Use`。
+- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`（列表另带 `publicBase`，即 `[a2a] public_base`，没设为 `null`）、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务）、`GET /api/a2a/contexts`（未关闭的 context：`contextId`、`entry`、`caller`、`callerName`、`source`、`sessionId`，新的在前，`pageSize`（1–500，默认 500）/`pageToken` 分页，回 `nextPageToken`；给会话列表打「来自 A2A」的标记）、`GET /api/a2a/devices`（这台设备接受的 a2a 设备：`id`、指纹；没登录 Droppen 时为空，给入口的 `allowedDevices` 选择用）。进 OpenAPI。
+- **bridge 分类**（`crates/droppen-agent/src/bridge.rs`）：`/a2a/*` 为 `Never`（§7 之前，远端设备一律不能经通道碰 A2A 路由）；`/api/a2a/*` 为 `Posture`，只有 `GET /api/a2a/tasks`、`GET /api/a2a/devices`、`GET /api/a2a/contexts` 是 `Use`。
 
 ## 3. 映射
 
@@ -102,7 +102,7 @@
 - `data`：`{"answers": {"<问题原文>": "<label>" 或 ["<label>", …]}, "notes": {"<问题原文>": "…"}, "requestId": "…"}`（`notes`、`requestId` 可省）；
 - `text`：自由回答。
 
-对应 `AnswerQuestion{answers, notes, response}`：`data.answers` → `answers`，`data.notes` → `notes`，文本 → `response`。入口关了 `allowRemoteAnswers` 时回错误 `droppen.remote_answers_disabled`。
+对应 `AnswerQuestion{answers, notes, response}`：`data.answers` → `answers`，`data.notes` → `notes`；只有文本时，文本 → `response`；文本和 `data.answers` 一起来时，文本接在最后一个已答问题的备注后面，不作 `response`（Claude 收到 `response` 会不看选项；与在 Droppen 界面里答题的规则相同）。入口关了 `allowRemoteAnswers` 时回错误 `droppen.remote_answers_disabled`。
 
 ### 3.5 错误码
 
@@ -177,7 +177,7 @@
 - 一个能开会话的端点等于以用户身份执行代码。所以：入口默认停用直到用户填完；权限模式只来自入口；token 只存哈希；`/a2a/*` 不经通道开放。
 - **A2A 调用方能读到这台设备上该用户能读的一切。** 不管权限模式，只读工具也能让会话读任意文件（包括 Droppen 自己的设备钥文件）并写进结果带回去。所以一个 A2A token 或 a2a 设备，等于这台设备上该用户的数据访问权；只交给你信任的调用方。
   - 有 `allowedDevices` 的入口不能用 bypass 类权限模式（Claude `bypassPermissions`、Codex `danger-full-access`）。
-  - 移除 a2a 设备时，接受过它的设备算作「暴露」：轮换它们的内容密钥，界面上说明，并建议轮换设备身份。
+  - 一台设备不再接受某个 a2a 设备（它被移除、被移出名单、或这台设备停止运行 AI）时，按「失去一个控制端」（D3）处理：这台设备、以及把它当控制端的设备（经它暴露）都算暴露，自动更新设备身份、轮换内容密钥、在更新前扣住发给它的密钥。原因：代理的会话能读到设备身份钥，只轮换内容密钥挡不住它。
 - 提示注入：任务描述可能来自第三方（自动导入的 issue）。模板把它放进分隔块；入口默认不用 bypass 类权限模式；dont-do 默认不自动委派导入的 issue。
 - push 防 SSRF：只发 https；源必须在入口的 `pushOrigins` 里；解析后的地址不能是回环、私网、链路本地（除非 `pushOrigins` 明确写了这个地址）；不跟随重定向；超时 15 秒。
   - TCK 例外（只在 `DROPPEN_A2A_TCK=1` 且入口是 `source: "tck"` 时）：`pushOrigins` 可以列 `http://127.0.0.1`、`http://localhost`；列出时不带端口的回环 http 源接受该主机的任意端口（TCK 的接收端口每次不同），带端口的只接受那个端口。建配置与发送用同一条规则（`push::guard::push_target`）。

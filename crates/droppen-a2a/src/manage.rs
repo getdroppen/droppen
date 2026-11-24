@@ -19,10 +19,11 @@ use droppen_http::openapi_ext::Nullable;
 use droppen_http::SendResult;
 
 use crate::backend::{EntrySource, Isolation};
+use crate::devices::A2aDeviceList;
 use crate::engine::{decode_page_token, encode_page_token, iso_ms, A2a};
 use crate::entry::{
-    clean_account, clean_cwd, clean_description, clean_devices, clean_flag, clean_name, clean_origins, clean_template, valid_id, A2aEntry,
-    A2aEntryCreate, A2aEntryUpdate, DEFAULT_TEMPLATE, MAX_CONCURRENT,
+    clean_account, clean_cwd, clean_description, clean_devices, clean_flag, clean_name, clean_origins, clean_template, is_bypass, valid_id, A2aEntry,
+    A2aEntryCreate, A2aEntryUpdate, BYPASS_PERMISSIONS, DEFAULT_TEMPLATE, MAX_CONCURRENT,
 };
 use crate::store::{TaskFilter, TokenRow};
 use crate::wire::TaskState;
@@ -125,7 +126,8 @@ pub struct A2aTaskSummary {
     pub context_id: String,
     /// Its entry.
     pub entry: String,
-    /// Who sent it: `a2a:token:<token id>`.
+    /// Who sent it: `a2a:token:<token id>`, or an A2A proxy's
+    /// `a2a:device:<device id>`.
     pub caller: String,
     /// The name of the token it came with, while that token is on file.
     pub caller_name: Nullable<String>,
@@ -229,6 +231,14 @@ impl A2a {
         entry.push_origins = clean_origins(&entry.push_origins, entry.source, self.settings().tck).map_err(bad)?;
         if !(1..=MAX_CONCURRENT).contains(&entry.max_concurrent) {
             return Err(bad(format!("maxConcurrent is 1 to {MAX_CONCURRENT}")));
+        }
+        // §6: an A2A proxy is somebody else's agent; it never drives a CLI
+        // whose guard rails are off.
+        if !entry.allowed_devices.is_empty() && is_bypass(entry.permission.0.as_deref()) {
+            return Err(bad(format!(
+                "an entry with allowedDevices cannot run in a bypass permission mode ({})",
+                BYPASS_PERMISSIONS.join(", ")
+            )));
         }
         if entry.source != EntrySource::Tck {
             self.backend().check_entry(&entry.run_spec()).await.map_err(bad)?;
@@ -612,6 +622,21 @@ pub async fn list_a2a_contexts(State(state): State<A2aState>, ApiQuery(query): A
     Ok(Json(state.a2a.context_list(&query)?))
 }
 
+/// The A2A proxies this device takes A2A calls from, as its device chain
+/// says now: what an entry's `allowedDevices` may usefully name. None on a
+/// device not linked to Droppen.
+#[api(
+    id = "list_a2a_devices",
+    group = "a2a",
+    summary = "List the A2A proxies this device takes calls from",
+    responses(200 = "The A2A proxies, by id")
+)]
+pub async fn list_a2a_devices(State(state): State<A2aState>) -> Json<A2aDeviceList> {
+    Json(A2aDeviceList {
+        devices: state.a2a.admitted_devices(),
+    })
+}
+
 impl A2aState {
     /// Register the management routes.
     pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
@@ -630,5 +655,6 @@ impl A2aState {
             .delete("/api/a2a/tokens/{id}", revoke_a2a_token)
             .get("/api/a2a/tasks", list_a2a_tasks)
             .get("/api/a2a/contexts", list_a2a_contexts)
+            .get("/api/a2a/devices", list_a2a_devices)
     }
 }
