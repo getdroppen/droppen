@@ -475,7 +475,11 @@ mod tests {
                 id: "m-1".into(),
                 sign_key: keys[0].sign_public(),
                 dh_key: keys[0].dh_public(),
-                flags: Flags { host: true, admin: false },
+                flags: Flags {
+                    host: true,
+                    admin: false,
+                    a2a: false,
+                },
             }),
         );
         push(&mut chain, epoch(0));

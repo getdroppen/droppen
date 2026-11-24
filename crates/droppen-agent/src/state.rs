@@ -1047,7 +1047,7 @@ mod tests {
             id: id.into(),
             sign_key: k.sign_public(),
             dh_key: k.dh_public(),
-            flags: Flags { host, admin },
+            flags: Flags { host, admin, a2a: false },
         };
         let genesis = genesis3_draft("a-1", ak.sign_public(), device("d-1", &admin, false, true), None, 1_000).sign(ak.signing_key());
         let mut hub = ChainState::verify(std::slice::from_ref(&genesis), None, &mut ChainClock::history()).unwrap();

@@ -471,10 +471,10 @@ export async function candidateFromOffer(text: string, chain: ChainState): Promi
   const offer = offerFromText(text);
   if (offer.account !== chain.account) throw new PairingError("wrongAccount", "this pairing code is for another account");
   // Already added with these very keys: it is pairing again (its keys never arrived, or it never pinned the account).
-  // (Chain v3: a device that does not manage the account pairs again too; a host never pairs.)
+  // (Chain v3: a device that does not manage the account pairs again too; a host never pairs, nor does an A2A proxy.)
   const listed = chain.deviceRecord(offer.device);
   const same = !!listed && equal(listed.info.signKey, offer.signKey) && equal(listed.info.dhKey, offer.dhKey);
-  const again = listed?.status.type === "active" && !listed.host && same;
+  const again = listed?.status.type === "active" && !listed.host && !listed.a2a && same;
   // Waiting after it joined with a passkey: approved by this pairing — only with the keys it joined with (`CloudAccount.pairDevice`).
   const joining = listed?.status.type === "pending" && listed.viaPasskey !== null;
   if (joining && !same) throw new PairingError("badOffer", "the device that showed this code is not the one that asked to join with a passkey: nothing was approved");
@@ -564,8 +564,8 @@ export interface CompleteDeps {
 export async function completePairing(deps: CompleteDeps, c: Candidate, opts: { admin?: boolean } = {}): Promise<"delivered" | "redelivered"> {
   try {
     const listed = deps.chain().deviceRecord(c.device);
-    // Pairing again: the device it is (never a host), with these very keys.
-    if (listed && (listed.status.type !== "active" || listed.host || !equal(listed.info.signKey, c.signKey) || !equal(listed.info.dhKey, c.dhKey))) {
+    // Pairing again: the device it is (never a host, nor an A2A proxy — it pairs never and is mailed nothing: docs/a2a.md §7.1), with these very keys.
+    if (listed && (listed.status.type !== "active" || listed.host || listed.a2a || !equal(listed.info.signKey, c.signKey) || !equal(listed.info.dhKey, c.dhKey))) {
       throw new PairingError("badOffer", `${c.device} is in the chain already, but not as this device`);
     }
     if (!listed) await deps.append(joinAction({ id: c.device, signKey: c.signKey, dhKey: c.dhKey }, { host: false, admin: opts.admin ?? true }, deps.chain()));

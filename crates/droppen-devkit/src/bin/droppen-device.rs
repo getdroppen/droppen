@@ -269,7 +269,11 @@ impl Session {
                             id,
                             sign_key,
                             dh_key,
-                            flags: droppen_proto::chain::Flags { host: false, admin: true },
+                            flags: droppen_proto::chain::Flags {
+                                host: false,
+                                admin: true,
+                                a2a: false,
+                            },
                         },
                         *recovery_key,
                         droppen_devkit::now_ms(),

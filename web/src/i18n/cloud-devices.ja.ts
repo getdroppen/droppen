@@ -556,6 +556,11 @@ export const cloudDevicesJa: Record<string, string> = {
   "It can control the devices that let it and read their offline copies. To add or remove devices here, upgrade the account to chain v3 from another of your devices, then make this browser a full device there.": "許可したデバイスを操作し、そのオフラインコピーを読めます。ここでデバイスを追加・削除するには、まず別のデバイスでアカウントをチェーン v3 にアップグレードし、そこでこのブラウザをフルデバイスにしてください。",
   "{{id}} is a full device now, but its keys were not sent": "{{id}} はフルデバイスになりましたが、鍵は送られていません",
   "a device that runs AI cannot be a full device (yet)": "AI を実行できるデバイスは、まだフルデバイスになれません",
+  // A2A proxies (docs/a2a.md §7.1, §7.3): their joins, whom a device takes A2A calls from, and what they never become.
+  "{{by}} added {{device}} to this account as an A2A proxy: it can call the A2A of devices that accept it": "{{by}} が {{device}} を A2A プロキシとしてこのアカウントに追加しました：受け入れたデバイスの A2A を呼び出せます",
+  "{{by}} let the A2A proxies {{ids}} call the A2A of {{host}}": "{{by}} が A2A プロキシ {{ids}} に {{host}} の A2A の呼び出しを許可しました",
+  "{{by}} set {{host}} to take A2A calls from no A2A proxy": "{{by}} が {{host}} をどの A2A プロキシからの呼び出しも受け付けない設定にしました",
+  "an A2A proxy can be neither a full device nor a device that runs AI": "A2A プロキシはフルデバイスにも、AI を実行するデバイスにもなれません",
   "{{id}} ran AI before, and its agent kept its key in a file: it cannot be a full device. Add a new browser or phone instead.": "{{id}} は以前 AI を実行しており、その agent は鍵をファイルに保存していました。フルデバイスにはなれません。代わりに新しいブラウザかスマートフォンを追加してください。",
   // The account's settings (account-settings.tsx) and joining with a passkey (passkey-join.tsx).
   "my account": "マイアカウント",

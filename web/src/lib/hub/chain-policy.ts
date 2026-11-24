@@ -174,6 +174,8 @@ export function reEnrollCulprits(chain: ChainState): Map<string, Map<string, num
 /** One device as a replay over the chain ({@link replayChain}) follows it. */
 export interface ReplayDevice {
   admin: boolean;
+  /** An A2A proxy (docs/a2a.md §7.1): it never controls a host, whatever a list says. */
+  a2a: boolean;
   active: boolean;
   /** Whether the chain says it is a host now. */
   host: boolean;
@@ -185,7 +187,7 @@ export interface ReplayDevice {
 export interface ChainReplay {
   devs: Map<string, ReplayDevice>;
   accept: Map<string, Accept>;
-  /** Whether `device` may control `host` now. */
+  /** Whether `device` may control `host` now (never an A2A proxy). */
   could(device: string, host: string): boolean;
   /** `host`'s accept list now (the admins', when it narrowed none). */
   policy(host: string): Accept;
@@ -227,7 +229,7 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
     policy,
     could: (d, host) => {
       const r = devs.get(d);
-      return !!r && r.active && d !== host && (r.admin || acceptNames(policy(host), d));
+      return !!r && r.active && !r.a2a && d !== host && (r.admin || acceptNames(policy(host), d, r.a2a));
     },
   };
   for (const e of chain.allEntries()) {
@@ -237,22 +239,22 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
     switch (a.type) {
       case "genesis":
       case "addDevice":
-        devs.set(a.device.id, { admin: a.device.full, active: true, host: false, addedSeq: seq });
+        devs.set(a.device.id, { admin: a.device.full, a2a: false, active: true, host: false, addedSeq: seq });
         break;
       case "genesis3":
-        devs.set(a.device.id, { admin: a.device.flags.admin, active: true, host: a.device.flags.host, addedSeq: seq });
+        devs.set(a.device.id, { admin: a.device.flags.admin, a2a: a.device.flags.a2a, active: true, host: a.device.flags.host, addedSeq: seq });
         break;
       case "addDevice3":
-        devs.set(a.device.id, { admin: a.device.flags.admin, active: signer.type !== "passkey", host: a.device.flags.host, addedSeq: seq });
+        devs.set(a.device.id, { admin: a.device.flags.admin, a2a: a.device.flags.a2a, active: signer.type !== "passkey", host: a.device.flags.host, addedSeq: seq });
         break;
       case "addMachine":
-        devs.set(a.machine.id, { admin: false, active: true, host: true, addedSeq: seq });
+        devs.set(a.machine.id, { admin: false, a2a: false, active: true, host: true, addedSeq: seq });
         break;
       case "recoveryJoin":
-        devs.set(a.device.id, { admin: true, active: false, host: false, addedSeq: seq });
+        devs.set(a.device.id, { admin: true, a2a: false, active: false, host: false, addedSeq: seq });
         break;
       case "recoveryJoin3":
-        devs.set(a.device.id, { admin: hooks.recoveryJoin3Admin(a.device.flags), active: false, host: a.device.flags.host, addedSeq: seq });
+        devs.set(a.device.id, { admin: hooks.recoveryJoin3Admin(a.device.flags), a2a: a.device.flags.a2a, active: false, host: a.device.flags.host, addedSeq: seq });
         break;
       case "approveDevice":
       case "activateRecovered":
@@ -264,14 +266,14 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
       case "setAdmin": {
         const r = devs.get(a.id);
         if (!r) break;
-        if (!a.admin) hooks.lost(replay, seq, a.id, (h) => replay.could(a.id, h) && !acceptNames(policy(h), a.id));
+        if (!a.admin) hooks.lost(replay, seq, a.id, (h) => replay.could(a.id, h) && !acceptNames(policy(h), a.id, r.a2a));
         r.admin = a.admin;
         break;
       }
       case "setAccept": {
         const before = policy(a.host);
         for (const [d, r] of devs) {
-          if (r.active && !r.admin && d !== a.host && acceptNames(before, d) && !acceptNames(a.from, d)) hooks.lost(replay, seq, d, (h) => h === a.host);
+          if (r.active && !r.admin && d !== a.host && acceptNames(before, d, r.a2a) && !acceptNames(a.from, d, r.a2a)) hooks.lost(replay, seq, d, (h) => h === a.host);
         }
         hooks.setAccept?.(replay, seq, a.host, before, a.from);
         if (a.from.type === "admins") accept.delete(a.host);
@@ -458,7 +460,8 @@ export function pauseReturns(chain: ChainState, pause: OpenPause): { edges: { ho
     if (!chain.machine(r.host)) continue;
     const base = chain.baseAccept(r.host);
     for (const id of r.ids) {
-      if (!chain.device(id) || heldElsewhere(r.host, id) || !acceptNames(base, id)) continue;
+      const listed = chain.device(id);
+      if (!listed || heldElsewhere(r.host, id) || !acceptNames(base, id, listed.a2a)) continue;
       edges.push({ host: r.host, id });
       if (base.type === "all") all.add(r.host);
     }
@@ -528,7 +531,7 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
   const paused = (host: string, id: string) => [...pauses.values()].some((rs) => rs.some((r) => r.host === host && r.ids.includes(id)));
   /** Since when `host`'s list has let `id` in, as the overlay of open pauses leaves it (`undefined`: it does not now). */
   const admittedSince = (replay: ChainReplay, host: string, id: string): number | undefined => {
-    if (!acceptNames(replay.policy(host), id) || paused(host, id)) return undefined;
+    if (!acceptNames(replay.policy(host), id, replay.devs.get(id)?.a2a ?? false) || paused(host, id)) return undefined;
     const since = admitted.get(host);
     const named = since?.get(id);
     if (named !== undefined) return named;
@@ -586,7 +589,7 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       for (const r of removals) {
         const since = admitted.get(r.host);
         if (!since) continue;
-        for (const id of r.ids) if (!paused(r.host, id) && acceptNames(replay.policy(r.host), id)) since.set(id, seq);
+        for (const id of r.ids) if (!paused(r.host, id) && acceptNames(replay.policy(r.host), id, replay.devs.get(id)?.a2a ?? false)) since.set(id, seq);
       }
     },
     removed: (_seq, device) => {
@@ -985,9 +988,12 @@ export interface AcceptChange {
   userKey?: FreshUserKey;
 }
 
-/** Whether `from` lets device `id` control a host (besides admins, which every host accepts). */
-export function acceptNames(from: Accept, id: string): boolean {
-  return from.type === "all" || (from.type === "devices" && from.ids.includes(id));
+/**
+ * Whether `from` lets device `id` control a host (besides admins, which every host accepts) — never when it is an A2A
+ * proxy (`a2a`: docs/a2a.md §7.1), even on a list that names it, so say which it is.
+ */
+export function acceptNames(from: Accept, id: string, a2a: boolean): boolean {
+  return !a2a && (from.type === "all" || (from.type === "devices" && from.ids.includes(id)));
 }
 
 /**
@@ -1005,7 +1011,7 @@ export function noDeviceRoleYet(to: Pick<DeviceRecord, "host">, error: unknown):
 /** What the hub's refusal of mail for a host's device role that never signed in says (docs/hub-api/http.md, `POST /v1/mailbox`). */
 export const NO_DEVICE_ROLE_HINT = "gets it once it signs in as a device";
 
-/** Whether host `host` accepts control from device `id` on `chain` (`mayControl`). */
+/** Whether host `host` accepts control from device `id` on `chain` (`mayControl`: never an A2A proxy). */
 export function admits(chain: ChainState, host: string, id: string): boolean {
   try {
     chain.mayControl(id, host);
@@ -1015,15 +1021,28 @@ export function admits(chain: ChainState, host: string, id: string): boolean {
   }
 }
 
-/** Who a new accept list `to` for `host` lets in and shuts out, among the current devices that are not admins (as the chain judges a narrowing). */
+/** Whether host `host` takes A2A calls from A2A proxy `id` on `chain` (`mayCallA2a`, docs/a2a.md §7.1). */
+export function acceptsA2a(chain: ChainState, host: string, id: string): boolean {
+  try {
+    chain.mayCallA2a(id, host);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Who a new accept list `to` for `host` lets in and shuts out, among the current devices that are not admins (as the
+ * chain judges a narrowing) — never an A2A proxy, which no list lets control anything.
+ */
 export function acceptChange(chain: ChainState, host: string, to: Accept): { admitted: string[]; shutOut: string[] } {
   const was = chain.acceptPolicy(host);
   const admitted: string[] = [];
   const shutOut: string[] = [];
   for (const d of chain.allDevices()) {
-    if (d.status.type !== "active" || d.admin || d.info.id === host) continue;
-    const before = acceptNames(was, d.info.id);
-    const after = acceptNames(to, d.info.id);
+    if (d.status.type !== "active" || d.admin || d.a2a || d.info.id === host) continue;
+    const before = acceptNames(was, d.info.id, d.a2a);
+    const after = acceptNames(to, d.info.id, d.a2a);
     if (after && !before) admitted.push(d.info.id);
     if (before && !after) shutOut.push(d.info.id);
   }

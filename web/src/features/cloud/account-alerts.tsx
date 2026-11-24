@@ -367,6 +367,8 @@ export function alertLevel(alert: ChainAlert): "confirm" | "high" | "info" {
   // Renewals confirmed on the device turned off (or never on): "is this you?" on every device. Turned on: a note.
   if (alert.kind === "renewalPolicy") return alert.on ? "info" : "confirm";
   if (alert.kind === "passkey") return alert.passkey === "join" || alert.passkey === "slotSet" ? "confirm" : "info";
+  // A host taking A2A calls from an A2A proxy (docs/a2a.md §7.3): "is this you?" — taking none, a note.
+  if (alert.kind === "a2aAccept") return alert.a2a?.length ? "confirm" : "info";
   return "confirm";
 }
 
@@ -379,6 +381,8 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
       const f = alert.flags;
       // A full device (chain v2's every addition, v3's admin) is what a browser or phone is: no more to say. A host is never one (review D1).
       if (!f || (f.admin && !f.host)) return t("{{by}} added {{device}} to this account", { by, device });
+      // An A2A proxy (docs/a2a.md §7.1, §7.3): never a host nor an admin — it only calls the A2A of devices that accept it.
+      if (f.a2a) return t("{{by}} added {{device}} to this account as an A2A proxy: it can call the A2A of devices that accept it", { by, device });
       if (f.host) return t("{{by}} added {{device}} to this account: it can run AI", { by, device });
       return t("{{by}} added {{device}} to this account as a limited device", { by, device });
     }
@@ -402,6 +406,10 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
       if (a?.type === "devices") return t("{{by}} let {{ids}} control {{host}}", { by, host: device, ids: a.ids.join(", ") });
       return t("{{by}} set {{host}} to take control only from your full devices", { by, host: device });
     }
+    case "a2aAccept":
+      return alert.a2a?.length
+        ? t("{{by}} let the A2A proxies {{ids}} call the A2A of {{host}}", { by, host: device, ids: alert.a2a.join(", ") })
+        : t("{{by}} set {{host}} to take A2A calls from no A2A proxy", { by, host: device });
     case "passkey":
       switch (alert.passkey) {
         case "slotSet":

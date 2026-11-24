@@ -117,6 +117,10 @@ export class ChainAlerts {
         case "setAccept":
           out.push({ alert: { seq, kind: "setAccept", by, subject: action.host, accept: action.from, atMs, remove: null }, pending: false });
           break;
+        case "setA2aAccept":
+          // Whom a host takes A2A calls from (docs/a2a.md §7.1, §7.3: said as 「A2A 代理」): letting one in is "is this you?".
+          out.push({ alert: { seq, kind: "a2aAccept", by, subject: action.host, a2a: [...action.devices], atMs, remove: null }, pending: false });
+          break;
         case "setRenewalPolicy":
           // The account's renewal policy (host identity rotation §3.4 rule 9): a note.
           out.push({ alert: { seq, kind: "renewalPolicy", by, subject: null, on: action.alwaysAssured, atMs, remove: null }, pending: false });

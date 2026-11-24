@@ -314,7 +314,7 @@ import {
 export type { AccountLocks, AccountStorage, CrossTab, SeenWatch } from "./account-storage";
 import type { ControllersRecord } from "./streams";
 import { deviceFingerprint, hasRunAi, joinAction, type Refusal, refusalOf, type SelfRemoval, type Standing } from "./account/devices";
-import { AccountError, heldWho, hostAdminRefused, KeysUnreadableError, MovingCheckpoint, noNewAccounts, notUpgraded, ranAiAdminRefused } from "./account/errors";
+import { a2aPlainRefused, AccountError, heldWho, hostAdminRefused, KeysUnreadableError, MovingCheckpoint, noNewAccounts, notUpgraded, ranAiAdminRefused } from "./account/errors";
 import { CHAIN_V3_WAIT, FIRST_LOAD_TRIES, HOST_KEYS_WAIT, KEY_REQUEST_EVERY_MS, MAX_APPEND_ENTRIES, MAX_HOST_KEY_MAILS, RENEW_MARGIN_MS, RENEW_RETRY_MS, SECOND_REFUSAL_MS } from "./account/limits";
 import { answeredWithin, BUSY, CODE_WAIT_MS, RENEW_RESTARTS, RenewalError, type RenewalReport, type RenewOptions } from "./account/renewal";
 import type { ChainAlert, FreshUserKey, HeldBack, HeldChange, RotationReport, VetoPlan } from "./account/views";
@@ -327,7 +327,7 @@ import { ActivationHold } from "./account/held-back";
 import { ChainTrust } from "./account/chain-trust";
 export { deviceFingerprint, hasRunAi, joinAction, limitedDevice } from "./account/devices";
 export type { JoinKeys, PromoteBlock, Refusal, SelfRemoval, Standing } from "./account/devices";
-export { AccountError, hostAdminRefused, KeysUnreadableError, v3NotWritableError } from "./account/errors";
+export { a2aPlainRefused, AccountError, hostAdminRefused, KeysUnreadableError, v3NotWritableError } from "./account/errors";
 export type { AccountErrorKind } from "./account/errors";
 export { CHAIN_V3_WAIT, HOST_KEYS_WAIT, KEY_REQUEST_EVERY_MS, MAX_APPEND_ENTRIES, MAX_HOST_KEY_MAILS, RENEW_MARGIN_MS } from "./account/limits";
 export { CODE_WAIT_MS, RenewalError } from "./account/renewal";
@@ -1541,7 +1541,7 @@ export class CloudAccount {
     const draft = genesis3Draft(
       this.account,
       akPublic,
-      { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } },
+      { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true, a2a: false } },
       recoveryKey,
       now,
     );
@@ -2186,10 +2186,11 @@ export class CloudAccount {
           // Another current full device lacks a user key epoch this one holds:
           // it gets every epoch held (to its chain key), once per batch.
           if (await this.vault.has(m.epoch)) asking.set(m.sender, (asking.get(m.sender) ?? new Set<number>()).add(m.epoch));
-        } else if (m.sender !== this.deviceId && peer && this.isAdmin) {
+        } else if (m.sender !== this.deviceId && peer && !peer.a2a && this.isAdmin) {
           // A device that does not manage the account (§3.3) — a host's
           // device role too (S1-4: the local install): only the hosts'
-          // machine keys, once per batch.
+          // machine keys, once per batch. An A2A proxy's is acked and
+          // dropped: it is sealed no key (docs/a2a.md §7.1).
           askingHostKeys.add(m.sender);
         }
         await this.api.ackMail(this.session.token, m.id);
@@ -2288,13 +2289,15 @@ export class CloudAccount {
    * device role takes them) — and not this device. None by default: a host
    * accepts admins only until an admin lets others in. Empty on a v2 chain
    * (no accept policy there). Never a host waiting to renew its identity
-   * key, nor an isolated one ({@link keysWithheldFrom}).
+   * key, nor an isolated one ({@link keysWithheldFrom}), nor ever an A2A
+   * proxy (docs/a2a.md §7.1: it controls nothing, whatever a list says —
+   * `admits` refuses it, and so does this, on its own).
    */
   hostKeyRecipients(host: string, chain: ChainState | null = this.state): DeviceRecord[] {
     if (!chain) return [];
     return chain
       .allDevices()
-      .filter((d) => d.status.type === "active" && !d.admin && d.info.id !== this.deviceId && admits(chain, host, d.info.id) && !this.keysWithheldFrom(d.info.id));
+      .filter((d) => d.status.type === "active" && !d.admin && !d.a2a && d.info.id !== this.deviceId && admits(chain, host, d.info.id) && !this.keysWithheldFrom(d.info.id));
   }
 
   /** Seal host `host`'s key epoch `epoch` from this (admin) device for device `to` and mail it (purpose 5). */
@@ -2376,6 +2379,8 @@ export class CloudAccount {
     const to = chain.device(id);
     if (!to || id === this.deviceId) throw new AccountError("notInChain", `${id} is not a current device of the account`);
     if (to.admin) throw new AccountError("notAdmin", `${id} manages the account: it reads the hosts' keys with the user key`);
+    // An A2A proxy is sealed nothing, ever (docs/a2a.md §7.1): it calls the hosts' A2A and reads none of their content.
+    if (to.a2a) return [];
     // A host waiting to renew its identity key, or isolated, is sealed nothing (§4.3): whoever holds its old key would read them.
     if (this.keysWithheldFrom(id)) return [];
     const wanted = chain
@@ -2459,7 +2464,7 @@ export class CloudAccount {
     for (;;) {
       const chain = this.state;
       const to = chain?.device(id);
-      if (!chain || !to || to.admin || !chain.hosts().some((h) => h.status.type === "active" && admits(chain, h.info.id, id))) return 0;
+      if (!chain || !to || to.admin || to.a2a || !chain.hosts().some((h) => h.status.type === "active" && admits(chain, h.info.id, id))) return 0;
       try {
         return await this.sendHostKeys(id);
       } catch (error) {
@@ -2554,11 +2559,13 @@ export class CloudAccount {
   /**
    * Send device `id` its keys again: every user key epoch to an admin
    * (`resendUserKeys`), the hosts' machine keys to a device that is not one
-   * (`sendHostKeys`) — a host's device role included (S1-4).
+   * (`sendHostKeys`) — a host's device role included (S1-4); nothing to an
+   * A2A proxy, which holds no key (docs/a2a.md §7.1).
    */
   async resendKeys(id: string): Promise<number> {
     const record = this.state?.device(id);
     if (!record) throw new AccountError("notInChain", `${id} is not a current device of the account`);
+    if (record.a2a) return 0;
     if (record.admin) return (await this.resendUserKeys(id)).length;
     return this.sendHostKeys(id);
   }
@@ -2610,7 +2617,7 @@ export class CloudAccount {
       opts,
     );
     const record = this.state?.device(candidate.device);
-    if (record && !record.admin && !record.host) {
+    if (record && !record.admin && !record.host && !record.a2a) {
       try {
         await this.sendHostKeys(record.info.id);
       } catch (error) {
@@ -2664,6 +2671,8 @@ export class CloudAccount {
     if (record.admin === admin) return { report: null, keysFailed: null };
     if (admin && id === this.deviceId) throw new AccountError("self", "a device cannot make itself a full device: do it from another full device");
     if (admin && record.host) throw hostAdminRefused();
+    // An A2A proxy stays one (docs/a2a.md §7.1): refused here, before anything is signed.
+    if (admin && record.a2a) throw a2aPlainRefused();
     // D1 extended: nor one that ran AI and stopped — refused here, before anything is signed.
     if (admin && hasRunAi(chain, record)) throw ranAiAdminRefused(id);
     if (!admin && chain.admins().length <= 1) throw new AccountError("lastAdmin", "the account's last full device stays one");
@@ -2704,6 +2713,7 @@ export class CloudAccount {
     }
     if (id === this.deviceId) throw new AccountError("self", "a device cannot make itself run AI");
     if (record.admin) throw hostAdminRefused();
+    if (record.a2a) throw a2aPlainRefused();
     this.requireWritable(opts.writable);
     // Only a computer that ran AI before (an enrolled machine) runs it again.
     if (chain.machineKeyEpochs(id) === 0) throw new AccountError("notInChain", "{{id}} never ran AI: add it as a device that runs AI instead", undefined, undefined, { id });
@@ -3816,7 +3826,7 @@ export class CloudAccount {
     // D2: what a device only paused missed — the host's committed epochs — sealed to it now that it is let in again.
     for (const e of returned) {
       const to = this.state?.device(e.id);
-      if (!to || to.admin || e.id === this.deviceId || !this.state?.machine(e.host)) continue;
+      if (!to || to.admin || to.a2a || e.id === this.deviceId || !this.state?.machine(e.host)) continue;
       try {
         await this.sendHostKeys(e.id, e.host);
       } catch (error) {
@@ -4169,7 +4179,7 @@ export class CloudAccount {
     await this.append({ type: "approveDevice", id });
     // A user key only to a device that manages the account (a passkey's joins do not: chain v3 §3.2).
     if (record.admin) await this.withUserKeys((keys) => this.mailUserKeys(id, record.info.dhKey, keys));
-    else if (!record.host) await this.sendHostKeys(id);
+    else if (!record.host && !record.a2a) await this.sendHostKeys(id);
   }
 
   /**
@@ -4257,7 +4267,7 @@ export class CloudAccount {
     if (!epochs.length) throw new AccountError("noPackages", "no recovery package opens with these words");
     // A v3 chain takes v3 joins only: an admin, never a host (review D1, D4).
     const join: Action = chain.isV3
-      ? { type: "recoveryJoin3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } } }
+      ? { type: "recoveryJoin3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true, a2a: false } } }
       : { type: "recoveryJoin", device: this.info() };
     const entry = await signDraft(chain.draft({ type: "recovery" }, join, Date.now()), keys.signing);
     // Refused here, by the chain's own rule, before it is posted (review 13).
@@ -4397,7 +4407,7 @@ export class CloudAccount {
       const pinned = await this.trust.pinnedGenesis();
       if (pinned && pinned !== hex(chain.hashAt(0)!)) throw new AccountError("fork", "the hub served a different genesis than this device pinned");
       await this.trust.pin();
-      const join: Action = { type: "addDevice3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: false } } };
+      const join: Action = { type: "addDevice3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: false, a2a: false } } };
       const entry = await signDraft(chain.draft({ type: "passkey", slot }, join, Date.now()), signing);
       // Refused here, by the chain's own rule, before it is posted.
       await verifyBatch(chain, [entry]);

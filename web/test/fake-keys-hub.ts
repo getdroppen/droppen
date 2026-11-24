@@ -870,7 +870,7 @@ export async function postAsPasskey(who: CloudAccount, slot: TestSlot, action: A
 
 /** `who` joins through `slot`: a pending device that does not manage the account (flags 0). */
 export async function passkeyJoin(who: CloudAccount, slot: TestSlot): Promise<void> {
-  await postAsPasskey(who, slot, { type: "addDevice3", device: { id: who.deviceId, signKey: who.keys.signPublic, dhKey: who.keys.dhPublic, flags: { host: false, admin: false } } });
+  await postAsPasskey(who, slot, { type: "addDevice3", device: { id: who.deviceId, signKey: who.keys.signPublic, dhKey: who.keys.dhPublic, flags: { host: false, admin: false, a2a: false } } });
 }
 
 /**

@@ -25,6 +25,10 @@ use droppen_base::time::now_ms_u64;
 /// cannot hold any of it back. A host renewing its identity key
 /// (`docs/host-identity-rotation.md` §3.4 "告警") is a note with the new
 /// fingerprint, as the device list shows it.
+///
+/// An A2A proxy (`docs/a2a.md` §7.1, §7.3: the words say "A2A proxy") joining,
+/// and every change to which A2A proxies a host takes A2A calls from
+/// (`SetA2aAccept`), are said too: such a call starts sessions on that host.
 pub(crate) fn account_change(entry: &Entry, prev: Option<&Entry>) -> Option<String> {
     account_change_in(entry, prev, None)
 }
@@ -40,6 +44,8 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
         Signer::Passkey(slot) => format!("passkey slot {slot}"),
     };
     let flags = |f: droppen_proto::chain::Flags| match (f.host, f.admin) {
+        // The chain refuses an A2A proxy with either other flag (`A2A_PLAIN`).
+        _ if f.a2a => "an A2A proxy: it calls the A2A of devices that accept it, and controls none",
         (true, true) => "runs AI, can manage the account",
         (true, false) => "runs AI",
         (false, true) => "can manage the account",
@@ -67,6 +73,12 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
                 droppen_proto::chain::Accept::Devices(ids) => format!("admin devices and {}", ids.join(", ")),
             };
             format!("{host} now accepts control from {whom} (set by {signer})")
+        }
+        Action::SetA2aAccept { host, devices } if devices.is_empty() => {
+            format!("{host} now takes A2A calls from no A2A proxy (set by {signer})")
+        }
+        Action::SetA2aAccept { host, devices } => {
+            format!("{host} now takes A2A calls from the A2A proxies {} (set by {signer})", devices.join(", "))
         }
         Action::RotateHostKey(r) => format!(
             "device {} renewed its identity key{} (new fingerprint {}, written by {signer})",
