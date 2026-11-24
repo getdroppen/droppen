@@ -81,7 +81,7 @@
 //!
 //! # What is deliberately *not* behind the guard
 //!
-//! Five things, and nothing else:
+//! Six things, and nothing else:
 //!
 //! * `POST /api/auth/login`, `POST /api/auth/setup`, `POST /api/auth/local-open`
 //!   and `GET /api/auth/status` — the three ways in, and the way to ask which
@@ -101,7 +101,13 @@
 //!   `GET /api/apps` hands out, and the proxied VS Code server speaks its own
 //!   protocol on paths this server does not model. The residual risk is real and
 //!   written down in docs/manual.zh-CN.md: anyone who learns an id reaches that
-//!   app.
+//!   app;
+//! * `/a2a/*`, every method — the A2A server (the server's `droppen_a2a`), which
+//!   has credentials of its own and checks them on every request: an A2A token,
+//!   from a loopback peer only, or an A2A proxy bridged in
+//!   ([`BridgedDevice`] with `a2a` set, `docs/a2a.md` §7.3). No login is
+//!   resolved there and none counts, and a request bridged from any other
+//!   device is refused outright (`docs/a2a.md` §2, §6).
 //!
 //! `/openapi.json`, `/redoc`, `/scalar`, `/api/settings`, `/api/push/vapid` and
 //! `POST /api/server/self-upgrade` are **not** exempt. The first three describe
@@ -737,6 +743,11 @@ fn exempt(method: &Method, path: &str) -> bool {
     if is_embed(path) {
         return true;
     }
+    // The A2A server's own credential is checked by the A2A server, on every
+    // request and every method; a login is no A2A caller.
+    if is_a2a(path) {
+        return true;
+    }
     // The SPA and its assets. An unauthenticated browser must be able to load
     // the shell, or there is nowhere to type a password. `index.html` and the
     // hashed bundles say nothing about the machine they are served from; the
@@ -1106,7 +1117,7 @@ mod tests {
             .route("/a2a/agents/main/jsonrpc", gotcha::axum::routing::post(found))
             .route("/api/settings", gotcha::axum::routing::get(found))
             .route("/api/sessions/new", gotcha::axum::routing::post(found))
-            .layer(layer(auth));
+            .layer(layer(auth.clone()));
         /// One request from a loopback peer: its status and body.
         async fn call(router: &mut gotcha::axum::Router, method: &str, path: &str, headers: &[(&str, &str)]) -> (StatusCode, String) {
             let mut request = gotcha::axum::http::Request::builder().method(method).uri(path);
@@ -1144,15 +1155,27 @@ mod tests {
             StatusCode::FORBIDDEN,
             "no A2A for it"
         );
-        // The mark alone is nobody's: no credential, nothing bridged.
-        let (status, _) = call(
-            &mut router,
-            "POST",
-            "/a2a/agents/main/jsonrpc",
-            &[(DEVICE_HEADER, "p-1"), (KIND_HEADER, "a2a")],
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        // The mark alone is nobody's: no credential, nothing bridged. The A2A
+        // server, which checks its own credentials, hears of no device and no
+        // login, and stripped headers.
+        assert_eq!(
+            call(
+                &mut router,
+                "POST",
+                "/a2a/agents/main/jsonrpc",
+                &[(DEVICE_HEADER, "p-1"), (KIND_HEADER, "a2a")],
+            )
+            .await,
+            (StatusCode::OK, "None None false".to_string())
+        );
+        // A local login is no caller there either.
+        let login = auth.sessions.issue(LOCAL_OWNER, None).await.expect("a login").token;
+        let bearer = format!("Bearer {login}");
+        assert_eq!(
+            call(&mut router, "POST", "/a2a/agents/main/jsonrpc", &[("authorization", bearer.as_str())]).await,
+            (StatusCode::OK, "None None false".to_string()),
+            "no login is resolved on /a2a"
+        );
         let (status, _) = call(&mut router, "GET", "/api/settings", &[(DEVICE_HEADER, "p-1"), (KIND_HEADER, "a2a")]).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
