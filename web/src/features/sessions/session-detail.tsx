@@ -78,7 +78,7 @@ import {
 import { useFeedSessionTitle } from "@/app/global-feed";
 import { MachineLink, useMachineNavigate } from "@/app/machine-route";
 import { cn } from "@/lib/cn";
-import { useApi, useEnsureLive, useInfoOf, useMachine, useSessionRef } from "@/lib/machines/context";
+import { useApi, useEnsureLive, useInfoOf, useMachine, useSessionRef, useViewSession } from "@/lib/machines/context";
 import { DeviceChip } from "@/features/machines/device-picker";
 import { sessionKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
@@ -220,6 +220,8 @@ export function SessionDetailInner({
   const readOnly = info.readOnly === true;
   // A transcript open is the machine itself in use: live, not only its copy.
   useEnsureLive();
+  // And this session looked at: shown from the copy, its copy comes first.
+  useViewSession(machine, source, id);
   const scrollRef = useRef<HTMLDivElement>(null);
   // The one box that holds every row, and the only thing whose height changing
   // means "the transcript got taller" — the panel and the load-earlier control

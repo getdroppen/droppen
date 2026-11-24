@@ -537,6 +537,13 @@ test("a relay path is gone only once its old probe is met with silence; slow is 
   assert.equal(relayPathGone(3 * RELAY_PROBE_MS, RELAY_PROBE_MS + 500), false, "a 5.5 s stall with a 15 s-old probe");
   assert.equal(relayPathGone(20 * RELAY_PROBE_MS, RELAY_SILENT_MS - 1), false);
   assert.equal(relayPathGone(20 * RELAY_PROBE_MS, RELAY_SILENT_MS), true);
+  // While a direct path carries the channel (something came in on it within
+  // RELAY_SILENT_MS), the hub path is not gone, however old and quiet; once
+  // nothing comes either way for as long, it is.
+  assert.equal(relayPathGone(20 * RELAY_PROBE_MS, 20 * RELAY_PROBE_MS, 657), false, "the direct path carries");
+  assert.equal(relayPathGone(20 * RELAY_PROBE_MS, 20 * RELAY_PROBE_MS, RELAY_SILENT_MS - 1), false);
+  assert.equal(relayPathGone(20 * RELAY_PROBE_MS, 20 * RELAY_PROBE_MS, RELAY_SILENT_MS), true, "nothing either way");
+  assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_SILENT_MS - 1, RELAY_SILENT_MS), false, "the hub path itself still delivers");
   assert.equal(relaySlowMs(null, 3), null);
   assert.equal(relaySlowMs(RELAY_PROBE_MS - 1, 3), null, "out less than an interval: the round trip says it");
   assert.equal(relaySlowMs(RELAY_PROBE_MS, 3), RELAY_PROBE_MS);

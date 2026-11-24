@@ -130,7 +130,7 @@ impl Stored {
                 self.answer
                     .as_ref()
                     .filter(|answer| !answer.answers.is_empty())
-                    .map(|answer| answer.answers.clone().into_iter().collect()),
+                    .map(|answer| answer.answers.clone()),
             ),
             response: Nullable(self.answer.as_ref().and_then(|answer| answer.response.clone())),
             answered_by: Nullable(self.answered_by.clone()),
@@ -734,6 +734,41 @@ mod tests {
              "options": [{"label": "Cheese"}, {"label": "Olives"}, {"label": "Basil"}],
              "multiSelect": true}
         ])
+    }
+
+    /// A session's feed resends its state whenever the state's bytes change,
+    /// every poll. An answered question must therefore read back as the same
+    /// bytes each time, whatever order its answers were given in.
+    #[test]
+    fn an_answered_question_reads_as_the_same_bytes_every_time() {
+        let stored = Stored {
+            request_id: "req-1".into(),
+            session_id: SESSION.into(),
+            tool_use_id: Some("toolu-1".into()),
+            questions: colours(),
+            state: QuestionState::Answered,
+            answer: Some(Answer {
+                answers: BTreeMap::from([
+                    ("Which toppings?".to_string(), "Cheese, Olives".to_string()),
+                    ("Which colour do you prefer?".to_string(), "Blue".to_string()),
+                    ("Which size?".to_string(), "Large".to_string()),
+                    ("Which crust?".to_string(), "Thin".to_string()),
+                ]),
+                ..Answer::default()
+            }),
+            delivery: None,
+            answered_by: None,
+            answered_ms: Some(2),
+            created_ms: 1,
+        };
+        let first = serde_json::to_string(&serde_json::to_value(stored.wire()).expect("value")).expect("json");
+        for _ in 0..50 {
+            let again = serde_json::to_string(&serde_json::to_value(stored.wire()).expect("value")).expect("json");
+            assert_eq!(again, first, "the same answers must serialise to the same bytes");
+        }
+        let sorted =
+            r#""answers":{"Which colour do you prefer?":"Blue","Which crust?":"Thin","Which size?":"Large","Which toppings?":"Cheese, Olives"}"#;
+        assert!(first.contains(sorted), "{first}");
     }
 
     /// The exact line the CLI writes, read back into everything the driver

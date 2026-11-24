@@ -943,7 +943,8 @@ pub async fn attach_session_feed_with(
     // State was read before the transcript was parsed, so a transition that
     // completed during a slow attach would otherwise be missed. Replaying the
     // current state closes that window.
-    let replay = load_session_state(drive, source, id).await.as_ref().map(state_frame);
+    let replay = load_session_state(drive, source, id).await;
+    let replay = replay.as_ref().map(|state| state_frame(state).to_string());
     // Read after subscribing, for the same reason: a draft that changes from
     // here on is on the broadcast, and one that changed before is in this.
     // Sent only when there is something in it — a client starts with none.
@@ -1131,13 +1132,13 @@ fn reset_frame(sig: &str, transcript: &Transcript) -> String {
     Value::Object(object).to_string()
 }
 
-fn state_frame(state: &SessionState) -> String {
+fn state_frame(state: &SessionState) -> Value {
     let mut object = serde_json::Map::new();
     object.insert("type".into(), Value::String("state".into()));
     if let Ok(Value::Object(state)) = serde_json::to_value(state) {
         object.extend(state);
     }
-    Value::Object(object).to_string()
+    Value::Object(object)
 }
 
 /// `{"type":"draft", turn, v, blocks}`. An empty `blocks` is a draft with no
@@ -1190,7 +1191,7 @@ async fn watch_session(target: WatchTarget, last_sig: String, tx: broadcast::Sen
     let mut poll = tokio::time::interval(STATE_INTERVAL);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     poll.tick().await; // the first tick is immediate
-    let mut last_state_json = String::new();
+    let mut last_state = Value::Null;
     let mut seen = Seen { sig: last_sig, failed: None };
     // The session's draft, for a claude session. A change arms a send at most
     // [`DRAFT_THROTTLE`] after the last one, and the send reads whatever the
@@ -1203,12 +1204,12 @@ async fn watch_session(target: WatchTarget, last_sig: String, tx: broadcast::Sen
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = poll.tick() => {
-                if !push_state(&drive, source, &id, &tx, &mut last_state_json).await {
+                if !push_state(&drive, source, &id, &tx, &mut last_state).await {
                     break;
                 }
             }
             _ = poke.notified() => {
-                if !push_state(&drive, source, &id, &tx, &mut last_state_json).await {
+                if !push_state(&drive, source, &id, &tx, &mut last_state).await {
                     break;
                 }
                 continue;
@@ -1264,15 +1265,21 @@ async fn watch_session(target: WatchTarget, last_sig: String, tx: broadcast::Sen
 }
 
 /// Returns `false` once the session is gone and the feed should close.
-async fn push_state(drive: &Arc<Drive>, source: Source, id: &str, tx: &broadcast::Sender<Broadcast>, last_state_json: &mut String) -> bool {
+///
+/// The state is polled every [`STATE_INTERVAL`] and sent only when it changed.
+/// It is compared as JSON values, which ignore the order of an object's keys,
+/// so a map whose order varies from read to read cannot resend an unchanged
+/// state every poll.
+async fn push_state(drive: &Arc<Drive>, source: Source, id: &str, tx: &broadcast::Sender<Broadcast>, last_state: &mut Value) -> bool {
     let Some(state) = load_session_state(drive, source, id).await else {
         return false;
     };
-    let json = state_frame(&state);
-    if json == *last_state_json {
+    let frame = state_frame(&state);
+    if frame == *last_state {
         return true;
     }
-    *last_state_json = json.clone();
+    let json = frame.to_string();
+    *last_state = frame;
     let _ = tx.send(Broadcast::State(Arc::from(json.as_str())));
     true
 }

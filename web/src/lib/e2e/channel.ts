@@ -411,11 +411,17 @@ export class Session {
     p.events.push({ type: "directUp" });
   }
 
-  /** Stop using the direct path: what it did not deliver goes again over the hub, after a `down` (`tellPeer`). */
-  detachDirect(reason: DownReason, tellPeer: boolean): void {
+  /**
+   * Stop using the direct path: what it did not deliver goes again over the
+   * hub, after a `down` (`tellPeer`). With `nowMs`, the hub path's numbers
+   * are taken afresh then: they alone judge it from now on (`relayPathGone`),
+   * and as of the last probe tick they may miss what arrived since.
+   */
+  detachDirect(reason: DownReason, tellPeer: boolean, nowMs?: number): void {
     const p = this.paths;
     if (!p?.direct) return;
     p.detach(reason, tellPeer);
+    if (nowMs !== undefined) p.ageRelayProbe(nowMs);
     p.events.push({ type: "directDown", reason, remote: false });
   }
 
@@ -566,7 +572,7 @@ export class Session {
     }
     // `down` belongs on the hub path only.
     if (!env || env.type === "down") {
-      this.detachDirect("failed", true);
+      this.detachDirect("failed", true, nowMs);
       return [];
     }
     p.lastDirectRxMs = nowMs;
@@ -618,6 +624,9 @@ export class Session {
       case "down":
         if (p.direct) {
           p.detach(env.reason, false);
+          // The hub path alone judges it from now on, and it just delivered
+          // this `down`: its numbers afresh, not as of the last probe tick.
+          p.ageRelayProbe(nowMs);
           p.events.push({ type: "directDown", reason: env.reason, remote: true });
         }
         break;
@@ -643,6 +652,7 @@ export class Session {
         const unackedBytes = p.lanes.unackedBytes;
         const elapsedMs = silent ? nowMs - p.lastDirectRxMs : nowMs - Math.max(p.lanes.oldestUnackedMs() ?? nowMs, p.lastDirectProgressMs);
         p.detach("timeout", true);
+        p.ageRelayProbe(nowMs);
         p.events.push({ type: "directDown", reason: "timeout", remote: false, timer: silent ? "DIRECT_TIMEOUT_MS" : "UNACKED_TIMEOUT_MS", elapsedMs, unackedBytes });
       } else if (nowMs >= p.nextDirectProbeMs) {
         p.nextDirectProbeMs = nowMs + DIRECT_PROBE_MS;

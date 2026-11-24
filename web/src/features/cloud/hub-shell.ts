@@ -56,6 +56,7 @@ import { agentKeyEpoch, checkAgentKey, flushPendingReencrypts, linkCourier, note
 import type { HubLink, PresenceState } from "@/lib/hub/link";
 import { MachineChannel } from "@/lib/hub/machine";
 import { deviceTransact, MachineMirror, mirrorSeal, sweepCopies, type Transact } from "@/lib/hub/mirror";
+import { PageQueue } from "@/lib/hub/page-queue";
 import type { RelayPool } from "@/lib/hub/relays";
 import type { MachineKey } from "@/lib/machines/key";
 import { invalidateMachine, machineQueryCount } from "@/lib/machines/query";
@@ -145,11 +146,22 @@ class CountedPipe implements Pipe {
   }
 }
 
-/** `channel` as the transport's pipe opener, keeping `open` as the pipes still open on it. */
-function countingOpener(channel: MachineChannel, open: Set<Pipe>): PipeOpener {
+/**
+ * `channel` as the transport's pipe opener, keeping `open` as the pipes still
+ * open on it. A request (a pipe with a method: `rpc`, `blob`; not a socket)
+ * holds the page's background page downloads back while it is in flight
+ * (`PageQueue.hold`): live traffic goes first on the person's link.
+ */
+function countingOpener(channel: MachineChannel, open: Set<Pipe>, pages: PageQueue | null): PipeOpener {
   return {
     open(kind, meta) {
-      const pipe: Pipe = new CountedPipe(channel.open(kind, meta), () => open.delete(pipe));
+      // Held only once there is a pipe to let go of it: one that cannot be opened (it throws) holds nothing.
+      const inner = channel.open(kind, meta);
+      const release = meta.method !== undefined ? (pages?.hold("live") ?? null) : null;
+      const pipe: Pipe = new CountedPipe(inner, () => {
+        open.delete(pipe);
+        release?.();
+      });
       open.add(pipe);
       return pipe;
     },
@@ -201,6 +213,8 @@ export class HubMachine implements MachineDriver {
   private wanted = false;
   /** It is the machine in view ({@link setInView}): never let go of. */
   private inView = false;
+  /** Its sessions a view on the page shows (the app's main view, a pane), by `source/id`, and how many views of each ({@link viewSession}). */
+  private readonly viewed = new Map<string, number>();
   /**
    * How many things on the page are using it ({@link hold}): a pane showing
    * one of its sessions or its terminal, one of its pages, the new-session
@@ -223,6 +237,8 @@ export class HubMachine implements MachineDriver {
     readonly key: MachineKey,
     private readonly opts: HubShellOptions,
     budget: StreamBudget | null = null,
+    /** The page's queue of page downloads, shared by every machine's copy (the shell's). */
+    private readonly pages: PageQueue | null = null,
   ) {
     const { api, account, link, relays, store, queryClient } = opts;
     const now = opts.now ?? Date.now;
@@ -235,7 +251,9 @@ export class HubMachine implements MachineDriver {
       keys: () => account.machineKeys(key, store),
       client: {
         link,
-        fetchPage: (stream, page) => api.streamPage(account.session.token, stream, page),
+        fetchPage: (stream, page, fetch) => api.streamPage(account.session.token, stream, page, fetch),
+        ...(pages ? { pageQueue: pages } : {}),
+        logId: maskId(key),
         // A record under an epoch not held yet: look for the keys again
         // (the account's change then reaches the source).
         onMissingKey: () => void account.refreshKeys().catch((error: unknown) => console.warn("cloud: keys:", error)),
@@ -266,7 +284,7 @@ export class HubMachine implements MachineDriver {
       messages: offlineMessages(() => this.presence()),
       machineOnline: () => this.presence() === "online",
     });
-    this.transport = new SwitchingTransport({ live: tunnelTransport(countingOpener(this.channel, this.pipes), { device: maskId(key) }), offline }, "offline", {
+    this.transport = new SwitchingTransport({ live: tunnelTransport(countingOpener(this.channel, this.pipes, pages), { device: maskId(key) }), offline }, "offline", {
       onOpened: (source, id) => this.mirror.touch(source, id),
     });
     this.controller = new ModeController({
@@ -295,6 +313,8 @@ export class HubMachine implements MachineDriver {
       link.onPresence(refresh),
       relays.onChange(refresh),
       this.channel.onStatus((status) => {
+        // Its first requests come now: background page downloads wait a while (`OPENED_MS`).
+        if (status === "open") this.pages?.pauseFor("opened");
         if (status === "open") this.recheckKey(true);
         // Open while nobody wants it (something late dialled it): let it go again in a while.
         if (status === "open" && !this.wanted && !this.inUse && this.idleTimer === undefined) this.idleAfter(this.opts.idleMs ?? IDLE_MS);
@@ -306,7 +326,10 @@ export class HubMachine implements MachineDriver {
         const held = this.path;
         if (next?.kind !== held.info?.kind || next?.relay !== held.info?.relay || now() - held.at >= PATH_EVERY_MS) refresh();
       }),
-      this.transport.onMode(refresh),
+      this.transport.onMode(() => {
+        this.showView();
+        refresh();
+      }),
       this.mirror.onChange((change) => {
         if (change.kind !== "session") refresh();
       }),
@@ -400,12 +423,14 @@ export class HubMachine implements MachineDriver {
     if (this.disposed) return () => undefined;
     this.holds += 1;
     this.mirror.setFollowSessions(true);
+    this.showView();
     this.ensureLive();
     let released = false;
     return () => {
       if (released || this.disposed) return;
       released = true;
       this.holds -= 1;
+      this.showView();
       if (this.inUse) return;
       this.mirror.setFollowSessions(false);
       if (this.wanted || this.channel.status === "open") this.idleAfter(this.opts.idleMs ?? IDLE_MS);
@@ -426,10 +451,43 @@ export class HubMachine implements MachineDriver {
   setInView(on: boolean): void {
     if (this.disposed) return;
     this.inView = on;
+    this.showView();
     this.mirror.setFollowSessions(this.inUse);
     if (on) return this.ensureLive();
     if (this.inUse) return;
     if (this.wanted || this.channel.status === "open") this.idleAfter(this.opts.idleMs ?? IDLE_MS);
+  }
+
+  /**
+   * A view of its session `source/id` is on the page until the release (the
+   * registry's `viewSession`: the main view or a pane). Counted: two views of
+   * one session are let go of twice.
+   */
+  viewSession(source: string, id: string): () => void {
+    if (this.disposed) return () => undefined;
+    const key = `${source}/${id}`;
+    this.viewed.set(key, (this.viewed.get(key) ?? 0) + 1);
+    this.showView();
+    let released = false;
+    return () => {
+      if (released || this.disposed) return;
+      released = true;
+      const left = (this.viewed.get(key) ?? 1) - 1;
+      if (left > 0) this.viewed.set(key, left);
+      else this.viewed.delete(key);
+      this.showView();
+    };
+  }
+
+  /**
+   * Tell the copy what the page shows of the machine: in use (in view, or a
+   * pane of it) on its copy, not live, and which of its sessions views show —
+   * what it has no copy of then is fetched ahead of the background
+   * (`MachineMirror.setView`).
+   */
+  private showView(): void {
+    const onCopy = this.inUse && this.transport.current === "offline";
+    this.mirror.setView({ onCopy, sessions: onCopy ? [...this.viewed.keys()] : [] });
   }
 
   private idleAfter(ms: number): void {
@@ -640,6 +698,12 @@ export class HubShell implements AppShell {
   private stopped = false;
   /** Every machine's hub streams, counted against one budget: they share the page's one hub link. */
   readonly budget = new StreamBudget();
+  /**
+   * Every machine's checkpoint page downloads, through one queue: they share
+   * the person's link with each other and with every live channel, so lanes,
+   * limits and giving way are the page's, not a machine's (`PageQueue`).
+   */
+  readonly pages = new PageQueue();
 
   constructor(readonly opts: HubShellOptions) {}
 
@@ -780,7 +844,7 @@ export class HubShell implements AppShell {
     const want = this.active();
     for (const key of want) {
       if (this.held.has(key)) continue;
-      const machine = new HubMachine(key, this.opts, this.budget);
+      const machine = new HubMachine(key, this.opts, this.budget, this.pages);
       this.held.set(key, machine);
       openHubMachine(key, machine.transport, machine);
       this.listening.set(key, machine.info.subscribe(() => this.publish()));
@@ -1103,6 +1167,7 @@ export class HubShell implements AppShell {
     }
     this.held.clear();
     this.list.set([]);
+    this.pages.close();
   }
 
   /** For diagnostics (and the acceptance harness's latency probe): the machine in view's channel, copy and transport. */

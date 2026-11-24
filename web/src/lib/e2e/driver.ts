@@ -385,7 +385,7 @@ export class ChannelDriver {
   detachDirect(reason: DownReason = "failed", link?: DirectLink): void {
     this.run(async () => {
       if (!this.direct || (link && link !== this.direct)) return false;
-      this.session.detachDirect(reason, true);
+      this.session.detachDirect(reason, true, this.clock());
       return true;
     });
   }
@@ -533,7 +533,7 @@ export class ChannelDriver {
         this.moved.directTx += polled.wire.message.length;
       } catch {
         // Its DataChannel is gone: what it did not deliver goes over the hub.
-        this.session.detachDirect("failed", true);
+        this.session.detachDirect("failed", true, this.clock());
         this.pathsChanged();
       }
     }

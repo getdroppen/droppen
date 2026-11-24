@@ -63,18 +63,20 @@ export const UNACKED_TIMEOUT_MS = 1_500;
 export const RELAY_PROBE_MS = 5_000;
 /**
  * A relay path with a probe out this long (unanswered, or still waiting for
- * credit to leave), and nothing arriving on the channel for as long, is gone
- * and the channel is replaced ({@link relayPathGone}): within 15 s of the last
- * thing it brought. Without it a dead peer kept a stalled channel until the
- * relay link's own 60 s silence.
+ * credit to leave), and nothing arriving over it for as long, is gone and the
+ * channel is replaced ({@link relayPathGone}): within 15 s of the last thing
+ * it brought — unless a direct path still carries the channel. Without it a
+ * dead peer kept a stalled channel until the relay link's own 60 s silence.
  */
 export const RELAY_SILENT_MS = 2 * RELAY_PROBE_MS;
 
 /**
  * Whether a relay path is gone rather than slow, given how long its oldest
  * probe has been out (`probeAgeMs`: unanswered, or still waiting for credit to
- * leave) and how long nothing has arrived on the channel (`quietMs`: no data,
- * no answer, no `CREDIT`), both as of the same moment.
+ * leave) and how long nothing has arrived over it (`quietMs`: no data, no
+ * answer, no `CREDIT`), both as of the same moment — and, while a direct path
+ * is attached, how long nothing has arrived on the channel at all, either way
+ * (`channelQuietMs`; `null` with no direct path).
  *
  * A probe's answer waits behind whatever the channel's window let the peer
  * send first — a megabyte of history on a 1 Mbps link is several seconds — so
@@ -91,10 +93,21 @@ export const RELAY_SILENT_MS = 2 * RELAY_PROBE_MS;
  *   download brings a frame every 64 KiB, an upload the peer's window update
  *   every 128 KiB it reads, and a stall of a few seconds on a mobile link is
  *   not taken for a death. An upload slower than about 100 kbps can go 10 s
- *   without a window update and still be taken for gone.
+ *   without a window update and still be taken for gone;
+ * - while a direct path carries the channel — something arrived on it within
+ *   {@link RELAY_SILENT_MS} — the relay path is not gone, however long its
+ *   probes go unanswered: it carries nothing but them then, and on a link the
+ *   direct path fills they wait behind its traffic. Closing the channel there
+ *   threw the working direct path away with it. The relay path is still
+ *   probed, and once the direct path is let go (`DIRECT_TIMEOUT_MS` of
+ *   silence, its DataChannel closed, the peer's `down`) the rule is the relay
+ *   path's alone again, on its numbers taken afresh then: one whose probe is
+ *   old and that has truly delivered nothing for RELAY_SILENT_MS is gone at
+ *   once — a peer's `down` came over it, so it is not.
  */
-export function relayPathGone(probeAgeMs: number | null, quietMs: number | null): boolean {
+export function relayPathGone(probeAgeMs: number | null, quietMs: number | null, channelQuietMs: number | null = null): boolean {
   if (probeAgeMs === null || quietMs === null) return false;
+  if (channelQuietMs !== null && channelQuietMs < RELAY_SILENT_MS) return false;
   return probeAgeMs >= RELAY_SILENT_MS && quietMs >= RELAY_SILENT_MS;
 }
 
