@@ -49,6 +49,15 @@ export interface PathStats {
   /** The latest round trip measured on each path (ms), once there is one. */
   relayRttMs: number | null;
   directRttMs: number | null;
+  /**
+   * How long the oldest hub probe still out had gone unanswered (or waited
+   * for credit to leave), and how long nothing had arrived on the hub path,
+   * at the latest probe tick or answer
+   * (ms; `null` with no probe out): a slow path (`relaySlowMs`), or a gone
+   * one (`relayPathGone`).
+   */
+  relayProbeAgeMs: number | null;
+  relayQuietMs: number | null;
   /** How often a direct path was attached, and let go. */
   ups: number;
   downs: number;
@@ -147,6 +156,8 @@ function sameStats(a: PathStats | null, b: PathStats): boolean {
     a.direct === b.direct &&
     a.relayRttMs === b.relayRttMs &&
     a.directRttMs === b.directRttMs &&
+    a.relayProbeAgeMs === b.relayProbeAgeMs &&
+    a.relayQuietMs === b.relayQuietMs &&
     a.ups === b.ups &&
     a.downs === b.downs &&
     a.resent === b.resent &&
@@ -295,6 +306,8 @@ export class ChannelDriver {
           return true;
         }
         case "credit":
+          // The peer read what was sent: the hub path carries, answers or not.
+          this.session.heardRelay(this.clock());
           this.sendWindow.grant(frame.bytes);
           return true;
         case "close":
@@ -431,6 +444,8 @@ export class ChannelDriver {
       direct: s.direct,
       relayRttMs: s.relayRttMs,
       directRttMs: s.directRttMs,
+      relayProbeAgeMs: s.relayProbeAgeMs,
+      relayQuietMs: s.relayQuietMs,
       ups: s.ups,
       downs: s.downs,
       resent: s.lanes.resent,

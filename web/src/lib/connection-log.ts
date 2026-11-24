@@ -114,6 +114,7 @@ export const CONN_EVENTS = {
   "handshake.done": "info",
   "handshake.fail": "warn",
   "path.switch": "info",
+  "path.slow": "warn",
   "mode.switch": "info",
   "reconnect.replay": "info",
   // The direct path (`lib/transport/p2p.ts`).
@@ -123,11 +124,11 @@ export const CONN_EVENTS = {
   "direct.fail": "warn",
   "direct.down": "warn",
   "direct.retry": "info",
-  // Liveness probes, on every link and path: one sent, its answer (a measured round trip), and a round
-  // trip shown as the age of a probe still unanswered (`probe.aged`: not a measurement).
+  // Liveness probes, on every link and path: one sent, its answer (a measured round trip), and a hub
+  // probe out a whole probe interval, said once (`probe.late`: its age and the path's quiet, no round trip).
   "probe.sent": "info",
   "probe.answer": "info",
-  "probe.aged": "warn",
+  "probe.late": "warn",
   // What the bar says.
   bar: "info",
   // Traffic, once a second while connected.
@@ -323,6 +324,7 @@ export const CODE_FIELDS: ReadonlySet<string> = new Set([
   "path",
   "method",
   "cause",
+  "decision",
 ]);
 
 /**

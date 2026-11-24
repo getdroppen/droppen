@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { formatExactTime, formatTime } from "@/lib/format";
 import { useShownAfter } from "@/lib/use-shown-after";
 import type { PathStats } from "@/lib/e2e";
+import { relaySlowMs } from "@/lib/e2e/path";
 import type { PresenceState, LinkState } from "@/lib/hub/link";
 import type { ChannelRefusal, ChannelRoute, ConnectStep, MachineChannel, MachineStatus } from "@/lib/hub/machine";
 import type { RelayPool } from "@/lib/hub/relays";
@@ -484,6 +485,10 @@ export function BarCatchUpLine({ source }: { source: CatchUpSource }) {
 /** Whole milliseconds, never "0 ms": a sub-millisecond round trip reads as 1 ms. */
 const wholeMs = (ms: number) => Math.max(1, Math.round(ms));
 const roundTrip = (ms: number | null | undefined) => (ms == null ? "—" : `${wholeMs(ms)} ms`);
+/** The whole seconds a slow path is known to take at least: rounded down, since it is a floor. */
+const wholeSeconds = (ms: number) => Math.max(1, Math.floor(ms / 1000));
+/** The hub path's slowness, when a probe has been out longer than its last round trip (`relaySlowMs`); `null` otherwise. */
+const slowOf = (paths: PathStats | null | undefined) => (paths ? relaySlowMs(paths.relayProbeAgeMs, paths.relayRttMs) : null);
 
 /** How fast a round trip reads: green under 100 ms, amber under 250 ms, red beyond. */
 export function latencyTone(ms: number): "ok" | "warn" | "danger" {
@@ -538,29 +543,38 @@ export interface PathIndicatorProps {
  * "Change relay…". Nothing about encryption: every path is end-to-end
  * encrypted. The bar shows it only while the channel is live; until then it
  * says in words what the page is doing (`ConnectionLabel`).
+ *
+ * A hub probe out for a probe interval or more, longer than the round trip
+ * last measured, says the hub path is at least that slow: shown as
+ * "slow · ≥5 s" (red), never as a round trip nobody measured; once an answer
+ * comes, its round trip shows again.
  */
 export function PathIndicator({ paths, route = null, notice = null, noDirect = false, onChangeRelay, onConnectionLog }: PathIndicatorProps) {
   const { t } = useTranslation();
   const direct = paths?.direct === true;
+  const relaySlow = slowOf(paths);
+  const slow = direct ? null : relaySlow;
   const rtt = direct ? paths?.directRttMs : paths?.relayRttMs;
   const ms = rtt == null ? null : wholeMs(rtt);
-  const tone = ms === null ? null : latencyTone(ms);
+  const tone = slow !== null ? "danger" : ms === null ? null : latencyTone(ms);
   const connecting = paths === null && route === null;
   const onHub = route?.kind === "hub";
   const kind = connecting ? "connecting" : direct ? "direct" : onHub ? "hub" : "relay";
   const relay = route?.kind === "relay" ? route : null;
   const emergency = relay?.emergency === true;
   const city = relay ? cityName(t, relay.relay.city) : "";
-  const shown = ms === null ? "—" : `${ms} ms`;
+  const slowText = (at: number) => t("slow · ≥{{s}} s", { s: wholeSeconds(at) });
+  const shown = slow !== null ? slowText(slow) : ms === null ? "—" : `${ms} ms`;
+  const relayTrip = relaySlow !== null ? slowText(relaySlow) : roundTrip(paths?.relayRttMs);
   const relayLine = relay
     ? t("relay · {{city}} ({{id}}) · {{mode}} · {{ms}}", {
         city,
         id: relay.relay.id,
         mode: relay.mode === "manual" ? t("manual") : t("automatic"),
-        ms: roundTrip(paths?.relayRttMs),
+        ms: relayTrip,
       })
     : onHub
-      ? t("Hub · {{ms}}", { ms: roundTrip(paths?.relayRttMs) })
+      ? t("Hub · {{ms}}", { ms: relayTrip })
       : null;
   const lines = [
     direct ? t("direct · {{ms}}", { ms: roundTrip(paths?.directRttMs) }) : null,
@@ -573,9 +587,13 @@ export function PathIndicator({ paths, route = null, notice = null, noDirect = f
     ? t("connecting…")
     : direct
       ? t("direct, round trip {{ms}}", { ms: shown })
-      : onHub
-        ? t("through the Hub, round trip {{ms}}", { ms: shown })
-        : t("through the {{city}} relay, round trip {{ms}}", { city: city || "—", ms: shown });
+      : slow !== null
+        ? onHub
+          ? t("through the Hub, slow: round trip at least {{s}} s", { s: wholeSeconds(slow) })
+          : t("through the {{city}} relay, slow: round trip at least {{s}} s", { city: city || "—", s: wholeSeconds(slow) })
+        : onHub
+          ? t("through the Hub, round trip {{ms}}", { ms: shown })
+          : t("through the {{city}} relay, round trip {{ms}}", { city: city || "—", ms: shown });
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -589,7 +607,7 @@ export function PathIndicator({ paths, route = null, notice = null, noDirect = f
         <DirectIcon className={direct ? "text-fg" : "text-faint"} />
         <RelayIcon className={!direct && !connecting ? "text-fg" : "text-faint"} />
         {emergency && <span data-signal="warn" className="size-[5px] shrink-0 bg-warn" />}
-        <span data-latency={tone ?? undefined} className={cn("ml-0.5", tone ? TONE_CLASS[tone] : "text-faint")}>
+        <span data-latency={tone ?? undefined} data-slow={slow !== null ? "" : undefined} className={cn("ml-0.5", tone ? TONE_CLASS[tone] : "text-faint")}>
           {shown}
         </span>
       </PopoverTrigger>
@@ -643,7 +661,8 @@ export function openRelayPicker(): void {
  * The bar's indicator, fed from the channel. A direct path is probed every
  * second; repainting for each probe is work nobody reads, so a new round trip
  * is taken at most every `SHOWN_EVERY_MS` — and only this span re-renders,
- * not the whole bar.
+ * not the whole bar. A hub path turning slow, or slower by a whole second
+ * (once a probe interval at most), shows at once.
  */
 function LivePathIndicator({ channel, relays }: { channel: MachineChannel | null | undefined; relays: RelayPool | null | undefined }) {
   const { t } = useTranslation();
@@ -653,7 +672,7 @@ function LivePathIndicator({ channel, relays }: { channel: MachineChannel | null
     paths: channel?.paths ?? null,
     route: channel?.route ?? null,
   }));
-  const taken = useRef({ at: 0, direct: false, measured: false, route: null as ChannelRoute | null });
+  const taken = useRef({ at: 0, direct: false, measured: false, slowS: null as number | null, route: null as ChannelRoute | null });
   useEffect(() => {
     if (!channel) {
       setShown({ paths: null, route: null });
@@ -664,10 +683,12 @@ function LivePathIndicator({ channel, relays }: { channel: MachineChannel | null
       const now = Date.now();
       const direct = next?.direct === true;
       const measured = (direct ? next?.directRttMs : next?.relayRttMs) != null;
+      const slow = slowOf(next);
+      const slowS = slow === null ? null : wholeSeconds(slow);
       const last = taken.current;
       const moved = channel.route !== last.route;
-      if (!force && !moved && direct === last.direct && measured === last.measured && now - last.at < SHOWN_EVERY_MS) return;
-      taken.current = { at: now, direct, measured, route: channel.route };
+      if (!force && !moved && direct === last.direct && measured === last.measured && slowS === last.slowS && now - last.at < SHOWN_EVERY_MS) return;
+      taken.current = { at: now, direct, measured, slowS, route: channel.route };
       setShown({ paths: next, route: channel.route });
     };
     take(true);

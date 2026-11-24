@@ -512,7 +512,7 @@ const BAR_SHELL = {
   setMain: noop,
 };
 const CLOUD_BAR_STATES: ReadonlyArray<
-  readonly [name: string, view: { label: BarLabel; step?: ConnectStep; retryAt?: number; notice?: boolean; refusal?: ChannelRefusal }]
+  readonly [name: string, view: { label: BarLabel; step?: ConnectStep; retryAt?: number; notice?: boolean; refusal?: ChannelRefusal; slowMs?: number }]
 > = [
   ["hub", { label: "hub" }],
   ["hub-retry", { label: "hubRetry", retryAt: loadedAt + 12_000, notice: true }],
@@ -527,6 +527,8 @@ const CLOUD_BAR_STATES: ReadonlyArray<
   ["unconfirmed", { label: "unconfirmed", refusal: { kind: "unconfirmed" } }],
   ["unsaved", { label: "unsaved", refusal: { kind: "unsaved" } }],
   ["live", { label: "e2e" }],
+  // A hub probe out two probe intervals while data keeps coming: slow, at its widest ("≥10 s").
+  ["live-slow", { label: "e2e", slowMs: 10_001 }],
 ];
 
 /**
@@ -598,7 +600,17 @@ function CloudBarFixture() {
             <ConnectionLabel label={view.label} step={view.step} retryAt={view.retryAt} link={{ wake: noop }} controller={{ poke: noop }} />
             {view.label === "e2e" && (
               <PathIndicator
-                paths={{ direct: false, relayRttMs: 38.4, directRttMs: null, ups: 0, downs: 0, resent: 0, duplicates: 0 }}
+                paths={{
+                  direct: false,
+                  relayRttMs: 38.4,
+                  directRttMs: null,
+                  relayProbeAgeMs: view.slowMs ?? null,
+                  relayQuietMs: view.slowMs !== undefined ? 400 : null,
+                  ups: 0,
+                  downs: 0,
+                  resent: 0,
+                  duplicates: 0,
+                }}
                 route={{ kind: "relay", relay: TOKYO, mode: "auto" }}
                 onChangeRelay={noop}
                 onConnectionLog={noop}

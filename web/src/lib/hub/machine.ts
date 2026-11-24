@@ -76,7 +76,7 @@ import {
   STREAMS_FEATURE,
   utf8,
 } from "@/lib/e2e";
-import { DIRECT_TIMEOUT_MS, RELAY_SILENT_MS, UNACKED_TIMEOUT_MS } from "@/lib/e2e/path";
+import { DIRECT_TIMEOUT_MS, RELAY_SILENT_MS, relayPathGone, UNACKED_TIMEOUT_MS } from "@/lib/e2e/path";
 import type { PathEvent } from "@/lib/e2e/channel";
 import { type ConnFields, connLog, deltaOf, errorFields, maskId } from "@/lib/connection-log";
 import { type DirectEnv, DirectHistory, DirectPaths } from "@/lib/transport/p2p";
@@ -125,6 +125,37 @@ export const AGENT_UNSAVED = 4507;
  * device has not heard yet.
  */
 export const AGENT_HANDSHAKE_REFUSED = 4401;
+
+/** Why a channel whose hub path is gone was closed ({@link watchRelayPath}). */
+export const RELAY_PATH_GONE = 4000;
+
+/**
+ * The page's watch on a channel's carrier path, as its driver's `onpaths`:
+ * once the path is gone (`relayPathGone`) — not merely slow — the channel is
+ * closed ({@link RELAY_PATH_GONE}) and the carrier (`carrier`, a relay link)
+ * woken with its short deadline, once: a dead relay link must be replaced
+ * before the next channel tries to use it. Rather than stall until the relay
+ * link's own 60 s silence, a dead path is replaced within 15 s of the last
+ * thing it brought. A probe answered late while data keeps coming is a slow
+ * link, not a dead one — its answer waits behind what the channel's window
+ * let the agent send first — and replacing that channel only had the page
+ * ask for the same data again, over and over.
+ */
+export function watchRelayPath(driver: ChannelDriver, carrier: { wake(): void } | null, onGone?: (stats: PathStats) => void): (stats: PathStats) => void {
+  let fired = false;
+  return (stats) => {
+    if (fired || driver.isClosed || !relayPathGone(stats.relayProbeAgeMs, stats.relayQuietMs)) return;
+    fired = true;
+    // Told first (the connection log), and never in the way of what follows.
+    try {
+      onGone?.(stats);
+    } catch {
+      // the close goes on all the same
+    }
+    carrier?.wake();
+    driver.close(RELAY_PATH_GONE, "the relay path stopped answering");
+  };
+}
 
 /** A relay's close for a refused `OPEN`: not a machine this ticket names (`droppen-relay-core/src/route.rs`). */
 const RELAY_FORBIDDEN = 4403;
@@ -292,6 +323,9 @@ interface OpenedChannel {
  */
 const closeRules = new WeakMap<ChannelDriver, "relay_silent" | "moved" | "key" | "done">();
 
+/** The numbers the relay rule closed a channel on (`relayPathGone`), for its `channel.close`. */
+const relayGoneStats = new WeakMap<ChannelDriver, { relayProbeAgeMs: number | null; relayQuietMs: number | null }>();
+
 /** What the connection log samples of a running channel once a second (`pipes`: those open on it). */
 function channelSampler(driver: ChannelDriver, pipes: () => number) {
   const deltas = { relayTx: deltaOf(), relayRx: deltaOf(), directTx: deltaOf(), directRx: deltaOf() };
@@ -321,6 +355,9 @@ function channelSampler(driver: ChannelDriver, pipes: () => number) {
         probes: d.probesOut,
         oldestProbeMs: d.oldestProbeMs,
         relayRttMs: paths?.relayRttMs ?? null,
+        // What the relay rule judges by: the oldest hub probe's age (sent or waiting for credit), and how long nothing has come over the hub.
+        relayProbeAgeMs: paths?.relayProbeAgeMs ?? null,
+        relayQuietMs: paths?.relayQuietMs ?? null,
         directRttMs: paths?.direct ? paths.directRttMs : null,
         path: paths?.direct ? "direct" : "carrier",
         streams: d.streams,
@@ -530,15 +567,65 @@ export class MachineChannel implements PipeOpener {
     }
   }
 
-  /** The carrier path went unanswered past `RELAY_SILENT_MS` (its shown round trip is the oldest probe's age): this page closes the channel. */
-  private logRelaySilent(on: string, driver: ChannelDriver, ageMs: number): void {
+  /**
+   * The carrier path is gone by the rule (`relayPathGone`: its oldest probe
+   * out at least `RELAY_SILENT_MS`, and nothing at all come over it for as
+   * long): this page closes the channel. Said with both numbers and the
+   * decision, from `watchRelayPath`'s hook, before the close.
+   */
+  private logRelaySilent(on: string, driver: ChannelDriver, stats: PathStats): void {
     closeRules.set(driver, "relay_silent");
+    relayGoneStats.set(driver, { relayProbeAgeMs: stats.relayProbeAgeMs, relayQuietMs: stats.relayQuietMs });
     try {
       const d = driver.diagnostics();
-      this.log("timeout", { timer: "RELAY_SILENT_MS", limitMs: RELAY_SILENT_MS, elapsedMs: ageMs, on, lastRxAgoMs: d.lastRxAgoMs, inflight: d.inflight, queued: d.queued + d.heldTx });
+      this.log("timeout", {
+        timer: "RELAY_SILENT_MS",
+        rule: "relayPathGone",
+        decision: "gone",
+        limitMs: RELAY_SILENT_MS,
+        relayProbeAgeMs: stats.relayProbeAgeMs,
+        relayQuietMs: stats.relayQuietMs,
+        elapsedMs: stats.relayQuietMs,
+        on,
+        lastRxAgoMs: d.lastRxAgoMs,
+        inflight: d.inflight,
+        queued: d.queued + d.heldTx,
+      });
     } catch {
       // the close goes on all the same
     }
+  }
+
+  /**
+   * The rule's other decision, for the log: a carrier path whose oldest probe
+   * is `RELAY_SILENT_MS` old while things still arrive is slow, and kept
+   * (`path.slow`, `decision=kept`). Said once each time the path turns slow,
+   * not on every change of its numbers; reads only.
+   */
+  private relaySlowLogger(on: string): (stats: PathStats) => void {
+    let said = false;
+    return (stats) => {
+      try {
+        const old = stats.relayProbeAgeMs !== null && stats.relayProbeAgeMs >= RELAY_SILENT_MS;
+        if (!old) {
+          said = false;
+          return;
+        }
+        if (said || relayPathGone(stats.relayProbeAgeMs, stats.relayQuietMs)) return;
+        said = true;
+        this.log("path.slow", {
+          on,
+          rule: "relayPathGone",
+          decision: "kept",
+          limitMs: RELAY_SILENT_MS,
+          relayProbeAgeMs: stats.relayProbeAgeMs,
+          relayQuietMs: stats.relayQuietMs,
+          relayRttMs: stats.relayRttMs,
+        });
+      } catch {
+        // nothing logged
+      }
+    };
   }
 
   /**
@@ -560,6 +647,8 @@ export class MachineChannel implements PipeOpener {
     this.lastCloseAt = now;
     const d = driver.diagnostics();
     const rule = closeRules.get(driver) ?? (end.local ? "error" : end.code === LINK_LOST ? "link_lost" : "peer");
+    // The relay rule's numbers as it judged them (a close by it), else the path's as they stand.
+    const judged = relayGoneStats.get(driver);
     this.log("channel.close", {
       on,
       via: routeName(end.route),
@@ -574,6 +663,9 @@ export class MachineChannel implements PipeOpener {
       oldestProbeAgeMs: d.oldestProbeMs,
       probesOut: d.probesOut,
       relayRttMs: driver.paths?.relayRttMs ?? null,
+      relayProbeAgeMs: judged ? judged.relayProbeAgeMs : (driver.paths?.relayProbeAgeMs ?? null),
+      relayQuietMs: judged ? judged.relayQuietMs : (driver.paths?.relayQuietMs ?? null),
+      decision: rule === "relay_silent" ? "gone" : undefined,
       sendCreditLeft: d.credit,
       inflight: d.inflight,
       recvUnacked: d.recvUnacked,
@@ -601,8 +693,8 @@ export class MachineChannel implements PipeOpener {
       case "rtt":
         connLog.emit("probe.answer", { on, path: event.via, nonce: event.nonce ?? null, rttMs: event.ms });
         return;
-      case "aged":
-        connLog.emit("probe.aged", { on, path: event.via, ageMs: event.ageMs });
+      case "late":
+        connLog.emit("probe.late", { on, path: event.via, nonce: event.nonce, ageMs: event.ageMs, quietMs: event.quietMs, unsent: event.unsent });
         return;
       case "paused":
         this.log("page.pause", { on, gapMs: event.gapMs, forgotten: event.forgotten });
@@ -1134,20 +1226,13 @@ export class MachineChannel implements PipeOpener {
         for (const f of queue.drain()) take(f);
         routeTo = take;
         let direct: DirectPaths | null = null;
-        let relayFailing = false;
+        // The connection log hears the rule's decisions: gone (the channel is closed), and slow but kept.
+        const watchRelay = watchRelayPath(driver, relayLink, (stats) => this.logRelaySilent(on, driver, stats));
+        const slowLog = this.relaySlowLogger(on);
         driver.onpaths = (stats) => {
           if (this.driver === driver) this.setPaths(stats);
-          // A carrier path with a probe unanswered for two probe intervals is
-          // gone. Until this, only the number shown rose (the probe's age)
-          // while the channel stalled until the relay link's own 60 s silence.
-          // Wake the carrier with its short deadline too: a dead relay link
-          // must be replaced before the next channel tries to use it.
-          if (!relayFailing && !driver.isClosed && stats.relayRttMs !== null && stats.relayRttMs >= RELAY_SILENT_MS) {
-            relayFailing = true;
-            this.logRelaySilent(on, driver, stats.relayRttMs);
-            relayLink?.wake();
-            driver.close(4000, "the relay path stopped answering");
-          }
+          slowLog(stats);
+          watchRelay(stats);
         };
         const offGoaway = relayLink?.onGoaway(({ retryMs }) => {
           // The relay is draining: move before it closes.
