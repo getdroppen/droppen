@@ -1,0 +1,53 @@
+[package]
+name = "droppen-a2a"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+description = "The Droppen server's A2A v1.0 server: the protocol types, the JSON-RPC and HTTP+JSON bindings, Agent Cards, A2A tokens, the task store and the SessionBackend port"
+
+# The A2A protocol and its bookkeeping, and nothing that runs a session: the
+# sessions an A2A task drives are reached through the `SessionBackend` port,
+# which the entry implements on top of the providers. So this crate names no
+# provider, no CLI and no other subsystem.
+[dependencies]
+# A token's secret, base64url, as `droppen-auth` spells its session tokens.
+base64 = "0.22"
+droppen-base = { path = "../droppen-base" }
+droppen-http = { path = "../droppen-http" }
+droppen-instance = { path = "../droppen-instance" }
+futures-util = "0.3"
+gotcha = { workspace = true }
+# A token's random secret, from the OS, as `droppen-auth` draws its own.
+rand = "0.8"
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+# Constant-time comparison of a token's digest; already in the graph.
+subtle = "2"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+# Driving the protocol router in its tests.
+tower-service = "0.3"
+
+[lints.rust]
+missing_docs = "deny"
+unreachable_pub = "deny"
+
+# `[lints] workspace = true` cannot be mixed with the rust lints above, so the
+# workspace's two clippy denials (the root `Cargo.toml` `[workspace.lints]`)
+# are repeated here: keep them in step.
+[lints.clippy]
+significant_drop_in_scrutinee = "deny"
+await_holding_lock = "deny"
+
+# `testing`: the fake session backend, for the server's tests. Only the
+# server's [dev-dependencies] turn it on.
+[features]
+test-support = []
