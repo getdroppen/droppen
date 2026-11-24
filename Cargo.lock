@@ -1315,7 +1315,9 @@ dependencies = [
 name = "droppen-client"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "droppen-proto",
+ "droppen-relay-core",
  "ed25519-dalek",
  "futures-util",
  "hex",
@@ -1325,6 +1327,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
  "zeroize",
 ]
 

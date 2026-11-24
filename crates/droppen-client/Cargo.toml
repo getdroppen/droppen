@@ -4,15 +4,17 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "The device side of the Droppen hub API in Rust: device sessions, the /v1/client link, and reading a machine's encrypted streams"
+description = "The device side of the Droppen hub API in Rust: device sessions, the /v1/client link, reading a machine's encrypted streams, and a standalone device's channels to its hosts"
 
 # Open source, like droppen-proto: it speaks only the documented hub API
 # (`docs/hub-api/`) and never links rh-hub. Its users are the headless test
-# device (droppen-devkit) and the local install's aggregator (`droppen-server`'s
-# `aggregator`); later the desktop app's Rust side.
+# device (droppen-devkit), the local install's aggregator (`droppen-server`'s
+# `aggregator`) and the a2a proxy (`droppen-a2a-proxy`, a standalone device);
+# later the desktop app's Rust side.
 
 [dependencies]
-droppen-proto = { path = "../droppen-proto" }
+# `runtime`: the channel driver a standalone device runs its channels on.
+droppen-proto = { path = "../droppen-proto", features = ["runtime"] }
 tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
@@ -22,10 +24,18 @@ ed25519-dalek = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 zeroize = "1"
+# What a standalone device's relays and channels log (never a ticket, a key
+# or a payload); the version droppen-proto's driver already links.
+tracing = "0.1"
 
 [dev-dependencies]
 rand = "0.8"
-tokio = { version = "1", features = ["rt", "macros", "net", "io-util"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util"] }
+# The end-to-end tests of a standalone device (`tests/standalone.rs`): a relay
+# in this process (the library the relay binary runs), and a hub that answers
+# the few routes a device reads.
+droppen-relay-core = { path = "../droppen-relay-core" }
+axum = "0.8"
 
 [lints]
 workspace = true
