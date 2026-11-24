@@ -670,12 +670,18 @@ function incidentLog(): ConnectionLog {
   step(1000);
   log.emit("req.start", { device, kind: "rpc", method: "GET", route: "/api/sessions/{source}/{id}/history?before=1200&fp&from=800" });
   step(1000);
-  log.emit("sample", { lagMs: 3, "hub.tx": 120, "hub.rx": 96, "hub.buf": 0, "ch:nrt-1/3.rx": 131_072, "ch:nrt-1/3.inflight": 524_288, "ch:nrt-1/3.queued": 0, "ch:nrt-1/3.probes": 1, "ch:nrt-1/3.oldestProbeMs": 1_000, "ch:nrt-1/3.relayRttMs": 38 });
+  log.emit("sample", { lagMs: 3, "hub.tx": 120, "hub.rx": 96, "hub.buf": 0, "ch:nrt-1/3.rx": 131_072, "ch:nrt-1/3.inflight": 524_288, "ch:nrt-1/3.queued": 0, "ch:nrt-1/3.probes": 1, "ch:nrt-1/3.relayProbeAgeMs": 1_000, "ch:nrt-1/3.relayQuietMs": 12, "ch:nrt-1/3.relayRttMs": 38 });
   step(4001);
-  log.emit("probe.aged", { on: "ch:nrt-1/3", path: "relay", ageMs: 5_001 });
+  // Slow, not dead: the probe's answer waits behind the data, which keeps coming.
+  log.emit("probe.late", { on: "ch:nrt-1/3", path: "relay", nonce: 2, ageMs: 5_001, quietMs: 12, unsent: false });
   step(5000);
-  log.emit("timeout", { device, timer: "RELAY_SILENT_MS", limitMs: 10_000, elapsedMs: 10_001, on: "ch:nrt-1/3", lastRxAgoMs: 12, inflight: 524_288, queued: 1_048_576 });
-  log.emit("channel.close", { device, on: "ch:nrt-1/3", via: "relay:nrt-1", code: 4000, reason: "the relay path stopped answering", by: "local", rule: "relay_silent", uptimeMs: 11_413, rxBytes: 4_194_304 });
+  log.emit("path.slow", { device, on: "ch:nrt-1/3", rule: "relayPathGone", decision: "kept", limitMs: 10_000, relayProbeAgeMs: 10_001, relayQuietMs: 40, relayRttMs: 38 });
+  step(4000);
+  // Then the link dies: nothing more comes over it.
+  log.emit("probe.late", { on: "ch:nrt-1/3", path: "relay", nonce: 4, ageMs: 5_002, quietMs: 5_004, unsent: false });
+  step(5000);
+  log.emit("timeout", { device, timer: "RELAY_SILENT_MS", rule: "relayPathGone", decision: "gone", limitMs: 10_000, relayProbeAgeMs: 10_002, relayQuietMs: 10_004, elapsedMs: 10_004, on: "ch:nrt-1/3", lastRxAgoMs: 10_004, inflight: 524_288, queued: 0 });
+  log.emit("channel.close", { device, on: "ch:nrt-1/3", via: "relay:nrt-1", code: 4000, reason: "the relay path stopped answering", by: "local", rule: "relay_silent", relayProbeAgeMs: 10_002, relayQuietMs: 10_004, decision: "gone", uptimeMs: 20_413, rxBytes: 4_194_304 });
   log.emit("req", { device, kind: "rpc", method: "GET", route: "/api/sessions/{source}/{id}/history?before=1200&fp&from=800", status: 200, ms: 10_002, ttfbMs: 640, rx: 1_310_720, tx: 0, stage: "body", error: "tunnel: the pipe closed before the answer ended (4000)" });
   step(2000);
   log.emit("channel.retry", { device, waitMs: 2000, attempt: 1, status: "idle" });

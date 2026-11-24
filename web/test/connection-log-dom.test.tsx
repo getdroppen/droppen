@@ -67,7 +67,7 @@ function incident() {
   log.emit("channel.open", { device, on: "ch:nrt-1/3", via: "relay:nrt-1", handshakeMs: 412 });
   log.emit("sample", { "ch:nrt-1/3.rx": 131072, "ch:nrt-1/3.inflight": 524288, "hub.buf": 0 });
   log.emit("probe.sent", { on: "ch:nrt-1/3", path: "relay", nonce: 7 });
-  log.emit("probe.aged", { on: "ch:nrt-1/3", path: "relay", ageMs: 5001 });
+  log.emit("probe.late", { on: "ch:nrt-1/3", path: "relay", nonce: 7, ageMs: 5001, quietMs: 40, unsent: false });
   log.emit("timeout", { device, timer: "RELAY_SILENT_MS", limitMs: 10_000, elapsedMs: 10_002, on: "ch:nrt-1/3" });
   log.emit("channel.close", { device, on: "ch:nrt-1/3", code: 4000, by: "local", rule: "relay_silent", rxBytes: 4_194_304 });
   log.emit("channel.retry", { device, waitMs: 2000, attempt: 1 });
@@ -83,20 +83,20 @@ test("opened, the log lists every event with its time, name and fields, and take
   assert.equal(byTestId("connection-log-filter-events")?.getAttribute("aria-selected"), "true");
   assert.deepEqual(
     rows().map((r) => r.dataset.event),
-    ["hub.open", "channel.open", "probe.aged", "timeout", "channel.close", "channel.retry"],
+    ["hub.open", "channel.open", "probe.late", "timeout", "channel.close", "channel.retry"],
   );
   assert.match(byTestId("connection-log-count")?.textContent ?? "", /^6 of 8 events$/);
   await click(byTestId("connection-log-filter-all"));
   await settle();
   const names = rows().map((r) => r.dataset.event);
-  assert.deepEqual(names, ["hub.open", "channel.open", "sample", "probe.sent", "probe.aged", "timeout", "channel.close", "channel.retry"]);
+  assert.deepEqual(names, ["hub.open", "channel.open", "sample", "probe.sent", "probe.late", "timeout", "channel.close", "channel.retry"]);
   const before = rows()[0];
   await settle(650);
   assert.equal(rows()[0], before, "a refresh keeps the rows it drew (keyed by seq), it does not draw them anew");
   const timeout = rows().find((r) => r.dataset.event === "timeout")!;
   assert.match(timeout.textContent ?? "", /^\d\d:\d\d:\d\d\.\d{3} \+\d+\.\d{3} timeout .*timer=RELAY_SILENT_MS limitMs=10000 elapsedMs=10002/);
   assert.equal(timeout.querySelector("[data-signal]")?.getAttribute("data-signal"), "failed", "an error in the danger colour, marked as a signal");
-  assert.equal(rows().find((r) => r.dataset.event === "probe.aged")!.querySelector("[data-signal]")?.getAttribute("data-signal"), "warn");
+  assert.equal(rows().find((r) => r.dataset.event === "probe.late")!.querySelector("[data-signal]")?.getAttribute("data-signal"), "warn");
   assert.match(byTestId("connection-log-count")?.textContent ?? "", /^8 of 8 events$/);
 
   // Live: what comes while it is open shows within half a second.
@@ -114,7 +114,7 @@ test("'problems' keeps the warnings and errors; Copy puts the view on the clipbo
   await settle();
   assert.deepEqual(
     rows().map((r) => r.dataset.event),
-    ["probe.aged", "timeout", "channel.close"],
+    ["probe.late", "timeout", "channel.close"],
   );
   await click(byTestId("connection-log-copy"));
   await settle();

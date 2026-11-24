@@ -10,8 +10,8 @@
 // dropped but for positions and counts, and every text is scrubbed on the way
 // in; the hub link says how its connection closed and who closed it (the hub
 // or this page's silence timer), and when it tries again; the paths say a
-// probe sent, a round trip that is only an unanswered probe's age
-// (`aged`, not an answer), a direct path given up and on which deadline, and
+// probe sent, a probe gone a whole interval unanswered (`late`, once, with its
+// age and the hub's quiet: no round trip), a direct path given up and on which deadline, and
 // a pause of the page's timers; the once-a-second sampler runs while a
 // connection is up and stops with it; and the text export has its header
 // (the release, the browser, the network, the connection) and one compact
@@ -366,7 +366,7 @@ async function transports(): Promise<[Transport, Transport]> {
   return [it, rt];
 }
 
-test("the paths say a probe sent, a round trip that is only an unanswered probe's age, a pause of the page's timers, and a direct path down on its deadline", async () => {
+test("the paths say a probe sent, a probe gone a probe interval unanswered (once, with its age and the quiet, never as a round trip), a pause of the page's timers, and a direct path down on its deadline", async () => {
   const [relay] = await transports();
   const [direct] = await transports();
   const s = Session.withPaths(1, relay, "initiator", { probeRelay: true }, 0);
@@ -376,15 +376,25 @@ test("the paths say a probe sent, a round trip that is only an unanswered probe'
     s.takeEvents().filter((e) => e.type === "probe"),
     [{ type: "probe", via: "relay", nonce: 1 }],
   );
-  // No answer by the next probe: the round trip shown is that probe's age — and said so.
+  // No answer by the next probe tick: the probe is late — said once, with its age and how quiet the
+  // hub has been. It is no round trip: none is measured, and the path's age and quiet say the rest.
   s.tick(RELAY_PROBE_MS + 1);
-  const aged = s.takeEvents().find((e) => e.type === "aged");
-  assert.deepEqual(aged, { type: "aged", via: "relay", ageMs: RELAY_PROBE_MS + 1 });
-  assert.equal(s.stats().relayRttMs, RELAY_PROBE_MS + 1, "the number the bar shows is that age");
+  assert.deepEqual(
+    s.takeEvents().filter((e) => e.type === "late"),
+    [{ type: "late", via: "relay", nonce: 1, ageMs: RELAY_PROBE_MS + 1, quietMs: RELAY_PROBE_MS + 1, unsent: false }],
+  );
+  assert.equal(s.stats().relayRttMs, null, "no answer, no round trip");
+  assert.deepEqual([s.stats().relayProbeAgeMs, s.stats().relayQuietMs], [RELAY_PROBE_MS + 1, RELAY_PROBE_MS + 1]);
   assert.equal(s.diagnostics(RELAY_PROBE_MS + 1)!.probesOut, 1, "one probe unanswered");
+  // The next tick: the first is not said again; the second, still waiting for credit to leave, is late too.
+  s.tick(2 * RELAY_PROBE_MS + 2);
+  assert.deepEqual(
+    s.takeEvents().filter((e) => e.type === "late"),
+    [{ type: "late", via: "relay", nonce: 2, ageMs: RELAY_PROBE_MS + 1, quietMs: 2 * RELAY_PROBE_MS + 2, unsent: true }],
+  );
 
   // The page's timers were held: the probes before the pause are forgotten, and that is said.
-  s.tick(RELAY_PROBE_MS + 1 + 4 * RELAY_PROBE_MS);
+  s.tick(2 * RELAY_PROBE_MS + 2 + 4 * RELAY_PROBE_MS);
   const paused = s.takeEvents().find((e) => e.type === "paused");
   assert.deepEqual(paused, { type: "paused", gapMs: 4 * RELAY_PROBE_MS, forgotten: 1 });
 
@@ -418,7 +428,7 @@ test("the text export: a header with the web build and the device's agent, the b
   const { log, step } = clocked();
   log.emit("channel.open", { device: "#3fa9c1", on: "ch:nrt-1/3", via: "relay:nrt-1", handshakeMs: 412.3 });
   step(5001);
-  log.emit("probe.aged", { on: "ch:nrt-1/3", path: "relay", ageMs: 5001 });
+  log.emit("probe.late", { on: "ch:nrt-1/3", path: "relay", nonce: 2, ageMs: 5001, quietMs: 12, unsent: false });
   step(5000);
   log.emit("channel.close", { on: "ch:nrt-1/3", code: 4000, reason: "the relay path stopped answering", by: "local", rule: "relay_silent" });
   const text = logText(log.events(), header());
@@ -431,7 +441,7 @@ test("the text export: a header with the web build and the device's agent, the b
   assert.equal(lines[6], PRIVACY_LINE);
   assert.match(lines[7]!, /^--- this page \(loaded /);
   assert.equal(lines[8], "09:00:00.000 +1.000 I channel.open device=#3fa9c1 on=ch:nrt-1/3 via=relay:nrt-1 handshakeMs=412.3");
-  assert.equal(lines[9], "09:00:05.001 +6.001 W probe.aged on=ch:nrt-1/3 path=relay ageMs=5001");
+  assert.equal(lines[9], "09:00:05.001 +6.001 W probe.late on=ch:nrt-1/3 path=relay nonce=2 ageMs=5001 quietMs=12 unsent=false");
   assert.equal(lines[10], '09:00:10.001 +11.001 W channel.close on=ch:nrt-1/3 code=4000 reason="the relay path stopped answering" by=local rule=relay_silent');
   assert.equal(lines.length, 11);
   assert.equal(eventLine(log.events()[1]!), lines[9]);
@@ -444,12 +454,12 @@ test("the views: all, all but samples and probes, and the problems alone", () =>
   log.emit("sample", { "hub.tx": 1 });
   log.emit("probe.sent", { on: "hub", nonce: 1 });
   log.emit("probe.answer", { on: "hub", nonce: 1, rttMs: 40 });
-  log.emit("probe.aged", { on: "ch:hub/1", ageMs: 5001 });
+  log.emit("probe.late", { on: "ch:hub/1", ageMs: 5001 });
   log.emit("timeout", { timer: "SILENCE_MS" });
   const names = (filter: "all" | "events" | "problems") => filterEvents(log.events(), filter).map((e) => e.name);
-  assert.deepEqual(names("all"), ["hub.open", "sample", "probe.sent", "probe.answer", "probe.aged", "timeout"]);
-  assert.deepEqual(names("events"), ["hub.open", "probe.aged", "timeout"], "an aged probe is no chatter");
-  assert.deepEqual(names("problems"), ["probe.aged", "timeout"]);
+  assert.deepEqual(names("all"), ["hub.open", "sample", "probe.sent", "probe.answer", "probe.late", "timeout"]);
+  assert.deepEqual(names("events"), ["hub.open", "probe.late", "timeout"], "a late probe is no chatter");
+  assert.deepEqual(names("problems"), ["probe.late", "timeout"]);
 });
 
 test("a copy holds the newest events under its cap, and says that Download has the rest; Download holds everything", () => {
