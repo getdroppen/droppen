@@ -9,6 +9,12 @@
 //! channel was authorised for (`x-rh-agent-device`), which becomes the
 //! request's identity (`cloud:<device>`). Nothing the device sends can set
 //! either: a request's headers are rebuilt from an allowlist.
+//!
+//! An A2A proxy's channel (`docs/a2a.md` §7.3, [`Access::A2aOnly`]) reaches
+//! this server's A2A binding and nothing else: `rpc` streams to the routes
+//! [`A2A_ROUTES`] lists, each refused otherwise (403 `a2a_only`,
+//! [`refusal`]), and each marked as an A2A proxy's (`x-rh-agent-kind: a2a`),
+//! which the guard holds to `/a2a/*` again.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,7 +26,11 @@ use droppen_proto::mux::StreamClass;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
-use droppen_http::bridge::{CREDENTIAL_HEADER, DEVICE_HEADER};
+use droppen_http::bridge::{A2A_KIND, CREDENTIAL_HEADER, DEVICE_HEADER, KIND_HEADER};
+
+/// What a channel was admitted for ([`droppen_proto::handshake::Access`]),
+/// which everything here matches on.
+pub use droppen_proto::handshake::Access;
 
 use super::answers::{AnswerBody, Refused, RefusedWithReason};
 
@@ -39,6 +49,12 @@ const FORWARDED: [&str; 9] = [
     "range",
     "cache-control",
 ];
+
+/// Request headers an A2A proxy may set besides [`FORWARDED`] (`docs/a2a.md`
+/// §7.3): the A2A protocol version and extensions it speaks. Never
+/// `authorization`: an A2A token is taken on this device's loopback only, and
+/// the bridge is loopback.
+const A2A_FORWARDED: [&str; 2] = ["a2a-version", "a2a-extensions"];
 
 /// Response headers never passed back (hop-by-hop, or re-framed by the bridge).
 const DROPPED: [&str; 8] = [
@@ -107,7 +123,8 @@ impl Loopback {
 pub const LOCAL_PREFIX: &str = "/rh/";
 
 /// Where a device stands for the admin-only routes, as this agent's own
-/// chain says now (chain v3, `docs/local-aggregator.md` §5.4).
+/// chain says now (chain v3, `docs/local-aggregator.md` §5.4), and what its
+/// channel was admitted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Standing {
     /// A current admin device (v2: a full device).
@@ -120,8 +137,12 @@ pub struct Standing {
     /// It may still control this machine: the chain lets it, and its control
     /// on this channel has not lapsed (`docs/local-aggregator.md` §3.4). Judged again
     /// when a request is dispatched, which can be long after its stream
-    /// opened.
+    /// opened. For an A2A proxy: the chain still lets it call this machine's
+    /// A2A ([`Access::check`]), and its channel has not lapsed.
     pub controls: bool,
+    /// What its channel was admitted for: [`Access::A2aOnly`] reaches the
+    /// A2A routes and nothing else ([`refusal`]).
+    pub access: Access,
 }
 
 /// This agent's view of the account, for a management request
@@ -160,6 +181,9 @@ pub enum Refusal {
     /// [`ROUTES`] classifies (403 `not_offered`). A route the server gains is
     /// refused to every device until it is classified there.
     Unlisted,
+    /// Anything an A2A proxy asks but an `rpc` request to a route of the A2A
+    /// binding ([`A2A_ROUTES`]): 403 `a2a_only` (`docs/a2a.md` §7.3).
+    A2aOnly,
 }
 
 impl Refusal {
@@ -191,6 +215,7 @@ impl Refusal {
             ),
             Refusal::NotFromCloud => refused(403, "not_from_cloud", "this is done on the device itself only, not from another device"),
             Refusal::Unlisted => refused(403, "not_offered", "the device you reach does not offer that to other devices"),
+            Refusal::A2aOnly => refused(403, "a2a_only", "an A2A proxy reaches the A2A routes of the device it calls, and nothing else"),
         }
     }
 }
@@ -427,10 +452,93 @@ pub fn classify(method: &str, route: &str) -> Option<RouteClass> {
 }
 
 /// Routes no device reaches over a channel, admin or not, whatever
-/// [`ROUTES`] says: the local Droppen link and gateway, by prefix.
+/// [`ROUTES`] says: the local Droppen link and gateway, and the A2A server
+/// (`/a2a/*`, whose callers are A2A tokens on this device's loopback until the
+/// a2a devices of `docs/a2a.md` §7), by prefix.
 pub fn never_from_cloud(route: &str) -> bool {
     let under = |prefix: &str| route == prefix || route.starts_with(&format!("{prefix}/"));
-    under("/api/cloud") || under("/api/agg")
+    under("/api/cloud") || under("/api/agg") || under("/a2a")
+}
+
+/// Where the A2A server's routes start ([`allowed`]).
+pub const A2A_PREFIX: &str = "/a2a/";
+
+/// The routes of the A2A binding an A2A proxy reaches (`docs/a2a.md` §2,
+/// §7.3), as `(method, path template)`, and nothing else: its Agent Card,
+/// JSON-RPC, and the HTTP+JSON operations. An allow-list of its own, matched
+/// by [`a2a_route`] with these placeholders, each standing for one segment:
+/// - `{entry}`: an entry id, `^[a-z0-9][a-z0-9-]{0,39}$` (`docs/a2a.md` §4);
+/// - `{id}`: a task id (Droppen's own, a UUID): not empty, and without a
+///   colon, which would read as a custom verb;
+/// - `{id}:verb` — the HTTP+JSON binding's custom verbs, which
+///   [`instance_of`] cannot express: a segment ending in `:verb`, with such
+///   an id before it;
+/// - `{configId}`: a push configuration's id (the client's): not empty.
+///
+/// Methods are matched exactly: no `HEAD`, no other spelling.
+pub const A2A_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/a2a/agents/{entry}/.well-known/agent-card.json"),
+    ("POST", "/a2a/agents/{entry}/jsonrpc"),
+    ("POST", "/a2a/agents/{entry}/jsonrpc/"),
+    ("POST", "/a2a/agents/{entry}/rest/message:send"),
+    ("POST", "/a2a/agents/{entry}/rest/message:stream"),
+    ("GET", "/a2a/agents/{entry}/rest/tasks"),
+    ("GET", "/a2a/agents/{entry}/rest/tasks/{id}"),
+    ("POST", "/a2a/agents/{entry}/rest/tasks/{id}:cancel"),
+    ("GET", "/a2a/agents/{entry}/rest/tasks/{id}:subscribe"),
+    ("POST", "/a2a/agents/{entry}/rest/tasks/{id}:subscribe"),
+    ("POST", "/a2a/agents/{entry}/rest/tasks/{id}/pushNotificationConfigs"),
+    ("GET", "/a2a/agents/{entry}/rest/tasks/{id}/pushNotificationConfigs"),
+    ("GET", "/a2a/agents/{entry}/rest/tasks/{id}/pushNotificationConfigs/{configId}"),
+    ("DELETE", "/a2a/agents/{entry}/rest/tasks/{id}/pushNotificationConfigs/{configId}"),
+];
+
+/// Whether segment `seg` fits template segment `pat` of [`A2A_ROUTES`].
+fn a2a_segment(seg: &str, pat: &str) -> bool {
+    let Some((name, verb)) = pat.strip_prefix('{').and_then(|p| p.split_once('}')) else {
+        return seg == pat;
+    };
+    match (name, verb) {
+        ("entry", "") => {
+            let bytes = seg.as_bytes();
+            !bytes.is_empty()
+                && bytes.len() <= 40
+                && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+                && bytes.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+        }
+        ("id", "") => !seg.is_empty() && !seg.contains(':'),
+        ("id", verb) => seg.strip_suffix(verb).is_some_and(|id| !id.is_empty() && !id.contains(':')),
+        ("configId", "") => !seg.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether `route` (no query) is an instance of `template` of
+/// [`A2A_ROUTES`]: segment for segment ([`a2a_segment`]).
+fn a2a_instance_of(route: &str, template: &str) -> bool {
+    let (mut r, mut t) = (route.split('/'), template.split('/'));
+    loop {
+        match (r.next(), t.next()) {
+            (None, None) => return true,
+            (Some(seg), Some(pat)) if a2a_segment(seg, pat) => {}
+            _ => return false,
+        }
+    }
+}
+
+/// Whether `method route` (`route` without its query) is a route of the A2A
+/// binding an A2A proxy reaches: one entry of [`A2A_ROUTES`] that the route
+/// is an instance of both as sent and as the server's router reads it, one
+/// segment decoded at a time; and clean as every bridged route must be
+/// ([`clean`]: no dot segment, no `//`, no backslash, no slash a segment
+/// decodes to), printable ASCII.
+pub fn a2a_route(method: &str, route: &str) -> bool {
+    let decoded = decoded_by_segment(route);
+    clean(route)
+        && route.bytes().all(|b| b.is_ascii_graphic())
+        && A2A_ROUTES
+            .iter()
+            .any(|(m, template)| *m == method && a2a_instance_of(route, template) && a2a_instance_of(&decoded, template))
 }
 
 /// Whether `route` belongs to runtime-installed plugins — listing, switching,
@@ -447,11 +555,20 @@ pub(crate) fn plugin_route(route: &str) -> bool {
 /// `None` when it may go on. The route is judged as sent and as the server
 /// sees it once percent-decoded, the stricter answer winning; a route
 /// [`ROUTES`] does not classify is refused.
+///
+/// An A2A proxy's channel ([`Access::A2aOnly`]) is judged by
+/// [`a2a_route`] alone, once its lapse is: what any other device may use is
+/// refused to it as everything else is (403 `a2a_only`).
 pub fn refusal(method: &str, path: &str, standing: Standing) -> Option<Refusal> {
     if !standing.controls {
         return Some(Refusal::Lapsed);
     }
     let route = path.split(['?', '#']).next().unwrap_or_default();
+    match standing.access {
+        Access::A2aOnly if a2a_route(method, route) => return None,
+        Access::A2aOnly => return Some(Refusal::A2aOnly),
+        Access::Full => {}
+    }
     let decoded = percent_decoded(route);
     if [route, decoded.as_str()].iter().any(|r| never_from_cloud(r) || plugin_route(r)) {
         return Some(Refusal::NotFromCloud);
@@ -472,6 +589,17 @@ pub fn refusal(method: &str, path: &str, standing: Standing) -> Option<Refusal> 
         }
     }
     None
+}
+
+/// [`refusal`] for a request on a stream of `class`: an A2A proxy opens `rpc`
+/// streams and no other, whatever it asks for on one (403 `a2a_only`, once
+/// its lapse is judged).
+pub fn refusal_on(class: StreamClass, method: &str, path: &str, standing: Standing) -> Option<Refusal> {
+    let refused = refusal(method, path, standing);
+    match (standing.access, class) {
+        (Access::Full, _) | (Access::A2aOnly, StreamClass::Rpc) => refused,
+        (Access::A2aOnly, StreamClass::Mux | StreamClass::Term | StreamClass::Blob) => refused.or(Some(Refusal::A2aOnly)),
+    }
 }
 
 /// The agent's own routes ([`LOCAL_PREFIX`]), answered with a status and JSON.
@@ -562,19 +690,29 @@ fn decoded_by_segment(route: &str) -> String {
 /// The routes a `blob` stream (low priority, for files and pictures) may reach.
 const BLOB_ROUTES: [&str; 3] = ["/api/fs/download", "/api/fs/upload", "/api/media/github"];
 
-/// Whether `path` may be reached by a stream of `class`.
-pub fn allowed(class: StreamClass, path: &str) -> bool {
-    let route = path.split(['?', '#']).next().unwrap_or_default();
-    // Judge the route as the server will see it once percent-decoded too:
-    // `%2e%2e` would otherwise walk past the dot-segment check.
+/// Whether `route` (no query) has nothing that walks it elsewhere once the
+/// server reads it: no dot segment, no `//`, no backslash — as sent, nor once
+/// percent-decoded (`%2e%2e` would otherwise walk past the dot-segment check)
+/// — and no slash a segment decodes to.
+fn clean(route: &str) -> bool {
     let decoded = percent_decoded(route);
-    let clean = (route.starts_with("/api/") || (class == StreamClass::Rpc && route.starts_with(LOCAL_PREFIX)))
-        && [route, decoded.as_str()]
-            .iter()
-            .all(|r| !r.split('/').any(|seg| seg == ".." || seg == ".") && !r.contains("//") && !r.contains('\\'))
+    [route, decoded.as_str()]
+        .iter()
+        .all(|r| !r.split('/').any(|seg| seg == ".." || seg == ".") && !r.contains("//") && !r.contains('\\'))
         && decoded.matches('/').count() == route.matches('/').count()
-        && path.bytes().all(|b| b.is_ascii_graphic());
-    if !clean {
+}
+
+/// Whether `path` may be reached by a stream of `class` on a channel
+/// admitted for `access`: `/api/*` (and the agent's own routes over `rpc`)
+/// for any device but an A2A proxy, and the A2A routes over `rpc` for an A2A
+/// proxy only.
+pub fn allowed(class: StreamClass, path: &str, access: Access) -> bool {
+    let route = path.split(['?', '#']).next().unwrap_or_default();
+    let reaches = match access {
+        Access::Full => route.starts_with("/api/") || (class == StreamClass::Rpc && route.starts_with(LOCAL_PREFIX)),
+        Access::A2aOnly => class == StreamClass::Rpc && route.starts_with(A2A_PREFIX),
+    };
+    if !(reaches && clean(route) && path.bytes().all(|b| b.is_ascii_graphic())) {
         return false;
     }
     match class {
@@ -598,13 +736,23 @@ pub async fn serve(incoming: Incoming, device: String, loopback: Arc<Loopback>, 
         Ok(head) => head,
         Err(_) => return stream.close(CLOSE_BAD_REQUEST),
     };
-    if !allowed(class, &head.path) {
+    // Where the device stands, judged on this agent's own chain now (a
+    // device demoted since the channel opened is held to what it is now),
+    // and what its channel was admitted for.
+    let standing = local.standing(&device);
+    let refused = refusal_on(class, &head.method, &head.path, standing);
+    // A path its class may not reach closes the stream; an A2A proxy is told
+    // why it was refused instead (403 `a2a_only`, or 412 `lapsed`).
+    let told = match standing.access {
+        Access::Full => false,
+        Access::A2aOnly => refused.is_some(),
+    };
+    if !allowed(class, &head.path, standing.access) && !told {
         tracing::info!(%device, ?class, "a bridged stream asked for a path its class may not reach");
         return stream.close(CLOSE_FORBIDDEN);
     }
-    // The admin-only routes, judged on this agent's own chain now (a device
-    // demoted since the channel opened is held to what it is now).
-    if let Some(refused) = refusal(&head.method, &head.path, local.standing(&device)) {
+    // The admin-only routes and an A2A proxy's allow-list.
+    if let Some(refused) = refused {
         let route = head.path.split(['?', '#']).next().unwrap_or_default().to_string();
         tracing::warn!(%device, method = %head.method, %route, ?refused, "refused a request over a channel");
         let mut stream = stream;
@@ -615,12 +763,16 @@ pub async fn serve(incoming: Incoming, device: String, loopback: Arc<Loopback>, 
         }
         return answer(stream, refused.answer()).await;
     }
-    match class {
-        StreamClass::Rpc if head.path.starts_with(LOCAL_PREFIX) => local_rpc(stream, head, &device, local.as_ref()).await,
+    match (standing.access, class) {
+        (Access::Full, StreamClass::Rpc) if head.path.starts_with(LOCAL_PREFIX) => local_rpc(stream, head, &device, local.as_ref()).await,
         // A blob is an rpc at the lowest priority: the same request, a
         // streamed response, and terminals never wait behind it.
-        StreamClass::Rpc | StreamClass::Blob => rpc(stream, head, &device, &loopback, local.as_ref()).await,
-        StreamClass::Mux | StreamClass::Term => socket(stream, head, &device, &loopback).await,
+        (Access::Full, StreamClass::Rpc | StreamClass::Blob) => rpc(stream, head, class, &device, Access::Full, &loopback, local.as_ref()).await,
+        (Access::Full, StreamClass::Mux | StreamClass::Term) => socket(stream, head, &device, Access::Full, &loopback).await,
+        // An A2A proxy's request to the A2A routes, marked as its own.
+        (Access::A2aOnly, StreamClass::Rpc) => rpc(stream, head, class, &device, Access::A2aOnly, &loopback, local.as_ref()).await,
+        // Refused above: an A2A proxy opens nothing else.
+        (Access::A2aOnly, StreamClass::Mux | StreamClass::Term | StreamClass::Blob) => stream.close(CLOSE_FORBIDDEN),
     }
 }
 
@@ -676,11 +828,12 @@ async fn request_body(stream: &mut Stream, max: usize) -> Option<Vec<u8>> {
     }
 }
 
-/// Whether a request whose body has just arrived is still to be served: judged
-/// again on where its device stands now, since a device can open a stream and
-/// hold back its `End` for as long as it likes. `None`: it was answered.
-async fn still_served(stream: Stream, head: &RequestHead, device: &str, local: &dyn Local) -> Option<Stream> {
-    match refusal(&head.method, &head.path, local.standing(device)) {
+/// Whether a request whose body has just arrived on a stream of `class` is
+/// still to be served: judged again on where its device stands now, since a
+/// device can open a stream and hold back its `End` for as long as it likes.
+/// `None`: it was answered.
+async fn still_served(stream: Stream, head: &RequestHead, class: StreamClass, device: &str, local: &dyn Local) -> Option<Stream> {
+    match refusal_on(class, &head.method, &head.path, local.standing(device)) {
         None => Some(stream),
         Some(refused) => {
             let route = head.path.split(['?', '#']).next().unwrap_or_default();
@@ -696,7 +849,7 @@ async fn local_rpc(mut stream: Stream, head: RequestHead, device: &str, local: &
     let Some(body) = request_body(&mut stream, 64 * 1024).await else {
         return;
     };
-    let Some(stream) = still_served(stream, &head, device, local).await else {
+    let Some(stream) = still_served(stream, &head, StreamClass::Rpc, device, local).await else {
         return;
     };
     let path = head.path.split(['?', '#']).next().unwrap_or_default().to_string();
@@ -704,11 +857,14 @@ async fn local_rpc(mut stream: Stream, head: RequestHead, device: &str, local: &
     answer(stream, (status, json)).await;
 }
 
-async fn rpc(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loopback, local: &dyn Local) {
+/// One request on loopback, for a channel admitted for `access`: an A2A
+/// proxy's is marked as its own ([`KIND_HEADER`]), and may say which A2A
+/// version and extensions it speaks ([`A2A_FORWARDED`]).
+async fn rpc(mut stream: Stream, head: RequestHead, class: StreamClass, device: &str, access: Access, loopback: &Loopback, local: &dyn Local) {
     let Some(body) = request_body(&mut stream, MAX_BODY).await else {
         return;
     };
-    let Some(stream) = still_served(stream, &head, device, local).await else {
+    let Some(stream) = still_served(stream, &head, class, device, local).await else {
         return;
     };
     if push_key_route(&head.method, &head.path) && local.push_renewing() {
@@ -724,8 +880,16 @@ async fn rpc(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loo
         .request(method, url)
         .header(CREDENTIAL_HEADER, &loopback.credential)
         .header(DEVICE_HEADER, device);
+    let a2a = match access {
+        Access::Full => false,
+        Access::A2aOnly => true,
+    };
+    if a2a {
+        request = request.header(KIND_HEADER, A2A_KIND);
+    }
     for (name, value) in &head.headers {
-        if FORWARDED.contains(&name.to_ascii_lowercase().as_str()) {
+        let name_lc = name.to_ascii_lowercase();
+        if FORWARDED.contains(&name_lc.as_str()) || (a2a && A2A_FORWARDED.contains(&name_lc.as_str())) {
             request = request.header(name.as_str(), value.as_str());
         }
     }
@@ -767,7 +931,7 @@ async fn rpc(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loo
     writer.close(CLOSE_DONE);
 }
 
-async fn socket(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loopback) {
+async fn socket(mut stream: Stream, head: RequestHead, device: &str, access: Access, loopback: &Loopback) {
     let writer = stream.writer();
     let mut request = match format!("ws://{}{}", loopback.addr, head.path).into_client_request() {
         Ok(r) => r,
@@ -782,6 +946,11 @@ async fn socket(mut stream: Stream, head: RequestHead, device: &str, loopback: &
             headers.insert(DEVICE_HEADER, device);
         }
         _ => return stream.close(CLOSE_BAD_REQUEST),
+    }
+    // An A2A proxy opens no socket ([`refusal_on`]); were one ever let
+    // through, the guard would still hold it to `/a2a/*`.
+    if access == Access::A2aOnly {
+        headers.insert(KIND_HEADER, tokio_tungstenite::tungstenite::http::HeaderValue::from_static(A2A_KIND));
     }
     let socket = match tokio_tungstenite::connect_async_with_config(request, None, true).await {
         Ok((socket, _)) => socket,
@@ -859,16 +1028,19 @@ mod tests {
         admin: false,
         view: View::Fresh,
         controls: true,
+        access: Access::Full,
     };
     const ADMIN: Standing = Standing {
         admin: true,
         view: View::Fresh,
         controls: true,
+        access: Access::Full,
     };
     const STALE_ADMIN: Standing = Standing {
         admin: true,
         view: View::Stale,
         controls: true,
+        access: Access::Full,
     };
 
     /// The routes held back while the push keys are renewed: the key and a
@@ -1048,6 +1220,7 @@ mod tests {
             (Refusal::Lapsed, 412, json!({"error": "stale", "reason": "lapsed", "message": "the device you reach takes no control from this device now: no admin device vouched for the account as it sees it in the last 7 days, or this device may no longer control it"})),
             (Refusal::NotFromCloud, 403, json!({"error": "not_from_cloud", "message": "this is done on the device itself only, not from another device"})),
             (Refusal::Unlisted, 403, json!({"error": "not_offered", "message": "the device you reach does not offer that to other devices"})),
+            (Refusal::A2aOnly, 403, json!({"error": "a2a_only", "message": "an A2A proxy reaches the A2A routes of the device it calls, and nothing else"})),
         ];
         for (refusal, status, body) in cases {
             assert_eq!(refusal.answer(), (status, body), "{refusal:?}");
@@ -1066,7 +1239,12 @@ mod tests {
     #[test]
     fn a_stale_answer_says_why() {
         for (view, reason) in [(View::Stale, "stale"), (View::Behind, "behind"), (View::Fork, "fork")] {
-            let admin = Standing { admin: true, view, controls: true };
+            let admin = Standing {
+                admin: true,
+                view,
+                controls: true,
+                access: Access::Full,
+            };
             let refused = refusal("POST", "/rh/display-name", admin);
             assert_eq!(refused, Some(Refusal::Stale(view)));
             let (status, body) = refused.unwrap().answer();
@@ -1086,6 +1264,7 @@ mod tests {
                     admin: false,
                     view: View::Fork,
                     controls: true,
+                    access: Access::Full,
                 }
             ),
             Some(Refusal::LimitedDevice),
@@ -1108,31 +1287,35 @@ mod tests {
 
     #[test]
     fn each_class_reaches_only_its_routes() {
-        assert!(allowed(StreamClass::Rpc, "/api/sessions?limit=5"));
-        assert!(allowed(StreamClass::Rpc, "/api/terminals"));
-        assert!(!allowed(StreamClass::Rpc, "/openapi.json"));
-        assert!(!allowed(StreamClass::Rpc, "/api/../embed/x"));
-        assert!(!allowed(StreamClass::Rpc, "/api//x"));
-        assert!(!allowed(StreamClass::Rpc, "/api/x y"));
-        assert!(allowed(StreamClass::Mux, "/api/events?v=2&z=1"));
-        assert!(!allowed(StreamClass::Mux, "/api/events/x"));
-        assert!(!allowed(StreamClass::Mux, "/api/sessions"));
-        assert!(allowed(StreamClass::Term, "/api/terminals/abc-1_2/ws"));
-        assert!(!allowed(StreamClass::Term, "/api/terminals//ws"));
-        assert!(!allowed(StreamClass::Term, "/api/terminals/a/b/ws"));
-        assert!(!allowed(StreamClass::Term, "/api/events"));
-        assert!(!allowed(StreamClass::Blob, "/api/fs/read"));
-        assert!(allowed(StreamClass::Blob, "/api/fs/download?path=%2Ftmp%2Fa.png&inline=true"));
-        assert!(allowed(StreamClass::Blob, "/api/media/github?url=x"));
-        assert!(allowed(StreamClass::Blob, "/api/fs/upload"));
-        assert!(!allowed(StreamClass::Blob, "/api/sessions"));
-        assert!(allowed(StreamClass::Rpc, "/rh/machine-key"));
-        assert!(!allowed(StreamClass::Blob, "/rh/machine-key"));
-        assert!(allowed(StreamClass::Rpc, "/rh/rotate"));
-        assert!(!allowed(StreamClass::Mux, "/rh/rotate"));
-        assert!(!allowed(StreamClass::Term, "/rh/rotate"));
-        assert!(!allowed(StreamClass::Mux, "/rh/info"));
-        assert!(!allowed(StreamClass::Rpc, "/rh/../api/x"));
+        assert!(allowed(StreamClass::Rpc, "/api/sessions?limit=5", Access::Full));
+        assert!(allowed(StreamClass::Rpc, "/api/terminals", Access::Full));
+        assert!(!allowed(StreamClass::Rpc, "/openapi.json", Access::Full));
+        assert!(!allowed(StreamClass::Rpc, "/api/../embed/x", Access::Full));
+        assert!(!allowed(StreamClass::Rpc, "/api//x", Access::Full));
+        assert!(!allowed(StreamClass::Rpc, "/api/x y", Access::Full));
+        assert!(allowed(StreamClass::Mux, "/api/events?v=2&z=1", Access::Full));
+        assert!(!allowed(StreamClass::Mux, "/api/events/x", Access::Full));
+        assert!(!allowed(StreamClass::Mux, "/api/sessions", Access::Full));
+        assert!(allowed(StreamClass::Term, "/api/terminals/abc-1_2/ws", Access::Full));
+        assert!(!allowed(StreamClass::Term, "/api/terminals//ws", Access::Full));
+        assert!(!allowed(StreamClass::Term, "/api/terminals/a/b/ws", Access::Full));
+        assert!(!allowed(StreamClass::Term, "/api/events", Access::Full));
+        assert!(!allowed(StreamClass::Blob, "/api/fs/read", Access::Full));
+        assert!(allowed(
+            StreamClass::Blob,
+            "/api/fs/download?path=%2Ftmp%2Fa.png&inline=true",
+            Access::Full
+        ));
+        assert!(allowed(StreamClass::Blob, "/api/media/github?url=x", Access::Full));
+        assert!(allowed(StreamClass::Blob, "/api/fs/upload", Access::Full));
+        assert!(!allowed(StreamClass::Blob, "/api/sessions", Access::Full));
+        assert!(allowed(StreamClass::Rpc, "/rh/machine-key", Access::Full));
+        assert!(!allowed(StreamClass::Blob, "/rh/machine-key", Access::Full));
+        assert!(allowed(StreamClass::Rpc, "/rh/rotate", Access::Full));
+        assert!(!allowed(StreamClass::Mux, "/rh/rotate", Access::Full));
+        assert!(!allowed(StreamClass::Term, "/rh/rotate", Access::Full));
+        assert!(!allowed(StreamClass::Mux, "/rh/info", Access::Full));
+        assert!(!allowed(StreamClass::Rpc, "/rh/../api/x", Access::Full));
         // Percent-encoded dot segments and slashes are refused too.
         for path in [
             "/api/%2e%2e/embed/x",
@@ -1142,13 +1325,13 @@ mod tests {
             "/api/a%5c..%5cb",
             "/rh/%2e%2e/api/x",
         ] {
-            assert!(!allowed(StreamClass::Rpc, path), "{path}");
+            assert!(!allowed(StreamClass::Rpc, path, Access::Full), "{path}");
         }
         assert!(
-            allowed(StreamClass::Rpc, "/api/fs/download?path=%2Ftmp%2Fa.png"),
+            allowed(StreamClass::Rpc, "/api/fs/download?path=%2Ftmp%2Fa.png", Access::Full),
             "the query is not the route"
         );
-        assert!(allowed(StreamClass::Rpc, "/api/sessions/claude/a%20b"));
+        assert!(allowed(StreamClass::Rpc, "/api/sessions/claude/a%20b", Access::Full));
         // A plugin document's encoded slash gets no exception, and the
         // plugin routes themselves are refused by [`refusal`], not here
         // (`docs/plugins/runtime.md` §5).
@@ -1162,7 +1345,202 @@ mod tests {
             "/api/plugins/tasks/docs/a%2F%2Fb",
             "/api/plugins/tasks/docs/a%2Fb/other",
         ] {
-            assert!(!allowed(StreamClass::Rpc, path), "{path}");
+            assert!(!allowed(StreamClass::Rpc, path, Access::Full), "{path}");
         }
+    }
+    /// An A2A proxy whose channel holds (`docs/a2a.md` §7.3).
+    const PROXY: Standing = Standing {
+        admin: false,
+        view: View::Stale,
+        controls: true,
+        access: Access::A2aOnly,
+    };
+
+    /// Every route of the A2A binding's allow-list, as an A2A client sends
+    /// it — queries included.
+    const A2A_SENT: [(&str, &str); 17] = [
+        ("GET", "/a2a/agents/main/.well-known/agent-card.json"),
+        ("POST", "/a2a/agents/main/jsonrpc"),
+        ("POST", "/a2a/agents/main/jsonrpc/"),
+        ("POST", "/a2a/agents/dont-do-2/rest/message:send"),
+        ("POST", "/a2a/agents/main/rest/message:stream"),
+        ("GET", "/a2a/agents/main/rest/tasks"),
+        ("GET", "/a2a/agents/main/rest/tasks?pageSize=10&status=TASK_STATE_WORKING"),
+        ("GET", "/a2a/agents/main/rest/tasks/4f1c2b9e-0a1b-4c3d-8e9f-001122334455"),
+        ("GET", "/a2a/agents/main/rest/tasks/t-1?historyLength=5"),
+        ("POST", "/a2a/agents/main/rest/tasks/t-1:cancel"),
+        ("GET", "/a2a/agents/main/rest/tasks/t-1:subscribe"),
+        ("POST", "/a2a/agents/main/rest/tasks/t-1:subscribe"),
+        ("POST", "/a2a/agents/main/rest/tasks/t-1/pushNotificationConfigs"),
+        ("GET", "/a2a/agents/main/rest/tasks/t-1/pushNotificationConfigs"),
+        ("GET", "/a2a/agents/main/rest/tasks/t-1/pushNotificationConfigs/c-1"),
+        ("DELETE", "/a2a/agents/main/rest/tasks/t-1/pushNotificationConfigs/c-1"),
+        ("GET", "/a2a/agents/0/rest/tasks/a%20b"),
+    ];
+
+    /// An A2A proxy reaches every route of the A2A binding, on `rpc`; no
+    /// other device reaches any of them, admin or not.
+    #[test]
+    fn an_a2a_proxy_reaches_every_route_of_the_a2a_binding() {
+        for (template_method, template) in A2A_ROUTES {
+            assert!(
+                A2A_SENT
+                    .iter()
+                    .any(|(m, p)| m == template_method && a2a_instance_of(p.split('?').next().unwrap(), template)),
+                "{template_method} {template} is tried below"
+            );
+        }
+        for (method, path) in A2A_SENT {
+            assert_eq!(refusal(method, path, PROXY), None, "{method} {path}");
+            assert_eq!(refusal_on(StreamClass::Rpc, method, path, PROXY), None, "{method} {path}");
+            assert!(allowed(StreamClass::Rpc, path, Access::A2aOnly), "{method} {path}");
+            for standing in [ADMIN, PLAIN] {
+                assert_eq!(refusal(method, path, standing), Some(Refusal::NotFromCloud), "{method} {path}");
+                assert!(!allowed(StreamClass::Rpc, path, Access::Full), "{method} {path}");
+            }
+        }
+    }
+
+    /// Everything else an A2A proxy asks is refused, 403 `a2a_only`: what
+    /// any device may use, the posture routes, the agent's own, every other
+    /// stream class, other methods and paths — and every spelling that would
+    /// walk an A2A route elsewhere once the server reads it. Its lapse is
+    /// judged first (412 `lapsed`).
+    #[test]
+    fn an_a2a_proxy_reaches_nothing_else() {
+        for (method, path) in [
+            ("GET", "/api/sessions"),
+            ("POST", "/api/sessions/new"),
+            ("POST", "/api/sessions/claude/abc/message"),
+            ("GET", "/api/fs/read?path=%2Fetc%2Fpasswd"),
+            ("POST", "/api/terminals"),
+            ("GET", "/api/settings"),
+            ("GET", "/api/a2a/tasks"),
+            ("POST", "/api/a2a/tokens"),
+            ("POST", "/api/server/self-upgrade"),
+            ("POST", "/api/cloud/link"),
+            ("GET", "/api/plugins"),
+            ("POST", "/api/notify"),
+            ("GET", "/rh/info"),
+            ("POST", "/rh/machine-key"),
+            ("POST", "/rh/rotate"),
+            ("GET", "/rh/direct"),
+            ("GET", "/"),
+            ("GET", "/openapi.json"),
+            // Another method, or the method in another spelling.
+            ("HEAD", "/a2a/agents/main/.well-known/agent-card.json"),
+            ("get", "/a2a/agents/main/.well-known/agent-card.json"),
+            ("POST", "/a2a/agents/main/.well-known/agent-card.json"),
+            ("GET", "/a2a/agents/main/jsonrpc"),
+            ("PUT", "/a2a/agents/main/jsonrpc"),
+            ("DELETE", "/a2a/agents/main/rest/tasks/t-1"),
+            ("POST", "/a2a/agents/main/rest/tasks/t-1"),
+            ("GET", "/a2a/agents/main/rest/tasks/t-1:cancel"),
+            ("GET", "/a2a/agents/main/rest/tasks/t-1:x"),
+            ("POST", "/a2a/agents/main/rest/tasks/t:1:cancel"),
+            ("PUT", "/a2a/agents/main/rest/tasks/t-1/pushNotificationConfigs/c-1"),
+            ("POST", "/a2a/agents/main/rest/tasks/t-1/pushNotificationConfigs/c-1"),
+            // Another path under /a2a, or none at all.
+            ("GET", "/a2a"),
+            ("GET", "/a2a/"),
+            ("GET", "/a2a/agents"),
+            ("GET", "/a2a/agents/main"),
+            ("GET", "/a2a/agents/main/rest/extendedAgentCard"),
+            ("GET", "/a2a/agents/main/rest/tasks/"),
+            ("POST", "/a2a/agents/main/rest/tasks/:cancel"),
+            ("POST", "/a2a/agents/main/rest/message:send/x"),
+            ("POST", "/a2a/agents/main/rest/message"),
+            ("POST", "/a2a/agents/main/jsonrpc/x"),
+            ("GET", "/a2a/agents/main/rest/tasks/t-1/pushNotificationConfigs/c-1/x"),
+            ("GET", "/a2a2/agents/main/rest/tasks"),
+            ("GET", "/a2a/agents/main/.well-known/agent.json"),
+            // An entry id the server never names.
+            ("POST", "/a2a/agents/Main/jsonrpc"),
+            ("POST", "/a2a/agents/-main/jsonrpc"),
+            ("POST", "/a2a/agents/main_1/jsonrpc"),
+            ("POST", "/a2a/agents/%6Dain/jsonrpc"),
+            ("POST", "/a2a/agents//jsonrpc"),
+            ("POST", "/a2a/agents/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/jsonrpc"),
+            // Walking elsewhere: dot segments, encoded or not, `//`, encoded
+            // slashes and backslashes, a trailing `..`.
+            ("GET", "/a2a/../api/sessions"),
+            ("POST", "/a2a/../api/sessions/new"),
+            ("GET", "/a2a/%2e%2e/api/sessions"),
+            ("GET", "/a2a/%2E%2E/rh/info"),
+            ("GET", "/a2a/agents/main/rest/tasks/%2e%2e"),
+            ("GET", "/a2a/agents/main/rest/tasks/%2e"),
+            ("GET", "/a2a/agents/main/rest/tasks/."),
+            ("POST", "/a2a/agents/main/jsonrpc/.."),
+            ("GET", "/a2a/agents/main/rest/tasks/.."),
+            ("POST", "/a2a/agents/x/rest/tasks/1:cancel/../../"),
+            ("POST", "/a2a/agents/x/rest/tasks/1:cancel/../../../../api/sessions/new"),
+            ("GET", "/a2a/agents/main/rest/tasks/a%2Fb"),
+            ("GET", "/a2a/agents/main/rest/tasks/a%2f..%2f..%2fapi"),
+            ("GET", "/a2a/agents/main/rest/tasks/a%5c..%5cb"),
+            ("GET", "/a2a/agents/main/rest/tasks/a\\b"),
+            ("POST", "/a2a/agents/main%2Fjsonrpc"),
+            ("GET", "/a2a//agents/main/rest/tasks"),
+            ("GET", "/a2a/agents/main/rest//tasks"),
+            ("GET", "//a2a/agents/main/rest/tasks"),
+            ("POST", "/a2a/agents/main/rest/tasks/t-1%3Acancel"),
+            ("GET", "/a2a/agents/main/rest/tasks/t\u{e9}"),
+            ("GET", "/a2a/agents/main/rest/tasks/a b"),
+        ] {
+            assert_eq!(refusal(method, path, PROXY), Some(Refusal::A2aOnly), "{method} {path}");
+            let reaches = allowed(StreamClass::Rpc, path, Access::A2aOnly) && refusal(method, path, PROXY).is_none();
+            assert!(!reaches, "{method} {path}");
+        }
+        // No stream class but rpc, whatever the path.
+        for class in [StreamClass::Mux, StreamClass::Term, StreamClass::Blob] {
+            for (method, path) in [
+                ("GET", "/api/events"),
+                ("GET", "/api/terminals/t-1/ws"),
+                ("GET", "/api/fs/download?path=%2Ftmp%2Fa"),
+                ("GET", "/rh/direct"),
+                A2A_SENT[0],
+                A2A_SENT[1],
+            ] {
+                assert_eq!(
+                    refusal_on(class, method, path, PROXY),
+                    Some(Refusal::A2aOnly),
+                    "{class:?} {method} {path}"
+                );
+                assert!(!allowed(class, path, Access::A2aOnly), "{class:?} {path}");
+            }
+            // Any other device's classes are judged as before.
+            assert_eq!(refusal_on(class, "GET", "/api/events", PLAIN), None);
+        }
+        // Its lapse comes first.
+        let lapsed = Standing { controls: false, ..PROXY };
+        for (method, path) in [A2A_SENT[1], ("GET", "/api/sessions"), ("GET", "/rh/info")] {
+            assert_eq!(refusal(method, path, lapsed), Some(Refusal::Lapsed), "{method} {path}");
+            assert_eq!(
+                refusal_on(StreamClass::Mux, method, path, lapsed),
+                Some(Refusal::Lapsed),
+                "{method} {path}"
+            );
+        }
+        let (status, body) = Refusal::A2aOnly.answer();
+        assert_eq!((status, body["error"].as_str()), (403, Some("a2a_only")));
+    }
+
+    /// The `{id}:verb` placeholder: an id, then the verb, in one segment.
+    #[test]
+    fn a_custom_verb_is_matched_on_its_segment() {
+        let cancel = "/a2a/agents/{entry}/rest/tasks/{id}:cancel";
+        assert!(a2a_instance_of("/a2a/agents/main/rest/tasks/t-1:cancel", cancel));
+        assert!(
+            !a2a_instance_of("/a2a/agents/main/rest/tasks/a:b:cancel", cancel),
+            "a task id has no colon"
+        );
+        assert!(!a2a_instance_of("/a2a/agents/main/rest/tasks/:cancel", cancel), "no id");
+        assert!(!a2a_instance_of("/a2a/agents/main/rest/tasks/t-1:cancelled", cancel));
+        assert!(!a2a_instance_of("/a2a/agents/main/rest/tasks/t-1:subscribe", cancel));
+        assert!(!a2a_instance_of("/a2a/agents/main/rest/tasks/t-1", cancel));
+        assert!(!a2a_instance_of("/a2a/agents/main/rest/tasks/t-1:cancel/x", cancel));
+        assert!(
+            !instance_of("/a2a/agents/main/rest/tasks/t-1:cancel", cancel),
+            "what the server's own templates cannot say"
+        );
     }
 }

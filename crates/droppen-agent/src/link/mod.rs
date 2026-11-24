@@ -36,6 +36,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use droppen_proto::frame::Frame;
+use droppen_proto::handshake::Access;
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::noise::ReplayGuard;
 use serde_json::Value;
@@ -45,7 +46,10 @@ use tokio_util::sync::CancellationToken;
 use lapse::{ChannelLapse, Clock};
 use super::bridge::Loopback;
 use super::state::{self, AgentState};
-use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, AgentFiles, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
+use super::{
+    bridge, direct, hub, load_or_create, relays, rotation, streams, AgentFiles, StagedSeed, A2A_FEATURE, CHAIN_V3_FEATURE, POLICY_FEATURE,
+    ROTATE_FEATURE,
+};
 use droppen_instance::paths::Paths;
 use droppen_base::time::now_ms_u64;
 
@@ -178,8 +182,8 @@ impl Shared {
 }
 
 /// Open channels: `ch` → (the device it was authorised for, the static key
-/// it opened the channel with, its inbound frames).
-pub(super) type Routes = HashMap<u32, (String, [u8; 32], mpsc::UnboundedSender<Frame>)>;
+/// it opened the channel with, its inbound frames, what it was admitted for).
+pub(super) type Routes = HashMap<u32, (String, [u8; 32], mpsc::UnboundedSender<Frame>, Access)>;
 
 /// Channels opened and waiting for the device's first message: `ch` → (the
 /// device, when it opened). Per connection, and bounded: a relay is not
@@ -396,7 +400,7 @@ mod tests {
     fn routes_with_d2() -> Routes {
         let (tx, rx) = mpsc::unbounded_channel();
         std::mem::forget(rx);
-        HashMap::from([(7, ("d-2".to_string(), d2().dh_public(), tx))])
+        HashMap::from([(7, ("d-2".to_string(), d2().dh_public(), tx, Access::Full))])
     }
 
     // ---- the policy's wiring --------------------------------------------
@@ -453,6 +457,19 @@ mod tests {
     /// the way the hub carries it: the device's end, or the codes the agent
     /// refused it with.
     async fn connect(a: &Account, key: &MachineIdentity, device: &str, ch: u32, routes: &mut Routes) -> Result<Channel, Vec<(u32, u16)>> {
+        connect_with(a, key, device, ch, routes, b"").await
+    }
+
+    /// [`connect`], the device's hello carrying `client` (its features): one
+    /// that offers sequenced frames gets a two-path channel.
+    async fn connect_with(
+        a: &Account,
+        key: &MachineIdentity,
+        device: &str,
+        ch: u32,
+        routes: &mut Routes,
+        client: &[u8],
+    ) -> Result<Channel, Vec<(u32, u16)>> {
         let binding = Binding {
             account: "a-1".into(),
             device: device.into(),
@@ -468,7 +485,7 @@ mod tests {
             chain_seq,
             chain_head,
             entries: Vec::new(),
-            client: Vec::new(),
+            client: client.to_vec(),
         };
         let hello = initiator.write_hello(a.shared.clock.now_ms(), &body.encode().unwrap()).unwrap();
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
@@ -486,7 +503,11 @@ mod tests {
             Err(_) => return Err(Vec::new()),
         };
         let (transport, _) = initiator.read_reply(&reply, RekeyPolicy::default(), a.shared.clock.now_ms()).unwrap();
-        let session = Session::new(ch, transport, Role::Initiator);
+        let session = if droppen_proto::path::client_wants_paths(client) {
+            Session::with_paths(ch, transport, Role::Initiator, droppen_proto::channel::PathOptions::default(), now_us())
+        } else {
+            Session::new(ch, transport, Role::Initiator)
+        };
         let (to_device, from_agent) = mpsc::unbounded_channel();
         let (device_out, mut device_frames) = mpsc::unbounded_channel();
         let (channel, _incoming) = Channel::spawn(session, from_agent, device_out);
@@ -521,19 +542,35 @@ mod tests {
 
     /// [`rpc`], its body and `End` held back for `hold` after the stream opened.
     async fn rpc_held(channel: &Channel, method: &str, path: &str, body: &[u8], hold: Duration) -> Option<(u16, Value)> {
+        request(channel, StreamClass::Rpc, method, path, &[], body, hold).await
+    }
+
+    /// [`rpc_held`] on a stream of `class`, the request carrying `headers`.
+    async fn request(
+        channel: &Channel,
+        class: StreamClass,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+        hold: Duration,
+    ) -> Option<(u16, Value)> {
         use droppen_proto::bridge::{message, Kind, MessageReader};
         use droppen_proto::driver::StreamEvent;
         let head = RequestHead {
             method: method.into(),
             path: path.into(),
-            headers: Vec::new(),
+            headers: headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect(),
         };
-        let mut stream = channel.open(StreamClass::Rpc, &head.encode().unwrap()).await.ok()?;
+        let mut stream = channel.open(class, &head.encode().unwrap()).await.ok()?;
         tokio::time::sleep(hold).await;
-        if !body.is_empty() {
-            stream.send(&message(Kind::Binary, body)).await.ok()?;
+        // A request's body and its end; a socket's (`mux`, `term`) has none.
+        if matches!(class, StreamClass::Rpc | StreamClass::Blob) {
+            if !body.is_empty() {
+                stream.send(&message(Kind::Binary, body)).await.ok()?;
+            }
+            stream.send(&message(Kind::End, &[])).await.ok()?;
         }
-        stream.send(&message(Kind::End, &[])).await.ok()?;
         let mut reader = MessageReader::new();
         let (mut status, mut out) = (None, Vec::new());
         loop {
@@ -563,7 +600,7 @@ mod tests {
     fn standing_is_read_from_this_agents_chain_and_attestations() {
         use bridge::Local as _;
         let a = policy_account();
-        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(ChannelLapse::new("d-1"))));
+        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(ChannelLapse::new("d-1"))), Access::Full);
         assert_eq!(
             (local.standing("d-1").admin, local.standing("d-1").view),
             (true, bridge::View::Stale),
@@ -589,6 +626,7 @@ mod tests {
                 admin: false,
                 view: bridge::View::Stale,
                 controls: false,
+                access: Access::Full,
             }
         );
     }
@@ -613,7 +651,7 @@ mod tests {
                 )],
             })],
         );
-        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(ChannelLapse::new("d-1"))));
+        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(ChannelLapse::new("d-1"))), Access::Full);
         let info = {
             let st = a.shared.state.lock().unwrap();
             json!({
@@ -679,7 +717,7 @@ mod tests {
     fn standing_tells_a_view_behind_from_a_fork() {
         use bridge::Local as _;
         let mut a = policy_account();
-        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(ChannelLapse::new("d-1"))));
+        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(ChannelLapse::new("d-1"))), Access::Full);
         let mut ahead = a.hub.clone();
         let theirs = ahead
             .draft(Signer::Device("d-1".into()), Action::RemoveDevice("d-3".into()), 3_001)
@@ -1172,9 +1210,9 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         std::mem::forget(rx);
         let mut routes: Routes = HashMap::from([
-            (1, ("d-1".to_string(), a.d1.dh_public(), tx.clone())),
-            (2, ("d-2".to_string(), d2().dh_public(), tx.clone())),
-            (3, ("d-3".to_string(), d3().dh_public(), tx)),
+            (1, ("d-1".to_string(), a.d1.dh_public(), tx.clone(), Access::Full)),
+            (2, ("d-2".to_string(), d2().dh_public(), tx.clone(), Access::Full)),
+            (3, ("d-3".to_string(), d3().dh_public(), tx, Access::Full)),
         ]);
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         drop_removed(&a.shared, &mut routes, &out_tx);
@@ -1635,7 +1673,7 @@ mod tests {
         attest(&a, "d-1", &a.d1, SEVEN_DAYS - 1_500);
         let mut lapse = ChannelLapse::new("d-2");
         assert!(lapse_at(&a, &mut lapse).is_some());
-        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(lapse)));
+        let local = AgentLocal::new(a.shared.clone(), Arc::new(Mutex::new(lapse)), Access::Full);
         assert!(local.standing("d-2").controls, "1.5 s before its lapse");
         offset.store(2_500, std::sync::atomic::Ordering::SeqCst);
         assert!(!local.standing("d-2").controls, "1 s past it");
@@ -1813,7 +1851,10 @@ mod tests {
         drop(rx);
         let (open, rx) = mpsc::unbounded_channel();
         std::mem::forget(rx);
-        let mut routes: Routes = HashMap::from([(1, ("d-1".to_string(), [1; 32], ended)), (2, ("d-2".to_string(), [2; 32], open))]);
+        let mut routes: Routes = HashMap::from([
+            (1, ("d-1".to_string(), [1; 32], ended, Access::Full)),
+            (2, ("d-2".to_string(), [2; 32], open, Access::Full)),
+        ]);
         drop_ended(&mut routes);
         assert_eq!(routes.keys().copied().collect::<Vec<_>>(), vec![2]);
     }
@@ -2908,5 +2949,392 @@ mod tests {
         assert!(ChainError::GenesisMismatch.is_conflict());
         assert!(!ChainError::TooEarly { seq: 3, ready_ms: 1 }.is_conflict());
         assert!(!ChainError::BadSignature { seq: 3 }.is_conflict());
+    }
+    // ---- an A2A proxy's channel (`docs/a2a.md` §7.3) ---------------------
+
+    /// The keys of A2A proxy p-1.
+    fn proxy() -> MachineIdentity {
+        MachineIdentity::from_seed(&[11; 32])
+    }
+
+    /// The entry that adds A2A proxy p-1 to the account.
+    fn add_proxy() -> Action {
+        let k = proxy();
+        Action::AddDevice3(droppen_proto::chain::DeviceV3 {
+            id: "p-1".into(),
+            sign_key: k.sign_public(),
+            dh_key: k.dh_public(),
+            flags: droppen_proto::chain::Flags::A2A_DEVICE,
+        })
+    }
+
+    /// m-1 takes A2A calls from the A2A proxies `ids`.
+    fn a2a_accept(ids: &[&str]) -> Action {
+        Action::SetA2aAccept {
+            host: "m-1".into(),
+            devices: ids.iter().map(|id| id.to_string()).collect(),
+        }
+    }
+
+    /// m-1 taking A2A calls from no A2A proxy any more, and — as any narrowing
+    /// of a host's lists is followed (`docs/a2a.md` §7.1) — its next content
+    /// key epoch.
+    fn no_a2a_calls() -> Vec<Action> {
+        let key = [9u8; 32];
+        vec![
+            a2a_accept(&[]),
+            Action::KeyEpochs(droppen_proto::chain::KeyCommits {
+                user: None,
+                machines: vec![(
+                    "m-1".into(),
+                    droppen_proto::chain::KeyCommit {
+                        epoch: 0,
+                        hash: droppen_proto::chain::machine_key_commit("a-1", "m-1", 0, &key),
+                    },
+                )],
+            }),
+        ]
+    }
+
+    /// `a` with A2A proxy p-1 in the account — m-1 taking A2A calls from it
+    /// when `accepted` — and d-2 vouching for this agent's head (for any
+    /// channel but its own).
+    fn with_proxy(mut a: Account, accepted: bool) -> Account {
+        let mut actions = vec![add_proxy()];
+        if accepted {
+            actions.push(a2a_accept(&["p-1"]));
+        }
+        take(&mut a, actions);
+        attest(&a, "d-2", &d2(), 0);
+        a
+    }
+
+    /// A loopback server that answers every request 200 `{"ok":true}` and
+    /// keeps each request's head (its request line and headers, as sent).
+    async fn loopback_server() -> (std::net::SocketAddr, Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = server.local_addr().unwrap();
+        let heads = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = heads.clone();
+        tokio::spawn(async move {
+            while let Ok((mut tcp, _)) = server.accept().await {
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match tcp.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => request.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&request);
+                    seen.lock().unwrap().push(text.split("\r\n\r\n").next().unwrap_or_default().to_string());
+                    let body = r#"{"ok":true}"#;
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = tcp.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        (addr, heads)
+    }
+
+    /// A request head's headers, by lower-case name.
+    fn head_headers(head: &str) -> Vec<(String, String)> {
+        head.lines()
+            .skip(1)
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
+            .collect()
+    }
+
+    /// An A2A proxy that m-1 takes A2A calls from (`SetA2aAccept`) is let
+    /// in `A2aOnly`, and recorded as any device that connects; without
+    /// `SetA2aAccept` it is refused (4401) — `SetAccept` letting every
+    /// device control m-1 does not let it in, an A2A proxy controls none. An
+    /// admin is let in `Full`, as before.
+    #[tokio::test]
+    async fn an_a2a_proxy_is_let_in_a2a_only_and_only_when_this_machine_takes_its_calls() {
+        let mut a = with_proxy(account(), false);
+        let mut routes = Routes::new();
+        assert_eq!(
+            connect(&a, &proxy(), "p-1", 1, &mut routes).await.err(),
+            Some(vec![(1, 4401)]),
+            "m-1 takes no A2A calls from it"
+        );
+        take(
+            &mut a,
+            vec![Action::SetAccept {
+                host: "m-1".into(),
+                from: droppen_proto::chain::Accept::All,
+            }],
+        );
+        attest(&a, "d-2", &d2(), 0);
+        assert_eq!(
+            connect(&a, &proxy(), "p-1", 2, &mut routes).await.err(),
+            Some(vec![(2, 4401)]),
+            "letting every device control m-1 lets no A2A proxy in"
+        );
+        assert!(!controller_ids(&a.shared.state.lock().unwrap()).contains(&"p-1".to_string()));
+        take(&mut a, vec![a2a_accept(&["p-1"])]);
+        attest(&a, "d-2", &d2(), 0);
+        let _proxy = connect(&a, &proxy(), "p-1", 3, &mut routes).await.expect("m-1 takes A2A calls from p-1");
+        assert_eq!(routes[&3].3, Access::A2aOnly);
+        assert!(
+            controller_ids(&AgentState::load(&a.shared.files).unwrap().unwrap()).contains(&"p-1".to_string()),
+            "on the saved record of who connected"
+        );
+        let _admin = connect(&a, &a.d1, "d-1", 4, &mut routes).await.expect("an admin");
+        assert_eq!(routes[&4].3, Access::Full);
+    }
+
+    /// An A2A proxy has no direct path: with direct paths on, its channel
+    /// offers none — its signaling stream is refused (403) where an admin's
+    /// is taken up (101) — and a direct hello from it is refused.
+    #[tokio::test]
+    async fn an_a2a_proxy_has_no_direct_path() {
+        use droppen_proto::bridge::{Kind, MessageReader};
+        use droppen_proto::driver::StreamEvent;
+        let mut a = with_proxy(account(), true);
+        Arc::get_mut(&mut a.shared).expect("nothing holds the link yet").direct = true;
+        let client = droppen_proto::path::CLIENT_FEATURE.as_bytes();
+        let mut routes = Routes::new();
+        let on_proxy = connect_with(&a, &proxy(), "p-1", 1, &mut routes, client).await.expect("A2aOnly");
+        let on_admin = connect_with(&a, &a.d1, "d-1", 2, &mut routes, client).await.expect("an admin");
+        // The status a signaling stream is answered with first, if any in half a second.
+        let signal = |channel: Channel| async move {
+            let head = RequestHead::get(droppen_proto::path::SIGNAL_PATH).encode().unwrap();
+            let mut stream = channel.open(StreamClass::Mux, &head).await.ok()?;
+            let mut reader = MessageReader::new();
+            loop {
+                match tokio::time::timeout(Duration::from_millis(500), stream.recv()).await {
+                    Ok(Some(StreamEvent::Data(data))) => {
+                        reader.push(&data);
+                        if let Ok(Some((Kind::Head, payload))) = reader.next_message() {
+                            return Some(ResponseHead::decode(&payload).unwrap().status);
+                        }
+                    }
+                    Ok(Some(StreamEvent::Closed(_)) | None) | Err(_) => return None,
+                }
+            }
+        };
+        assert_eq!(signal(on_proxy).await, Some(403), "no direct path for an A2A proxy");
+        assert_eq!(signal(on_admin).await, Some(101), "an admin's is taken up");
+        let admit = LinkAdmit { shared: a.shared.clone() };
+        let (bind, hello) = direct_hello(&a, &proxy(), "p-1");
+        assert!(
+            matches!(admit.admit("p-1", &bind, &hello), Admission::Refused { .. }),
+            "nor a direct hello"
+        );
+        let (bind, hello) = direct_hello(&a, &a.d1, "d-1");
+        assert!(
+            matches!(admit.admit("d-1", &bind, &hello), Admission::Open { .. }),
+            "an admin's, as before"
+        );
+    }
+
+    /// What an A2A proxy reaches over its channel, end to end
+    /// (`docs/a2a.md` §7.3): the A2A routes, on loopback, marked as its own —
+    /// the agent's credential, its device id and `x-rh-agent-kind: a2a`,
+    /// whatever it sent of those — with its `A2A-Version` and
+    /// `A2A-Extensions` and never its `Authorization`. Everything else is
+    /// answered 403 `a2a_only` without reaching the server, on every stream
+    /// class. An admin's requests carry no mark and no A2A header, and it
+    /// reaches no A2A route.
+    #[tokio::test]
+    async fn an_a2a_proxy_reaches_the_a2a_routes_marked_and_nothing_else() {
+        let (addr, heads) = loopback_server().await;
+        let a = with_proxy(account_at(super::super::streams::Handle::detached(), addr), true);
+        let mut routes = Routes::new();
+        let on_proxy = connect(&a, &proxy(), "p-1", 1, &mut routes).await.expect("A2aOnly");
+        let on_admin = connect(&a, &a.d1, "d-1", 2, &mut routes).await.expect("an admin");
+        let sent = [
+            ("a2a-version", "1.0"),
+            ("A2A-Extensions", "https://example.com/ext/v1"),
+            ("content-type", "application/json"),
+            ("authorization", "Bearer dpa_x_secret"),
+            ("x-rh-agent", "forged"),
+            ("x-rh-agent-device", "d-1"),
+            ("x-rh-agent-kind", "full"),
+            ("x-other", "1"),
+        ];
+        let call = br#"{"jsonrpc":"2.0","id":1,"method":"ListTasks","params":{}}"#;
+        let answer = request(
+            &on_proxy,
+            StreamClass::Rpc,
+            "POST",
+            "/a2a/agents/main/jsonrpc",
+            &sent,
+            call,
+            Duration::ZERO,
+        )
+        .await;
+        assert_eq!(answer, Some((200, json!({"ok": true}))));
+        let head = heads.lock().unwrap().pop().expect("it reached the server");
+        assert!(head.starts_with("POST /a2a/agents/main/jsonrpc HTTP/1.1"), "{head}");
+        let mut got: Vec<(String, String)> = head_headers(&head)
+            .into_iter()
+            .filter(|(name, _)| !["host", "content-length", "accept"].contains(&name.as_str()))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                ("a2a-extensions", "https://example.com/ext/v1"),
+                ("a2a-version", "1.0"),
+                ("content-type", "application/json"),
+                ("x-rh-agent", "test"),
+                ("x-rh-agent-device", "p-1"),
+                ("x-rh-agent-kind", "a2a"),
+            ]
+            .map(|(n, v)| (n.to_string(), v.to_string())),
+            "{head}"
+        );
+        // Nothing else, on any class: refused here, the server never asked.
+        for (class, method, path) in [
+            (StreamClass::Rpc, "GET", "/api/sessions"),
+            (StreamClass::Rpc, "POST", "/api/sessions/new"),
+            (StreamClass::Rpc, "GET", "/rh/info"),
+            (StreamClass::Rpc, "POST", "/a2a/../api/sessions/new"),
+            (StreamClass::Rpc, "POST", "/a2a/agents/main/rest/tasks/1:cancel/../../../../api/x"),
+            (StreamClass::Rpc, "GET", "/a2a/agents/main/rest/tasks/%2e%2e"),
+            (StreamClass::Mux, "GET", "/api/events"),
+            (StreamClass::Term, "GET", "/api/terminals/t-1/ws"),
+            (StreamClass::Blob, "GET", "/api/fs/download?path=%2Fetc%2Fpasswd"),
+            (StreamClass::Blob, "GET", "/a2a/agents/main/.well-known/agent-card.json"),
+        ] {
+            let answer = request(&on_proxy, class, method, path, &[], b"", Duration::ZERO).await;
+            assert_eq!(
+                answer.as_ref().map(|(status, body)| (*status, body["error"].as_str())),
+                Some((403, Some("a2a_only"))),
+                "{class:?} {method} {path}"
+            );
+        }
+        assert!(
+            heads.lock().unwrap().is_empty(),
+            "nothing else reached the server: {:?}",
+            heads.lock().unwrap()
+        );
+        // An admin: no A2A route (its stream is closed, as for any path
+        // outside `/api/`), and no mark or A2A header on what it reaches.
+        let answer = request(
+            &on_admin,
+            StreamClass::Rpc,
+            "POST",
+            "/a2a/agents/main/jsonrpc",
+            &sent,
+            call,
+            Duration::ZERO,
+        )
+        .await;
+        assert_eq!(answer, None);
+        assert!(heads.lock().unwrap().is_empty(), "not to the server");
+        let answer = request(&on_admin, StreamClass::Rpc, "GET", "/api/sessions", &sent, b"", Duration::ZERO).await;
+        assert_eq!(answer, Some((200, json!({"ok": true}))));
+        let head = heads.lock().unwrap().pop().expect("it reached the server");
+        let names: Vec<String> = head_headers(&head).into_iter().map(|(name, _)| name).collect();
+        assert!(names.contains(&"x-rh-agent-device".to_string()), "{head}");
+        for absent in ["x-rh-agent-kind", "a2a-version", "a2a-extensions", "authorization", "x-other"] {
+            assert!(!names.contains(&absent.to_string()), "{absent}: {head}");
+        }
+        assert!(head_headers(&head).contains(&("x-rh-agent-device".into(), "d-1".into())));
+    }
+
+    /// "Who may call my A2A" holds for an open channel, as "who may control
+    /// me" does: once m-1 no longer takes A2A calls from p-1, its next stream
+    /// is not served, and the chain's change closes its channel (4403, said
+    /// as A2A) while an admin's stays.
+    #[tokio::test]
+    async fn taking_an_a2a_proxy_off_the_list_closes_its_channel() {
+        let (addr, heads) = loopback_server().await;
+        let mut a = with_proxy(account_at(super::super::streams::Handle::detached(), addr), true);
+        let mut routes = Routes::new();
+        let on_proxy = connect(&a, &proxy(), "p-1", 4, &mut routes).await.expect("A2aOnly");
+        let _admin = connect(&a, &a.d1, "d-1", 5, &mut routes).await.expect("an admin");
+        let card = "/a2a/agents/main/.well-known/agent-card.json";
+        assert_eq!(rpc(&on_proxy, "GET", card, b"").await.map(|(status, _)| status), Some(200));
+        take(&mut a, no_a2a_calls());
+        assert!(routes.contains_key(&4), "the channel is not swept yet");
+        assert_eq!(
+            rpc(&on_proxy, "GET", card, b"").await,
+            None,
+            "not served once m-1 takes no A2A calls from it"
+        );
+        assert_eq!(heads.lock().unwrap().len(), 1, "only the first reached the server");
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        drop_removed(&a.shared, &mut routes, &out_tx);
+        match out_rx.try_recv() {
+            Ok(Frame::Close { ch, code, reason }) => {
+                assert_eq!((ch, code), (4, 4403));
+                assert_eq!(reason, "the device you reach no longer takes A2A calls from this A2A proxy");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(out_rx.try_recv().is_err(), "the admin's channel stays");
+        assert_eq!(routes.keys().copied().collect::<Vec<_>>(), vec![5]);
+        attest(&a, "d-2", &d2(), 0);
+        assert_eq!(
+            connect(&a, &proxy(), "p-1", 6, &mut routes).await.err(),
+            Some(vec![(6, 4401)]),
+            "nor let in again"
+        );
+    }
+
+    /// A request that waits on its body is judged again when it is
+    /// dispatched: m-1 stopping taking A2A calls from p-1 meanwhile has it
+    /// refused (412 `lapsed`), not served.
+    #[tokio::test]
+    async fn an_a2a_proxys_request_is_judged_again_when_it_is_dispatched() {
+        let (addr, heads) = loopback_server().await;
+        let mut a = with_proxy(account_at(super::super::streams::Handle::detached(), addr), true);
+        let mut routes = Routes::new();
+        let on_proxy = connect(&a, &proxy(), "p-1", 4, &mut routes).await.expect("A2aOnly");
+        let call = br#"{"jsonrpc":"2.0","id":1,"method":"ListTasks","params":{}}"#;
+        let held = tokio::spawn(async move { rpc_held(&on_proxy, "POST", "/a2a/agents/main/jsonrpc", call, Duration::from_millis(300)).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        take(&mut a, no_a2a_calls());
+        let (status, body) = held.await.unwrap().expect("answered");
+        assert_eq!((status, body["reason"].as_str()), (412, Some("lapsed")));
+        assert!(heads.lock().unwrap().is_empty(), "nothing reached the server");
+    }
+
+    /// A host that keeps what the phone is told.
+    #[derive(Default)]
+    struct Told(Mutex<Vec<(String, String)>>);
+
+    impl LinkHost for Told {
+        fn renew_push_keys<'a>(&'a self, _paths: &'a Paths) -> futures_util::future::BoxFuture<'a, std::io::Result<usize>> {
+            Box::pin(async { Ok(0) })
+        }
+
+        fn account_change(&self, _paths: Arc<Paths>, title: String, body: String) {
+            self.0.lock().unwrap().push((title, body));
+        }
+    }
+
+    /// The first channel a given A2A proxy opens to this device is told on
+    /// the phone, once (`docs/a2a.md` §7.3); later ones, and any other
+    /// device's, are not.
+    #[tokio::test]
+    async fn the_first_channel_of_an_a2a_proxy_is_told_once() {
+        let told = Arc::new(Told::default());
+        let a = with_proxy(hosted_account(told.clone()), true);
+        let mut routes = Routes::new();
+        let _admin = connect(&a, &a.d1, "d-1", 1, &mut routes).await.expect("an admin");
+        assert!(told.0.lock().unwrap().is_empty(), "an admin's channel is no news");
+        let _first = connect(&a, &proxy(), "p-1", 2, &mut routes).await.expect("A2aOnly");
+        let _again = connect(&a, &proxy(), "p-1", 3, &mut routes).await.expect("again");
+        assert_eq!(
+            *told.0.lock().unwrap(),
+            vec![(
+                "Droppen: A2A proxy connected".to_string(),
+                "an A2A proxy (p-1) connected to this device for the first time: it can start sessions here through the A2A entries that allow it"
+                    .to_string()
+            )]
+        );
     }
 }

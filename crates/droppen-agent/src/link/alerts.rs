@@ -252,6 +252,22 @@ pub(crate) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     shared.host.account_change(Arc::new(shared.paths.clone()), "Droppen: device chain alarm".into(), what);
 }
 
+/// An A2A proxy's channel to this device opened (`docs/a2a.md` §7.3): logged
+/// every time, and the first time a given proxy connects — `first`: new to
+/// the record of who ever opened a channel here, and saved — the phone hears
+/// it once too (Web Push and Bark): such a proxy starts sessions here through
+/// the A2A entries that allow it.
+pub(crate) fn a2a_connected(shared: &Arc<Shared>, device: &str, ch: u32, first: bool) {
+    tracing::info!(%device, ch, first, "an A2A proxy connected");
+    if first {
+        shared.host.account_change(
+            Arc::new(shared.paths.clone()),
+            "Droppen: A2A proxy connected".into(),
+            format!("an A2A proxy ({device}) connected to this device for the first time: it can start sessions here through the A2A entries that allow it"),
+        );
+    }
+}
+
 /// The hub sends each entry once a connection: an activation held back as too
 /// early is asked for again (with what follows it) once this agent's own day
 /// since the join has passed.

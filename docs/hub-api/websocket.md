@@ -234,7 +234,7 @@ or is in it, signs in as before.
 | `login` | `role: "agent"`, `account`, `id`, `time_ms`, `sig` | sign in as an enrolled machine |
 | `enroll` | `token` (16-byte hex) | claim an enrollment code |
 | `enroll_proof` | `sign_key`, `dh_key`, `time_ms`, `sig`, `proof` (32-byte hex each but `sig`) | finish it |
-| `agent_info` | `version` (≤ 64 characters kept), `features` | what it speaks: `relays/1` (it attaches to the account's relays; devices hear it as `presence.relays`); `chain/3` (it reads chain v3: until it says so, the hub sends it no v3 chain entry); `policy/1` (it refuses the admin-only routes to devices that are not admins). An account goes to v3 only once every current host declared both, and a host joins a v3 account only once it declared them (`GET /v1/me` `chain_v3`). Send it before `chain_sub` |
+| `agent_info` | `version` (≤ 64 characters kept), `features` | what it speaks: `relays/1` (it attaches to the account's relays; devices hear it as `presence.relays`); `chain/3` (it reads chain v3: until it says so, the hub sends it no v3 chain entry); `policy/1` (it refuses the admin-only routes to devices that are not admins); `a2a/1` (it takes an A2A proxy's channel as its chain says and serves it the A2A routes only, `docs/a2a.md` §7.3). An account goes to v3 only once every current host declared both, and a host joins a v3 account only once it declared them (`GET /v1/me` `chain_v3`). Send it before `chain_sub` |
 | `chain_sub` | `from` | as on `/v1/client` |
 | `mail_ack` | `id` | done with a mail: it is deleted (only its own machine keys, purpose 2: the rest of its mailbox is its device role's) |
 | `mail_release` | `id` | cannot judge a mail yet and will not hold it: it stays for the next sign-in |

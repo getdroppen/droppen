@@ -315,7 +315,7 @@ tickets. WebSocket limits are in websocket.md.
   type and meaning, a required request field, a route or a message type are
   never changed or removed within `/v1/`.
 - **Features are negotiated, not assumed**: an agent says what it speaks in
-  `agent_info.features` (`relays/1`, `chain/3`, `policy/1`, `rotate/1`), and the hub tells devices
+  `agent_info.features` (`relays/1`, `chain/3`, `policy/1`, `rotate/1`, `a2a/1`), and the hub tells devices
   (`presence.relays`, `GET /v1/me` `machines[].rotates`); the hub says what it
   speaks in `welcome.features` (`rotate/1`), and a peer sends a feature's
   messages only where it was offered (a hub without it answers an unknown `t`

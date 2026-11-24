@@ -626,7 +626,12 @@ pub(crate) async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     // However this connection ends — an error, or the link stopping it
     // mid-way — it is no longer the hub connection.
     let _session = super::rotation::SessionGuard(&shared.rotation);
-    let mut features: Vec<String> = vec![super::CHAIN_V3_FEATURE.into(), super::POLICY_FEATURE.into(), super::ROTATE_FEATURE.into()];
+    let mut features: Vec<String> = vec![
+        super::CHAIN_V3_FEATURE.into(),
+        super::POLICY_FEATURE.into(),
+        super::ROTATE_FEATURE.into(),
+        super::A2A_FEATURE.into(),
+    ];
     if shared.relays.lock().expect("relays").is_some() {
         features.push(super::relays::FEATURE.into());
     }

@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use droppen_proto::chain::ChainError;
+use droppen_proto::handshake::Access;
 use serde_json::Value;
 
 use super::bridge;
@@ -28,11 +29,14 @@ pub(crate) struct AgentLocal {
     /// The channel's control lapse, shared with the channel's own task: what
     /// a request is held to again when it is dispatched.
     lapse: Arc<Mutex<ChannelLapse>>,
+    /// What the channel was admitted for: the rule its requests are held to
+    /// again, and what the bridge lets them reach ([`bridge::Standing::access`]).
+    access: Access,
 }
 
 impl AgentLocal {
-    pub(crate) fn new(shared: Arc<Shared>, lapse: Arc<Mutex<ChannelLapse>>) -> Self {
-        Self { shared, lapse }
+    pub(crate) fn new(shared: Arc<Shared>, lapse: Arc<Mutex<ChannelLapse>>, access: Access) -> Self {
+        Self { shared, lapse, access }
     }
 }
 
@@ -48,17 +52,19 @@ pub(crate) fn standing_of(shared: &Shared, device: &str) -> bridge::Standing {
         let st = shared.state.lock().expect("agent state");
         st.chain.as_ref().is_some_and(|c| c.may_control(device, &st.machine).is_ok())
     };
-    standing_with(shared, device, controls)
+    standing_with(shared, device, controls, Access::Full)
 }
 
-/// [`standing_of`], with `controls` as judged by the caller.
-pub(crate) fn standing_with(shared: &Shared, device: &str, controls: bool) -> bridge::Standing {
+/// [`standing_of`], with `controls` as judged by the caller, for a channel
+/// admitted for `access`.
+pub(crate) fn standing_with(shared: &Shared, device: &str, controls: bool, access: Access) -> bridge::Standing {
     let st = shared.state.lock().expect("agent state");
     let Some(chain) = st.chain.as_ref() else {
         return bridge::Standing {
             admin: false,
             view: bridge::View::Stale,
             controls: false,
+            access,
         };
     };
     use droppen_proto::chain::Freshness;
@@ -73,18 +79,25 @@ pub(crate) fn standing_with(shared: &Shared, device: &str, controls: bool) -> br
         admin: chain.admin(device).is_some(),
         view,
         controls,
+        access,
     }
 }
 
 impl bridge::Local for AgentLocal {
     fn standing(&self, device: &str) -> bridge::Standing {
-        // The channel's own control lapse (local-aggregator §3.4).
-        let controls = still_controls(&self.shared, &self.lapse, self.shared.clock.now_ms());
-        standing_with(&self.shared, device, controls)
+        // The channel's own control lapse (local-aggregator §3.4), and the
+        // rule it was admitted by.
+        let controls = still_controls(&self.shared, &self.lapse, self.access, self.shared.clock.now_ms());
+        standing_with(&self.shared, device, controls, self.access)
     }
 
     fn handle<'a>(&'a self, device: &'a str, method: &'a str, path: &'a str, body: &'a [u8]) -> futures_util::future::BoxFuture<'a, (u16, Value)> {
         Box::pin(async move {
+            // The bridge never brings an A2A proxy here; were it to, nothing.
+            match self.access {
+                Access::Full => {}
+                Access::A2aOnly => return bridge::Refusal::A2aOnly.answer(),
+            }
             if (method, path) == ("POST", "/rh/rotate") {
                 return super::rotation::rotate(&self.shared, device, body).await;
             }
