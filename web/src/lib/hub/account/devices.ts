@@ -36,7 +36,7 @@ export interface JoinKeys {
 export function joinAction(device: JoinKeys, opts: { host: boolean; admin: boolean }, chain: Pick<ChainState, "isV3">): Action {
   const keys = { id: device.id, signKey: device.signKey, dhKey: device.dhKey };
   if (opts.host && opts.admin) throw hostAdminRefused();
-  if (chain.isV3) return { type: "addDevice3", device: { ...keys, flags: { host: opts.host, admin: opts.admin } } };
+  if (chain.isV3) return { type: "addDevice3", device: { ...keys, flags: { host: opts.host, admin: opts.admin, a2a: false } } };
   if (opts.host) return { type: "addMachine", machine: keys };
   if (!opts.admin) throw notUpgraded();
   return { type: "addDevice", device: { ...keys, full: true } };
@@ -60,7 +60,8 @@ export type PromoteBlock =
  * its own row, and only on an account upgraded to chain v3 (`upgraded`: the
  * chain holds a v3 entry — review D4). A device that runs AI, or ever did
  * (D1 extended: {@link hasRunAi}), is no limited device: it never manages the
- * account (review D1). `null`: not a limited device.
+ * account (review D1). Nor is an A2A proxy (docs/a2a.md §7.1): it stays one.
+ * `null`: not a limited device.
  */
 export function limitedDevice(input: {
   viewer: string;
@@ -71,7 +72,7 @@ export function limitedDevice(input: {
   ranAi?: boolean;
 }): { block: PromoteBlock | null } | null {
   const { viewer, viewerAdmin, device, upgraded } = input;
-  if (device.status.type !== "active" || device.admin || device.host || (input.ranAi ?? device.ranAi)) return null;
+  if (device.status.type !== "active" || device.admin || device.host || device.a2a || (input.ranAi ?? device.ranAi)) return null;
   if (device.info.id === viewer) return { block: "self" };
   if (!viewerAdmin) return { block: "notAdmin" };
   if (!upgraded) return { block: "notUpgraded" };

@@ -50,7 +50,7 @@ test("a new account is chain v3 from its genesis: genesis3 names this browser it
   assert.equal(genesis.signer.type, "account");
   assert.ok(genesis.action.type === "genesis3" && genesis.action.recoveryKey, "the recovery key is in genesis");
   assert.ok(genesis.action.type === "genesis3" && genesis.action.device.id === a.deviceId);
-  assert.deepEqual(genesis.action.type === "genesis3" && genesis.action.device.flags, { host: false, admin: true }, "an admin that runs no AI (D1)");
+  assert.deepEqual(genesis.action.type === "genesis3" && genesis.action.device.flags, { host: false, admin: true, a2a: false }, "an admin that runs no AI (D1)");
   const first = a.chain!.entryAt(1)!.draft.action;
   assert.ok(first.type === "keyEpochs" && first.user?.epoch === 0 && first.machines.length === 0);
   assert.equal(a.chain!.isV3, true);

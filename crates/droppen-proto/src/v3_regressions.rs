@@ -32,7 +32,7 @@ pub(crate) fn dev3(id: &str, keys: &(SigningKey, DhKeypair), host: bool, admin: 
         id: id.into(),
         sign_key: keys.0.verifying_key().to_bytes(),
         dh_key: keys.1.public(),
-        flags: Flags { host, admin },
+        flags: Flags { host, admin, a2a: false },
     }
 }
 
@@ -184,11 +184,12 @@ fn c2_versions_cannot_be_confused_and_encodings_are_canonical() {
     let mut v2_by_pak = state.draft(Signer::Passkey("p-1".into()), Action::ApproveDevice("x".into()), 1);
     v2_by_pak.version = VERSION;
     assert!(matches!(Entry::decode(&v2_by_pak.sign(&pk.signing).encode()), Err(ChainError::Decode(_))));
-    // Flag bits beyond host and admin; a boolean that is not 0 or 1.
+    // Flag bits beyond host, admin and a2a (bit 2, `docs/a2a.md` §7.1: its
+    // rules are `a2a_regressions`); a boolean that is not 0 or 1.
     let mut bytes = add.encode();
     let flags_at = bytes.len() - 64 - 1;
     assert_eq!(bytes[flags_at], Flags::HOST);
-    bytes[flags_at] = 0b100 | Flags::HOST;
+    bytes[flags_at] = 0b1000 | Flags::HOST;
     assert!(matches!(Entry::decode(&bytes), Err(ChainError::Decode(_))));
     let set = state
         .draft(

@@ -2044,7 +2044,11 @@ mod tests {
                     id: "h-2".into(),
                     sign_key: host.sign_public(),
                     dh_key: host.dh_public(),
-                    flags: Flags { host: true, admin: false },
+                    flags: Flags {
+                        host: true,
+                        admin: false,
+                        a2a: false,
+                    },
                 }),
                 2_000,
             )
@@ -2123,6 +2127,36 @@ mod tests {
             )
             .sign(dev.signing_key());
         assert!(said(&joined).is_some_and(|s| s.contains("joining with passkey slot p-1") && s.contains("approve it")));
+        // `docs/a2a.md` §7.3: an A2A proxy's join and every change to whom a
+        // host takes A2A calls from say "A2A proxy" — never the plain
+        // device's "can control devices that accept it".
+        let proxy = MachineIdentity::from_seed(&[8; 32]);
+        let add_proxy = entry(Action::AddDevice3(DeviceV3 {
+            id: "a-1".into(),
+            sign_key: proxy.sign_public(),
+            dh_key: proxy.dh_public(),
+            flags: Flags::A2A_DEVICE,
+        }));
+        assert_eq!(
+            said(&add_proxy).as_deref(),
+            Some("device a-1 (an A2A proxy: it calls the A2A of devices that accept it, and controls none) was added by d-1")
+        );
+        assert_eq!(
+            said(&entry(Action::SetA2aAccept {
+                host: "h-2".into(),
+                devices: vec!["a-1".into(), "a-2".into()],
+            }))
+            .as_deref(),
+            Some("h-2 now takes A2A calls from the A2A proxies a-1, a-2 (set by d-1)")
+        );
+        assert_eq!(
+            said(&entry(Action::SetA2aAccept {
+                host: "h-2".into(),
+                devices: vec![],
+            }))
+            .as_deref(),
+            Some("h-2 now takes A2A calls from no A2A proxy (set by d-1)")
+        );
     }
 
     /// Host identity rotation (`docs/host-identity-rotation.md` §3.4 "告警"):
@@ -2152,7 +2186,11 @@ mod tests {
             id: "h-2".into(),
             sign_key: old.sign_public(),
             dh_key: old.dh_public(),
-            flags: Flags { host: true, admin: false },
+            flags: Flags {
+                host: true,
+                admin: false,
+                a2a: false,
+            },
         };
         push(&mut state, Action::AddDevice3(add));
         push(&mut state, key(0));
@@ -2278,6 +2316,33 @@ mod tests {
         assert_eq!(
             account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref()).as_deref(),
             Some("a renewal pause was completed; none of the control it paused comes back (by d-1)")
+        );
+        // A pause holds an A2A proxy's calls too (`docs/a2a.md` §7.1): its end
+        // gives them back, and the notice names the proxy among what comes back.
+        let proxy = MachineIdentity::from_seed(&[10; 32]);
+        push(
+            &mut state,
+            Action::AddDevice3(DeviceV3 {
+                id: "a-1".into(),
+                sign_key: proxy.sign_public(),
+                dh_key: proxy.dh_public(),
+                flags: Flags::A2A_DEVICE,
+            }),
+        );
+        push(
+            &mut state,
+            Action::SetA2aAccept {
+                host: "h-2".into(),
+                devices: vec!["a-1".into()],
+            },
+        );
+        push(&mut state, pause(3, Start, &["a-1"]));
+        assert!(state.may_call_a2a("a-1", "h-2").is_err(), "held while the pause is open");
+        let done = push(&mut state, pause(3, Completed, &[]));
+        assert!(state.may_call_a2a("a-1", "h-2").is_ok());
+        assert_eq!(
+            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref()).as_deref(),
+            Some("control by a-1 over h-2 resumes (by d-1)")
         );
         // The renewed host is h-2 with its new keys, here as everywhere.
         assert_eq!(state.machine("h-2").map(|d| d.info.sign_key), Some(new.sign_public()));
@@ -2565,7 +2630,11 @@ mod tests {
                 id: id.into(),
                 sign_key: dev.sign_public(),
                 dh_key: dev.dh_public(),
-                flags: Flags { host, admin: false },
+                flags: Flags {
+                    host,
+                    admin: false,
+                    a2a: false,
+                },
             })
         };
         let commit = KeyCommit { epoch: 0, hash: [0; 32] };

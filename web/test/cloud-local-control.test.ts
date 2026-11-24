@@ -192,7 +192,7 @@ test("S1-4: the popup adds the local install as a host that is never a full devi
   assert.equal(added.machine, "m-local");
   const batch = a.chain!.allEntries().slice(seq + 1).map((e) => e.draft.action);
   assert.equal(batch[0]!.type, "addDevice3");
-  assert.deepEqual(batch[0]!.type === "addDevice3" && batch[0]!.device.flags, { host: true, admin: false });
+  assert.deepEqual(batch[0]!.type === "addDevice3" && batch[0]!.device.flags, { host: true, admin: false, a2a: false });
   assert.equal(batch[1]!.type, "keyEpochs");
   assert.equal(batch.length, 2, "nothing else is written: no new entry to get the others' keys");
   assert.ok(courier.posted.some((p) => p.machine === "m-local") || courier.mailed.some((p) => p.machine === "m-local"), "its own key handed over");

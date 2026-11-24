@@ -54,7 +54,7 @@ fn account() -> Account {
         id: id.into(),
         sign_key: sign.verifying_key().to_bytes(),
         dh_key: dh,
-        flags: Flags { host, admin },
+        flags: Flags { host, admin, a2a: false },
     };
     let genesis = droppen_proto::chain::genesis3_draft(
         "a-1",

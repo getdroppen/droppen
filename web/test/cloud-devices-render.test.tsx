@@ -625,9 +625,9 @@ test("while this device holds an activation back, the pairing says so and cannot
 test("chain v3's alerts in words: a full device added is just added, a limited one is named so; a device made a full device is loud, the rest are notes", () => {
   const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
   const base = { seq: 1, by: "d-1", atMs: 0, remove: null };
-  assert.equal(alertText({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false } }, t), "d-1 added m-2 to this account: it can run AI");
-  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-2", flags: { host: false, admin: true } }, t), "d-1 added d-2 to this account", "a full device: nothing more to say");
-  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-3", flags: { host: false, admin: false } }, t), "d-1 added d-3 to this account as a limited device");
+  assert.equal(alertText({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false, a2a: false } }, t), "d-1 added m-2 to this account: it can run AI");
+  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-2", flags: { host: false, admin: true, a2a: false } }, t), "d-1 added d-2 to this account", "a full device: nothing more to say");
+  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-3", flags: { host: false, admin: false, a2a: false } }, t), "d-1 added d-3 to this account as a limited device");
   assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-4" }, t), "d-1 added d-4 to this account", "chain v2: as before");
   assert.equal(alertText({ ...base, kind: "setAdmin", subject: "d-2", on: true }, t), "d-1 made d-2 a full device");
   assert.equal(alertText({ ...base, kind: "setAdmin", subject: "d-2", on: false }, t), "d-1 made d-2 a limited device");
@@ -637,7 +637,17 @@ test("chain v3's alerts in words: a full device added is just added, a limited o
   assert.equal(alertText({ ...base, kind: "passkey", passkey: "join", subject: "d-5" }, t), "a passkey added d-5 to this account (it waits to be approved)");
   assert.equal(alertLevel({ ...base, kind: "setAdmin", subject: "d-2", on: true }), "high");
   assert.equal(alertLevel({ ...base, kind: "setAdmin", subject: "d-2", on: false }), "info");
-  assert.equal(alertLevel({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false } }), "confirm");
+  assert.equal(alertLevel({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false, a2a: false } }), "confirm");
+  // An A2A proxy (docs/a2a.md §7.3): said as one, and letting one call a host is "is this you?".
+  assert.equal(
+    alertText({ ...base, kind: "addDevice", subject: "a-1", flags: { host: false, admin: false, a2a: true } }, t),
+    "d-1 added a-1 to this account as an A2A proxy: it can call the A2A of devices that accept it",
+  );
+  assert.equal(alertText({ ...base, kind: "a2aAccept", subject: "m-1", a2a: ["a-1", "a-2"] }, t), "d-1 let the A2A proxies a-1, a-2 call the A2A of m-1");
+  assert.equal(alertText({ ...base, kind: "a2aAccept", subject: "m-1", a2a: [] }, t), "d-1 set m-1 to take A2A calls from no A2A proxy");
+  assert.equal(alertLevel({ ...base, kind: "addDevice", subject: "a-1", flags: { host: false, admin: false, a2a: true } }), "confirm");
+  assert.equal(alertLevel({ ...base, kind: "a2aAccept", subject: "m-1", a2a: ["a-1"] }), "confirm");
+  assert.equal(alertLevel({ ...base, kind: "a2aAccept", subject: "m-1", a2a: [] }), "info");
   const alerts = [
     { ...base, seq: 8, kind: "setAdmin", subject: "d-2", on: true, remove: "d-2" },
     { ...base, seq: 9, kind: "setHost", subject: "m-3", on: false },
@@ -1456,4 +1466,60 @@ test("「备用中继」: the account's standby relay preference — off by defa
   ]);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(asked, [true]);
+});
+
+/** An account with computer m-1 that takes A2A calls from an A2A proxy (docs/a2a.md §7.1), its id `proxy`. */
+async function a2aAccount() {
+  const hub = new FakeKeysHub();
+  hub.chainV3Mode = "write";
+  const a = await hub.device("tok");
+  await createV2Genesis(a, true);
+  await hub.enroll(a, "m-1");
+  await a.upgradeToV3({ writable: true });
+  const p = await hub.device("tok");
+  const proxy = p.deviceId;
+  await a.append({ type: "addDevice3", device: { id: proxy, signKey: p.keys.signPublic, dhKey: p.keys.dhPublic, flags: { host: false, admin: false, a2a: true } } });
+  await a.append({ type: "setA2aAccept", host: "m-1", devices: [proxy] });
+  return { hub, a, proxy };
+}
+
+test("removing an A2A proxy a device takes calls from names that device as exposed, and rotates the content keys whatever is ticked", async () => {
+  const { a, proxy } = await a2aAccount();
+  const props = { account: a, link: quietLink() };
+  const opened = drive(DevicesPanel, props, [(tree) => (rowOf(tree, proxy).props.onRemove as () => void)()]);
+  assert.match(opened.html, /data-testid="remove-a2a-exposed"[^>]*data-signal="warn"|data-signal="warn"[^>]*data-testid="remove-a2a-exposed"/);
+  assert.ok(
+    opened.html.includes(
+      `${proxy} is an A2A proxy that could call the A2A of m-1. A session it started there could read any file the user can read on that device, its identity key included, so treat m-1 as exposed`,
+    ),
+    opened.html,
+  );
+  assert.ok(opened.html.includes("it is an A2A proxy that devices that run AI take calls from: the content keys are rotated."));
+  // The content keys' box: ticked, and not a choice.
+  const box = (html: string) => html.match(/<[^>]*data-testid="rotate-machine-keys"[^>]*>/)?.[0] ?? "";
+  assert.match(box(opened.html), /aria-checked="true"/);
+  assert.match(box(opened.html), /aria-disabled="true"/);
+  assert.ok(opened.html.includes("also rotate the content keys (always, for an A2A proxy a device took calls from)"));
+  // A proxy no device takes calls from: no exposure to name, the rotation a choice again.
+  await a.setA2aAccept("m-1", [], new FakeCourier());
+  const none = drive(DevicesPanel, props, [(tree) => (rowOf(tree, proxy).props.onRemove as () => void)()]);
+  assert.doesNotMatch(none.html, /data-testid="remove-a2a-exposed"/);
+  assert.doesNotMatch(box(none.html), /aria-disabled="true"/, "ticked by default, and a choice");
+});
+
+test("a device an A2A proxy that could call it no longer can says so on its row: renewing its identity key is suggested, never done", async () => {
+  const { a, proxy } = await a2aAccount();
+  await a.append({ type: "removeDevice3", id: proxy });
+  const page = drive(DevicesPanel, { account: a, link: quietLink() }, []);
+  assert.deepEqual((rowOf(page.tree, "m-1").props.view as DeviceRowView).a2aExposed, [proxy]);
+  const host = row({ id: "m-1", kind: "computer", host: true, presence: "online", a2aExposed: ["a-1"] });
+  const renews = list(<DeviceRow view={{ ...host, renewable: true }} viewerAdmin upgraded writable />);
+  assert.match(renews, /data-testid="a2a-exposed-m-1"[^>]*data-signal="warn"/);
+  assert.ok(renews.includes("a-1, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Renewing its identity key is suggested."), renews);
+  const old = list(<DeviceRow view={host} viewerAdmin upgraded writable />);
+  assert.ok(old.includes("Removing it and adding it again is suggested."), "one that cannot renew: re-enrolling");
+  assert.ok(!list(<DeviceRow view={host} viewerAdmin={false} upgraded writable />).includes("a2a-exposed-m-1"), "not on a read-only list");
+  assert.ok(!list(<DeviceRow view={{ ...host, a2aExposed: [] }} viewerAdmin upgraded writable />).includes("a2a-exposed-m-1"));
+  // Said in every language the page speaks.
+  assert.ok(list(<DeviceRow view={{ ...host, renewable: true }} viewerAdmin upgraded writable />, "zh-CN").includes("A2A 代理"));
 });

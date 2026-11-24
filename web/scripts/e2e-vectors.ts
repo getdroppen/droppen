@@ -6,7 +6,9 @@
  * a chain TS signed (v2: a recovery key with its proof, key epochs committed)
  * must verify in Rust, and so must a v3 chain TS built on a v2 prefix (a
  * host, a promoted admin, a passkey slot and its join, an accept policy) with
- * the same state, the same control matrix and the same refusals, and so must a chain where a host renews its identity
+ * the same state, the same control matrix and the same refusals, and so must a v3 chain with A2A proxies (their
+ * state, who may control and who may call whose A2A, whose machine keys each may hold, every refusal by its rule),
+ * and so must a chain where a host renews its identity
  * key (the proofs, the confirmation MAC, the code and the ack recomputed there), a handshake TS ran (both roles, fixed
  * ephemerals) must be exactly what `snow` writes, records TS sealed must open,
  * keys TS wrapped must unwrap. `web/test/e2e-ts-vectors.test.ts` regenerates
@@ -121,6 +123,8 @@ import {
   signRotateDispute,
   signRotateAck,
   verifyRotateConfirm,
+  FLAG_A2A,
+  MAX_ACCEPT_IDS,
 } from "../src/lib/e2e/index";
 
 export const TS_VECTORS_PATH = fileURLToPath(new URL("../../crates/droppen-proto/vectors/ts.json", import.meta.url));
@@ -322,7 +326,7 @@ async function chainV3Vectors() {
     selfActivate: false,
   };
   const byDev = (m: { id: string }) => ({ type: "device", id: m.id }) as const;
-  const v3 = (m: typeof dev0, host: boolean, admin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host, admin } });
+  const v3 = (m: typeof dev0, host: boolean, admin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host, admin, a2a: false } });
   const entries: Entry[] = [
     await signDraft(genesisDraft(account, akPublic, { id: dev0.id, signKey: dev0.signKey, dhKey: dev0.dhKey, full: true }, await recoveryKeyFor(rk, account, akPublic), 1_000), ak),
   ];
@@ -531,6 +535,240 @@ async function chainV3Vectors() {
   };
 }
 
+/**
+ * An A2A proxy chain's state as both halves' vectors write it (Rust's `a2a_state_json`, docs/a2a.md §7.1): every
+ * device with its flags and status, the current A2A proxies, and for `hosts` whom each takes A2A calls and control
+ * from, and its committed machine key epochs.
+ */
+export function a2aStateJson(state: ChainState, hosts: string[]) {
+  return {
+    seq: state.seq,
+    head: hex(state.head),
+    devices: state.allDevices().map((d) => ({ id: d.info.id, host: d.host, admin: d.admin, a2a: d.a2a, status: d.status.type })),
+    a2aDevices: state
+      .allDevices()
+      .filter((d) => state.a2aDevice(d.info.id))
+      .map((d) => d.info.id),
+    a2aAccept: hosts.map((host) => ({ host, devices: state.a2aAccept(host) })),
+    accept: hosts.map((host) => ({ host, from: acceptJson(state.acceptPolicy(host)) })),
+    paused: hosts.map((host) => ({ host, ids: state.pausedEdges(host) })),
+    hostKeyDue: state.hostKeyDue,
+    machineKeyEpochs: Object.fromEntries(hosts.map((host) => [host, state.machineKeyEpochs(host)])),
+  };
+}
+
+/** `check(device, host)` as both halves' vectors write it: `{device, host, ok, error}` (the error's kind). */
+export function relationJson(check: (device: string, host: string) => void, device: string, host: string) {
+  try {
+    check(device, host);
+    return { device, host, ok: true, error: null };
+  } catch (e) {
+    if (!(e instanceof ChainError)) throw e;
+    return { device, host, ok: false, error: e.kind };
+  }
+}
+
+/**
+ * For every device of `state` (and one the chain never named): the current hosts that let it control them — whose
+ * machine keys it may be sealed (Rust's `hosts_admitting`; never any for an A2A proxy) — and the ones that take its
+ * A2A calls (`hostsAcceptingA2a`).
+ */
+export function a2aReachJson(state: ChainState, nobody: string) {
+  const ids = [...state.allDevices().map((d) => d.info.id), nobody];
+  const admitting = (device: string) =>
+    state
+      .allDevices()
+      .filter((h) => state.machine(h.info.id) && relationJson((d, host) => state.mayControl(d, host), device, h.info.id).ok)
+      .map((h) => h.info.id);
+  return {
+    hostsAdmitting: ids.map((device) => ({ device, hosts: admitting(device) })),
+    hostsAcceptingA2a: ids.map((device) => ({ device, hosts: state.hostsAcceptingA2a(device).map((h) => h.info.id) })),
+  };
+}
+
+/**
+ * A2A proxies (docs/a2a.md §7.1) built and signed here on a v3 chain: a host and its first key, a plain device, a
+ * passkey slot, two A2A proxies; the host takes A2A calls from both; an accept list that names one (it does not count,
+ * and taking it off owes no new machine key); a widening to everyone; a removal that drops a proxy from the host's A2A
+ * list; a list narrowed to none; one set again; the host stopping AI (its A2A list goes with it) and restarting with its
+ * next key; everyone and one proxy let in again. With every state, who may control whom, who may call whose A2A, whose
+ * machine keys each may hold (none for a proxy), and the chains a verifier must refuse — each by its rule.
+ */
+async function a2aVectors() {
+  const account = "ts-acct-a2a";
+  const akSeed = await seed(300);
+  const ak = await importEd25519Private(akSeed);
+  const akPublic = await publicFromSecret("Ed25519", akSeed);
+  const member = async (id: string, n: number) => {
+    const signSeed = await seed(n);
+    const dhSecret = await seed(n + 1);
+    return { id, signSeed, dhSecret, key: await importEd25519Private(signSeed), signKey: await publicFromSecret("Ed25519", signSeed), dhKey: await publicFromSecret("X25519", dhSecret) };
+  };
+  type Member = Awaited<ReturnType<typeof member>>;
+  const [dev0, h1, devP, a1, a2, x] = [
+    await member("ts-dev-0", 301),
+    await member("ts-h-1", 303),
+    await member("ts-dev-p", 305),
+    await member("ts-a-1", 307),
+    await member("ts-a-2", 309),
+    await member("ts-x", 311),
+  ];
+  const rk = await recoveryKeys((await seed(313)).slice(0, 16));
+  const pakSeed = await seed(315);
+  const pak = await importEd25519Private(pakSeed);
+  const pakPublic = await publicFromSecret("Ed25519", pakSeed);
+  const [credHash, saltNonce] = [await seed(316), await seed(317)];
+  const slot: PasskeySlot = {
+    slot: "p-tsa",
+    key: pakPublic,
+    proof: await passkeySlotProof(pak, pakPublic, account, akPublic, "p-tsa", credHash, saltNonce),
+    credHash,
+    saltNonce,
+    grants: 0,
+    selfActivate: true,
+  };
+  const [uk0, mk0, mk1, mk2] = [await seed(318), await seed(319), await seed(320), await seed(321)];
+  const byDev = (m: Member) => ({ type: "device", id: m.id }) as const;
+  const v3 = (m: Member, flags: { host?: boolean; admin?: boolean; a2a?: boolean }) => ({
+    id: m.id,
+    signKey: m.signKey,
+    dhKey: m.dhKey,
+    flags: { host: !!flags.host, admin: !!flags.admin, a2a: !!flags.a2a },
+  });
+  const mkCommit = async (epoch: number, mk: Uint8Array): Promise<Action> => ({ type: "keyEpochs", user: null, machines: [{ machine: h1.id, epoch, hash: await machineKeyCommit(account, h1.id, epoch, mk) }] });
+  const genesis = await signDraft(genesis3Draft(account, akPublic, v3(dev0, { admin: true }), await recoveryKeyFor(rk, account, akPublic), 1_000), ak);
+  const entries: Entry[] = [genesis];
+  const state = await ChainState.verify(entries, undefined, ChainClock.history());
+  const hosts = [h1.id];
+  const steps: [string, Signer, CryptoKey, Action][] = [
+    ["userKey", byDev(dev0), dev0.key, { type: "keyEpochs", user: { epoch: 0, hash: await userKeyCommit(account, 0, uk0) }, machines: [] }],
+    ["addHost", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(h1, { host: true }) }],
+    ["hostKey", byDev(dev0), dev0.key, await mkCommit(0, mk0)],
+    ["addPlain", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(devP, {}) }],
+    ["slot", byDev(dev0), dev0.key, { type: "passkeySlotSet", slot }],
+    ["addA1", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(a1, { a2a: true }) }],
+    ["addA2", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(a2, { a2a: true }) }],
+    ["a2aAccept", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [a1.id, a2.id] }],
+    // An accept list for the plain device (a list never names an A2A proxy: RULES.a2aNotController).
+    ["acceptPlain", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [devP.id] } }],
+    ["acceptAll", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "all" } }],
+    // A removal drops the proxy from every A2A list.
+    ["removeA1", byDev(dev0), dev0.key, { type: "removeDevice3", id: a1.id }],
+    ["a2aNone", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [] }],
+    // Dropping a proxy takes the host's next machine key epoch next: a session it started could read the host's key files.
+    ["a2aNoneKey", byDev(dev0), dev0.key, await mkCommit(1, mk2)],
+    ["a2aAgain", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [a2.id] }],
+    // Its A2A list goes with its hosting, as its accept policy does.
+    ["stopHost", byDev(dev0), dev0.key, { type: "setHost", id: h1.id, host: false }],
+    ["restartHost", byDev(dev0), dev0.key, { type: "setHost", id: h1.id, host: true }],
+    ["restartKey", byDev(dev0), dev0.key, await mkCommit(2, mk1)],
+    ["acceptAllAgain", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "all" } }],
+    ["a2aFinal", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [a2.id] }],
+    // A renewal pause holds the proxy's calls as it holds control; cancelled, they come back.
+    ["pauseA2", byDev(dev0), dev0.key, { type: "renewalPause", op: new Uint8Array(16).fill(0xa2), phase: PAUSE_START, removals: [{ host: h1.id, ids: [a2.id] }] }],
+    ["pauseA2Ended", byDev(dev0), dev0.key, { type: "renewalPause", op: new Uint8Array(16).fill(0xa2), phase: PAUSE_CANCELLED, removals: [] }],
+  ];
+  const labels: { label: string; seq: number; state: ReturnType<typeof a2aStateJson> }[] = [{ label: "genesis", seq: 0, state: a2aStateJson(state, hosts) }];
+  for (const [label, signer, key, action] of steps) {
+    const entry = await signDraft(state.draft(signer, action, 2_000 + state.seq), key);
+    await state.apply(entry, ChainClock.history());
+    entries.push(entry);
+    labels.push({ label, seq: entry.draft.seq, state: a2aStateJson(state, hosts) });
+  }
+  const at = (label: string) => entries.slice(0, labels.find((l) => l.label === label)!.seq + 1);
+
+  const invalid: { name: string; entries: string[]; error: string; rule: string | null }[] = [];
+  /** `prefix` then `entry` must be refused with `error` (and, when given, `rule`): by decoding, when `entry` is bytes. */
+  const refused = async (name: string, prefix: Entry[], entry: Entry | Uint8Array, error: string, rule?: string | null) => {
+    let reason: string | null = null;
+    try {
+      const last = entry instanceof Uint8Array ? decodeEntry(entry) : entry;
+      if (prefix.length === 0) await ChainState.verify([last], undefined, ChainClock.history());
+      else await (await ChainState.verify(prefix, undefined, ChainClock.history())).apply(last, ChainClock.history());
+      throw new Error(`${name}: applied`);
+    } catch (e) {
+      if (!(e instanceof ChainError) || e.kind !== error) throw new Error(`${name}: ${e}`);
+      reason = e.detail.reason ?? null;
+    }
+    if (rule !== undefined && reason !== rule) throw new Error(`${name}: refused for ${reason}, not ${rule}`);
+    invalid.push({ name, entries: [...prefix.map((e) => hex(encodeEntry(e))), hex(entry instanceof Uint8Array ? entry : encodeEntry(entry))], error, rule: reason });
+  };
+  const sign = async (prefix: Entry[], signer: Signer, key: CryptoKey, action: Action, version?: number) => {
+    const st = await ChainState.verify(prefix, undefined, ChainClock.history());
+    const draft = st.draft(signer, action, 3_000);
+    return signDraft(version === undefined ? draft : { ...draft, version }, key);
+  };
+  const ruled = async (name: string, prefix: Entry[], signer: Signer, key: CryptoKey, action: Action, rule: string) =>
+    refused(name, prefix, await sign(prefix, signer, key, action), "notAllowed", rule);
+  const setA2a = (host: string, devices: string[]): Action => ({ type: "setA2aAccept", host, devices });
+  // §7.1: an A2A proxy is never a host nor an admin, and never joins with a passkey.
+  await refused("a genesis device that is an A2A proxy", [], await signDraft(genesis3Draft(account, akPublic, v3(dev0, { admin: true, a2a: true }), null, 1_000), ak), "notAllowed", RULES.a2aPlain);
+  await ruled("an A2A proxy added as a host", at("hostKey"), byDev(dev0), dev0.key, { type: "addDevice3", device: v3(x, { host: true, a2a: true }) }, RULES.a2aPlain);
+  await ruled("an A2A proxy added as an admin", at("hostKey"), byDev(dev0), dev0.key, { type: "addDevice3", device: v3(x, { admin: true, a2a: true }) }, RULES.a2aPlain);
+  await ruled("an A2A proxy added as a host and an admin", at("hostKey"), byDev(dev0), dev0.key, { type: "addDevice3", device: v3(x, { host: true, admin: true, a2a: true }) }, RULES.hostNotAdmin);
+  await ruled("a passkey adds an A2A proxy", at("slot"), { type: "passkey", slot: slot.slot }, pak, { type: "addDevice3", device: v3(x, { a2a: true }) }, RULES.passkeyPlain);
+  await ruled("an A2A proxy coming back with the recovery words", at("hostKey"), { type: "recovery" }, rk.signing, { type: "recoveryJoin3", device: v3(x, { admin: true, a2a: true }) }, RULES.a2aPlain);
+  await ruled("an A2A proxy made an admin", at("addA1"), byDev(dev0), dev0.key, { type: "setAdmin", id: a1.id, admin: true }, RULES.a2aPlain);
+  await ruled("an A2A proxy made a host", at("addA1"), byDev(dev0), dev0.key, { type: "setHost", id: a1.id, host: true }, RULES.a2aPlain);
+  // setA2aAccept: an admin signs it, for a current host, naming current A2A proxies, and it changes something.
+  await ruled("an A2A proxy signs its own admission", at("addA2"), byDev(a1), a1.key, setA2a(h1.id, [a1.id]), RULES.onlyAdminSigns);
+  await ruled("a plain device signs an A2A list", at("addA2"), byDev(devP), devP.key, setA2a(h1.id, [a1.id]), RULES.onlyAdminSigns);
+  await ruled("a passkey slot signs an A2A list", at("addA2"), { type: "passkey", slot: slot.slot }, pak, setA2a(h1.id, [a1.id]), "a passkey slot signs only its own joins and activations");
+  await ruled("the recovery words sign an A2A list", at("addA2"), { type: "recovery" }, rk.signing, setA2a(h1.id, [a1.id]), "the recovery key signs only recovery entries");
+  await ruled("an A2A list for a device that is not a host", at("addA2"), byDev(dev0), dev0.key, setA2a(devP.id, [a1.id]), RULES.a2aAcceptNotHost);
+  await ruled("an A2A list for an A2A proxy", at("addA2"), byDev(dev0), dev0.key, setA2a(a2.id, [a1.id]), RULES.a2aAcceptNotHost);
+  // An accept list never names an A2A proxy: it controls nothing, and a name written but ignored would mislead.
+  await ruled("an accept list naming an A2A proxy", at("a2aAccept"), byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [a1.id, devP.id] } }, RULES.a2aNotController);
+  await ruled("an accept list naming only an A2A proxy", at("a2aAccept"), byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [a2.id] } }, RULES.a2aNotController);
+  await ruled("an A2A list naming a plain device", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, devP.id]), RULES.a2aAcceptNotA2a);
+  await ruled("an A2A list naming the host", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [h1.id]), RULES.a2aAcceptNotA2a);
+  await ruled("an A2A list naming an admin", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [dev0.id]), RULES.a2aAcceptNotA2a);
+  await refused("an A2A list naming nobody the chain knows", at("addA2"), await sign(at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, ["ts-a-9"])), "unknownId", null);
+  await refused("an A2A list naming a removed proxy", at("removeA1"), await sign(at("removeA1"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, a2.id])), "unknownId", null);
+  await ruled("an A2A list that changes nothing", at("a2aAccept"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, a2.id]), RULES.a2aAcceptSame);
+  const narrowed = [...at("a2aAccept"), await sign(at("a2aAccept"), byDev(dev0), dev0.key, setA2a(h1.id, [a2.id]))];
+  await ruled("an A2A list that drops a proxy, without the host's next key", narrowed, byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, a2.id]), RULES.hostKeyNext);
+  await ruled("an empty A2A list where none is set", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, []), RULES.a2aAcceptSame);
+  await ruled("the A2A list a removal left, written again", at("removeA1"), byDev(dev0), dev0.key, setA2a(h1.id, [a2.id]), RULES.a2aAcceptSame);
+  await ruled("a restarted host's A2A list, set back to none", at("restartKey"), byDev(dev0), dev0.key, setA2a(h1.id, []), RULES.a2aAcceptSame);
+  // One list, one encoding: order, repeats and size are refused by decoding; so are an unknown flag bit and kind 23 in v2.
+  await refused("an A2A list out of order", at("addA2"), encodeEntry(await sign(at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [a2.id, a1.id]))), "decode");
+  await refused("an A2A list naming a proxy twice", at("addA2"), encodeEntry(await sign(at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, a1.id]))), "decode");
+  const many = Array.from({ length: MAX_ACCEPT_IDS + 1 }, (_, i) => `ts-a-${String(i).padStart(3, "0")}`);
+  await refused("an A2A list of 65 proxies", at("addA2"), encodeEntry(await sign(at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, many))), "decode");
+  const flagged = encodeEntry(await sign(at("hostKey"), byDev(dev0), dev0.key, { type: "addDevice3", device: v3(x, { a2a: true }) }));
+  if (flagged[flagged.length - 65] !== FLAG_A2A) throw new Error("the flag byte is not where it was expected");
+  flagged[flagged.length - 65] = 0b1000;
+  await refused("a device flag beyond a2a (bit 3)", at("hostKey"), flagged, "decode");
+  await refused("an A2A list in a v2 entry", at("addA2"), encodeEntry(await sign(at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id]), CHAIN_VERSION)), "decode");
+
+  const nobody = "ts-nobody";
+  const pairs: [string, string][] = [
+    [dev0.id, h1.id],
+    [devP.id, h1.id],
+    [a2.id, h1.id],
+    [a1.id, h1.id],
+    [a2.id, devP.id],
+    [a2.id, a2.id],
+    [h1.id, h1.id],
+    [nobody, h1.id],
+  ];
+  return {
+    account,
+    accountFingerprint: hex(await fingerprint(akPublic)),
+    entries: entries.map((e) => hex(encodeEntry(e))),
+    hashes: await Promise.all(entries.map(async (e) => hex(await entryHash(e)))),
+    versions: entries.map((e) => e.draft.version),
+    steps: labels,
+    extraDevices: [dev0, h1, devP, a1, a2, x].map((m) => ({ id: m.id, signSeed: hex(m.signSeed), signKey: hex(m.signKey), dhSecret: hex(m.dhSecret), dhKey: hex(m.dhKey) })),
+    state: a2aStateJson(state, hosts),
+    control: pairs.map(([d, host]) => relationJson((dd, hh) => state.mayControl(dd, hh), d, host)),
+    a2aCalls: pairs.map(([d, host]) => relationJson((dd, hh) => state.mayCallA2a(dd, hh), d, host)),
+    ...a2aReachJson(state, nobody),
+    invalid,
+  };
+}
+
 /** A device's two keys as the device list shows them (`lib/hub/account.ts` `deviceFingerprint`; Rust's `device_fingerprint_text`). */
 async function deviceFingerprintText(signKey: Uint8Array, dhKey: Uint8Array): Promise<string> {
   return (base32((await fingerprint(concat(signKey, dhKey))).slice(0, 10)).match(/.{1,4}/g) ?? []).join("-");
@@ -622,7 +860,7 @@ async function hostRotationVectors() {
   const thief = await member("ts-r-host", 239);
   const fresh = await member("ts-r-host", 241);
   const rk = await recoveryKeys((await seed(243)).slice(0, 16));
-  const v3 = (m: Member, isHost: boolean, isAdmin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host: isHost, admin: isAdmin } });
+  const v3 = (m: Member, isHost: boolean, isAdmin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host: isHost, admin: isAdmin, a2a: false } });
   const byAdmin = { type: "device", id: admin.id } as const;
   const mk = async (id: string, epoch: number): Promise<Action> => ({
     type: "keyEpochs",
@@ -1405,6 +1643,7 @@ export async function buildTsVectors() {
     chain: await chainVectors(),
     chainV3: await chainV3Vectors(),
     hostRotation: await hostRotationVectors(),
+    a2a: await a2aVectors(),
     noise: await noiseVectors(),
     records: await recordVectors(),
     streams: await streamVectors(),

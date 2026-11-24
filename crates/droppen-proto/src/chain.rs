@@ -25,6 +25,21 @@
 //! devices; host-to-host (or any other non-admin) control is allowed only when
 //! an admin says so with [`Action::SetAccept`] ([`ChainState::may_control`]).
 //!
+//! # The A2A proxy: a third flag (`docs/a2a.md` §7.1)
+//!
+//! - **a2a** (A2A 代理): a device that only calls the A2A server of the hosts
+//!   that accept it ([`Action::SetA2aAccept`], [`ChainState::may_call_a2a`]).
+//!   It is never a host nor an admin ([`rules::A2A_PLAIN`]), so it signs
+//!   nothing, attests nothing and never holds `UK`; it never joins with a
+//!   passkey; and the flag is set at its join and never changes.
+//! - It **controls nothing**: [`ChainState::may_control`] refuses it, an
+//!   [`Accept::All`] does not take it in, and an [`Action::SetAccept`] list
+//!   never names it ([`rules::A2A_NOT_CONTROLLER`]). In this code "may
+//!   control" also chooses who is handed a host's machine key
+//!   ([`ChainState::hosts_admitting`]), so an A2A proxy is never sealed one.
+//! - A renewal pause ([`Action::RenewalPause`]) that names a proxy for a host
+//!   holds its A2A calls to it, as it holds control.
+//!
 //! # Two encodings, one state
 //!
 //! Entries carry a version byte, which the signature covers. Version 2 is the
@@ -531,33 +546,51 @@ pub struct MachineInfo {
     pub dh_key: [u8; 32],
 }
 
-/// A device's two flags (`DeviceV3`'s last byte: bit 0 host, bit 1 admin;
-/// every other bit must be 0).
+/// A device's flags (`DeviceV3`'s last byte: bit 0 host, bit 1 admin, bit 2
+/// a2a; every other bit must be 0). Every combination of the three decodes;
+/// the chain's rules refuse an a2a device that is also a host or an admin
+/// ([`rules::A2A_PLAIN`]), as they refuse a host that is an admin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Flags {
     /// 可运行 AI: runs an agent, can be controlled, has machine keys.
     pub host: bool,
     /// 可管理账号: signs entries, holds `UK`, attests.
     pub admin: bool,
+    /// A2A 代理 (`docs/a2a.md` §7.1): calls the A2A of the hosts that accept
+    /// it ([`ChainState::may_call_a2a`]) and controls none. Set at its join,
+    /// never changed.
+    pub a2a: bool,
 }
 
 impl Flags {
-    pub const HOST: u8 = 0b01;
-    pub const ADMIN: u8 = 0b10;
-    pub const NONE: Flags = Flags { host: false, admin: false };
+    pub const HOST: u8 = 0b001;
+    pub const ADMIN: u8 = 0b010;
+    pub const A2A: u8 = 0b100;
+    pub const NONE: Flags = Flags {
+        host: false,
+        admin: false,
+        a2a: false,
+    };
+    /// An A2A proxy: the a2a flag alone, the only way it joins.
+    pub const A2A_DEVICE: Flags = Flags {
+        host: false,
+        admin: false,
+        a2a: true,
+    };
 
     pub fn to_byte(self) -> u8 {
-        (if self.host { Self::HOST } else { 0 }) | (if self.admin { Self::ADMIN } else { 0 })
+        (if self.host { Self::HOST } else { 0 }) | (if self.admin { Self::ADMIN } else { 0 }) | (if self.a2a { Self::A2A } else { 0 })
     }
 
     /// Unknown bits are refused: one byte, one meaning.
     pub fn from_byte(b: u8) -> Result<Self, DecodeError> {
-        if b & !(Self::HOST | Self::ADMIN) != 0 {
+        if b & !(Self::HOST | Self::ADMIN | Self::A2A) != 0 {
             return Err(DecodeError::Invalid("device flags"));
         }
         Ok(Self {
             host: b & Self::HOST != 0,
             admin: b & Self::ADMIN != 0,
+            a2a: b & Self::A2A != 0,
         })
     }
 }
@@ -580,15 +613,17 @@ pub struct DeviceKeys {
 }
 
 /// Whom a host accepts control from (`SetAccept`), besides admin devices,
-/// which it always accepts.
+/// which it always accepts. Never an A2A proxy ([`ChainState::may_control`]):
+/// `All` does not take it in, and a list never names one
+/// ([`rules::A2A_NOT_CONTROLLER`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Accept {
     /// Admin devices only: the default.
     #[default]
     Admins,
-    /// Every current device of the account.
+    /// Every current device of the account (an A2A proxy is none of them).
     All,
-    /// Admin devices and these (ascending, no repeats).
+    /// Admin devices and these (ascending, no repeats, never an A2A proxy).
     Devices(Vec<String>),
 }
 
@@ -659,6 +694,20 @@ pub enum Action {
         /// Start: each host and the ids it stops accepting (never a current
         /// admin), hosts and each host's ids in byte order. End: empty.
         removals: Vec<(String, Vec<String>)>,
+    },
+    /// Kind 23 (`docs/a2a.md` §7.1): which A2A proxies host `host` takes A2A
+    /// calls from ([`ChainState::may_call_a2a`]) — every one of `devices`, a
+    /// current a2a device, ascending by bytes, each once, at most
+    /// [`MAX_ACCEPT_IDS`]; empty: none (the default). An admin signs it. One
+    /// that drops a proxy takes the host's next machine key epoch in the very
+    /// next entry ([`rules::HOST_KEY_NEXT`]): a session the proxy started
+    /// could read the host's key files. It is not control:
+    /// [`Action::SetAccept`] never names an A2A proxy. A
+    /// renewal pause that names the proxy for the host holds the call too
+    /// ([`ChainState::paused_edges`]).
+    SetA2aAccept {
+        host: String,
+        devices: Vec<String>,
     },
 }
 
@@ -754,6 +803,7 @@ impl Action {
             Action::RotateHostKey(_) => 20,
             Action::SetRenewalPolicy { .. } => 21,
             Action::RenewalPause { .. } => 22,
+            Action::SetA2aAccept { .. } => 23,
         }
     }
 
@@ -1121,6 +1171,28 @@ fn get_pause(r: &mut Reader<'_>) -> Result<Action, DecodeError> {
     Ok(Action::RenewalPause { op, phase, removals })
 }
 
+/// `u16 n | str16 id × n` (after `str16 host`): at most [`MAX_ACCEPT_IDS`],
+/// strictly ascending by bytes, possibly none — one list, one encoding.
+fn get_a2a_accept(r: &mut Reader<'_>) -> Result<Vec<String>, DecodeError> {
+    let n = usize::from(r.u16()?);
+    if n > MAX_ACCEPT_IDS {
+        return Err(DecodeError::TooLarge {
+            what: "A2A accept list",
+            len: n,
+            max: MAX_ACCEPT_IDS,
+        });
+    }
+    let mut ids: Vec<String> = Vec::with_capacity(n);
+    for _ in 0..n {
+        let id = r.str16("device id", MAX_ID_LEN)?;
+        if ids.last().is_some_and(|last| last.as_bytes() >= id.as_bytes()) {
+            return Err(DecodeError::Invalid("A2A accept list order"));
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
 /// Whether `items` are strictly ascending by bytes: each once, in the one
 /// order a renewal pause's removals take (§3.4 rule 10).
 fn ascending<'a>(items: impl IntoIterator<Item = &'a String>) -> bool {
@@ -1211,6 +1283,13 @@ impl Draft {
                     for id in ids {
                         put_str16(&mut out, id);
                     }
+                }
+            }
+            Action::SetA2aAccept { host, devices } => {
+                put_str16(&mut out, host);
+                put_count(&mut out, devices.len());
+                for id in devices {
+                    put_str16(&mut out, id);
                 }
             }
         }
@@ -1305,6 +1384,10 @@ impl Entry {
                 always_assured: get_bool(&mut r, "renewal policy")?,
             },
             (true, 22) => get_pause(&mut r)?,
+            (true, 23) => Action::SetA2aAccept {
+                host: id(&mut r, "device id")?,
+                devices: get_a2a_accept(&mut r)?,
+            },
             (_, other) => {
                 return Err(DecodeError::Unknown {
                     what: "chain action",
@@ -1461,6 +1544,10 @@ pub struct DeviceRecord {
     pub host: bool,
     /// Manages the account (v2: a full device).
     pub admin: bool,
+    /// An A2A proxy (`docs/a2a.md` §7.1): neither a host nor an admin, it
+    /// controls nothing and calls the A2A of the hosts that accept it. Fixed
+    /// at its join.
+    pub a2a: bool,
     /// Has run AI here at some point — been a host, so its agent held its
     /// key in a file (review of chain v3: such a device never becomes an
     /// admin, [`rules::RAN_AI_NOT_ADMIN`]).
@@ -1506,6 +1593,7 @@ impl DeviceRecord {
         Flags {
             host: self.host,
             admin: self.admin,
+            a2a: self.a2a,
         }
     }
 
@@ -1517,6 +1605,11 @@ impl DeviceRecord {
     /// An active admin: what v2 called a current full device.
     pub fn is_current_admin(&self) -> bool {
         self.is_active() && self.admin
+    }
+
+    /// An active A2A proxy.
+    pub fn is_current_a2a(&self) -> bool {
+        self.is_active() && self.a2a
     }
 }
 
@@ -1716,6 +1809,10 @@ pub struct ChainState {
     slots: BTreeMap<String, SlotRecord>,
     /// Hosts whose accept policy is not the default ([`Accept::Admins`]).
     accept: BTreeMap<String, Accept>,
+    /// Hosts that take A2A calls from some A2A proxy (`SetA2aAccept`), and
+    /// from which: never empty (none is the default, kept by no entry), only
+    /// current a2a devices (a removal drops its device from every list).
+    a2a_accept: BTreeMap<String, Vec<String>>,
     /// The first v3 entry's seq: no v2 entry may follow it.
     v3_from: Option<u64>,
     /// A host that joined or restarted hosting in the last entry: the next
@@ -1799,6 +1896,20 @@ pub mod rules {
     pub const PAUSE_NOT_OPEN: &str = "only an open renewal pause ends, and only once";
     /// A completion or cancellation names no removals.
     pub const PAUSE_END_REMOVALS: &str = "a renewal pause ends without naming removals";
+    /// `docs/a2a.md` §7.1: an A2A proxy is never a host nor an admin — not at
+    /// its join (`Genesis3`, `AddDevice3`, `RecoveryJoin3`), and no
+    /// `SetAdmin{true}` or `SetHost{true}` later — so it signs nothing,
+    /// attests nothing, never holds `UK` or a machine key.
+    pub const A2A_PLAIN: &str = "an A2A proxy neither runs AI nor manages the account";
+    /// `SetA2aAccept` names a current host.
+    pub const A2A_ACCEPT_NOT_HOST: &str = "only a host accepts A2A calls";
+    /// `SetA2aAccept` names only current a2a devices.
+    pub const A2A_ACCEPT_NOT_A2A: &str = "an A2A accept list names only current A2A proxies";
+    /// `SetA2aAccept` changes the host's list (as `SetAccept`, no no-op).
+    pub const A2A_ACCEPT_SAME: &str = "the host already accepts exactly those A2A proxies";
+    /// A `SetAccept` list never names an A2A proxy: it controls nothing, and
+    /// a name written but ignored would mislead whoever reads the list.
+    pub const A2A_NOT_CONTROLLER: &str = "an A2A proxy controls nothing: an accept list never names one";
 }
 
 /// Which removal voids the recovery key: v2's `RemoveDevice` (unchanged, so
@@ -1834,6 +1945,7 @@ impl ChainState {
                 Flags {
                     host: false,
                     admin: device.full,
+                    a2a: false,
                 },
                 recovery_key,
             ),
@@ -1895,6 +2007,10 @@ impl ChainState {
         if flags.host && flags.admin {
             return Err(not_allowed(0, rules::HOST_NOT_ADMIN));
         }
+        // The first device is an admin: an A2A proxy never is.
+        if flags.a2a {
+            return Err(not_allowed(0, rules::A2A_PLAIN));
+        }
         let mut state = Self {
             account: d.account.clone(),
             account_key: *account_key,
@@ -1907,6 +2023,7 @@ impl ChainState {
             devices: BTreeMap::new(),
             slots: BTreeMap::new(),
             accept: BTreeMap::new(),
+            a2a_accept: BTreeMap::new(),
             v3_from: (d.version == VERSION_3).then_some(0),
             host_key_due: flags.host.then(|| keys.id.clone()),
             always_assured: false,
@@ -1920,6 +2037,7 @@ impl ChainState {
                 info: keys,
                 host: flags.host,
                 admin: flags.admin,
+                a2a: flags.a2a,
                 ran_ai: flags.host,
                 status: DeviceStatus::Active,
                 via_recovery: false,
@@ -2057,6 +2175,7 @@ impl ChainState {
                     Flags {
                         host: false,
                         admin: device.full,
+                        a2a: false,
                     },
                     DeviceStatus::Active,
                     seq,
@@ -2065,7 +2184,16 @@ impl ChainState {
             Action::AddMachine(machine) => {
                 let keys = keys_of(&machine.id, &machine.sign_key, &machine.dh_key);
                 self.check_new(seq, &keys)?;
-                self.insert(keys, Flags { host: true, admin: false }, DeviceStatus::Active, seq);
+                self.insert(
+                    keys,
+                    Flags {
+                        host: true,
+                        admin: false,
+                        a2a: false,
+                    },
+                    DeviceStatus::Active,
+                    seq,
+                );
             }
             Action::RecoveryJoin(device) => {
                 let keys = keys_of(&device.id, &device.sign_key, &device.dh_key);
@@ -2073,7 +2201,16 @@ impl ChainState {
                 if !device.full {
                     return Err(not_allowed(seq, "a recovered device is a full device"));
                 }
-                self.insert(keys, Flags { host: false, admin: true }, DeviceStatus::Pending { join_seq: seq }, seq);
+                self.insert(
+                    keys,
+                    Flags {
+                        host: false,
+                        admin: true,
+                        a2a: false,
+                    },
+                    DeviceStatus::Pending { join_seq: seq },
+                    seq,
+                );
                 let record = self.devices.get_mut(&device.id).expect("inserted");
                 record.via_recovery = true;
                 record.via_recovery_key = self.recovery_key;
@@ -2087,6 +2224,9 @@ impl ChainState {
                 if device.flags.host {
                     return Err(not_allowed(seq, rules::HOST_NOT_ADMIN));
                 }
+                if device.flags.a2a {
+                    return Err(not_allowed(seq, rules::A2A_PLAIN));
+                }
                 self.insert(keys, device.flags, DeviceStatus::Pending { join_seq: seq }, seq);
                 let record = self.devices.get_mut(&device.id).expect("inserted");
                 record.via_recovery = true;
@@ -2097,6 +2237,7 @@ impl ChainState {
                 self.check_new(seq, &keys)?;
                 match &authority {
                     Authority::Passkey(slot) => {
+                        // Neither runs AI nor manages the account, nor is an A2A proxy.
                         if device.flags != Flags::NONE {
                             return Err(not_allowed(seq, rules::PASSKEY_PLAIN));
                         }
@@ -2112,6 +2253,9 @@ impl ChainState {
                     _ => {
                         if device.flags.host && device.flags.admin {
                             return Err(not_allowed(seq, rules::HOST_NOT_ADMIN));
+                        }
+                        if device.flags.a2a && (device.flags.host || device.flags.admin) {
+                            return Err(not_allowed(seq, rules::A2A_PLAIN));
                         }
                         if device.flags.host {
                             host_key_due = Some(device.id.clone());
@@ -2217,6 +2361,9 @@ impl ChainState {
                 if *admin && record.host {
                     return Err(not_allowed(seq, rules::HOST_NOT_ADMIN));
                 }
+                if *admin && record.a2a {
+                    return Err(not_allowed(seq, rules::A2A_PLAIN));
+                }
                 if *admin && (record.ran_ai || self.machine_key_epochs(id) > 0) {
                     return Err(not_allowed(seq, rules::RAN_AI_NOT_ADMIN));
                 }
@@ -2260,12 +2407,17 @@ impl ChainState {
                 if *host && record.admin {
                     return Err(not_allowed(seq, rules::HOST_NOT_ADMIN));
                 }
+                if *host && record.a2a {
+                    return Err(not_allowed(seq, rules::A2A_PLAIN));
+                }
                 if *host {
                     host_key_due = Some(id.clone());
                 } else {
-                    // Its accept policy goes with its hosting: restarting
-                    // starts from admins only, never silently from before.
+                    // Its accept policies go with its hosting: restarting
+                    // starts from admins only and no A2A proxy, never
+                    // silently from before.
                     self.accept.remove(id);
+                    self.a2a_accept.remove(id);
                 }
                 let record = self.devices.get_mut(id).expect("present");
                 record.host = *host;
@@ -2372,6 +2524,9 @@ impl ChainState {
                         }
                         if id == host {
                             return Err(not_allowed(seq, rules::ACCEPT_SELF));
+                        }
+                        if self.device(id).is_some_and(|d| d.a2a) {
+                            return Err(not_allowed(seq, rules::A2A_NOT_CONTROLLER));
                         }
                     }
                 }
@@ -2497,6 +2652,43 @@ impl ChainState {
                     }
                 }
             }
+            Action::SetA2aAccept { host, devices } => {
+                // `docs/a2a.md` §7.1. An active admin signs it (checked
+                // above, as for every entry).
+                let record = self
+                    .devices
+                    .get(host)
+                    .filter(|r| r.is_active())
+                    .ok_or_else(|| ChainError::UnknownId { seq, id: host.clone() })?;
+                if !record.host {
+                    return Err(not_allowed(seq, rules::A2A_ACCEPT_NOT_HOST));
+                }
+                for id in devices {
+                    if !valid_id(id) {
+                        return Err(ChainError::BadId { seq });
+                    }
+                    let listed = self.device(id).ok_or_else(|| ChainError::UnknownId { seq, id: id.clone() })?;
+                    if !listed.a2a {
+                        return Err(not_allowed(seq, rules::A2A_ACCEPT_NOT_A2A));
+                    }
+                }
+                if self.a2a_accept(host) == devices.as_slice() {
+                    return Err(not_allowed(seq, rules::A2A_ACCEPT_SAME));
+                }
+                // A proxy it stops taking calls from never held a machine key,
+                // but a session it started there could read the host's key
+                // files, its machine key included: as for a `SetAccept`
+                // narrowing (D2), the host's next epoch comes in the very next
+                // entry. Adding proxies owes nothing.
+                if self.a2a_accept(host).iter().any(|id| !devices.contains(id)) {
+                    host_key_due = Some(host.clone());
+                }
+                if devices.is_empty() {
+                    self.a2a_accept.remove(host);
+                } else {
+                    self.a2a_accept.insert(host.clone(), devices.clone());
+                }
+            }
         }
         self.host_key_due = host_key_due;
         if d.version == VERSION_3 && self.v3_from.is_none() {
@@ -2538,6 +2730,14 @@ impl ChainState {
                 slot.removed = true;
             }
         }
+        // It leaves every host's A2A accept list (a list left empty is the
+        // default, none), and a host's own list goes with it: the lists say
+        // exactly who may call now.
+        self.a2a_accept.remove(id);
+        for ids in self.a2a_accept.values_mut() {
+            ids.retain(|d| d != id);
+        }
+        self.a2a_accept.retain(|_, ids| !ids.is_empty());
         self.devices.get_mut(id).expect("present").status = DeviceStatus::Removed;
     }
 
@@ -2549,6 +2749,7 @@ impl ChainState {
                 info,
                 host: flags.host,
                 admin: flags.admin,
+                a2a: flags.a2a,
                 ran_ai: flags.host,
                 status,
                 via_recovery: false,
@@ -2563,11 +2764,13 @@ impl ChainState {
     }
 
     /// The current devices other than admins and the host itself that
-    /// policy `from` lets control `host`.
+    /// policy `from` lets control `host` — never an A2A proxy, which no
+    /// policy lets control anything (so dropping one from a list turns no
+    /// machine key over: it never held one).
     fn extra_controllers(&self, host: &str, from: &Accept) -> BTreeSet<String> {
         self.devices
             .values()
-            .filter(|d| d.is_active() && !d.admin && d.info.id != host)
+            .filter(|d| d.is_active() && !d.admin && !d.a2a && d.info.id != host)
             .filter(|d| match from {
                 Accept::Admins => false,
                 Accept::All => true,
@@ -2730,7 +2933,9 @@ impl ChainState {
     /// The ids host `host` stops accepting while renewal pauses are open
     /// (§3.4 rule 10): every open pause's removals for it, sorted, once each.
     /// [`ChainState::may_control`] refuses them, whatever the host's
-    /// [`ChainState::base_accept`] says.
+    /// [`ChainState::base_accept`] says, and so does
+    /// [`ChainState::may_call_a2a`] for an A2A proxy, whatever its
+    /// [`ChainState::a2a_accept`] says.
     pub fn paused_edges(&self, host: &str) -> Vec<String> {
         let ids: BTreeSet<&String> = self
             .pauses
@@ -2961,9 +3166,21 @@ impl ChainState {
         self.slots.values()
     }
 
-    /// Whom host `host` accepts control from besides admin devices.
+    /// Whom host `host` accepts control from besides admin devices (never an
+    /// A2A proxy: [`ChainState::may_control`]).
     pub fn accept_policy(&self, host: &str) -> Accept {
         self.accept.get(host).cloned().unwrap_or_default()
+    }
+
+    /// The A2A proxies host `host` takes A2A calls from (`SetA2aAccept`),
+    /// ascending: current a2a devices only; none by default.
+    pub fn a2a_accept(&self, host: &str) -> &[String] {
+        self.a2a_accept.get(host).map_or(&[], Vec::as_slice)
+    }
+
+    /// A current A2A proxy: an active device with the a2a flag.
+    pub fn a2a_device(&self, id: &str) -> Option<&DeviceRecord> {
+        self.devices.get(id).filter(|d| d.is_current_a2a())
     }
 
     /// Devices that joined with the recovery key and are not yet active: what
@@ -3000,10 +3217,12 @@ impl ChainState {
 
     /// Whether device `device` may control host `host` — open a channel to
     /// it at all (`docs/local-aggregator.md` §3.1, "谁可以控制我"): never
-    /// itself; only a current device to a current host; an admin device
+    /// itself; only a current device to a current host; never an A2A proxy
+    /// (`docs/a2a.md` §7.1), whatever the policy says; an admin device
     /// always; any other device only when the host's [`Accept`] policy names
     /// it (or all). Agents enforce this at admission; the hub trims tickets by
-    /// it as defence in depth.
+    /// it as defence in depth. It also decides who is handed the host's
+    /// machine keys ([`ChainState::hosts_admitting`]).
     pub fn may_control(&self, device: &str, host: &str) -> Result<(), ChainError> {
         if device == host {
             return Err(ChainError::SelfControl);
@@ -3014,6 +3233,12 @@ impl ChainState {
             host: host.to_string(),
             reason,
         };
+        // Calling a host's A2A is not control (`SetA2aAccept`,
+        // [`ChainState::may_call_a2a`]): `All` does not take it in (and no
+        // list names it), so it is never sealed a machine key either.
+        if requester.a2a {
+            return Err(refuse("an A2A proxy controls no device"));
+        }
         if self.machine(host).is_none() {
             return Err(refuse("not a current host of this account"));
         }
@@ -3040,11 +3265,58 @@ impl ChainState {
     /// and so whose machine keys it may hold (review D2: machine keys follow
     /// the accept policy; `docs/local-aggregator.md` S1-4). Never the device
     /// itself; every other current host for an admin; none for a device that
-    /// is not current.
+    /// is not current, and none for an A2A proxy (`docs/a2a.md` §7.1).
     pub fn hosts_admitting<'a>(&'a self, device: &'a str) -> impl Iterator<Item = &'a DeviceRecord> + 'a {
         self.devices
             .values()
             .filter(move |d| d.is_current_host() && self.may_control(device, &d.info.id).is_ok())
+    }
+
+    /// Whether A2A proxy `device` may call host `host`'s A2A server
+    /// (`docs/a2a.md` §7.1): a current a2a device, a current host, no open
+    /// renewal pause holds the call ([`ChainState::paused_edges`]), and the
+    /// host's `SetA2aAccept` list names it. Not control — a full device or a
+    /// host never passes it, and passing it opens nothing but the A2A
+    /// routes: an agent asks it only when [`ChainState::may_control`] says
+    /// no (its `A2aOnly` admission), the bridge again for each request, and
+    /// the hub routes and tickets an A2A proxy by it.
+    pub fn may_call_a2a(&self, device: &str, host: &str) -> Result<(), ChainError> {
+        if device == host {
+            return Err(ChainError::SelfControl);
+        }
+        let requester = self.device(device).ok_or_else(|| ChainError::UnknownDevice(device.to_string()))?;
+        let refuse = |reason| ChainError::NotAccepted {
+            device: device.to_string(),
+            host: host.to_string(),
+            reason,
+        };
+        if !requester.a2a {
+            return Err(refuse("only an A2A proxy calls a host's A2A"));
+        }
+        if self.machine(host).is_none() {
+            return Err(refuse("not a current host of this account"));
+        }
+        // §3.4 rule 10, as for control: while a renewal pause names the
+        // proxy for this host, its calls wait. A pause is about who may reach
+        // a host whose identity key is renewed, not about machine keys, and
+        // an A2A call reaches it as surely as control does.
+        if self.paused_edges(host).iter().any(|id| id == device) {
+            return Err(refuse("A2A calls are paused while identity keys are renewed"));
+        }
+        if self.a2a_accept(host).iter().any(|id| id == device) {
+            Ok(())
+        } else {
+            Err(refuse("the host does not accept A2A calls from this proxy"))
+        }
+    }
+
+    /// The current hosts A2A proxy `device` may call — each one
+    /// [`ChainState::may_call_a2a`] allows — in id order: the hub's routing
+    /// and ticket `peers` for it, and what the proxy offers.
+    pub fn hosts_accepting_a2a<'a>(&'a self, device: &'a str) -> impl Iterator<Item = &'a DeviceRecord> + 'a {
+        self.devices
+            .values()
+            .filter(move |d| d.is_current_host() && self.may_call_a2a(device, &d.info.id).is_ok())
     }
 
     /// [`ChainState::authorize_device`] and [`ChainState::may_control`]: what

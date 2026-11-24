@@ -556,6 +556,17 @@ export const cloudDevicesJa: Record<string, string> = {
   "It can control the devices that let it and read their offline copies. To add or remove devices here, upgrade the account to chain v3 from another of your devices, then make this browser a full device there.": "許可したデバイスを操作し、そのオフラインコピーを読めます。ここでデバイスを追加・削除するには、まず別のデバイスでアカウントをチェーン v3 にアップグレードし、そこでこのブラウザをフルデバイスにしてください。",
   "{{id}} is a full device now, but its keys were not sent": "{{id}} はフルデバイスになりましたが、鍵は送られていません",
   "a device that runs AI cannot be a full device (yet)": "AI を実行できるデバイスは、まだフルデバイスになれません",
+  // A2A proxies (docs/a2a.md §7.1, §7.3): their joins, whom a device takes A2A calls from, and what they never become.
+  "{{by}} added {{device}} to this account as an A2A proxy: it can call the A2A of devices that accept it": "{{by}} が {{device}} を A2A プロキシとしてこのアカウントに追加しました：受け入れたデバイスの A2A を呼び出せます",
+  "{{by}} let the A2A proxies {{ids}} call the A2A of {{host}}": "{{by}} が A2A プロキシ {{ids}} に {{host}} の A2A の呼び出しを許可しました",
+  "{{by}} set {{host}} to take A2A calls from no A2A proxy": "{{by}} が {{host}} をどの A2A プロキシからの呼び出しも受け付けない設定にしました",
+  "an A2A proxy can be neither a full device nor a device that runs AI": "A2A プロキシはフルデバイスにも、AI を実行するデバイスにもなれません",
+  "It loses access at once. It never held a key, but it is an A2A proxy that devices that run AI take calls from: the content keys are rotated. What it already copied cannot be taken back.": "すぐにアクセスできなくなります。鍵を持ったことはありませんが、AI を実行するデバイスが呼び出しを受け付ける A2A プロキシのため、コンテンツ鍵をローテーションします。すでにコピーされたものは取り戻せません。",
+  "{{device}} is an A2A proxy that could call the A2A of {{hosts}}. A session it started there could read any file the user can read on that device, its identity key included, so treat {{hosts}} as exposed: their content keys are rotated now, and renewing their identity key (or removing and adding them again) is suggested.": "{{device}} は {{hosts}} の A2A を呼び出せる A2A プロキシです。そこで開始したセッションは、そのデバイスでユーザーが読めるファイルを ID 鍵も含めてすべて読めたため、{{hosts}} は露出したものとして扱ってください。コンテンツ鍵は今ローテーションします。ID 鍵の更新（または削除して追加し直すこと）をおすすめします。",
+  "also rotate the content keys (always, for an A2A proxy a device took calls from)": "コンテンツ鍵もローテーションする（呼び出しを受け付けたデバイスがある A2A プロキシでは常に）",
+  "{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Renewing its identity key is suggested.": "この A2A を呼び出せた A2A プロキシ {{ids}} が削除されたか、受け付けられなくなりました。それが開始したセッションは ID 鍵を読めた可能性があります。ID 鍵の更新をおすすめします。",
+  "{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Removing it and adding it again is suggested.": "この A2A を呼び出せた A2A プロキシ {{ids}} が削除されたか、受け付けられなくなりました。それが開始したセッションは ID 鍵を読めた可能性があります。削除して追加し直すことをおすすめします。",
+  "{{ids}} is an A2A proxy: it controls no device, so no accept list names it": "{{ids}} は A2A プロキシです。どのデバイスも操作しないため、操作の許可リストには入れられません",
   "{{id}} ran AI before, and its agent kept its key in a file: it cannot be a full device. Add a new browser or phone instead.": "{{id}} は以前 AI を実行しており、その agent は鍵をファイルに保存していました。フルデバイスにはなれません。代わりに新しいブラウザかスマートフォンを追加してください。",
   // The account's settings (account-settings.tsx) and joining with a passkey (passkey-join.tsx).
   "my account": "マイアカウント",
