@@ -99,6 +99,11 @@ class Runtime implements MachineRuntime {
     this.driver = driver;
   }
 
+  /** @internal What it is now ({@link machineInstance}): its driver. */
+  get instance(): MachineDriver {
+    return this.driver;
+  }
+
   /** @internal */
   dispose(): void {
     this.driver.dispose();
@@ -138,9 +143,30 @@ function sameKeys(a: readonly MachineKey[], b: readonly MachineKey[]): boolean {
   return a.length === b.length && a.every((key, i) => key === b[i]);
 }
 
-/** Say what is open now to whoever listens ({@link openMachinesStore}). */
+/** Bumped on every open, close and change of driver: what {@link machineInstancesStore} says. */
+const instancesStore = createStore(0);
+
+/** Say what is open now to whoever listens ({@link openMachinesStore}, {@link machineInstancesStore}). */
 function published(): void {
   openStore.set(openMachines());
+  instancesStore.set(instancesStore.get() + 1);
+}
+
+/**
+ * What `machine` is now, as a thing to hold on to: its runtime's driver while
+ * it is open, `null` while it is not. A machine closed and opened again in
+ * the same moment — the shell itself replaced — or given another driver is
+ * another one, though its key, and the list of open machines, are the same:
+ * whoever held the old one holds it on the new one ({@link machineInstancesStore}).
+ */
+export function machineInstance(machine: MachineKey): object | null {
+  if (!isOpen(machine)) return null;
+  return (runtimeFor(machine) as Runtime).instance;
+}
+
+/** Changes whenever a machine opens, closes or changes driver ({@link machineInstance}). */
+export function machineInstancesStore(): Store<number> {
+  return instancesStore;
 }
 
 /** The shell the page is running as. */

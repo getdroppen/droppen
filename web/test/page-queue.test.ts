@@ -402,6 +402,42 @@ test("a page frozen in a background tab past its 30 s is not taken for a stalled
   await assert.rejects(silent, { name: "TimeoutError" });
 });
 
+/** A clock whose timers all fire late by `lag` ms: a hidden tab Chrome throttles, running but behind. */
+class LateClock extends HandClock {
+  constructor(private readonly lag: number) {
+    super();
+  }
+  override setTimeout(fn: () => void, ms: number) {
+    return super.setTimeout(fn, ms + this.lag);
+  }
+}
+
+test("in a tab whose every timer is late (throttled, not frozen) a hung page still stalls: one short grace, then given up on", async () => {
+  const clock = new LateClock(1_500);
+  const queue = new PageQueue({ limits: { fg: 1, bg: 1 }, clock, log: false });
+  const started: PageJob[] = [];
+  const hung = () =>
+    queue.run("bg", (job) => {
+      started.push(job);
+      return new Promise<Uint8Array>((_, reject) => job.signal.addEventListener("abort", () => reject(job.signal.reason)));
+    });
+  const first = hung();
+  first.catch(() => undefined);
+  void hung().catch(() => undefined);
+  await settle();
+  let abortedAt: number | null = null;
+  for (let t = 0; t < 630_000 && abortedAt === null; t += 500) {
+    clock.advance(500);
+    await settle();
+    if (started[0]!.signal.aborted) abortedAt = clock.t;
+  }
+  assert.ok(abortedAt !== null, "given up on, not pending for ever");
+  // Its 30 s, late; the grace, late again: stalled.
+  assert.ok(abortedAt <= STALL_MS + 1_500 + 2_000 + 1_500 + 500, `stalled at ${abortedAt} ms`);
+  await assert.rejects(first, { name: "TimeoutError" });
+  assert.equal(started.length, 2, "and the next page goes in its place");
+});
+
 test("a pause that ran out unseen is over: a live request after a quiet while holds the background back as a new pause, said for what it was", async () => {
   const clock = new HandClock();
   const queue = new PageQueue({ limits: { fg: 4, bg: 4 }, clock });

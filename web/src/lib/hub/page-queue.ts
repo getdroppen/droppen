@@ -34,8 +34,9 @@
  *   already finishes. A pause that lasts {@link TRICKLE_MS} lets one page
  *   through each {@link TRICKLE_MS}, so a copy still moves under a page that
  *   is never quiet.
- * - A page that stalls — {@link STALL_MS} with not a byte of it arriving, the
- *   page itself not frozen meanwhile ({@link SUSPENDED_MS}) — is
+ * - A page that stalls — {@link STALL_MS} with not a byte of it arriving, and
+ *   none in a short grace after it when the page itself may have been
+ *   frozen ({@link SUSPENDED_MS}) — is
  *   aborted and stops counting against the limits at once: on a slow link
  *   one background page at a time means one hung connection would otherwise
  *   hold every machine's copy back for as long as the browser takes to give
@@ -122,11 +123,17 @@ const BODY_FLOOR_MS = 10;
 const CACHED_HEAD_MS = 10;
 /**
  * A watchdog that fires this much later than it was due (ms) was not
- * running: the page was frozen (a tab in the background, a phone asleep),
- * and what arrived meanwhile is still to be read. Its count starts again
- * rather than giving up on a page that may be healthy.
+ * running on time: the page may have been frozen (a tab in the background, a
+ * phone asleep), with what arrived meanwhile still to be read. A page silent
+ * for its whole {@link STALL_MS} that way gets one short grace,
+ * {@link STALL_GRACE_MS}, for those bytes — once for each silence: a tab
+ * that is only throttled (Chrome wakes a hidden one's timers once a minute,
+ * so every fire is late) would have read them already, and a hung page in
+ * it is still given up on.
  */
 const SUSPENDED_MS = 1_000;
+/** The grace a page silent through a late watchdog gets, for bytes a frozen tab has still to read (ms). */
+const STALL_GRACE_MS = 2_000;
 /**
  * The most a gap between two pieces of a body counts for (ms): a body that
  * stalls and then goes on, or hangs until the stall watchdog, says the link
@@ -338,18 +345,20 @@ export class PageQueue {
     };
     const stallMs = this.opts.stallMs ?? STALL_MS;
     let watchdog: unknown;
+    // The silence (as `lastAt` stood) a grace was given for: one each.
+    let gracedAt: number | null = null;
     const watch = (wait: number) => {
       const due = this.clock.now() + wait;
       watchdog = this.clock.setTimeout(() => {
         if (!counted) return;
         const at = this.clock.now();
-        if (at - due > SUSPENDED_MS) {
-          // The page was frozen, not the connection: count from now.
-          page.lastAt = at;
-          return watch(stallMs);
-        }
         const quiet = at - page.lastAt;
         if (quiet < stallMs) return watch(stallMs - quiet);
+        if (at - due > SUSPENDED_MS && gracedAt !== page.lastAt) {
+          // Maybe frozen rather than stalled: a moment for what it buffered meanwhile, once for this silence.
+          gracedAt = page.lastAt;
+          return watch(STALL_GRACE_MS);
+        }
         // Given up on: aborted, its caller told, and no longer in anybody's
         // way — even if its fetch takes a while to notice the abort.
         const stalled = new DOMException("the page stalled", "TimeoutError");

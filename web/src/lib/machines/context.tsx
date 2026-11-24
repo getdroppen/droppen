@@ -14,7 +14,7 @@
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import type { ApiClient } from "@/api/client";
 import { sessionRef, type MachineKey, type SessionRef } from "./key";
-import { homeMachine, homeMachineStore, isOpen, openMachinesStore, runtimeFor, type MachineInfo, type MachineRuntime } from "./registry";
+import { homeMachine, homeMachineStore, isOpen, machineInstance, machineInstancesStore, openMachinesStore, runtimeFor, type MachineInfo, type MachineRuntime } from "./registry";
 import { constantStore, type Store, useStore } from "./store";
 
 const MachineContext = createContext<MachineKey | null>(null);
@@ -59,14 +59,25 @@ export function useEnsureLive(): void {
  * page does not have (any more): nothing.
  */
 export function useHoldMachine(machine: MachineKey | null): void {
-  const open = useIsOpen(machine);
+  const instance = useMachineInstance(machine);
   useEffect(() => {
-    // Again here, not only as rendered: the machine may have gone between the
-    // commit and this effect (a chain change landing in between). Then there
-    // is nothing to hold, and the view re-renders without it.
-    if (machine === null || !open || !isOpen(machine)) return;
+    // Again here, not only as rendered: the machine may have gone (or been
+    // replaced) between the commit and this effect — a chain change landing
+    // in between. Then there is nothing to hold, and the view re-renders.
+    if (machine === null || instance === null || machineInstance(machine) !== instance) return;
     return runtimeFor(machine).hold();
-  }, [machine, open]);
+  }, [machine, instance]);
+}
+
+/**
+ * `machine` as the thing it is now (`machineInstance`), re-rendering as
+ * machines open, close or are replaced: what a view's hold on a machine is
+ * keyed on, so a machine closed and opened again in one moment — whose key
+ * and open list stay the same — is held anew, not left on the one disposed.
+ */
+function useMachineInstance(machine: MachineKey | null): object | null {
+  useStore(machineInstancesStore());
+  return machine === null ? null : machineInstance(machine);
 }
 
 /**
@@ -76,11 +87,11 @@ export function useHoldMachine(machine: MachineKey | null): void {
  * A machine not open (yet) has it the moment it opens.
  */
 export function useViewSession(machine: MachineKey | null, source: string, id: string): void {
-  const open = useIsOpen(machine);
+  const instance = useMachineInstance(machine);
   useEffect(() => {
-    if (machine === null || !open || !isOpen(machine)) return;
+    if (machine === null || instance === null || machineInstance(machine) !== instance) return;
     return runtimeFor(machine).viewSession(source, id);
-  }, [machine, open, source, id]);
+  }, [machine, instance, source, id]);
 }
 
 /** Every machine open on the page, home first, as they come and go. */
