@@ -113,6 +113,7 @@ JSON-RPC 错误的 `error.data` 是 `{"code": "<下表>"}`；HTTP+JSON 的错误
 | `droppen.device_offline` | （§7）代理连不上这台设备 |
 | `droppen.attestation_stale` | （§7）7 天内没有完整设备作证，开不了通道；提示「在任一设备上打开一次 Droppen」 |
 | `droppen.not_accepted` | （§7）这台设备不接受这个 a2a 设备 |
+| `droppen.device_removed` | （§7）这个 a2a 设备已被移出账号 |
 
 ## 4. 存储
 
@@ -161,12 +162,47 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
            ──Noise 通道，经中继（只有密文）──▶ 可运行 AI 的设备：bridge → /a2a/*
 ```
 
-- **a2a 设备**：链 v3 的设备标志加一位（bit 2，`a2a`）。不能与 `host`、`admin` 同在；不能签条目；不能经通行密钥加入。由一台完整设备在加入时签进链，Hub 改不了。
-- **未知位已经是失败即拒绝**：`Flags::from_byte`（`droppen-proto/src/chain.rs`）与 `web/src/lib/e2e/chain.ts` 都拒绝未知位，`merge_partial` 停在解不了的条目前面。所以所有校验方（Rust 的 `droppen-proto`、web、Hub 内嵌的 droppen）都要先认识这一位；旧版本的设备会停在这一条之前、要升级。顺序：先发版，再升级设备，再加 a2a 设备。
-- **主机侧**：`SetAccept` 列了它才接受；接受之后 bridge 只放行 A2A 路由（新分类），终端、文件、会话 API 一律拒绝；入口另列允许的 a2a 设备。调用方记为 `a2a:device:<id>`。
-- **代理**：`droppen a2a-proxy`（同一个二进制的子命令，另出 Docker 镜像）。只做两件事：带设备身份开通道，把 A2A 请求作为 `rpc` 子流转给设备，改写 Agent Card 里的接口地址为自己的地址。暂定配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理的 Bearer）、`PORT`。
+### 7.1 a2a 设备（链 v3）
+
+- 设备标志 bit 2（`0b100`）`a2a`。规则（Rust `droppen-proto/src/chain.rs` 与 TS `web/src/lib/e2e/chain.ts` 一致，并有互通向量）：
+  - 不能与 `host`、`admin` 同在：`Genesis3`、`AddDevice3`、`RecoveryJoin3` 带它和其中之一一律拒绝；`SetAdmin{true}`、`SetHost{true}` 不能给它（新规则 `A2A_PLAIN`）。
+  - 不是 admin，所以不能签任何条目。
+  - 不能经通行密钥加入（Rust 的 `!= Flags::NONE` 已挡住；TS 的检查今天只看 `host || admin`，要显式加上）。
+  - 只在加入时定，之后没有任何条目能给它或去掉它。
+- **只被明确点名接受**：`may_control(a2a 设备, host)` 只在 host 的 `SetAccept` 是 `Devices` 且名单里有它时成立；`Accept::All` 不包括 a2a 设备。TS 的 `mayControl`、`chain-policy.ts` 的 `could`/`acceptNames` 同样。
+- **不持任何内容密钥**：不在 `extra_controllers` 里（移出名单不触发轮换）；web 的 `hostKeyRecipients` 排除它；任何设备都不回应它的索钥请求（用途 4），Hub 也拒绝发给它、由它发出的这类信件。原因：它的钥在云上，持 `MK` 就能读那台设备的离线副本。
+- 未知位已经失败即拒绝（`Flags::from_byte`、`chain.ts`、`merge_partial` 停在解不了的条目前面）。所以加 a2a 设备之前，账号里所有可运行 AI 的设备都必须已升级到认识这一位的版本，否则它们停在这一条之前、链头落后、通道全部开不了，也就不能再经通道推送自升级。添加界面列出还没升级的设备，全部升级前不让加。
+
+### 7.2 加入：`RH1` 注册，`kind: "a2a"`
+
+配对（QR、8 位码）要求新设备先用密码在 Hub 注册，不适合无人值守的代理；`RH1` 注册只要一个环境变量和日志。
+
+1. 用户在 my.droppen.app「我的设备」→「添加 A2A 代理」，Hub 建一个 `kind: "a2a"` 的注册码（按 `devices.max` 计数）。
+2. 代理首次启动读 `DROPPEN_ENROLL_CODE`，生成自己的身份，按 `RH1` 协议证明（绑定账户、id 与两把公钥）；Hub 为它建 devices 行（`kind = 'a2a'`），不建 machines 行、不让它以 agent 身份登录。代理在日志里打出自己的设备指纹。
+3. 页面验证证明，显示指纹让用户核对，让用户选哪些设备接受它，然后写一批：`[AddDevice3{flags: a2a}, SetAccept{host, devices[… ∪ {id}]} …]`（不带 `KeyEpochs`、不交任何密钥）。
+4. 代理在 `/v1/client` 上等链里出现自己（带 `a2a`、钥匙对得上），之后用设备会话工作。
+
+### 7.3 可运行 AI 的设备一侧
+
+- agent 声明功能 `a2a/1`。
+- bridge：`Standing` 多一个 `a2a`。a2a 设备只能开 `rpc` 子流到 `/a2a/*`；`/api/*`、`/rh/*`、终端、`mux`、`blob` 一律 403 `a2a_only`；不给它直连信令。其它设备碰 `/a2a/*` 仍是拒绝。新鲜度（`Lapsed`）照旧最先判。
+- 转发 `A2A-Version`、`A2A-Extensions` 两个头。
+- 身份：bridge 照旧从通道得到设备 id，以 `cloud:<id>` 交给本机 server（只认本次启动的回环凭据，别的设备伪造不了）。A2A 层把它当作调用方 `a2a:device:<id>`，并再查一次：链上它带 `a2a`、入口的 `allowedDevices` 有它。
+- 入口多一个字段 `allowedDevices`（a2a 设备 id 列表，默认空）。
+
+### 7.4 代理 `droppen a2a-proxy`
+
+- `droppen` 二进制的子命令，另出 Docker 镜像。配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷：身份、已验证的链）、`DROPPEN_HUB`（默认 droppen.app）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理用的 Bearer）、`PORT`。
+- 建在 `droppen-client` 上：要补设备侧开通道（从 `droppen-devkit` 提出来）、流式 `rpc`、中继票据续期（15 分钟前必须续，否则 4419）、链的持久化与指纹钉住。
+- 路由：`/a2a/<设备>/agents/<entry>/…`，`<设备>` 是设备 id 或代理配置里的别名；把请求作为 `rpc` 子流转给那台设备的 `/a2a/agents/<entry>/…`，把 Agent Card 里的接口地址改写成代理自己的地址。
+- 长流（SSE）会被中继迁移、票据、链变化、7 天新鲜度切断；代理不替客户端重连，客户端靠 `SubscribeToTask` 或轮询接着跟。
+- 错误映射（代理按自己验证过的链判断，因为 4401/4403/412 有歧义）：设备离线（4404、中途 4410、presence 离线）→ `droppen.device_offline`；新鲜度（`Stale`、4412、412 `lapsed`）→ `droppen.attestation_stale`；链上它不在那台设备的接受名单 → `droppen.not_accepted`；链上它已被移除（或会话被拒 `device_removed`）→ `droppen.device_removed`。
 - push 由可运行 AI 的设备直接发到客户端的公网 https 地址（§5、§6 的规则），不经代理。
-- 待定：a2a 设备怎么加入（复用 `RH1` 注册还是配对码）、Hub 侧的改动（设备数、票据 `peers`、内嵌 droppen 的版本），见评审。
+
+### 7.5 Hub 与发布顺序
+
+- Hub：升级内嵌的 droppen；注册码加 `kind`（`a2a` 按 `devices.max` 计、建 devices 行）；拒绝发给 a2a 设备和由它发出的索钥信件；a2a 设备的路由与票据要求目标设备声明了 `a2a/1`；`docs/hub-api/` 同步。
+- 顺序：droppen 发版（链、web、agent、bridge、代理）→ Hub 升级内嵌 droppen 并部署 → 用户升级设备 → 添加 a2a 设备。第一条 a2a 条目写进链之后，Hub 不能再回滚到不认识这一位的版本（会解不开这个账号的链）。
 
 ## 8. 里程碑
 
@@ -176,5 +212,5 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 | M1b | 真实 `SessionBackend`：开会话、追问、回答、打断、轮次归属、worktree、artifacts、重启对账 | M1a |
 | M1c | push 投递与 SSRF 防护 | M1a |
 | M1d | 本机设置界面：入口、token（显示一次）、任务列表；会话列表上的「来自 A2A」标记 | M1a |
-| M2 | §7：评审 → 链标志与校验方 → bridge 分类 → 代理 → 加入流程与界面 → Hub | M1 |
+| M2 | §7：评审 → 链标志与校验方（Rust、TS）→ agent 与 bridge → 代理（droppen-client 补齐）→ 加入流程与界面 → Hub（另一个仓库）| M1a |
 | M3 | 与 dont-do 联调：先用它的 mock，再真跑 | M1；远程要 M2 |
