@@ -129,6 +129,8 @@
 | `droppen.device_removed` | （§7）这个 a2a 设备已被移出账号 |
 | `droppen.quota_exceeded` | 超过 §5 的每调用方限额（排队数、每天新 context 数、push 配置数、请求体大小） |
 | `droppen.revoked` | 调用方的 token 被吊销、被移出入口的 `allowedDevices`，或入口停用（task 被取消时状态消息里也带它） |
+| `droppen.context_closed` | 入口的 source、目录、账号、权限模式或隔离方式改了，旧 context 已关闭；追问要开新 context |
+| `droppen.push_origin_not_allowed` | 请求里的 push 配置不在入口的 `pushOrigins` 里（整个请求被拒，客户端可以去掉 push 配置重发） |
 
 ## 4. 存储
 
@@ -179,6 +181,7 @@
   - TCK 例外（只在 `DROPPEN_A2A_TCK=1` 且入口是 `source: "tck"` 时）：`pushOrigins` 可以列 `http://127.0.0.1`、`http://localhost`；列出时不带端口的回环 http 源接受该主机的任意端口（TCK 的接收端口每次不同），带端口的只接受那个端口。建配置与发送用同一条规则（`push::guard::push_target`）。
   - 唯一的例外：实例以 `DROPPEN_A2A_TCK=1` 启动时，`source: "tck"` 的入口可以列 `http://127.0.0.1[:port]` 与 `http://localhost[:port]`（TCK 自己的 webhook）。别的入口一律不行；`tck` 入口改成别的类型时这些源不跟过去。
 - **按调用方隔离**：task、context、push 配置都按 `(调用方, id)` 查。同一个入口的两个调用方互相看不见、不能续、不能答、不能取消对方的任务；「不是你的」与「不存在」回同样的错误。
+- **收紧要追溯**：入口的 source、目录、账号、权限模式、隔离方式改了，它已有的 context 全部关闭（未结束的 task 取消，带 `droppen.context_closed`），之后对这些 context 的追问回 `droppen.context_closed`。
 - **吊销要彻底**：吊销 token、从入口的 `allowedDevices` 里去掉一台 a2a 设备、a2a 设备被移出链、入口停用时，这个调用方（在这个入口上）所有未结束的 task 都取消（排队的撤掉，在跑的打断），push 配置删掉，开着的流关掉；之后每个流事件、每次 push 都再验一次调用方。入口上的 `allowedDevices` 与停用，是不依赖 Hub 的紧急开关。
 - **审计**：每个 A2A 请求记一行本机日志（时间、调用方、入口、方法、task），不记内容和 token。
 
