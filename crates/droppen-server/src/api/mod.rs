@@ -28,6 +28,9 @@ use droppen_sessions::{SessionDetail, SessionList, Settings, Source};
 
 mod state;
 
+/// The A2A server (`droppen_a2a`) behind the server's guards.
+#[cfg(test)]
+mod a2a_routes;
 /// The ACP agents' routes (`droppen_provider_acp::agents`), through the
 /// router as the server builds it.
 #[cfg(test)]
@@ -148,6 +151,9 @@ pub struct AppState {
     pub desktop_app: bool,
     /// The first-run guide: tool detection and the children's `PATH`.
     pub setup: Arc<droppen_setup::Setup>,
+    /// The A2A server (`docs/a2a.md`): its routes under `/a2a/*` and
+    /// `/api/a2a/*`, its tasks and the backend they run on.
+    pub a2a: Arc<droppen_a2a::A2a>,
     /// The port this server listens on, once it does: what a request from the
     /// app's own window names as its `Host` and `Origin`. Filled once, by the
     /// entry when its listener is bound; read by the desktop-window gate
@@ -452,6 +458,7 @@ pub fn routes(router: ApiRouter) -> ApiRouter {
     let router = droppen_notify::push::PushState::routes(router);
     let router = droppen_accounts::quota::QuotaState::routes(router);
     let router = droppen_drive::schedule::ScheduleState::routes(router);
+    let router = droppen_a2a::A2aState::routes(router);
     let router = droppen_workbench::screens::ScreensState::routes(router);
     let router = droppen_supervisor::selfupdate::SelfUpdateState::routes(router);
     let router = droppen_setup::SetupState::routes(router);

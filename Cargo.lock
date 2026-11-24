@@ -1710,6 +1710,7 @@ version = "0.2.141"
 dependencies = [
  "axum",
  "clap",
+ "droppen-a2a",
  "droppen-accounts",
  "droppen-agent",
  "droppen-aggregator",

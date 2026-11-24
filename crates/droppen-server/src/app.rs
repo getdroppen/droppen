@@ -150,7 +150,10 @@ impl RemoteHandApp {
         // to start rather than on the first request for an agent.
         let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(drive.providers.clone())
             .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
+        let cancel = CancellationToken::new();
+        let a2a = a2a_server(&paths, config, cancel.clone());
         Ok(AppState {
+            a2a,
             acp_agents,
             cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
             // Touches nothing yet: the installed packages are read by the
@@ -170,12 +173,24 @@ impl RemoteHandApp {
             feeds,
             global,
             refresh,
-            cancel: CancellationToken::new(),
+            cancel,
             lock: Arc::new(std::sync::OnceLock::new()),
             desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),
             send_limit: droppen_http::SEND_LIMIT,
         })
     }
+}
+
+/// The A2A server over this instance's database (`docs/a2a.md`).
+///
+/// Its session backend is [`droppen_a2a::backend::Unwired`] until a real one
+/// is wired in here: entries and tokens can be set up, and every task an entry
+/// is handed is rejected.
+fn a2a_server(paths: &Paths, config: &ConfigWrapper<AppConfig>, cancel: CancellationToken) -> Arc<droppen_a2a::A2a> {
+    let (_events, inbox) = droppen_a2a::backend::event_channel();
+    let store = droppen_a2a::store::Store::new(droppen_instance::db::at(paths.instance_db()));
+    let settings = droppen_a2a::Settings::from_env(droppen_http::SERVER_VERSION, config.app.a2a.public_base());
+    droppen_a2a::A2a::new(store, droppen_a2a::backend::Unwired::shared(), inbox, settings, cancel)
 }
 
 /// The instance claims [`Prepared::claim_for_process`] keeps. A static is never
@@ -226,6 +241,10 @@ impl RemoteHandApp {
             // find them. `/redoc` is a redirect of ours — see
             // [`redoc_to_scalar`].
             .openapi_endpoints(Some(OpenApiEndpoints::default()))
+            // `/a2a/*` is a router of its own, with its own credential
+            // (`droppen_a2a::protocol`); the guards `router` adds go around it
+            // as around everything else.
+            .finish_router(|router, context| router.nest_service("/a2a", droppen_a2a::protocol::router(context.state.a2a.clone())))
     }
 
     /// The router the server serves: [`Self::builder`], plus the `/embed`
@@ -426,6 +445,14 @@ impl RemoteHandApp {
                 // task. Acting on a schedule without owning the instance is
                 // exactly the thing this block exists to prevent.
                 droppen_drive::schedule::runner::spawn(&droppen_drive::schedule::ScheduleState::from_ref(&state));
+                // The A2A tasks that were running when the server stopped are
+                // picked up again where their sessions stand, and the waiting
+                // ones handed out: that starts sessions too, so only the
+                // instance's owner does it.
+                tokio::spawn({
+                    let a2a = state.a2a.clone();
+                    async move { a2a.resume().await }
+                });
                 // The quota fallback probe starts CLIs as well — against the
                 // usage logins every instance on this machine shares — so it
                 // sits behind the same gate. It only probes a login nothing has

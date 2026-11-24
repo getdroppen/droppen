@@ -73,8 +73,9 @@ impl EntrySource {
 pub enum Isolation {
     /// In the entry's directory itself.
     None,
-    /// In a worktree of its own: `<cwd>/.worktrees/a2a-<first 8 of the
-    /// context>`, on the branch `a2a/<first 8 of the context>` (§5).
+    /// In a worktree of its own: `<cwd>/.worktrees/a2a-<contextId>`, on the
+    /// branch `a2a/<contextId>`, the whole uuid; one that exists already is a
+    /// rejection, and none is removed afterwards (§5).
     #[default]
     Worktree,
 }
@@ -136,7 +137,8 @@ pub struct TaskRef {
 pub struct Image {
     /// `image/png` or `image/jpeg`.
     pub media_type: String,
-    /// The file name the part gave, if any.
+    /// The file name the part gave, cut down to letters, digits, `.`, `-`
+    /// and `_`: a label to show, never a path to write to (§5).
     pub filename: Option<String>,
     /// The bytes.
     pub bytes: Vec<u8>,
@@ -398,6 +400,13 @@ pub enum ErrorCode {
     AttestationStale,
     /// `droppen.not_accepted` (§7).
     NotAccepted,
+    /// `droppen.device_removed` (§7).
+    DeviceRemoved,
+    /// `droppen.quota_exceeded`: one of the per-caller caps of §5.
+    QuotaExceeded,
+    /// `droppen.revoked`: the caller's token was revoked, its device taken
+    /// out of `allowedDevices`, or the entry switched off.
+    Revoked,
 }
 
 impl ErrorCode {
@@ -410,7 +419,16 @@ impl ErrorCode {
             ErrorCode::DeviceOffline => "droppen.device_offline",
             ErrorCode::AttestationStale => "droppen.attestation_stale",
             ErrorCode::NotAccepted => "droppen.not_accepted",
+            ErrorCode::DeviceRemoved => "droppen.device_removed",
+            ErrorCode::QuotaExceeded => "droppen.quota_exceeded",
+            ErrorCode::Revoked => "droppen.revoked",
         }
+    }
+
+    /// The `reason` of the `google.rpc.ErrorInfo` that carries it (§3.5):
+    /// the code without `droppen.`, in upper snake case.
+    pub fn reason(self) -> String {
+        self.as_str().trim_start_matches("droppen.").to_ascii_uppercase()
     }
 }
 

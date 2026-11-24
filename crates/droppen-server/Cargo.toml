@@ -74,6 +74,9 @@ droppen-provider-claude-code = { path = "../droppen-provider-claude-code" }
 droppen-drive = { path = "../droppen-drive" }
 # The first-run guide: detection, installs and sign-ins, folders and progress.
 droppen-setup = { path = "../droppen-setup" }
+# The A2A server: `/a2a/*`, `/api/a2a/*`, its store, and the SessionBackend
+# port the entry wires a session backend into.
+droppen-a2a = { path = "../droppen-a2a" }
 # The device role: verified copies of the account's other machines.
 droppen-aggregator = { path = "../droppen-aggregator" }
 # The machine role: identity, enrollment, the hub link, chain, relays, streams.
