@@ -215,6 +215,9 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 2. 代理首次启动读 `DROPPEN_ENROLL_CODE`，生成自己的身份，按 `RH1` 协议证明。a2a 码用自己的版本前缀 `DA1-<账户指纹>-<秘密>`，证明用自己的标签（`PROOF_LABEL` 之外另一个常量，带 `a2a`）；`agent enroll` 拒绝 `DA1`，代理拒绝 `RH1`/`DR1`，两种码不能互换。代理在日志里打出自己的设备指纹。Hub 为它建 devices 行（`kind = 'a2a'`），不建 machines 行、不让它以 agent 身份登录。
 3. **页面要求用户把代理日志里的指纹粘进来**（与 `completeEnrollment` 的 `expect` 同一机制），对不上、或 Hub 显示有不止一个认领，就中止。然后让用户选哪些设备接受它，写一批：`[AddDevice3{flags: a2a}, SetA2aAccept{host, devices[…]} …]`（不带 `KeyEpochs`、不交任何密钥）。
 4. 代理在 `/v1/client` 上等链里出现自己（带 `a2a`、钥匙对得上），之后用设备会话工作。所有信件不拆就丢。
+   - 认领协议（`/v1/agent` 上）：`enroll {token, kind: "a2a"}` → `enroll_assigned {account, device}` → `enroll_proof {kind, sign_key, dh_key, time_ms, sig, proof}`（`sig` 是角色为 Device 的 `HubLogin`；`proof` 用 `A2A_PROOF_LABEL = b"rh/v1 enroll-proof a2a\0"`）→ `enrolled`。向量在 `vectors/rust.json` 的 `identity.enrollA2a`。
+   - 还没进链的 a2a 设备，Hub 要让它领设备会话、在 `/v1/client` 上 `chain_sub`、读 `GET /v1/chain`（它要等自己出现在链里）。
+   - 页面比对：用户粘进来的指纹必须等于 `deviceFingerprint(signKey, dhKey)`（「我的设备」显示的同一种）。
 5. 文档里提醒：码只设在代理这个服务上（不要放进共享变量），加入后从环境里删掉。
 
 ### 7.3 可运行 AI 的设备一侧
@@ -229,7 +232,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 
 ### 7.4 代理 `droppen a2a-proxy`
 
-- `droppen` 二进制的子命令，另出 Docker 镜像。配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷：身份、已验证的链）、`DROPPEN_HUB`（默认 `https://api.droppen.app`）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理用的 Bearer，至少 32 个字符）、`PORT`；可选 `DROPPEN_A2A_PROXY_BASE`（Agent Card 里写的代理地址，默认取请求的 Host）、`DROPPEN_A2A_PROXY_ALIASES`（`别名=设备 id,…`）。
+- `droppen` 二进制的子命令，另出 Docker 镜像 `ghcr.io/getdroppen/droppen-a2a-proxy:vX.Y.Z`（随发版构建、带证明；部署见 `docs/a2a-proxy.md`）。`GET /healthz`（无鉴权）回 `{"status":"up","enrolled":bool}`；加入前 A2A 请求回 503。配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷：身份、已验证的链）、`DROPPEN_HUB`（默认 `https://api.droppen.app`）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理用的 Bearer，至少 32 个字符）、`PORT`；可选 `DROPPEN_A2A_PROXY_BASE`（Agent Card 里写的代理地址，默认取请求的 Host）、`DROPPEN_A2A_PROXY_ALIASES`（`别名=设备 id,…`）。
 - 建在 `droppen-client` 上：要补设备侧开通道（从 `droppen-devkit` 提出来）、流式 `rpc`、中继票据续期（15 分钟前必须续，否则 4419）、链的持久化与指纹钉住。
 - 路由：`/a2a/<设备>/agents/<entry>/…`，`<设备>` 是设备 id 或代理配置里的别名；把请求作为 `rpc` 子流转给那台设备的 `/a2a/agents/<entry>/…`，把 Agent Card 里的接口地址改写成代理自己的地址。
 - 长流（SSE）会被中继迁移、票据、链变化、7 天新鲜度切断；代理不替客户端重连，客户端靠 `SubscribeToTask` 或轮询接着跟。
