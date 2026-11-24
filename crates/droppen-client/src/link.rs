@@ -138,11 +138,31 @@ pub async fn connect_device(hub: &HubUrl, account: &str, device: &str, sign: &Si
 /// (`POST /v1/relays/tickets`): a link channels open on like the hub's. The
 /// relay's `welcome` and `presence` come first.
 pub async fn connect_relay(origin: &str, account: &str, device: &str, sign: &SigningKey, ticket: &str) -> Result<Link> {
+    match connect_relay_welcome(origin, account, device, sign, ticket).await {
+        Ok((link, _)) => Ok(link),
+        Err(ConnectError::Refused { answer, .. }) => Err(format!("the relay refused the sign-in: {answer}")),
+        Err(ConnectError::Failed(why)) => Err(why),
+    }
+}
+
+/// [`connect_relay`], with the relay's `welcome` (`{relay, id, expires_ms}`:
+/// when the ticket the link signed in with runs out) and a refusal told
+/// apart: the relay's `error {code, …}` (`denied`, `limit`, `busy`) or its
+/// close before a `welcome`. The `presence` that follows the `welcome` is the
+/// link's first control message.
+pub async fn connect_relay_welcome(
+    origin: &str,
+    account: &str,
+    device: &str,
+    sign: &SigningKey,
+    ticket: &str,
+) -> std::result::Result<(Link, Value), ConnectError> {
+    let failed = ConnectError::Failed;
     let url = format!("{origin}{CONNECT_PATH}");
-    let ws = dial(&url).await?;
+    let ws = dial(&url).await.map_err(failed)?;
     let (mut sink, mut stream) = ws.split();
-    let challenge = next_json(&mut stream, CONNECT_PATH).await?;
-    let nonce: [u8; 32] = key32(challenge["nonce"].as_str().ok_or("no challenge")?)?;
+    let challenge = next_json(&mut stream, CONNECT_PATH).await.map_err(failed)?;
+    let nonce: [u8; 32] = key32(challenge["nonce"].as_str().ok_or_else(|| failed("no challenge".into()))?).map_err(failed)?;
     let time_ms = now_ms();
     let sig = HubLogin {
         role: LoginRole::RelayDevice,
@@ -153,24 +173,49 @@ pub async fn connect_relay(origin: &str, account: &str, device: &str, sign: &Sig
         time_ms,
     }
     .sign(sign)
-    .map_err(err("sign-in"))?;
+    .map_err(|e| failed(format!("sign-in: {e}")))?;
     let login = PeerToRelay::Login {
         ticket: ticket.into(),
         time_ms,
         sig: hex(&sig),
     };
-    let login = serde_json::to_string(&login).map_err(err("sign-in"))?;
+    let login = serde_json::to_string(&login).map_err(|e| failed(format!("sign-in: {e}")))?;
     sink.send(Message::Text(tap::sent(CONNECT_PATH, login).into()))
         .await
-        .map_err(err("send"))?;
-    let welcome = next_json(&mut stream, CONNECT_PATH).await?;
+        .map_err(|e| failed(format!("send: {e}")))?;
+    let welcome = next_json(&mut stream, CONNECT_PATH).await.map_err(failed)?;
     if welcome["t"] != "welcome" {
-        return Err(format!("the relay refused the sign-in: {welcome}"));
+        return Err(match welcome["code"].as_str() {
+            Some(code) if welcome["t"] == "error" => ConnectError::Refused {
+                code: code.to_string(),
+                answer: welcome.to_string(),
+            },
+            _ => failed(format!("the relay refused the sign-in: {welcome}")),
+        });
     }
-    Ok(Link::spawn(sink, stream, CONNECT_PATH))
+    Ok((Link::spawn(sink, stream, CONNECT_PATH), welcome))
 }
 
 type Routes = Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<Frame>>>>;
+
+/// How the far end closed a link: the websocket close frame's code and
+/// reason (a relay's 4419 for a ticket that ran out, 4403 for a revoked
+/// one, 1012 for a restart, …), shared with whoever watches the link's
+/// channels ([`Link::close_frame`]). Empty while the link is up, and when it
+/// ended with no close frame (a network failure, or this side letting go).
+#[derive(Debug, Clone, Default)]
+pub struct CloseFrame(Arc<Mutex<Option<(u16, String)>>>);
+
+impl CloseFrame {
+    /// The code and reason, once the far end sent them.
+    pub fn get(&self) -> Option<(u16, String)> {
+        self.0.lock().expect("close frame").clone()
+    }
+
+    fn set(&self, code: u16, reason: String) {
+        *self.0.lock().expect("close frame") = Some((code, reason));
+    }
+}
 
 /// A signed-in `/v1/client` connection: control messages, and frames routed
 /// to channels by `ch`.
@@ -183,9 +228,12 @@ pub struct Link {
     closed: tokio::sync::watch::Receiver<bool>,
     /// When (ms) the far end last sent anything (a `PONG` included).
     heard: Arc<AtomicU64>,
-    /// Dropped with the link: its reader stops, and the socket goes, even if
-    /// the far end never answers the close.
-    _reader_stop: tokio::sync::watch::Sender<()>,
+    /// The far end's close frame, once it sent one.
+    close_frame: CloseFrame,
+    /// Dropped with the link (or sent on by [`Link::stop`]): its reader
+    /// stops, and the socket goes, even if the far end never answers the
+    /// close.
+    reader_stop: tokio::sync::watch::Sender<()>,
 }
 
 impl Link {
@@ -224,9 +272,11 @@ impl Link {
             let _ = sink.close().await;
         });
         let (reader_stop, mut stop) = tokio::sync::watch::channel(());
+        let close_frame = CloseFrame::default();
         {
             let routes = routes.clone();
             let heard = heard.clone();
+            let close_frame = close_frame.clone();
             tokio::spawn(async move {
                 loop {
                     let message = tokio::select! {
@@ -281,10 +331,17 @@ impl Link {
                                 }
                             }
                         }
-                        Message::Close(_) => break,
+                        Message::Close(frame) => {
+                            if let Some(frame) = frame {
+                                close_frame.set(u16::from(frame.code), frame.reason.as_str().to_string());
+                            }
+                            break;
+                        }
                         _ => {}
                     }
                 }
+                // Before the routes go: a channel that sees its route end
+                // finds the close frame already there.
                 routes.lock().expect("routes").clear();
                 let _ = closed_tx.send(true);
             });
@@ -297,8 +354,22 @@ impl Link {
             control: tokio::sync::Mutex::new(control_rx),
             closed,
             heard,
-            _reader_stop: reader_stop,
+            close_frame,
+            reader_stop,
         }
+    }
+
+    /// The far end's close frame, as it is now and as it will be: the handle
+    /// a channel keeps to say why its link went.
+    pub fn close_frame(&self) -> CloseFrame {
+        self.close_frame.clone()
+    }
+
+    /// Let the link go now (a connection gone silent, a relay draining):
+    /// its reader stops and every channel on it ends, as if the far end had
+    /// closed it; the socket goes once the last sender is dropped.
+    pub fn stop(&self) {
+        let _ = self.reader_stop.send(());
     }
 
     /// How long (ms) since the far end last sent anything. The link pings
@@ -341,6 +412,12 @@ impl Link {
 
     /// Send a control message.
     pub fn send_control(&self, message: &DeviceToHub) -> Result<()> {
+        let text = serde_json::to_string(message).map_err(err("control message"))?;
+        self.text.send(text).map_err(|_| "the link is closed".to_string())
+    }
+
+    /// Send a relay control message (`ticket {ticket}`, a renewal).
+    pub fn send_relay(&self, message: &PeerToRelay) -> Result<()> {
         let text = serde_json::to_string(message).map_err(err("control message"))?;
         self.text.send(text).map_err(|_| "the link is closed".to_string())
     }
