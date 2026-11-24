@@ -2459,6 +2459,10 @@
                   "rotates": {
                     "type": "boolean",
                     "description": "Its agent last declared `rotate/1`: it can renew its identity key. Absent from hubs before renewals."
+                  },
+                  "a2a": {
+                    "type": "boolean",
+                    "description": "Its agent last declared `a2a/1`: it reads an A2A proxy in the chain (docs/a2a.md §7.3). Absent from hubs before A2A proxies."
                   }
                 }
               }
@@ -2758,6 +2762,12 @@
             },
             "token": {
               "$ref": "#/$defs/hex16"
+            },
+            "kind": {
+              "enum": [
+                "a2a"
+              ],
+              "description": "An A2A proxy's `DA1-` code (docs/a2a.md §7.2): counted against `devices.max`, claimed only as `kind: \"a2a\"`, its claimer a `devices` row of that kind. Absent: a code for a device that runs AI."
             }
           }
         },
@@ -2824,6 +2834,48 @@
                 },
                 "proof": {
                   "$ref": "#/$defs/hex32"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "description": "An A2A proxy's code, proved (docs/a2a.md §7.2).",
+              "required": [
+                "state",
+                "kind",
+                "device",
+                "sign_key",
+                "dh_key",
+                "proof",
+                "claims"
+              ],
+              "properties": {
+                "state": {
+                  "const": "proved"
+                },
+                "kind": {
+                  "const": "a2a"
+                },
+                "device": {
+                  "$ref": "#/$defs/id",
+                  "description": "The id the hub assigned the A2A proxy (`enroll_assigned`)."
+                },
+                "sign_key": {
+                  "$ref": "#/$defs/hex32"
+                },
+                "dh_key": {
+                  "$ref": "#/$defs/hex32"
+                },
+                "proof": {
+                  "$ref": "#/$defs/hex32"
+                },
+                "claims": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "How many `enroll` messages named this token while it was waiting or proved, assigned or refused, the one that proved it included. The page adds nothing unless it is 1."
+                },
+                "expires_ms": {
+                  "$ref": "#/$defs/ms"
                 }
               }
             }

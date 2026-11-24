@@ -61,7 +61,11 @@ export type AccountErrorKind =
    */
   | "exposed"
   /** A pause's end would give back other control than the person was shown (M7): ask again. */
-  | "pauseChanged";
+  | "pauseChanged"
+  /** The fingerprint pasted from an A2A proxy's log is not the one of the device that claimed its code (docs/a2a.md §7.2): nothing is added. */
+  | "fingerprintMismatch"
+  /** The hub saw an A2A proxy's code claimed more than once, or does not say how often (docs/a2a.md §7.2): nothing is added. */
+  | "claims";
 
 export class AccountError extends Error {
   /** The message as an i18n key (the English, with `{{name}}` where `vars` go). */

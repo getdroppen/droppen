@@ -523,7 +523,7 @@ login session. Any other value is no hint.
 - `rotations`: `{enabled, window_ms, active: [{host, state}]}` — identity key renewals ([below](#identity-key-renewals)): whether this hub takes them (`DROPPEN_HUB_HOST_ROTATION=on`), the window T, and each host with a renewal under way or committed in the last day (`GET /v1/rotations` has the rest); a hub from before renewals leaves it out;
 - `devices[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, kind, host, ua_label, replaces, online}` (`kind`, `host`, `replaces`: as registered, `null` when not given; a hub from before local sign-in leaves them out, and one from before `replaces` and `online` leaves those out; `ua_label`: below; `online`: whether the device is signed in on `/v1/client` now — `last_seen_ms` is when it last signed in, which a device connected for hours does not move);
 - `devices[].ua_label`: the device's browser by a short name, for a page to tell browsers and phones apart: what the device is and which browser, `"<device> · <browser>"` (a space, `·` U+00B7, a space), or either alone. `<device>` is one of `iPhone`, `iPad`, `Mac`, `Windows`, `Android`, `Linux`, `ChromeOS`, `<browser>` one of `Safari`, `Chrome`, `Firefox`, `Edge`, `Opera`, `Samsung Internet` — nothing else, ever: no version, no model, never the `User-Agent` itself, which the hub does not keep. A webview that names no browser (the desktop app's, a home-screen web app) is the device alone (`"Mac"`, `"iPhone"`); an iPad asking for desktop sites reads as `"Mac"` unless its page says `?touch=1` (above), then `"iPad"`. It comes from the `User-Agent` of the device's own requests only: its sign-in on `/v1/client` and its `GET /v1/me` with its device session — never a request body, a login session or another device's request. Replaced when it changes; a request whose `User-Agent` names nothing known (curl, an HTTP library, the agent) leaves it as it is, and so does one that says `Mac` where the device is known as an `iPad` with the same browser (a request without the hint cannot tell the two apart, and a device never turns from one into the other). `null` until one named something; metadata only, like `kind`; a hub from before it leaves it out;
-- `machines[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, presence, copy: {streams, bytes, last_write_ms}, reads_v3, rotates}` (`presence` as in websocket.md; `copy`: the machine's encrypted offline copy on the hub; `in_chain`: a current host; `reads_v3`: its agent declared `chain/3` and `policy/1`; `rotates`: it declared `rotate/1`, it can renew its identity key).
+- `machines[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, presence, copy: {streams, bytes, last_write_ms}, reads_v3, rotates, a2a}` (`presence` as in websocket.md; `copy`: the machine's encrypted offline copy on the hub; `in_chain`: a current host; `reads_v3`: its agent declared `chain/3` and `policy/1`; `rotates`: it declared `rotate/1`, it can renew its identity key; `a2a`: it declared `a2a/1`, it reads an A2A proxy in the chain — the page adds an A2A proxy only once every current host says `true`, for availability only (`docs/a2a.md` §7.1); absent from hubs before A2A proxies).
 - A host that signed in as a device (`POST /v1/session`) is listed in `devices[]` too, with `kind: "host"`.
 - `credentials`: `{password, passkeys}` — whether the account has a password (an account made with a passkey, or one whose password was removed, has none) and how many passkeys; a hub from before passkeys leaves it out.
 - `sign_in_changes`: `[{id, kind, device, label, at_ms}]` — how the account's sign-in changed in the last 30 days (below, "The account's ways to sign in"), oldest first, at most the newest 50, each exactly as `sign_in_changed` told the account's devices at the time (websocket.md): `kind` `passkey_added | passkey_renamed | passkey_removed | password_set | password_changed | password_removed`; `device` the device session that made it; `label` the passkey's (the new one, for a rename), `null` for the password. A hub from before it leaves it out.
@@ -611,18 +611,34 @@ fp}` and close with 4005, its relay tickets so far are revoked, and the
 account's devices hear `rotation {state: "committed"}`.
 
 ### `POST /v1/enrollments` — requires a current full device
-`{device, token}` (`device`: the session's own; `token`: the enrollment
+`{device, token, kind?}` (`device`: the session's own; `token`: the enrollment
 code's 16-byte token, hex) → `{expires_ms}` (10 minutes). Announces a code
 an agent will claim on `/v1/agent` (`enroll`).
-Errors: `400 bad_request`, `403 not_a_full_device | email_unverified`,
-`409 limit` (`hosts.max`, waiting enrollments included), `409 exists`,
-`429 too_many_enrollments`. Limits: 10/hour per device, 5 waiting per account.
+`kind: "a2a"` announces an A2A proxy's `DA1-` code instead (`docs/a2a.md`
+§7.2): it counts against `devices.max` (not `hosts.max`), only a claim that
+says `kind: "a2a"` takes it, and the device that claims it gets a `devices`
+row of that kind — no `machines` row, no agent sign-in. Without `kind`, a code
+for a device that runs AI, as before. The page decides what it adds from its
+own record of the code, never from the kind the hub keeps.
+Errors: `400 bad_request` (also an unknown `kind`), `403 not_a_full_device |
+email_unverified`, `409 limit` (`hosts.max`, or `devices.max` for `kind:
+"a2a"`, waiting enrollments included), `409 exists`, `429
+too_many_enrollments`. Limits: 10/hour per device, 5 waiting per account.
 
 ### `GET /v1/enrollments/{token}`
 → `{state: "waiting"|"expired", expires_ms}`, or once the agent proved
 `{state: "proved", machine, device, sign_key, dh_key, proof}`. The device
 checks `proof` against the code before it adds the host (`[AddDevice3{host},
 KeyEpochs]`; v2: `AddMachine`).
+An A2A proxy's code (`kind: "a2a"`), once proved: `{state: "proved", kind:
+"a2a", device, sign_key, dh_key, proof, claims, expires_ms}` — `device` the id
+the hub assigned the proxy in `enroll_assigned` (there is no `machine`), and
+`claims` how many `enroll` messages named this token while it was waiting or
+proved (each one counted, assigned or refused, the one that proved it
+included). The page checks `proof` under the A2A label, refuses the code if
+`claims` is not exactly 1 (or missing), and adds the proxy only once the
+person pasted the fingerprint from the proxy's log and it matches `sign_key`
+and `dh_key` (`[AddDevice3{a2a}, SetA2aAccept{…}…]`, no `KeyEpochs`).
 Errors: `400 bad_request`, `404 not_found` (another account's, or none).
 
 ### `POST /v1/mailbox` — requires a current admin device (but see purpose 4)

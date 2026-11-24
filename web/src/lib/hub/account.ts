@@ -97,6 +97,7 @@ import {
   type Draft,
   encodeEntry,
   encodeHostKeyMail,
+  type A2aEnrollCode,
   type EnrollCode,
   enrollToken,
   type Entry,
@@ -106,6 +107,7 @@ import {
   fingerprint,
   fixedVersion,
   fromHex,
+  generateA2aEnrollCode,
   generateEnrollCode,
   genesis3Draft,
   HandshakeError,
@@ -146,6 +148,7 @@ import {
   type SlotRecord,
   userKeyCommit,
   utf8,
+  verifyA2aEnrollProof,
   verifyEnrollProof,
   verifyPasskeySlot,
   verifyHostRotation,
@@ -331,6 +334,9 @@ import { type AccountNote, accountBasics } from "./account/basics";
 import { RenewalNotes } from "./account/renewal-notes";
 import { ActivationHold } from "./account/held-back";
 import { ChainTrust } from "./account/chain-trust";
+import { type A2aClaim, type A2aHostsChange, sameFingerprint } from "./account/a2a";
+export { a2aUpgradeGate, fingerprintDigits, sameFingerprint } from "./account/a2a";
+export type { A2aClaim, A2aHostsChange, A2aUpgradeGate } from "./account/a2a";
 export { deviceFingerprint, hasRunAi, joinAction, limitedDevice } from "./account/devices";
 export type { JoinKeys, PromoteBlock, Refusal, SelfRemoval, Standing } from "./account/devices";
 export { a2aPlainRefused, AccountError, hostAdminRefused, KeysUnreadableError, v3NotWritableError } from "./account/errors";
@@ -445,6 +451,13 @@ export class CloudAccount {
   });
   /** What this browser trusts of the account's chain: the pinned genesis, the seen record and the fork latch (`ChainTrust`). */
   private readonly trust: ChainTrust;
+  /**
+   * The A2A proxies' codes this page made (`startA2aEnrollment`), by token:
+   * the local record that a code is an A2A proxy's (docs/a2a.md §7.2). What a
+   * claim of one adds is an A2A proxy because of this record, never because the
+   * hub says what kind the enrollment is; a code not in it adds nothing.
+   */
+  private readonly a2aCodes = new Map<string, A2aEnrollCode>();
 
   private constructor(
     readonly api: HubApi,
@@ -1902,6 +1915,148 @@ export class CloudAccount {
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
+  }
+
+  // ------------------------------------------------------------ A2A proxies (docs/a2a.md §7.2)
+
+  /**
+   * A fresh code that joins an A2A proxy (`DA1-`), its token announced to the
+   * hub as `kind: "a2a"` (the secret never is) and kept here as an A2A proxy's
+   * code ({@link a2aCodes}). Only a full device of an account upgraded to
+   * chain v3 adds one; the hub counts it against the plan's devices and says
+   * when the code runs out (`expires_ms`, its clock; `null` when it does not).
+   */
+  async startA2aEnrollment(): Promise<{ code: A2aEnrollCode; expiresMs: number | null }> {
+    this.requireUpgraded(this.requireAdmin());
+    const code = generateA2aEnrollCode(await this.fingerprint());
+    const token = await enrollToken(code);
+    const key = hex(token);
+    this.a2aCodes.set(key, code);
+    try {
+      const expiresMs = await this.api.createEnrollment(this.session.token, this.deviceId, token, "a2a");
+      return { code, expiresMs: typeof expiresMs === "number" && Number.isFinite(expiresMs) ? expiresMs : null };
+    } catch (error) {
+      this.a2aCodes.delete(key);
+      throw error;
+    }
+  }
+
+  /** The local record of A2A proxy code `code` (`startA2aEnrollment`), by its token: refused if this page did not make it as one. */
+  private async a2aRecord(code: A2aEnrollCode): Promise<string> {
+    const key = hex(await enrollToken(code));
+    if (this.a2aCodes.get(key) !== code) throw new AccountError("proof", "this page did not make that code for an A2A proxy: nothing is added with it");
+    return key;
+  }
+
+  /** Forget A2A proxy code `code`: it adds nothing any more (added with, or given up on). */
+  async dropA2aCode(code: A2aEnrollCode): Promise<void> {
+    this.a2aCodes.delete(hex(await enrollToken(code)));
+  }
+
+  /**
+   * Wait for an A2A proxy to claim `code` (a code this page made:
+   * `startA2aEnrollment`) and check the claim: the hub saw the code claimed
+   * exactly once — more, and someone else holds it; not said, and the hub does
+   * not take A2A proxies yet — and the proxy's proof verifies under the A2A
+   * label over this account, the device id the hub assigned and its keys.
+   * Nothing is added: whoever else held the code in its ten minutes could have
+   * claimed it first with a valid proof, so the person pastes the fingerprint
+   * from the proxy's own log first ({@link addA2aProxy}, the same check as
+   * `completeEnrollment`'s `expect`). Either refusal forgets the code.
+   */
+  async awaitA2aClaim(code: A2aEnrollCode, signal?: AbortSignal, pollMs = 1000): Promise<A2aClaim> {
+    const key = await this.a2aRecord(code);
+    const token = await enrollToken(code);
+    const refuse = (error: AccountError) => {
+      this.a2aCodes.delete(key);
+      return error;
+    };
+    for (;;) {
+      if (signal?.aborted) throw signal.reason ?? new DOMException("aborted", "AbortError");
+      const status = await this.api.enrollment(this.session.token, token);
+      if (status.state === "expired") throw refuse(new AccountError("expired", "the enrollment code expired"));
+      if (status.state === "proved" && status.device && status.signKey && status.dhKey && status.proof) {
+        if (status.claims === undefined) throw refuse(new AccountError("claims", "the hub does not say how often the code was claimed, so it cannot add an A2A proxy yet: nothing was added"));
+        if (status.claims !== 1) {
+          throw refuse(new AccountError("claims", "the code was claimed more than once: someone else may hold it. Nothing was added; make a new code"));
+        }
+        if (!(await verifyA2aEnrollProof(code, this.account, status.device, status.signKey, status.dhKey, status.proof))) {
+          throw refuse(new AccountError("proof", "the A2A proxy's proof does not verify: it was not added"));
+        }
+        return { code, device: status.device, signKey: status.signKey, dhKey: status.dhKey };
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+
+  /**
+   * Add the A2A proxy of claim `claim` ({@link awaitA2aClaim}) — only if
+   * `pasted`, the fingerprint the person copied from the proxy's log, is the
+   * fingerprint of the keys that proved the code (`deviceFingerprint`, what
+   * 「我的设备」 shows): any other, and nothing is added and the code is
+   * forgotten (someone else claimed it). The hosts `hosts` take its A2A calls,
+   * in the same batch: `[addDevice3{a2a}, setA2aAccept{host, its list and the
+   * proxy}…]`. No key epoch and no key: a host that takes more A2A calls owes
+   * none, and an A2A proxy is sealed nothing (docs/a2a.md §7.1). What it is
+   * added as — an A2A proxy — is this page's own record of the code, whatever
+   * the hub said the enrollment was.
+   */
+  async addA2aProxy(claim: A2aClaim, pasted: string, hosts: readonly string[]): Promise<{ device: string; hosts: string[] }> {
+    const chain = this.requireAdmin();
+    this.requireUpgraded(chain);
+    const key = await this.a2aRecord(claim.code);
+    if (!sameFingerprint(pasted, await deviceFingerprint(claim.signKey, claim.dhKey))) {
+      this.a2aCodes.delete(key);
+      throw new AccountError(
+        "fingerprintMismatch",
+        "the fingerprint you pasted is not the one of the device that claimed the code: it was not added. Someone else may hold the code; make a new one",
+      );
+    }
+    const named = [...new Set(hosts)].sort((a, b) => compareBytes(utf8(a), utf8(b)));
+    for (const host of named) {
+      if (!chain.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
+    }
+    const device = claim.device;
+    await this.appendBatch(async (base) => [
+      { type: "addDevice3", device: { id: device, signKey: claim.signKey, dhKey: claim.dhKey, flags: { host: false, admin: false, a2a: true } } },
+      ...named.map(
+        (host): Action => ({ type: "setA2aAccept", host, devices: [...new Set([...base.a2aAccept(host), device])].sort((a, b) => compareBytes(utf8(a), utf8(b))) }),
+      ),
+    ]);
+    this.a2aCodes.delete(key);
+    this.emit();
+    return { device, hosts: named };
+  }
+
+  /**
+   * Which hosts take A2A proxy `id`'s calls: exactly `hosts` (docs/a2a.md
+   * §7.1), each host whose list changes written through `setA2aAccept` on its
+   * own. The narrowings first — a session the proxy started on such a host
+   * could have read its keys off the disk, so each comes with the host's next
+   * machine key epoch in the same batch, handed over by `courier` — then the
+   * widenings, which owe nothing. A host named that is not a current host is
+   * refused before anything is written.
+   */
+  async setA2aHosts(id: string, hosts: readonly string[], courier: MachineKeyCourier): Promise<A2aHostsChange> {
+    const chain = this.requireAdmin();
+    this.requireUpgraded(chain);
+    if (!chain.device(id)?.a2a) throw new AccountError("notInChain", "{{id}} is not an A2A proxy of the account", undefined, undefined, { id });
+    const wanted = new Set(hosts);
+    for (const host of wanted) {
+      if (!chain.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
+    }
+    const now = a2aHostsOf(chain, id);
+    const change: A2aHostsChange = { widened: [], narrowed: [] };
+    for (const host of now.filter((h) => !wanted.has(h))) {
+      const list = (this.state ?? chain).a2aAccept(host).filter((p) => p !== id);
+      const done = await this.setA2aAccept(host, list, courier);
+      change.narrowed.push({ host, mkEpoch: done.mkEpoch, result: done.result, hostKeysTo: done.hostKeysTo, ...(done.userKey ? { userKey: done.userKey } : {}) });
+    }
+    for (const host of [...wanted].filter((h) => !now.includes(h)).sort()) {
+      await this.setA2aAccept(host, [...(this.state ?? chain).a2aAccept(host), id], courier);
+      change.widened.push(host);
+    }
+    return change;
   }
 
   /**

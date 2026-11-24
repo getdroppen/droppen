@@ -292,6 +292,12 @@ function loggedFetch(fetchImpl: Fetch): Fetch {
   };
 }
 
+/** `/v1/me` `machines[].a2a` (docs/a2a.md §7.3: its agent declared `a2a/1`), newer than the hub's published schema: `null` while the hub does not say. */
+function declaredA2a(m: object): boolean | null {
+  const a2a = (m as { a2a?: unknown }).a2a;
+  return typeof a2a === "boolean" ? a2a : null;
+}
+
 /**
  * Whether this page says "Macintosh" yet has a touch screen: an iPad asking
  * for desktop sites (iPadOS Safari's default), since no Mac has one. Never
@@ -756,6 +762,8 @@ export class HubApi {
         copy: machineCopy(m.copy),
         readsV3: m.reads_v3 === true,
         rotates: m.rotates === true,
+        // Newer than the hub's published schema (docs/a2a.md §7.3): `null` while the hub does not say.
+        a2a: declaredA2a(m),
       })),
       devices: registeredDevices(r.devices),
       relayStandby: typeof r.relay_prefs?.standby === "boolean" ? r.relay_prefs.standby : null,
@@ -805,25 +813,36 @@ export class HubApi {
     return r.seq;
   }
 
-  async createEnrollment(token: string, device: string, enrollToken: Uint8Array): Promise<number> {
+  /**
+   * Announce an enrollment code's token (`POST /v1/enrollments`). `kind:
+   * "a2a"` announces an A2A proxy's `DA1-` code (docs/a2a.md §7.2): the hub
+   * counts it against `devices.max` and makes the device that claims it a
+   * device row of that kind. Without it, a code for a device that runs AI.
+   */
+  async createEnrollment(token: string, device: string, enrollToken: Uint8Array, kind?: "a2a"): Promise<number> {
+    // `kind` is newer than the hub's published schema (openapi/hub.json): said here, typed by hand.
+    const body: components["schemas"]["NewEnrollment"] & { kind?: "a2a" } = { device, token: hex(enrollToken), ...(kind ? { kind } : {}) };
     const r = await this.typed<components["schemas"]["EnrollmentMade"]>(
-      (headers) => this.client.POST("/v1/enrollments", { body: { device, token: hex(enrollToken) }, headers }),
+      (headers) => this.client.POST("/v1/enrollments", { body, headers }),
       { token },
     );
     return r.expires_ms;
   }
 
   async enrollment(token: string, enrollToken: Uint8Array): Promise<EnrollmentStatus> {
-    const r = await this.typed<components["schemas"]["EnrollmentState"]>(
+    // `claims` is newer than the hub's published schema: an A2A proxy's code (docs/a2a.md §7.2).
+    const r = await this.typed<components["schemas"]["EnrollmentState"] & { claims?: unknown }>(
       (headers) => this.client.GET("/v1/enrollments/{token}", { params: { path: { token: hex(enrollToken) } }, headers }),
       { token },
     );
     return {
       state: r.state as EnrollmentStatus["state"],
       machine: r.machine ?? undefined,
+      device: r.device ?? undefined,
       signKey: r.sign_key ? fromHex(r.sign_key) : undefined,
       dhKey: r.dh_key ? fromHex(r.dh_key) : undefined,
       proof: r.proof ? fromHex(r.proof) : undefined,
+      claims: typeof r.claims === "number" && Number.isSafeInteger(r.claims) ? r.claims : undefined,
     };
   }
 

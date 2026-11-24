@@ -14,11 +14,14 @@ import {
   ChainError,
   ChainState,
   decodeEntry,
+  a2aEnrollProof,
+  type A2aEnrollCode,
   decodeHostKeyMail,
   type Draft,
   encodeEntry,
   enrollProof,
   type EnrollCode,
+  enrollToken,
   entryHash,
   fromHex,
   generateDeviceKeys,
@@ -114,7 +117,25 @@ export class FakeKeysHub {
   now = () => Date.now();
   /** The hub chain's clock (the recovery delay runs on it). */
   chainNow = () => this.now();
-  enrollments = new Map<string, { device: string; machine?: string; sign?: Uint8Array; dh?: Uint8Array; proof?: Uint8Array }>();
+  enrollments = new Map<
+    string,
+    {
+      device: string;
+      machine?: string;
+      sign?: Uint8Array;
+      dh?: Uint8Array;
+      proof?: Uint8Array;
+      /** `a2a`: an A2A proxy's code (`POST /v1/enrollments` `kind`, docs/a2a.md §7.2). */
+      kind?: "a2a";
+      /** An A2A proxy's code, claimed: the device id the hub assigned it. */
+      assigned?: string;
+      /** An A2A proxy's code: how often the hub saw it claimed (`GET` `claims`; `null`: a hub that does not say). */
+      claims?: number | null;
+      expired?: boolean;
+    }
+  >();
+  /** Every `POST /v1/enrollments` body, in order. */
+  enrollmentPosts: Record<string, unknown>[] = [];
   mail: StoredMail[] = [];
   mailLog: StoredMail[] = [];
   private mailId = 0;
@@ -586,13 +607,29 @@ export class FakeKeysHub {
       return this.json(200, next);
     }
     if (path === "/v1/enrollments") {
-      this.enrollments.set(body.token, { device: body.device });
+      this.enrollmentPosts.push({ ...body });
+      this.enrollments.set(body.token, { device: body.device, ...(body.kind === "a2a" ? { kind: "a2a" as const } : {}) });
       return this.json(200, { expires_ms: Date.now() + 600_000 });
     }
     if (path.startsWith("/v1/enrollments/")) {
       const e = this.enrollments.get(path.split("/").pop()!);
       if (!e) return this.json(404, { error: "not_found" });
-      if (!e.proof) return this.json(200, { state: "waiting" });
+      if (e.expired) return this.json(200, { state: "expired", expires_ms: Date.now() });
+      if (!e.proof) return this.json(200, { state: "waiting", expires_ms: Date.now() + 600_000 });
+      // An A2A proxy's code (docs/a2a.md §7.2): the device the hub assigned, no machine, and how often the code was claimed.
+      if (e.kind === "a2a") {
+        return this.json(200, {
+          state: "proved",
+          kind: "a2a",
+          device: e.assigned,
+          machine: null,
+          sign_key: hex(e.sign!),
+          dh_key: hex(e.dh!),
+          proof: hex(e.proof),
+          expires_ms: Date.now() + 600_000,
+          ...(e.claims === null ? {} : { claims: e.claims ?? 1 }),
+        });
+      }
       return this.json(200, { state: "proved", machine: e.machine, sign_key: hex(e.sign!), dh_key: hex(e.dh!), proof: hex(e.proof) });
     }
     if (path === "/v1/mailbox" && method === "POST") this.mailAttempts.push(`${body.sender} ${body.recipient} ${body.purpose}`);
@@ -778,6 +815,31 @@ export class FakeKeysHub {
   /** The same browser again with its device session kept from before (a reload). */
   async reload(account: CloudAccount): Promise<CloudAccount> {
     return CloudAccount.open(this.api(), { ...account.session }, account.store, { origin: HUB_ORIGIN, ...browserOf(account.store) });
+  }
+
+  /**
+   * An A2A proxy claiming the newest A2A proxy code at the hub (docs/a2a.md
+   * §7.2), as rh-hub takes `enroll {token, kind: "a2a"}` and `enroll_proof`:
+   * the device id it assigns, a devices row with the proxy's keys (no machine),
+   * and the claim as `GET /v1/enrollments/{token}` says it. `proof`: what the
+   * proxy sent (its own A2A proof of `code` by default); `claims`: how often the
+   * hub saw the code claimed (`null`: a hub that does not say).
+   */
+  async claimA2a(
+    account: CloudAccount,
+    code: A2aEnrollCode,
+    opts: { id?: string; claims?: number | null; proof?: (keys: { signPublic: Uint8Array; dhPublic: Uint8Array }, id: string) => Promise<Uint8Array> } = {},
+  ): Promise<{ id: string; signKey: Uint8Array; dhKey: Uint8Array }> {
+    const id = opts.id ?? "a-1";
+    const keys = await generateDeviceKeys();
+    const token = hex(await enrollToken(code));
+    const e = this.enrollments.get(token);
+    assert.ok(e?.kind === "a2a", "the page announced it as an A2A proxy's code");
+    this.devices.set(id, { sign: hex(keys.signPublic), dh: hex(keys.dhPublic) });
+    this.registeredMs.set(id, this.now());
+    const proof = opts.proof ? await opts.proof(keys, id) : await a2aEnrollProof(code, account.account, id, keys.signPublic, keys.dhPublic);
+    this.enrollments.set(token, { ...e, assigned: id, sign: keys.signPublic, dh: keys.dhPublic, proof, claims: opts.claims === undefined ? 1 : opts.claims });
+    return { id, signKey: keys.signPublic, dhKey: keys.dhPublic };
   }
 
   /** Enroll a machine through `account`: the agent's keys, its proof checked, "add machine" signed (`opts`: the hub's say, `writable`). */
