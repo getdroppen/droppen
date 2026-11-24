@@ -54,8 +54,10 @@ pub(crate) struct Said {
 }
 
 /// What the turns of the task whose messages `probes` find said: `probes[0]`
-/// is its first message, the rest the ones added to it.
-pub(crate) fn said(items: &[TranscriptItem], probes: &[String]) -> Said {
+/// is its first message, the rest the ones added to it, and the first
+/// `continued` other user messages after it its own too (the continuations
+/// the driver sent after moving the session to another account).
+pub(crate) fn said(items: &[TranscriptItem], probes: &[String], continued: u32) -> Said {
     let user_text = |item: &TranscriptItem| item.role == Role::User && item.kind == ItemKind::Text;
     let finds = |item: &TranscriptItem, probe: &String| !probe.is_empty() && collapse(&item.text).contains(probe.as_str());
     let first = probes.first();
@@ -69,11 +71,18 @@ pub(crate) fn said(items: &[TranscriptItem], probes: &[String]) -> Said {
         return Said::default();
     };
     let part = &items[start + 1..];
-    // Up to the first user message that is none of the task's own: whatever
-    // follows it is another turn's.
+    // Up to the first user message that is none of the task's own, its
+    // continuations aside: whatever follows it is another turn's.
+    let mut foreign = 0;
     let end = part
         .iter()
-        .position(|item| user_text(item) && !probes.iter().any(|probe| finds(item, probe)))
+        .position(|item| {
+            if !user_text(item) || probes.iter().any(|probe| finds(item, probe)) {
+                return false;
+            }
+            foreign += 1;
+            foreign > continued
+        })
         .unwrap_or(part.len());
     let part = &part[..end];
     let assistant_text = |item: &TranscriptItem| item.role == Role::Assistant && item.kind == ItemKind::Text && !item.text.trim().is_empty();
@@ -174,9 +183,26 @@ mod tests {
             says("something else"),
         ];
         let probes = vec![probe("fence-1 fix the bug"), probe("fence-1 also the docs")];
-        let said = said(&items, &probes);
+        let said = said(&items, &probes, 0);
         assert_eq!(said.summary, "Done.\n\nPR: https://github.com/o/r/pull/7");
         assert_eq!(said.texts, ["looking", "Done.", "PR: https://github.com/o/r/pull/7"]);
+    }
+
+    #[test]
+    fn a_continuation_the_driver_sent_is_the_task_s_own() {
+        let items = vec![
+            user("fence-1 go"),
+            user("[Droppen] moved to another account; carry on"),
+            says("Done after the move."),
+            user("the next task"),
+            says("not this one"),
+        ];
+        assert_eq!(said(&items, &[probe("fence-1 go")], 1).summary, "Done after the move.");
+        assert_eq!(
+            said(&items, &[probe("fence-1 go")], 0).summary,
+            "",
+            "without it, the turn ends at the first message not its own"
+        );
     }
 
     #[test]
@@ -188,14 +214,14 @@ mod tests {
             says("last"),
             item(Role::System, ItemKind::Text, "notice"),
         ];
-        assert_eq!(said(&items, &[probe("go")]).summary, "last");
+        assert_eq!(said(&items, &[probe("go")], 0).summary, "last");
     }
 
     #[test]
     fn a_message_the_parser_rewrote_falls_back_to_the_last_user_message() {
         let items = vec![user("one"), says("a"), user("two"), says("b")];
-        assert_eq!(said(&items, &[probe("not in the transcript")]).summary, "b");
-        assert_eq!(said(&[], &[probe("x")]), Said::default());
+        assert_eq!(said(&items, &[probe("not in the transcript")], 0).summary, "b");
+        assert_eq!(said(&[], &[probe("x")], 0), Said::default());
     }
 
     #[test]

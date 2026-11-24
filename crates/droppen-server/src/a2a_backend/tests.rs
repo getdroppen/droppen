@@ -14,7 +14,9 @@
 //!   `go` into the fake's control directory; an interrupt ends it first;
 //! * `[fail]` — end the turn with an error result;
 //! * `[write <name>]` — create `<name>` in the session's directory;
-//! * `[pr]` — name a pull request in the reply.
+//! * `[pr]` — name a pull request in the reply;
+//! * `[limit]` — the first time, refuse the turn with a session limit, as
+//!   claude does when an account's five hours have run out.
 //!
 //! A `refuse-start` file in the control directory makes it exit before it
 //! says it is listening. Every spawn is logged (`spawns.jsonl`), and every
@@ -173,6 +175,13 @@ def turn(message):
             return
     if "[fail]" in text:
         result("error_during_execution")
+        return
+    limited = os.path.join(CONTROL, "limit-hit")
+    if "[limit]" in text and not os.path.exists(limited):
+        open(limited, "w").close()
+        out({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "rateLimitType": "five_hour",
+             "resetsAt": int(time.time()) + 7200, "overageStatus": "rejected", "isUsingOverage": False}})
+        out({"type": "result", "subtype": "success", "is_error": True, "result": "You have hit your session limit", "api_error_status": 429})
         return
     words = " ".join(re.sub(r"\[[^\]]*\]", " ", text).split())
     reply = "Done: %s." % words[-60:]
@@ -629,6 +638,132 @@ async fn an_acp_session_completes() {
     let result = harness.completed("t1").await;
     assert_eq!(result.result.source, "acp");
     assert_eq!(Some(result.result.session_id), started.session_id);
+}
+
+/// Store a Claude account `label` in the harness's server, an OAuth one, which
+/// is in the rotation's pool.
+async fn account(harness: &Harness, label: &str) -> droppen_accounts::store::Account {
+    use droppen_accounts::store::{AccountProvider, Credential};
+    let token = format!("sk-ant-oat01-test-{}", label.replace('@', "-"));
+    harness
+        .state
+        .drive
+        .accounts
+        .create(label, AccountProvider::Claude, Credential::Oauth(token))
+        .await
+        .expect("an account")
+}
+
+/// A turn a limit refuses is not the task's end when the driver moves the
+/// session to the next account: the task stays working, says so, and
+/// completes with the turn the driver continues there.
+#[tokio::test]
+async fn a_turn_a_limit_moves_to_another_account_is_still_the_task_s() {
+    let mut harness = Harness::new().await;
+    let first = account(&harness, "a@work").await;
+    let next = account(&harness, "b@team").await;
+    let run = RunSpec {
+        account_id: Some(first.id.clone()),
+        ..harness.run(&harness.work(), Isolation::None)
+    };
+    let started = harness
+        .start("t1", &context(), &run, "fence-1 [limit] heavy work")
+        .await
+        .expect("started");
+    let session = started.session_id.clone().expect("the session");
+    harness.turn_started("t1").await;
+    let result = harness.completed("t1").await;
+    assert!(result.summary.starts_with("Done:"), "the continued turn's reply: {}", result.summary);
+    assert!(
+        harness
+            .seen
+            .iter()
+            .any(|event| matches!(event, BackendEvent::Progress { text, .. } if text.contains("b@team"))),
+        "the move is reported as progress: {:#?}",
+        harness.seen
+    );
+    assert_eq!(
+        harness.state.drive.accounts.session_account_id(&session).await.as_deref(),
+        Some(next.id.as_str()),
+        "the session moved"
+    );
+    let spawns = harness.spawns();
+    assert_eq!(spawns.len(), 2, "a second process, under the next account: {spawns:?}");
+    assert!(spawns[1]["argv"].as_array().is_some_and(|argv| argv.iter().any(|arg| arg == "--resume")));
+}
+
+/// A turn a limit refuses with nowhere to move the session fails the task,
+/// with the limit.
+#[tokio::test]
+async fn a_turn_a_limit_holds_fails_the_task() {
+    let mut harness = Harness::new().await;
+    let only = account(&harness, "a@work").await;
+    let run = RunSpec {
+        account_id: Some(only.id.clone()),
+        ..harness.run(&harness.work(), Isolation::None)
+    };
+    harness
+        .start("t1", &context(), &run, "fence-1 [limit] heavy work")
+        .await
+        .expect("started");
+    match harness.ended("t1").await {
+        TurnOutcome::Failed(why) => assert!(why.contains("session limit"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A turn a limit refuses on a session nothing moves (the CLI's own login)
+/// fails the task, and the turn of the next task queued behind it is that
+/// task's, not this one's.
+#[tokio::test]
+async fn a_limit_nothing_moves_fails_the_task_and_not_the_next() {
+    let mut harness = Harness::new().await;
+    let run = harness.run(&harness.work(), Isolation::None);
+    let ctx = context();
+    let started = harness
+        .start("t1", &ctx, &run, "fence-1 [hold] [limit] heavy work")
+        .await
+        .expect("started");
+    harness.turn_started("t1").await;
+    harness
+        .send("t2", &ctx, &started, SendKind::NewTurn, "m2", "fence-2 next")
+        .await
+        .expect("queued");
+    harness.release();
+    match harness.ended("t1").await {
+        TurnOutcome::Failed(why) => assert!(why.contains("session limit"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(harness.completed("t2").await.summary, "Done: fence-2 next.");
+}
+
+/// A completed task's artifacts are made with a time limit: past it, the
+/// task still completes, with the fields that need no git and no transcript
+/// and empty lists for the rest.
+#[tokio::test]
+async fn a_task_completes_without_the_artifacts_that_take_too_long() {
+    let mut harness = Harness::new().await;
+    harness.sessions.inner.artifacts_wait_ms.store(0, Ordering::Relaxed);
+    let run = harness.run(&harness.work(), Isolation::None);
+    let started = harness
+        .start("t1", &context(), &run, "fence-1 [write made.txt] [pr] quick")
+        .await
+        .expect("started");
+    let result = harness.completed("t1").await;
+    assert_eq!(result.summary, "");
+    assert_eq!(
+        result.result,
+        ResultData {
+            source: "claude".into(),
+            session_id: started.session_id.expect("the session"),
+            host: droppen_http::hostname(),
+            cwd: harness.work(),
+            branch: None,
+            changed_files: Vec::new(),
+            pr_urls: Vec::new(),
+            droppen_url: None,
+        }
+    );
 }
 
 /// A question stops the task (`INPUT_REQUIRED`); its answer — a choice and

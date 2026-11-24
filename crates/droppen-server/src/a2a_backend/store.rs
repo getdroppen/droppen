@@ -53,6 +53,11 @@ pub(crate) struct TaskRecord {
     /// The question it was reported as waiting on, by request id.
     #[serde(default)]
     pub asked: Option<String>,
+    /// How many continuations the driver queued for its turn, each after a
+    /// limit moved the session to another account: messages of its own,
+    /// though no client named them.
+    #[serde(default)]
+    pub continued: u32,
 }
 
 /// A context: what its session was started with.

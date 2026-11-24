@@ -26,6 +26,9 @@
 //! "Ended" is the driver's: no message of the task queued, and no background
 //! work claude is still minding with nothing queued after it — claude opens a
 //! turn of its own when that work finishes, and the task ends with that one.
+//! A turn a limit refused is not an end either when the driver moves the
+//! session to another account (`Alerts::rotation`): the turn it continues
+//! there is the task's.
 //!
 //! The rest is read as it happens, every half second: the receipt that moves the
 //! task to `WORKING`, a question it asks and one answered in Droppen, and the
@@ -45,6 +48,7 @@ mod turn;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
@@ -90,6 +94,11 @@ const ADOPTION_WAIT: Duration = Duration::from_secs(60);
 /// How long a call waits for an earlier attempt under the same message id
 /// to answer.
 const CLAIM_WAIT: Duration = Duration::from_secs(5);
+
+/// How long a completed task's artifacts may take to make, git and the
+/// transcript together: past it the task completes with what was made, and
+/// empty lists for the rest.
+const ARTIFACTS_WAIT: Duration = Duration::from_secs(30);
 
 /// How long the end of a turn waits for its reply to reach the transcript.
 const REPLY_WAIT: [Duration; 3] = [Duration::from_millis(200), Duration::from_millis(500), Duration::from_millis(1000)];
@@ -141,6 +150,8 @@ struct Inner {
     internal: mpsc::UnboundedSender<Internal>,
     /// Set once the boot has adopted what the previous server left behind.
     adopted: watch::Sender<bool>,
+    /// [`ARTIFACTS_WAIT`], in milliseconds, which a test shortens.
+    artifacts_wait_ms: AtomicU64,
 }
 
 /// The events' way out, and in tests a copy of each for the test.
@@ -186,6 +197,13 @@ struct Task {
     answered: Option<String>,
     /// How many looks in a row found its session at rest.
     at_rest: u8,
+    /// Its turn was refused by a limit, with this error: not its end yet if
+    /// the driver moves the session to another account.
+    limited: Option<String>,
+    /// The driver moved its session to another account and queued a
+    /// continuation of its turn there: the ids queued when it decided, which
+    /// the continuation is not one of.
+    rotated: Option<Vec<String>>,
 }
 
 /// Where a followed task's turn stands.
@@ -214,6 +232,9 @@ enum Internal {
     Ended { task_id: String, ending: Ending },
     /// A session asked a question: look now rather than at the next tick.
     Look,
+    /// The task's session was moved to another account to go on with its
+    /// turn: `notice` says so.
+    Rotated { task_id: String, notice: String },
 }
 
 /// What a claim on a message id found.
@@ -281,6 +302,7 @@ impl A2aSessions {
             cancelled: Mutex::new(VecDeque::new()),
             internal,
             adopted: watch::channel(false).0,
+            artifacts_wait_ms: AtomicU64::new(ARTIFACTS_WAIT.as_millis() as u64),
         });
         tokio::spawn(watch_tasks(Arc::downgrade(&inner), rx));
         Arc::new(Self {
@@ -357,6 +379,9 @@ impl<A: droppen_provider::Alerts> droppen_provider::Alerts for Hooked<A> {
         trigger: droppen_sessions::account::RotationTrigger,
         text: String,
     ) {
+        if let Some(sessions) = self.sessions.upgrade() {
+            sessions.on_rotation(source, &id, outcome, trigger, &text);
+        }
         self.alerts.rotation(paths, source, id, outcome, trigger, text);
     }
 }
@@ -376,11 +401,12 @@ async fn watch_tasks(inner: Weak<Inner>, mut internal: mpsc::UnboundedReceiver<I
                 let Some(inner) = inner.upgrade() else { break };
                 match message {
                     Internal::Ended { task_id, ending } => {
-                        if !inner.finish(&task_id, &ending).await {
+                        if !inner.finish(&task_id, &ending) {
                             deferred.push((task_id, ending));
                         }
                     }
                     Internal::Look => inner.look(false).await,
+                    Internal::Rotated { task_id, notice } => inner.rotated(&task_id, &notice),
                 }
             }
             _ = ticks.tick() => {
@@ -388,7 +414,7 @@ async fn watch_tasks(inner: Weak<Inner>, mut internal: mpsc::UnboundedReceiver<I
                 count = count.wrapping_add(1);
                 let mut waiting = Vec::new();
                 for (task_id, ending) in std::mem::take(&mut deferred) {
-                    if !inner.finish(&task_id, &ending).await {
+                    if !inner.finish(&task_id, &ending) {
                         waiting.push((task_id, ending));
                     }
                 }
@@ -451,6 +477,8 @@ impl Inner {
             transcript: None,
             answered: None,
             at_rest: 0,
+            limited: None,
+            rotated: None,
         };
         self.tasks.lock().unwrap_or_else(PoisonError::into_inner).insert(id.to_string(), task);
     }
@@ -506,14 +534,39 @@ impl Inner {
                 _ => continue,
             }
             let ending = match main.map(|main| main.status) {
+                // Its turn was refused by a limit and the driver did not move
+                // the session ([`Self::on_rotation`]): this later turn is not
+                // the task's, and the task failed with the limit.
+                _ if task.limited.is_some() => task.limited.take().map(Ending::Failed),
                 Some(ReceiptStatus::Failed) => Some(Ending::Failed(error.unwrap_or("the task's message was not delivered").to_string())),
                 Some(ReceiptStatus::Sent) if !queued.contains(&task.record.main.qid.as_str()) => {
-                    let more = task.record.appends.iter().any(|message| {
-                        queued.contains(&message.qid.as_str())
-                            || receipts.whereabouts(&message.qid).is_some_and(|at| at.status == ReceiptStatus::Queued)
-                    });
+                    let ours = |qid: &str| {
+                        std::iter::once(&task.record.main)
+                            .chain(&task.record.appends)
+                            .any(|message| message.qid == qid)
+                    };
+                    // The continuation the driver queued after moving the
+                    // session is still to run: this turn is one before it.
+                    let continuing = task
+                        .rotated
+                        .as_ref()
+                        .is_some_and(|before| queued.iter().any(|qid| !before.iter().any(|known| known == qid) && !ours(qid)));
+                    if !continuing {
+                        task.rotated = None;
+                    }
+                    let more = continuing
+                        || task.record.appends.iter().any(|message| {
+                            queued.contains(&message.qid.as_str())
+                                || receipts.whereabouts(&message.qid).is_some_and(|at| at.status == ReceiptStatus::Queued)
+                        });
                     match outcome {
                         _ if more => None,
+                        // A limit: the driver may move the session and go on
+                        // with the turn elsewhere ([`Self::on_rotation`]).
+                        InjectionRunState::Failed if error.is_some_and(|error| droppen_accounts::limits::classify(error, None).is_some()) => {
+                            task.limited = error.map(str::to_owned);
+                            None
+                        }
                         InjectionRunState::Failed => Some(Ending::Failed(error.unwrap_or("the turn failed").to_string())),
                         // claude opens a turn of its own once the work it is
                         // minding finishes, and that turn is still this task's
@@ -535,7 +588,81 @@ impl Inner {
         }
     }
 
+    /// Session `id` was moved to another account after a limit, or could not
+    /// be: a task whose turn the limit refused goes on with the continuation
+    /// the driver queues there, or fails with the limit.
+    ///
+    /// Called by the driver as it decides, before it queues the continuation,
+    /// so the queue as it stands now is what the continuation is not.
+    fn on_rotation(
+        &self,
+        source: Source,
+        id: &str,
+        outcome: droppen_sessions::account::RotationOutcome,
+        trigger: droppen_sessions::account::RotationTrigger,
+        notice: &str,
+    ) {
+        if trigger != droppen_sessions::account::RotationTrigger::Limit {
+            return;
+        }
+        if self.tasks.lock().unwrap_or_else(PoisonError::into_inner).is_empty() {
+            return;
+        }
+        let queued: Vec<String> = self
+            .drive
+            .providers
+            .resident_info(source, id)
+            .map(|resident| resident.queued_messages.into_iter().map(|message| message.id).collect())
+            .unwrap_or_default();
+        let switched = outcome == droppen_sessions::account::RotationOutcome::Switched;
+        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut said = Vec::new();
+        for (task_id, task) in tasks.iter_mut() {
+            if task.source != source || task.record.session_id.as_deref() != Some(id) || task.stage == Stage::Ending {
+                continue;
+            }
+            let Some(why) = task.limited.take() else { continue };
+            if switched {
+                task.rotated = Some(queued.clone());
+                task.record.continued += 1;
+                self.store.put_task(task_id, &task.record);
+                said.push(Internal::Rotated {
+                    task_id: task_id.clone(),
+                    notice: notice.to_string(),
+                });
+            } else {
+                task.stage = Stage::Ending;
+                said.push(Internal::Ended {
+                    task_id: task_id.clone(),
+                    ending: Ending::Failed(format!("{why}\n{notice}")),
+                });
+            }
+        }
+        drop(tasks);
+        for message in said {
+            let _ = self.internal.send(message);
+        }
+    }
+
     // ------------------------------------------------------------ the watcher
+
+    /// Report that task `id`'s turn goes on on another account.
+    fn rotated(&self, id: &str, notice: &str) {
+        let line = turn::progress_line(notice);
+        let fresh = self.with_task(id, |task| {
+            let fresh = task.stage == Stage::Running && !line.is_empty();
+            if fresh {
+                task.progress = Some(line.clone());
+            }
+            fresh
+        });
+        if fresh == Some(true) {
+            self.report.send(BackendEvent::Progress {
+                task_id: id.to_string(),
+                text: line,
+            });
+        }
+    }
 
     /// Look at every followed task once.
     async fn look(&self, progress: bool) {
@@ -593,12 +720,15 @@ impl Inner {
                     }
                     return;
                 }
-                if self.at_rest(task.source, &session, &task.record) {
+                // A continuation waiting for its new process is no rest; a turn
+                // a limit refused gives the driver longer to decide.
+                if task.rotated.is_none() && self.at_rest(task.source, &session, &task.record) {
                     let looks = self.with_task(id, |task| {
                         task.at_rest = task.at_rest.saturating_add(1);
                         task.at_rest
                     });
-                    if looks.is_some_and(|looks| looks >= AT_REST_LOOKS) {
+                    let needed = if task.limited.is_some() { 2 * AT_REST_LOOKS } else { AT_REST_LOOKS };
+                    if looks.is_some_and(|looks| looks >= needed) {
                         self.end(id, self.ended_while_unwatched(task.source, &session));
                     }
                     return;
@@ -736,7 +866,10 @@ impl Inner {
     /// Report task `id`'s end, with the artifacts of a completed one, and stop
     /// following it. `false` while the call that made the task has not
     /// answered: its end is reported once it has.
-    async fn finish(&self, id: &str, ending: &Ending) -> bool {
+    ///
+    /// The artifacts are made on a task of their own, so a slow git or a
+    /// large transcript holds up no other task's events.
+    fn finish(self: &Arc<Self>, id: &str, ending: &Ending) -> bool {
         let Some(task) = self.with_task(id, |task| task.clone()) else {
             return true;
         };
@@ -751,66 +884,99 @@ impl Inner {
         if task.record.asked.is_some() && task.record.asked != task.answered {
             self.report.send(BackendEvent::QuestionResolved { task_id: id.to_string() });
         }
-        let outcome = match ending {
-            Ending::Failed(why) => TurnOutcome::Failed(why.clone()),
-            Ending::Completed => TurnOutcome::Completed(self.artifacts(&task).await),
-        };
-        // Cancelled while the artifacts were being made: nothing more of it.
-        if self.unfollow(id).is_none() {
-            return true;
+        match ending {
+            Ending::Failed(why) => self.ended(id, TurnOutcome::Failed(why.clone())),
+            Ending::Completed => {
+                let inner = Arc::clone(self);
+                let id = id.to_string();
+                tokio::spawn(async move {
+                    let result = inner.artifacts(&task).await;
+                    inner.ended(&id, TurnOutcome::Completed(result));
+                });
+            }
         }
-        self.report.send(BackendEvent::TurnEnded {
-            task_id: id.to_string(),
-            outcome,
-        });
         true
+    }
+
+    /// Stop following task `id` and report how it ended — unless it was
+    /// cancelled meanwhile, when nothing more is said of it.
+    fn ended(&self, id: &str, outcome: TurnOutcome) {
+        if self.unfollow(id).is_some() {
+            self.report.send(BackendEvent::TurnEnded {
+                task_id: id.to_string(),
+                outcome,
+            });
+        }
     }
 
     // ------------------------------------------------------------ artifacts
 
-    /// What a completed task's turns produced (§3.3).
+    /// What a completed task's turns produced (§3.3), each part made at once
+    /// and given until [`ARTIFACTS_WAIT`]: a part not made by then is left
+    /// out (an empty reply or list, no branch the record does not know, the
+    /// host name, no address).
     async fn artifacts(&self, task: &Task) -> TurnResult {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(self.artifacts_wait_ms.load(Ordering::Relaxed));
         let session = task.record.session_id.clone().unwrap_or_default();
-        let probes: Vec<String> = std::iter::once(&task.record.main)
-            .chain(&task.record.appends)
-            .map(|message| message.probe.clone())
-            .collect();
-        let mut said = self.said(task.source, &session, &probes).await;
-        for wait in REPLY_WAIT {
-            if !said.summary.is_empty() {
-                break;
-            }
-            tokio::time::sleep(wait).await;
-            said = self.said(task.source, &session, &probes).await;
-        }
         let context = self.store.context(&task.record.context_id).unwrap_or_default();
-        let branch = match &task.record.branch {
-            Some(branch) => Some(branch.clone()),
-            None => git::current_branch(&task.record.cwd).await,
+        let branch = async {
+            match &task.record.branch {
+                Some(branch) => Some(branch.clone()),
+                None => git::current_branch(&task.record.cwd).await,
+            }
         };
+        let (said, branch, changed_files, host, droppen_url) = tokio::join!(
+            within(deadline, self.said_at_end(task, &session)),
+            within(deadline, branch),
+            within(deadline, git::changed_files(&task.record.cwd, context.base.as_deref())),
+            within(deadline, self.host_name()),
+            within(deadline, self.droppen_url(task.source, &session)),
+        );
+        let said = said.unwrap_or_default();
         TurnResult {
             result: ResultData {
                 source: task.source.as_str().to_string(),
-                session_id: session.clone(),
-                host: self.host_name().await,
+                session_id: session,
+                host: host.unwrap_or_else(droppen_http::hostname),
                 cwd: task.record.cwd.clone(),
-                branch,
-                changed_files: git::changed_files(&task.record.cwd, context.base.as_deref()).await,
+                branch: branch.unwrap_or_else(|| task.record.branch.clone()),
+                changed_files: changed_files.unwrap_or_default(),
                 pr_urls: turn::pr_urls(said.texts.iter().map(String::as_str)),
-                droppen_url: self.droppen_url(task.source, &session).await,
+                droppen_url: droppen_url.flatten(),
             },
             summary: said.summary,
         }
     }
 
-    /// What the task's turns said in session `id`, read off its transcript.
-    async fn said(&self, source: Source, id: &str, probes: &[String]) -> turn::Said {
+    /// What the task's turns said, once the reply is in the transcript (or
+    /// [`REPLY_WAIT`] is over).
+    async fn said_at_end(&self, task: &Task, session: &str) -> turn::Said {
+        let probes: Vec<String> = std::iter::once(&task.record.main)
+            .chain(&task.record.appends)
+            .map(|message| message.probe.clone())
+            .collect();
+        let continued = task.record.continued;
+        let mut said = self.said(task.source, session, &probes, continued).await;
+        for wait in REPLY_WAIT {
+            if !said.summary.is_empty() {
+                break;
+            }
+            tokio::time::sleep(wait).await;
+            said = self.said(task.source, session, &probes, continued).await;
+        }
+        said
+    }
+
+    /// What the task's turns said in session `id`, read off its transcript:
+    /// the turns of `probes`' messages and of the `continued` continuations
+    /// the driver added after them.
+    async fn said(&self, source: Source, id: &str, probes: &[String], continued: u32) -> turn::Said {
         let transcripts = &self.drive.transcripts;
         let Some(path) = transcripts.find_file(&self.drive.paths, source, id).await else {
             return turn::Said::default();
         };
         match transcripts.parse(&self.drive.paths, source, &path).await {
-            Ok(items) => turn::said(&items, probes),
+            Ok(items) => turn::said(&items, probes, continued),
             Err(error) => {
                 tracing::warn!(session = id, %error, "cannot read an A2A task's transcript");
                 turn::Said::default()
@@ -1001,6 +1167,7 @@ impl Inner {
                 appends: Vec::new(),
                 turn_started: false,
                 asked: None,
+                continued: 0,
             });
             self.follow(
                 &task.task_id,
@@ -1067,6 +1234,7 @@ impl Inner {
             appends: Vec::new(),
             turn_started: false,
             asked: None,
+            continued: 0,
         };
         self.follow(&task.task_id, source, record, Stage::Running, true);
         if self.with_task(&task.task_id, |task| task.cancelled) == Some(true) {
@@ -1230,6 +1398,7 @@ impl Inner {
             appends: Vec::new(),
             turn_started: false,
             asked: None,
+            continued: 0,
         }
     }
 
@@ -1572,6 +1741,8 @@ impl Inner {
             transcript: None,
             answered: None,
             at_rest: 0,
+            limited: None,
+            rotated: None,
         };
         ended(TurnOutcome::Completed(self.artifacts(&finished).await))
     }
@@ -1632,6 +1803,11 @@ fn waiting(record: TaskRecord) -> TaskRecord {
         asked: None,
         ..record
     }
+}
+
+/// `future`'s answer, if it has one by `deadline`.
+async fn within<T>(deadline: tokio::time::Instant, future: impl std::future::Future<Output = T>) -> Option<T> {
+    tokio::time::timeout_at(deadline, future).await.ok()
 }
 
 /// A question as the protocol reports it, from the stored one.
