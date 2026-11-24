@@ -29,17 +29,19 @@ use droppen_client::verified::VerifiedChain;
 use droppen_client::{hex, now_ms};
 use droppen_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead};
 use droppen_proto::chain::{
-    genesis3_draft, machine_key_commit, user_key_commit, Accept, Action, Attestation, ChainClock, ChainState, DeviceV3, Entry, Flags, KeyCommit,
+    genesis3_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainState, DeviceV3, Entry, Flags, Freshness, KeyCommit,
     KeyCommits, Signer,
 };
 use droppen_proto::channel::Session;
 use droppen_proto::driver::{Channel, Incoming, StreamEvent, StreamWriter};
 use droppen_proto::frame::Frame;
-use droppen_proto::handshake::{self, Accepted, AgentSide, FRESHNESS_MAX_AGE_MS};
+use droppen_proto::handshake::{
+    self, Accepted, AgentSide, HandshakeError, HelloBody, ReplyBody, ReplyStatus, FRESHNESS_MAX_AGE_MS, MAX_HELLO_ENTRIES,
+};
 use droppen_proto::identity::fingerprint;
 use droppen_proto::keys::DhKeypair;
 use droppen_proto::mux::{Role, StreamClass};
-use droppen_proto::noise::{RekeyPolicy, ReplayGuard};
+use droppen_proto::noise::{self, Binding, RekeyPolicy, ReplayGuard};
 use droppen_proto::sig::{HubLogin, LoginRole};
 use droppen_proto::ticket::{RelayTicket, TicketLimits, TicketRole};
 use droppen_relay_core::config::{Config, Timing, TrustProxy};
@@ -85,8 +87,8 @@ impl Account {
     }
 
     /// Genesis (the admin), user key epoch 0, the host with its first
-    /// machine key epoch, the device under test (no flags), and the host
-    /// accepting it.
+    /// machine key epoch, the device under test (an A2A proxy: the a2a flag
+    /// alone), and the host taking A2A calls from it (`SetA2aAccept`).
     pub fn new() -> Account {
         let ak = SigningKey::from_bytes(&[9; 32]);
         let (admin, admin_dh) = keys(1);
@@ -97,7 +99,11 @@ impl Account {
                 id: ADMIN.into(),
                 sign_key: admin.verifying_key().to_bytes(),
                 dh_key: admin_dh.public(),
-                flags: Flags { host: false, admin: true },
+                flags: Flags {
+                    host: false,
+                    admin: true,
+                    a2a: false,
+                },
             },
             None,
             now_ms(),
@@ -122,7 +128,11 @@ impl Account {
                 id: HOST.into(),
                 sign_key: host.verifying_key().to_bytes(),
                 dh_key: host_dh.public(),
-                flags: Flags { host: true, admin: false },
+                flags: Flags {
+                    host: true,
+                    admin: false,
+                    a2a: false,
+                },
             }),
             Action::KeyEpochs(KeyCommits {
                 user: None,
@@ -140,11 +150,11 @@ impl Account {
             id: PROXY.into(),
             sign_key: proxy.verifying_key().to_bytes(),
             dh_key: proxy_dh.public(),
-            flags: Flags::NONE,
+            flags: Flags::A2A_DEVICE,
         })]);
-        account.append(vec![Action::SetAccept {
+        account.append(vec![Action::SetA2aAccept {
             host: HOST.into(),
-            from: Accept::Devices(vec![PROXY.into()]),
+            devices: vec![PROXY.into()],
         }]);
         account
     }
@@ -390,10 +400,12 @@ async fn tickets(State(state): State<Arc<Mutex<HubState>>>, Json(body): Json<Val
     }
     let mut clock = ChainClock::history();
     let chain = ChainState::verify(&st.entries, None, &mut clock).unwrap();
-    let peers = st
-        .peers
-        .clone()
-        .unwrap_or_else(|| chain.hosts_admitting(PROXY).map(|d| d.info.id.clone()).collect());
+    // The hosts the chain lets the device reach: an A2A proxy's by
+    // `may_call_a2a`, any other device's by `may_control`.
+    let peers = st.peers.clone().unwrap_or_else(|| match chain.a2a_device(PROXY) {
+        Some(_) => chain.hosts_accepting_a2a(PROXY).map(|d| d.info.id.clone()).collect(),
+        None => chain.hosts_admitting(PROXY).map(|d| d.info.id.clone()).collect(),
+    });
     let mut out = Vec::new();
     for relay in body["relays"].as_array().into_iter().flatten().filter_map(Value::as_str) {
         let Some((_, origin)) = st.relays.iter().find(|(id, _)| id == relay).cloned() else {
@@ -672,7 +684,13 @@ impl TestAgent {
                 reason: reason.into(),
             });
         };
-        match handshake::accept(side, device, hello, now_ms()) {
+        let outcome = match handshake::accept(side, device, hello, now_ms()) {
+            // Not one that may control the host: an A2A proxy it takes A2A
+            // calls from gets in as the agent's `A2aOnly` admission will.
+            Err(HandshakeError::NotAccepted(_)) if st.chain.may_call_a2a(device, HOST).is_ok() => accept_a2a(st, device, hello, server.as_bytes()),
+            outcome => outcome,
+        };
+        match outcome {
             Ok(Accepted::Open { reply, transport, .. }) => {
                 st.outcomes.push("open".into());
                 let _ = out.send(Frame::Data { ch, payload: reply });
@@ -715,6 +733,65 @@ impl TestAgent {
             }
         }
     }
+}
+
+/// The admission an agent gives an A2A proxy (`docs/a2a.md` §7.3, its
+/// `A2aOnly` channel) — [`handshake::accept`]'s checks in its order, with
+/// `may_call_a2a` where a device that controls has `may_control` — standing
+/// in for the agent's own until it has one. The hello's chain entries were
+/// taken already (by the `accept` that said "not accepted").
+fn accept_a2a(st: &mut AgentState, device: &str, message: &[u8], server: &[u8]) -> Result<Accepted, HandshakeError> {
+    let (_, host_dh) = keys(2);
+    let now = now_ms();
+    let binding = Binding {
+        account: ACCOUNT.into(),
+        device: device.into(),
+        machine: HOST.into(),
+    };
+    let mut responder = noise::Responder::with_prologue(&host_dh, &binding.prologue()?)?;
+    let hello = responder.read_hello(message)?;
+    let body = HelloBody::decode(&hello.payload)?;
+    st.chain
+        .authorize_device(device, &hello.initiator_static)
+        .map_err(|_| HandshakeError::Unauthorized)?;
+    st.chain
+        .may_call_a2a(device, HOST)
+        .map_err(|e| HandshakeError::NotAccepted(e.to_string()))?;
+    let reply = |status: ReplyStatus, chain: &ChainState| ReplyBody {
+        status,
+        chain_seq: chain.seq(),
+        chain_head: chain.head(),
+        need_from: if status == ReplyStatus::NeedEntries { chain.seq() + 1 } else { 0 },
+        server: server.to_vec(),
+        entries: chain
+            .entries()
+            .iter()
+            .skip(usize::try_from(body.chain_seq + 1).unwrap_or(usize::MAX))
+            .take(MAX_HELLO_ENTRIES)
+            .cloned()
+            .collect(),
+    };
+    let policy = RekeyPolicy::default();
+    match st.chain.freshness(device, &st.attestations, now, FRESHNESS_MAX_AGE_MS)? {
+        Freshness::Fresh => {}
+        Freshness::Behind { .. } => {
+            let from = st.chain.seq() + 1;
+            let (reply, _) = responder.write_reply(&reply(ReplyStatus::NeedEntries, &st.chain).encode()?, policy, now)?;
+            return Ok(Accepted::NeedEntries { reply, from, applied: 0 });
+        }
+        Freshness::Stale { newest_ms } => {
+            let (reply, _) = responder.write_reply(&reply(ReplyStatus::Stale, &st.chain).encode()?, policy, now)?;
+            return Ok(Accepted::Stale { reply, newest_ms, applied: 0 });
+        }
+    }
+    st.guard.check(device, &hello, now)?;
+    let (reply, transport) = responder.write_reply(&reply(ReplyStatus::Accepted, &st.chain).encode()?, policy, now)?;
+    Ok(Accepted::Open {
+        reply,
+        transport: Box::new(transport),
+        hello: body,
+        applied: 0,
+    })
 }
 
 /// One stream, bridged to `handler` as the agent's bridge would: the request

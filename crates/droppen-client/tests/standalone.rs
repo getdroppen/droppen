@@ -304,7 +304,7 @@ async fn a_device_comes_back_from_its_data_directory_and_refuses_a_hub_that_serv
     }]);
     fork.append(vec![Action::SetAccept {
         host: HOST.into(),
-        from: Accept::Devices(vec![PROXY.into()]),
+        from: Accept::Admins,
     }]);
     stand.hub.set_entries(fork.entries());
     let failure = again.sync_chain().await.unwrap_err();
@@ -341,9 +341,9 @@ async fn an_agent_behind_the_device_asks_for_entries_and_lets_it_in_once_it_caug
     // Eighteen entries the agent lacks: more than a hello carries.
     let mut actions = Vec::new();
     for n in 0..18 {
-        actions.push(Action::SetAccept {
+        actions.push(Action::SetA2aAccept {
             host: HOST.into(),
-            from: if n % 2 == 0 { Accept::All } else { Accept::Devices(vec![PROXY.into()]) },
+            devices: if n % 2 == 0 { Vec::new() } else { vec![PROXY.into()] },
         });
     }
     let entries = stand.account.append(actions);
@@ -447,13 +447,10 @@ async fn a_host_that_stopped_accepting_the_device_is_a_refusal_for_its_chain_to_
     // reach: no ticket names the host, and the relay refuses the `OPEN`.
     let mut stand = Stand::new(echo()).await;
     stand.append(
-        vec![
-            Action::SetAccept {
-                host: HOST.into(),
-                from: Accept::Admins,
-            },
-            Account::host_key(1),
-        ],
+        vec![Action::SetA2aAccept {
+            host: HOST.into(),
+            devices: Vec::new(),
+        }],
         true,
     );
     stand.device.sync_chain().await.unwrap();
@@ -470,7 +467,7 @@ async fn a_host_that_stopped_accepting_the_device_is_a_refusal_for_its_chain_to_
         "{failure:?}"
     );
     assert!(stand.agent.outcomes().is_empty(), "no hello reached the host");
-    assert!(stand.device.with_chain(|c| c.unwrap().may_control(PROXY, HOST).is_err()));
+    assert!(stand.device.with_chain(|c| c.unwrap().may_call_a2a(PROXY, HOST).is_err()));
 
     // A hub that names it anyway: the agent refuses the hello (4401), once
     // more after a sync.
