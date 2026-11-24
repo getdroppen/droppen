@@ -197,7 +197,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 配对（QR、8 位码）要求新设备先用密码在 Hub 注册，不适合无人值守的代理；`RH1` 注册只要一个环境变量和日志。
 
 1. 用户在 my.droppen.app「我的设备」→「添加 A2A 代理」。**码在页面上生成**（和今天加电脑一样，Hub 只存 `token`），页面向 Hub 登记 `{token, kind: "a2a"}`，并在本地记下这是 a2a 码；之后加什么标志由页面自己的记录决定，不信 Hub 回来的 `kind`。码 10 分钟有效、只用一次。
-2. 代理首次启动读 `DROPPEN_ENROLL_CODE`，生成自己的身份，按 `RH1` 协议证明。证明的标签带上种类（`enroll-proof a2a`），a2a 码和加电脑的码不能互换。代理在日志里打出自己的设备指纹。Hub 为它建 devices 行（`kind = 'a2a'`），不建 machines 行、不让它以 agent 身份登录。
+2. 代理首次启动读 `DROPPEN_ENROLL_CODE`，生成自己的身份，按 `RH1` 协议证明。a2a 码用自己的版本前缀 `DA1-<账户指纹>-<秘密>`，证明用自己的标签（`PROOF_LABEL` 之外另一个常量，带 `a2a`）；`agent enroll` 拒绝 `DA1`，代理拒绝 `RH1`/`DR1`，两种码不能互换。代理在日志里打出自己的设备指纹。Hub 为它建 devices 行（`kind = 'a2a'`），不建 machines 行、不让它以 agent 身份登录。
 3. **页面要求用户把代理日志里的指纹粘进来**（与 `completeEnrollment` 的 `expect` 同一机制），对不上、或 Hub 显示有不止一个认领，就中止。然后让用户选哪些设备接受它，写一批：`[AddDevice3{flags: a2a}, SetA2aAccept{host, devices[…]} …]`（不带 `KeyEpochs`、不交任何密钥）。
 4. 代理在 `/v1/client` 上等链里出现自己（带 `a2a`、钥匙对得上），之后用设备会话工作。所有信件不拆就丢。
 5. 文档里提醒：码只设在代理这个服务上（不要放进共享变量），加入后从环境里删掉。
@@ -214,11 +214,11 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 
 ### 7.4 代理 `droppen a2a-proxy`
 
-- `droppen` 二进制的子命令，另出 Docker 镜像。配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷：身份、已验证的链）、`DROPPEN_HUB`（默认 droppen.app）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理用的 Bearer）、`PORT`。
+- `droppen` 二进制的子命令，另出 Docker 镜像。配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷：身份、已验证的链）、`DROPPEN_HUB`（默认 `https://api.droppen.app`）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理用的 Bearer，至少 32 个字符）、`PORT`；可选 `DROPPEN_A2A_PROXY_BASE`（Agent Card 里写的代理地址，默认取请求的 Host）、`DROPPEN_A2A_PROXY_ALIASES`（`别名=设备 id,…`）。
 - 建在 `droppen-client` 上：要补设备侧开通道（从 `droppen-devkit` 提出来）、流式 `rpc`、中继票据续期（15 分钟前必须续，否则 4419）、链的持久化与指纹钉住。
 - 路由：`/a2a/<设备>/agents/<entry>/…`，`<设备>` 是设备 id 或代理配置里的别名；把请求作为 `rpc` 子流转给那台设备的 `/a2a/agents/<entry>/…`，把 Agent Card 里的接口地址改写成代理自己的地址。
 - 长流（SSE）会被中继迁移、票据、链变化、7 天新鲜度切断；代理不替客户端重连，客户端靠 `SubscribeToTask` 或轮询接着跟。
-- 错误映射（代理按自己验证过的链判断，因为 4401/4403/412 有歧义）：设备离线（4404、中途 4410、presence 离线）→ `droppen.device_offline`；新鲜度（`Stale`、4412、412 `lapsed`）→ `droppen.attestation_stale`；链上 `may_call_a2a(自己, 设备)` 不成立 → `droppen.not_accepted`；链上自己已被移除（或会话被拒 `device_removed`）→ `droppen.device_removed`。
+- 错误映射（代理按自己验证过的链判断，因为 4401/4403/412 有歧义；JSON-RPC 都是 -32603，HTTP 状态见括号）：设备离线（4404、中途 4410、presence 离线）→ `droppen.device_offline`（503 `UNAVAILABLE`）；新鲜度（`Stale`、4412、412 `lapsed`）→ `droppen.attestation_stale`（400 `FAILED_PRECONDITION`）；链上 `may_call_a2a(自己, 设备)` 不成立 → `droppen.not_accepted`（403 `PERMISSION_DENIED`）；链上自己已被移除（或会话被拒 `device_removed`）→ `droppen.device_removed`（403 `PERMISSION_DENIED`）。请求体超过 10 MiB → `droppen.quota_exceeded`。代理连设备时拨的是检查过的解析地址（不按名字重新解析）。
 - push 由可运行 AI 的设备直接发到客户端的公网 https 地址（§5、§6 的规则），不经代理。
 - 新鲜度保持 7 天（控制类同一窗口）。恶意 Hub 扣住移除时最多多活 7 天；不依赖 Hub 的紧急开关是入口的 `allowedDevices` 与停用（§6）。
 
@@ -227,7 +227,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 - Hub：
   - 升级内嵌的 droppen（链里多了 bit 2 与 `SetA2aAccept`）。
   - 注册码加 `kind`：`a2a` 按 `devices.max` 计、建 devices 行、不建 machines 行、不给 agent 登录。
-  - a2a 设备会话只能读链、取票据、看接受它的设备的在线状态；`/v1/me` 的邮箱与设备列表、`/v1/keys`、流的 `SUB` 与页、`POST /v1/devices`、配对、主设备、中继偏好一律拒绝。
+  - a2a 设备会话只能读链、取票据、`GET /v1/relays`、看接受它的设备的在线状态；`/v1/me` 的邮箱与设备列表、`/v1/keys`、流的 `SUB` 与页、`POST /v1/devices`、配对、主设备、中继偏好一律拒绝。
   - 拒绝发给 a2a 设备的信件（用途 1、3、5）和由它发出的索钥信件（用途 4）。
   - a2a 设备的路由与票据 `peers` 按 `may_call_a2a`，并要求目标设备声明 `a2a/1`。
   - `docs/hub-api/` 同步。
