@@ -99,9 +99,17 @@ pub struct PathStats {
     /// The latest round trip a probe measured on the hub path; never a guess.
     pub relay_rtt_ms: Option<f64>,
     pub direct_rtt_ms: Option<f64>,
-    /// How long the oldest hub probe still out had gone unanswered, as of the
-    /// latest probe tick or answer (`None` with none out then): the hub path
-    /// is at least that slow. Kept apart from [`PathStats::relay_rtt_ms`].
+    /// How long the oldest hub probe still out had gone unanswered (or waited
+    /// for credit to leave), as of the latest probe tick or answer (`None`
+    /// with none out then): the hub path is at least that slow. Kept apart
+    /// from [`PathStats::relay_rtt_ms`].
+    ///
+    /// This and [`PathStats::relay_quiet_ms`] mirror the page's
+    /// `relayProbeAgeMs` / `relayQuietMs` (`web/src/lib/e2e/channel.ts`), so
+    /// the two halves of the protocol keep the same stats the same way and
+    /// the ported tests pin both. Only the page acts on them (it replaces a
+    /// channel whose hub path is gone, `relayPathGone`); the agent never
+    /// probes the hub path, and a headless device only reports them.
     pub relay_probe_age_ms: Option<f64>,
     /// How long nothing had arrived on the hub path at that same moment
     /// (`None` with no probe out): a slow path keeps delivering, a gone one
@@ -125,6 +133,10 @@ struct Paths {
     /// Probes and their answers for the direct path.
     out_direct: VecDeque<Envelope>,
     probes: HashMap<u64, (Via, u64)>,
+    /// Hub probes queued and not sent yet, and since when (µs): the hub window
+    /// is spent and the peer has handed no credit back. One that cannot leave
+    /// says the hub path is as slow as one unanswered.
+    unsent_relay_probes: HashMap<u64, u64>,
     next_nonce: u64,
     last_direct_rx_us: u64,
     /// When the direct path last showed it delivers: the peer's data arrived
@@ -172,6 +184,7 @@ impl Session {
                 out_relay: VecDeque::new(),
                 out_direct: VecDeque::new(),
                 probes: HashMap::new(),
+                unsent_relay_probes: HashMap::new(),
                 next_nonce: 1,
                 last_direct_rx_us: now_us,
                 last_direct_progress_us: now_us,
@@ -506,6 +519,7 @@ impl Session {
             p.age_relay_probe(now_us);
             let nonce = p.nonce();
             p.out_relay.push_back(Envelope::Probe { nonce });
+            p.unsent_relay_probes.insert(nonce, now_us);
         }
     }
 
@@ -575,14 +589,16 @@ impl Paths {
         n
     }
 
-    /// A hub probe still unanswered says the hub path is at least that slow:
-    /// note how long the oldest one has been out, and how long nothing has
-    /// arrived on the hub path, as of `now_us` (whole milliseconds). Kept
-    /// apart from the round trip, which only a probe's answer sets: the page
-    /// says an old probe as "slow", and the two together tell a slow path,
-    /// which keeps delivering, from one that is gone.
+    /// A hub probe still unanswered (or still waiting for credit to leave)
+    /// says the hub path is at least that slow: note how long the oldest one
+    /// has been out, and how long nothing has arrived on the hub path, as of
+    /// `now_us` (whole milliseconds). Kept apart from the round trip, which
+    /// only a probe's answer sets: the page says an old probe as "slow", and
+    /// the two together tell a slow path, which keeps delivering, from one
+    /// that is gone.
     fn age_relay_probe(&mut self, now_us: u64) {
-        let oldest = self.probes.values().filter(|(via, _)| *via == Via::Relay).map(|(_, at)| *at).min();
+        let sent = self.probes.values().filter(|(via, _)| *via == Via::Relay).map(|(_, at)| *at);
+        let oldest = sent.chain(self.unsent_relay_probes.values().copied()).min();
         let whole_ms = |us: u64| (us as f64 / 1000.0).round();
         self.stats.relay_probe_age_ms = oldest.map(|at| whole_ms(now_us.saturating_sub(at)));
         self.stats.relay_quiet_ms = oldest.map(|_| whole_ms(now_us.saturating_sub(self.last_relay_rx_us)));
@@ -591,6 +607,9 @@ impl Paths {
     /// Remember when a probe left (and on which path).
     fn note_probe(&mut self, env: &Envelope, via: Via, now_us: u64) {
         if let Envelope::Probe { nonce } = env {
+            if via == Via::Relay {
+                self.unsent_relay_probes.remove(nonce);
+            }
             if self.probes.len() >= MAX_PROBES {
                 if let Some(oldest) = self.probes.keys().min().copied() {
                     self.probes.remove(&oldest);
@@ -895,6 +914,29 @@ mod tests {
         let s = p.a.stats();
         assert_eq!(s.relay_rtt_ms, Some(0.0), "measured afresh: the latest probe was answered at once");
         assert_eq!((s.relay_probe_age_ms, s.relay_quiet_ms), (None, None), "nothing out any more");
+    }
+
+    /// A hub probe that cannot leave (the hub window is spent, no credit comes
+    /// back) is timed from when it was queued: on a path that died while this
+    /// side was sending, it is the only probe out.
+    #[test]
+    fn a_hub_probe_that_cannot_leave_is_timed_from_when_it_was_queued() {
+        let mut p = Pair::new();
+        open_stream(&mut p);
+        for at in [0, RELAY_PROBE_MS, 2 * RELAY_PROBE_MS] {
+            p.now = at * 1000;
+            p.a.tick(p.now);
+        }
+        assert_eq!(
+            p.a.stats().relay_probe_age_ms,
+            Some((2 * RELAY_PROBE_MS) as f64),
+            "queued at 0, and still there"
+        );
+        // They leave; from then on they are timed from when they left.
+        p.send_all();
+        p.now = 3 * RELAY_PROBE_MS * 1000;
+        p.a.tick(p.now);
+        assert_eq!(p.a.stats().relay_probe_age_ms, Some(RELAY_PROBE_MS as f64));
     }
 
     /// A slow hub path — its probes' answers queued behind a download the link

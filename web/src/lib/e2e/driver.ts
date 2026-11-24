@@ -50,8 +50,9 @@ export interface PathStats {
   relayRttMs: number | null;
   directRttMs: number | null;
   /**
-   * How long the oldest hub probe still out had gone unanswered, and how long
-   * nothing had arrived on the hub path, at the latest probe tick or answer
+   * How long the oldest hub probe still out had gone unanswered (or waited
+   * for credit to leave), and how long nothing had arrived on the hub path,
+   * at the latest probe tick or answer
    * (ms; `null` with no probe out): a slow path (`relaySlowMs`), or a gone
    * one (`relayPathGone`).
    */

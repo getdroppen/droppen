@@ -510,6 +510,22 @@ test("a CREDIT from the peer counts as the hub path carrying", async () => {
   assert.equal(relayPathGone(s.relayProbeAgeMs, s.relayQuietMs), false);
 });
 
+test("a hub probe that cannot leave (the page's window is spent) is timed from when it was queued", async () => {
+  const p = await Pair.create();
+  await openStream(p);
+  // No room on the hub path: nothing is polled, the probes stay queued.
+  for (const at of [0, RELAY_PROBE_MS, 2 * RELAY_PROBE_MS]) {
+    p.now = at;
+    p.a.tick(p.now);
+  }
+  assert.equal(p.a.stats().relayProbeAgeMs, 2 * RELAY_PROBE_MS, "queued at 0, and still there");
+  // They leave; from then on they are timed from when they left.
+  await p.sendAll();
+  p.now = 3 * RELAY_PROBE_MS;
+  p.a.tick(p.now);
+  assert.equal(p.a.stats().relayProbeAgeMs, RELAY_PROBE_MS);
+});
+
 test("a relay path is gone only once its old probe is met with silence; slow is a probe older than the round trip", () => {
   assert.equal(relayPathGone(null, null), false);
   assert.equal(relayPathGone(RELAY_SILENT_MS - 1, 60_000), false, "not old enough");
@@ -517,6 +533,10 @@ test("a relay path is gone only once its old probe is met with silence; slow is 
   assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_PROBE_MS), true);
   assert.equal(relayPathGone(3 * RELAY_PROBE_MS, 2 * RELAY_PROBE_MS - 1), false, "an older probe asks a longer silence");
   assert.equal(relayPathGone(3 * RELAY_PROBE_MS, 2 * RELAY_PROBE_MS), true);
+  // However old the probe, RELAY_SILENT_MS of silence is enough: a dead path
+  // whose probe went out long before it died is not kept waiting for ever.
+  assert.equal(relayPathGone(20 * RELAY_PROBE_MS, RELAY_SILENT_MS - 1), false);
+  assert.equal(relayPathGone(20 * RELAY_PROBE_MS, RELAY_SILENT_MS), true);
   assert.equal(relaySlowMs(null, 3), null);
   assert.equal(relaySlowMs(RELAY_PROBE_MS - 1, 3), null, "out less than an interval: the round trip says it");
   assert.equal(relaySlowMs(RELAY_PROBE_MS, 3), RELAY_PROBE_MS);

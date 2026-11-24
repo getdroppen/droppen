@@ -48,7 +48,7 @@
  */
 import type { QueryClient } from "@tanstack/react-query";
 import i18next from "i18next";
-import { type KeyStore, relaySlowMs } from "@/lib/e2e";
+import type { KeyStore } from "@/lib/e2e";
 import type { CloudAccount } from "@/lib/hub/account";
 import { type AccountMain, accountMain, type HubApi, HubApiError } from "@/lib/hub/api";
 import { HubCopySource, StreamBudget } from "@/lib/hub/copy-source";
@@ -327,11 +327,8 @@ export class HubMachine implements MachineDriver {
     const route = this.channel.route;
     if (this.channel.status !== "open" || (!paths && !route)) return undefined;
     if (paths?.direct) return { kind: "direct", rttMs: paths.directRttMs };
-    // A probe out longer than the last measured round trip: slow, by at least that much (never a round trip nobody measured).
-    const slowMs = paths ? relaySlowMs(paths.relayProbeAgeMs, paths.relayRttMs) : null;
-    const relay = { rttMs: paths?.relayRttMs ?? null, ...(slowMs !== null ? { slowMs } : {}) };
-    if (route?.kind === "relay") return { kind: "relay", relay: route.relay.id, ...relay };
-    return { kind: "hub", ...relay };
+    if (route?.kind === "relay") return { kind: "relay", relay: route.relay.id, rttMs: paths?.relayRttMs ?? null };
+    return { kind: "hub", rttMs: paths?.relayRttMs ?? null };
   }
 
   private read(): MachineInfo {

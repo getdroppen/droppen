@@ -124,6 +124,31 @@ export const AGENT_UNSAVED = 4507;
  */
 export const AGENT_HANDSHAKE_REFUSED = 4401;
 
+/** Why a channel whose hub path is gone was closed ({@link watchRelayPath}). */
+export const RELAY_PATH_GONE = 4000;
+
+/**
+ * The page's watch on a channel's carrier path, as its driver's `onpaths`:
+ * once the path is gone (`relayPathGone`) — not merely slow — the channel is
+ * closed ({@link RELAY_PATH_GONE}) and the carrier (`carrier`, a relay link)
+ * woken with its short deadline, once: a dead relay link must be replaced
+ * before the next channel tries to use it. Rather than stall until the relay
+ * link's own 60 s silence, a dead path is replaced within 15 s of the last
+ * thing it brought. A probe answered late while data keeps coming is a slow
+ * link, not a dead one — its answer waits behind what the channel's window
+ * let the agent send first — and replacing that channel only had the page
+ * ask for the same data again, over and over.
+ */
+export function watchRelayPath(driver: ChannelDriver, carrier: { wake(): void } | null): (stats: PathStats) => void {
+  let fired = false;
+  return (stats) => {
+    if (fired || driver.isClosed || !relayPathGone(stats.relayProbeAgeMs, stats.relayQuietMs)) return;
+    fired = true;
+    carrier?.wake();
+    driver.close(RELAY_PATH_GONE, "the relay path stopped answering");
+  };
+}
+
 /** A relay's close for a refused `OPEN`: not a machine this ticket names (`droppen-relay-core/src/route.rs`). */
 const RELAY_FORBIDDEN = 4403;
 /** The hub's closes for a refused `OPEN` (`droppen-relay-core/src/route.rs`, as the hub runs it). */
@@ -873,23 +898,10 @@ export class MachineChannel implements PipeOpener {
         for (const f of queue.drain()) take(f);
         routeTo = take;
         let direct: DirectPaths | null = null;
-        let relayFailing = false;
+        const watchRelay = watchRelayPath(driver, relayLink);
         driver.onpaths = (stats) => {
           if (this.driver === driver) this.setPaths(stats);
-          // A carrier path with a probe unanswered for two probe intervals,
-          // and nothing at all arriving on the channel since, is gone: replace
-          // it rather than stall until the relay link's own 60 s silence. A
-          // probe answered late while data keeps coming is a slow link, not a
-          // dead one — its answer waits behind what the channel's window let
-          // the agent send first — and replacing that channel only had the
-          // page ask for the same data again, over and over (`relayPathGone`).
-          // Wake the carrier with its short deadline too: a dead relay link
-          // must be replaced before the next channel tries to use it.
-          if (!relayFailing && !driver.isClosed && relayPathGone(stats.relayProbeAgeMs, stats.relayQuietMs)) {
-            relayFailing = true;
-            relayLink?.wake();
-            driver.close(4000, "the relay path stopped answering");
-          }
+          watchRelay(stats);
         };
         const offGoaway = relayLink?.onGoaway(({ retryMs }) => {
           // The relay is draining: move before it closes.

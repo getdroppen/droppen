@@ -65,8 +65,9 @@ export interface SessionPathStats {
   relayRttMs: number | null;
   directRttMs: number | null;
   /**
-   * How long the oldest hub probe still out has gone unanswered (whole ms), as
-   * of the latest probe tick or answer; `null` with none out then.
+   * How long the oldest hub probe still out has gone unanswered, or waited
+   * for credit to leave (whole ms), as of the latest probe tick or answer;
+   * `null` with none out then.
    */
   relayProbeAgeMs: number | null;
   /** How long nothing had arrived on the hub path at that moment (whole ms); `null` with no probe out. */
@@ -100,6 +101,14 @@ class Paths {
   /** Probes and their answers for the direct path. */
   outDirect: Envelope[] = [];
   readonly probes = new Map<number, [Via, number]>();
+  /**
+   * Hub probes queued and not sent yet, and since when: the hub window is
+   * spent (this page is uploading) and the peer has handed no credit back. A
+   * probe that cannot leave says the hub path is as slow as one unanswered,
+   * and on a path that died while this page was sending it is the only probe
+   * out.
+   */
+  readonly unsentRelayProbes = new Map<number, number>();
   private nextNonce = 1;
   lastDirectRxMs: number;
   /**
@@ -165,17 +174,18 @@ class Paths {
   }
 
   /**
-   * A hub probe still unanswered says the hub path is at least that slow:
-   * note how long the oldest one has been out, and how long nothing has
-   * arrived on the hub path, as of `nowMs`. Kept apart from the round trip,
-   * which only a probe's answer sets: the indicator says an old probe as
-   * "slow" rather than as a round trip nobody measured (`relaySlowMs`), and
-   * the two together tell a slow path, which keeps delivering, from one that
-   * is gone (`relayPathGone`).
+   * A hub probe still unanswered (or still waiting for credit to leave) says
+   * the hub path is at least that slow: note how long the oldest one has been
+   * out, and how long nothing has arrived on the hub path, as of `nowMs`.
+   * Kept apart from the round trip, which only a probe's answer sets: the
+   * indicator says an old probe as "slow" rather than as a round trip nobody
+   * measured (`relaySlowMs`), and the two together tell a slow path, which
+   * keeps delivering, from one that is gone (`relayPathGone`).
    */
   ageRelayProbe(nowMs: number): void {
     let oldest: number | null = null;
     for (const [via, at] of this.probes.values()) if (via === "relay" && (oldest === null || at < oldest)) oldest = at;
+    for (const at of this.unsentRelayProbes.values()) if (oldest === null || at < oldest) oldest = at;
     this.counts.relayProbeAgeMs = oldest === null ? null : Math.round(nowMs - oldest);
     this.counts.relayQuietMs = oldest === null ? null : Math.round(Math.max(0, nowMs - this.lastRelayRxMs));
   }
@@ -188,12 +198,15 @@ class Paths {
    */
   forgetProbesAfterPause(nowMs: number): void {
     for (const [nonce, [via]] of this.probes) if (via === "relay") this.probes.delete(nonce);
+    // Still queued, they are timed afresh from when they leave.
+    this.unsentRelayProbes.clear();
     this.ageRelayProbe(nowMs);
   }
 
   /** Remember when a probe left (and on which path). */
   noteProbe(env: Envelope, via: Via, nowMs: number): void {
     if (env.type !== "probe") return;
+    if (via === "relay") this.unsentRelayProbes.delete(env.nonce);
     if (this.probes.size >= MAX_PROBES) this.probes.delete(Math.min(...this.probes.keys()));
     this.probes.set(env.nonce, [via, nowMs]);
   }
@@ -474,7 +487,9 @@ export class Session {
     if (p.opts.probeRelay && nowMs >= p.nextRelayProbeMs) {
       p.nextRelayProbeMs = nowMs + RELAY_PROBE_MS;
       p.ageRelayProbe(nowMs);
-      p.outRelay.push({ type: "probe", nonce: p.nonce() });
+      const nonce = p.nonce();
+      p.outRelay.push({ type: "probe", nonce });
+      p.unsentRelayProbes.set(nonce, nowMs);
     }
   }
 
