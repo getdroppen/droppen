@@ -1604,8 +1604,12 @@ impl A2a {
         if push.url.is_empty() {
             return Err(A2aError::invalid("a push configuration needs a url"));
         }
-        if !entry.allows_push_to(&push.url, self.settings.tck && entry.source == EntrySource::Tck) {
-            return Err(A2aError::invalid("a push url is https, at an origin this agent's pushOrigins lists"));
+        // The rule the sender holds every attempt to (§6), so a configuration
+        // made here is one it delivers to while the entry stays as it is.
+        if let Err(refusal) = crate::push::guard::push_target(&push.url, &entry.push_origins, entry.source, self.settings.tck) {
+            return Err(A2aError::invalid(format!(
+                "a push url is https, at an origin this agent's pushOrigins lists: {refusal}"
+            )));
         }
         if push.id.chars().count() > 128 || push.id.chars().any(char::is_control) {
             return Err(A2aError::invalid("a push configuration's id is at most 128 characters"));

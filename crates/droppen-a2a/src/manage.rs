@@ -180,7 +180,7 @@ impl A2a {
         }
         // Again as the entry now stands: a `tck` entry's loopback origins do
         // not come along when it becomes another kind.
-        entry.push_origins = clean_origins(&entry.push_origins, self.settings().tck && entry.source == EntrySource::Tck).map_err(bad)?;
+        entry.push_origins = clean_origins(&entry.push_origins, entry.source, self.settings().tck).map_err(bad)?;
         if !(1..=MAX_CONCURRENT).contains(&entry.max_concurrent) {
             return Err(bad(format!("maxConcurrent is 1 to {MAX_CONCURRENT}")));
         }
@@ -215,11 +215,7 @@ impl A2a {
             max_concurrent: body.max_concurrent.0.unwrap_or(1),
             template: Nullable(clean_template(body.template.as_deref()).map_err(bad)?),
             allow_remote_answers: body.allow_remote_answers.0.unwrap_or(true),
-            push_origins: clean_origins(
-                body.push_origins.0.as_deref().unwrap_or_default(),
-                self.settings().tck && body.source == EntrySource::Tck,
-            )
-            .map_err(bad)?,
+            push_origins: clean_origins(body.push_origins.0.as_deref().unwrap_or_default(), body.source, self.settings().tck).map_err(bad)?,
             allowed_devices: clean_devices(body.allowed_devices.0.as_deref().unwrap_or_default()).map_err(bad)?,
             created_at: iso_ms(now),
             updated_at: iso_ms(now),
@@ -276,7 +272,7 @@ impl A2a {
             entry.allow_remote_answers = allow;
         }
         if let Some(origins) = &body.push_origins.0 {
-            entry.push_origins = clean_origins(origins, self.settings().tck && entry.source == EntrySource::Tck).map_err(bad)?;
+            entry.push_origins = clean_origins(origins, entry.source, self.settings().tck).map_err(bad)?;
         }
         if let Some(devices) = &body.allowed_devices.0 {
             entry.allowed_devices = clean_devices(devices).map_err(bad)?;

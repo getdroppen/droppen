@@ -25,7 +25,10 @@
 //! The one exception to the classes is an address `pushOrigins` names
 //! literally, at the URL's port (`https://10.0.0.5:8443`): the person who set
 //! the entry up said so. The TCK's plain-http webhook is the other
-//! ([`tck_plain_http`]).
+//! ([`tck_exception`]).
+//!
+//! An entry's `pushOrigins` are written by [`listed_origin`], so what an entry
+//! may list and where its pushes may go are one rule.
 
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -221,7 +224,7 @@ pub enum Refusal {
     Unparsable,
     /// Credentials in it (`https://user:pw@…`).
     Userinfo,
-    /// Not `https` (and not the TCK's plain http to loopback).
+    /// Not `https`, nor plain http to loopback under [`tck_exception`].
     Scheme,
     /// An origin the entry's `pushOrigins` does not list.
     Origin,
@@ -249,7 +252,7 @@ pub struct PushTarget {
     /// The addresses its host may resolve to whatever their class: those
     /// `pushOrigins` names literally at its port.
     pub named: BTreeSet<IpAddr>,
-    /// Plain http to this device's loopback ([`tck_plain_http`]).
+    /// Plain http to this device's loopback ([`tck_exception`]).
     pub plain_http: bool,
 }
 
@@ -301,52 +304,88 @@ fn has_userinfo(url: &Url) -> bool {
     !url.username().is_empty() || url.password().is_some()
 }
 
-/// The TCK's exception (`docs/a2a.md` §5): plain http to this device's
-/// loopback, `http://127.0.0.1` or `http://localhost` at any port, which is
-/// where the A2A TCK's webhook listens. Only for a `tck` entry, and only on a
-/// server started with `DROPPEN_A2A_TCK=1` (`tck`); nothing else ever goes
-/// out in plain http.
-pub fn tck_plain_http(url: &Url, source: EntrySource, tck: bool) -> bool {
-    tck && source == EntrySource::Tck && url.scheme() == "http" && !has_userinfo(url) && matches!(url.host_str(), Some("127.0.0.1" | "localhost"))
+/// The hosts of the TCK's exception: this device's loopback, by address and
+/// by name, as the URL parser writes them.
+const LOOPBACK_HOSTS: [&str; 2] = ["127.0.0.1", "localhost"];
+
+/// The TCK's exception (`docs/a2a.md` §6): whether an entry of `source`, on a
+/// server whose `DROPPEN_A2A_TCK` is `tck`, may list and push to plain-http
+/// origins on this device's loopback, `http://127.0.0.1[:port]` and
+/// `http://localhost[:port]`, where the A2A TCK's webhook receiver listens.
+/// Only a `tck` entry of a server started with the switch; nothing else ever
+/// goes out in plain http. The receiver takes a port of its own each run, so
+/// such an origin listed without a port admits any port of its host.
+pub fn tck_exception(source: EntrySource, tck: bool) -> bool {
+    tck && source == EntrySource::Tck
+}
+
+/// Whether `url`'s scheme and host are ones an entry may name at all:
+/// `https` anywhere, plain `http` only on loopback under [`tck_exception`].
+fn scheme_allowed(url: &Url, source: EntrySource, tck: bool) -> bool {
+    match url.scheme() {
+        "https" => true,
+        "http" => tck_exception(source, tck) && url.host_str().is_some_and(|host| LOOPBACK_HOSTS.contains(&host)),
+        _ => false,
+    }
+}
+
+/// `origin` as an entry of `source` keeps it in its `pushOrigins`, read by the
+/// parser a push URL is read with: `scheme://host[:port]`, the host lower-case
+/// and in its ASCII form, the scheme's default port left out. `None` for
+/// anything else: a path, a query, credentials, another scheme, plain http
+/// but on loopback under [`tck_exception`].
+pub fn listed_origin(origin: &str, source: EntrySource, tck: bool) -> Option<String> {
+    let url = Url::parse(origin.trim()).ok()?;
+    let bare = !has_userinfo(&url) && url.path() == "/" && url.query().is_none() && url.fragment().is_none();
+    if !bare || !scheme_allowed(&url, source, tck) {
+        return None;
+    }
+    let host = url.host_str()?;
+    Some(match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    })
 }
 
 /// Where a push to `url` goes, for an entry whose `pushOrigins` are
 /// `push_origins`, of `source`, on a server whose `DROPPEN_A2A_TCK` is `tck`;
-/// or why it does not. The one rule for a push URL: the sender asks it
-/// before every attempt, and a configuration may be checked with it when it
-/// is made.
+/// or why it does not. The one rule for a push URL: a configuration is
+/// refused by it when it is made, and the sender asks it again before every
+/// attempt, against the entry as it stands then.
 pub fn push_target(url: &str, push_origins: &[String], source: EntrySource, tck: bool) -> Result<PushTarget, Refusal> {
     let url = Url::parse(url).map_err(|_| Refusal::Unparsable)?;
     if has_userinfo(&url) {
         return Err(Refusal::Userinfo);
     }
     let origin = origin_of(&url).ok_or(Refusal::Unparsable)?;
-    if tck_plain_http(&url, source, tck) {
-        let named = [IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V6(Ipv6Addr::LOCALHOST)].into();
-        return Ok(PushTarget {
-            url,
-            named,
-            plain_http: true,
-        });
-    }
-    if url.scheme() != "https" {
+    if !scheme_allowed(&url, source, tck) {
         return Err(Refusal::Scheme);
     }
     let mut listed = false;
     let mut named = BTreeSet::new();
     for allowed in push_origins {
-        let Ok(allowed) = Url::parse(allowed) else { continue };
-        if has_userinfo(&allowed) {
+        // Read as it was checked when it was listed: an origin the entry may
+        // no longer list (loopback http without the switch) lists nothing.
+        let Some(allowed) = listed_origin(allowed, source, tck).and_then(|allowed| Url::parse(&allowed).ok()) else {
             continue;
-        }
+        };
         let Some(allowed_origin) = origin_of(&allowed) else { continue };
-        listed |= allowed_origin == origin;
+        let any_port = allowed.scheme() == "http" && allowed.port().is_none();
+        listed |= allowed_origin == origin || (any_port && allowed_origin.scheme == origin.scheme && allowed_origin.host == origin.host);
         if allowed_origin.scheme == "https" && allowed_origin.port == origin.port {
             named.extend(literal(&allowed));
         }
     }
     if !listed {
         return Err(Refusal::Origin);
+    }
+    if url.scheme() == "http" {
+        let named = [IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V6(Ipv6Addr::LOCALHOST)].into();
+        return Ok(PushTarget {
+            url,
+            named,
+            plain_http: true,
+        });
     }
     if let Some(ip) = literal(&url) {
         admit(ip, &named).map_err(|class| Refusal::Address(ip, class))?;
@@ -614,41 +653,81 @@ mod tests {
     }
 
     #[test]
-    fn plain_http_to_loopback_is_the_tcks_alone() {
-        let none: Vec<String> = Vec::new();
-        for url in [
-            "http://127.0.0.1:41234/webhook",
-            "http://localhost:41234/webhook",
-            "http://LOCALHOST:41234/webhook",
+    fn an_origin_is_listed_as_the_parser_reads_it() {
+        let listed = |origin: &str| listed_origin(origin, EntrySource::Claude, false);
+        assert_eq!(listed("https://Hooks.Example.com").as_deref(), Some("https://hooks.example.com"));
+        assert_eq!(listed(" https://example.com/ ").as_deref(), Some("https://example.com"));
+        assert_eq!(listed("https://example.com:443").as_deref(), Some("https://example.com"));
+        assert_eq!(listed("https://example.com:8443").as_deref(), Some("https://example.com:8443"));
+        assert_eq!(listed("https://[::1]:8443").as_deref(), Some("https://[::1]:8443"));
+        assert_eq!(listed("https://bücher.example").as_deref(), Some("https://xn--bcher-kva.example"));
+        assert_eq!(listed("https://0x7f.0.0.1:8443").as_deref(), Some("https://127.0.0.1:8443"));
+        for not_one in [
+            "https://example.com/path",
+            "https://example.com?x=1",
+            "https://example.com#top",
+            "https://user:pw@example.com",
+            "https://example.com:99999",
+            "http://example.com",
+            "ftp://example.com",
+            "example.com",
         ] {
-            let target = push_target(url, &none, EntrySource::Tck, true).unwrap();
+            assert_eq!(listed(not_one), None, "{not_one}");
+        }
+    }
+
+    #[test]
+    fn plain_http_to_loopback_is_the_tcks_alone_and_listed() {
+        let tck = |origin: &str, source, switch| listed_origin(origin, source, switch);
+        assert_eq!(
+            tck("http://127.0.0.1:9000", EntrySource::Tck, true).as_deref(),
+            Some("http://127.0.0.1:9000")
+        );
+        assert_eq!(tck("http://LOCALHOST:80/", EntrySource::Tck, true).as_deref(), Some("http://localhost"));
+        assert_eq!(tck("http://127.0.0.1:9000", EntrySource::Tck, false), None, "not without the switch");
+        assert_eq!(tck("http://127.0.0.1:9000", EntrySource::Claude, true), None, "nor for another entry");
+        for not_loopback in [
+            "http://example.com",
+            "http://127.0.0.1.evil.net",
+            "http://[::1]:9000",
+            "http://127.0.0.2",
+            "http://10.0.0.1",
+        ] {
+            assert_eq!(tck(not_loopback, EntrySource::Tck, true), None, "{not_loopback}");
+        }
+
+        let listed = origins(&["http://localhost", "http://127.0.0.1:41234"]);
+        let push = |url: &str, source, switch| push_target(url, &listed, source, switch);
+        for url in [
+            "http://localhost:41234/webhook",
+            "http://LOCALHOST:9/webhook",
+            "http://127.0.0.1:41234/webhook",
+        ] {
+            let target = push(url, EntrySource::Tck, true).unwrap();
             assert!(target.plain_http, "{url}");
             assert_eq!(target.named, [ip("127.0.0.1"), ip("::1")].into());
-            assert_eq!(
-                push_target(url, &none, EntrySource::Tck, false),
-                Err(Refusal::Scheme),
-                "{url} without the switch"
-            );
-            assert_eq!(
-                push_target(url, &none, EntrySource::Claude, true),
-                Err(Refusal::Scheme),
-                "{url} for another entry"
-            );
-            assert_eq!(push_target(url, &none, EntrySource::Codex, false), Err(Refusal::Scheme));
+            assert_eq!(push(url, EntrySource::Tck, false), Err(Refusal::Scheme), "{url} without the switch");
+            assert_eq!(push(url, EntrySource::Claude, true), Err(Refusal::Scheme), "{url} for another entry");
         }
+        assert_eq!(
+            push("http://127.0.0.1:41235/webhook", EntrySource::Tck, true),
+            Err(Refusal::Origin),
+            "a listed port is that port; only a portless origin takes any"
+        );
+        assert_eq!(
+            push_target("http://localhost:41234/webhook", &[], EntrySource::Tck, true),
+            Err(Refusal::Origin),
+            "an origin not listed is not one"
+        );
         for url in [
             "http://10.0.0.1:41234/webhook",
             "http://example.com/webhook",
             "http://[::1]:41234/webhook",
-            "http://127.0.0.2:41234/webhook",
-            "http://localhost.evil.test/webhook",
+            "http://localhost.evil.test/",
         ] {
-            assert_eq!(push_target(url, &none, EntrySource::Tck, true), Err(Refusal::Scheme), "{url}");
+            assert_eq!(push(url, EntrySource::Tck, true), Err(Refusal::Scheme), "{url}");
         }
-        assert_eq!(
-            push_target("http://u:p@localhost:1/webhook", &none, EntrySource::Tck, true),
-            Err(Refusal::Userinfo)
-        );
+        assert_eq!(push("http://u:p@localhost:1/webhook", EntrySource::Tck, true), Err(Refusal::Userinfo));
         // A tck entry's https pushes follow the ordinary rule.
         assert!(push_target(
             "https://hooks.example.com/",
@@ -657,6 +736,15 @@ mod tests {
             true
         )
         .is_ok());
+        assert_eq!(
+            push_target(
+                "https://hooks.example.com/",
+                &origins(&["http://hooks.example.com"]),
+                EntrySource::Tck,
+                true
+            ),
+            Err(Refusal::Origin)
+        );
     }
 
     struct Answers(std::sync::Mutex<std::collections::VecDeque<Vec<IpAddr>>>);

@@ -931,31 +931,63 @@ async fn plain_http_goes_to_the_tcks_webhook_and_no_one_elses() {
     let rig = Rig::new();
     let hook = Hook::plain().await;
     rig.names.answer("localhost", &[&[IpAddr::V4(Ipv4Addr::LOCALHOST)]]);
+    // The receiver's port is its own: a portless loopback origin admits any.
+    let origins = json!(["http://localhost", format!("http://127.0.0.1:{}", hook.port())]);
     let w = rig
-        .start(json!({"id": "tck", "name": "TCK", "source": "tck", "enabled": true}), true)
+        .start(
+            json!({"id": "tck", "name": "TCK", "source": "tck", "enabled": true, "pushOrigins": origins}),
+            true,
+        )
         .await;
-    let task = w.send(json!({"message": message("tck-input-required-1", "ask me")})).await;
-    w.wait_state(&task, TaskState::InputRequired).await;
+    // As the TCK does it (PUSH-DELIVER-*): the configuration comes with the
+    // message, through the same check as any other, and a follow-up ends the
+    // task.
     let auth = json!({"scheme": "Bearer", "credentials": "tck-test-token"});
-    for (id, url) in [
-        ("literal", format!("http://127.0.0.1:{}/webhook", hook.port())),
-        ("name", format!("http://localhost:{}/webhook", hook.port())),
-    ] {
-        w.a2a
-            .add_push(
-                &task,
-                serde_json::from_value(json!({"id": id, "url": url, "authentication": auth})).unwrap(),
-            )
-            .unwrap();
+    let mut whats = Vec::new();
+    for (n, url) in [
+        format!("http://127.0.0.1:{}/webhook", hook.port()),
+        format!("http://localhost:{}/webhook", hook.port()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let push = json!({"id": "tck-push", "url": url, "authentication": auth});
+        let task = w
+            .send(json!({"message": message(&format!("tck-input-required-{n}"), "ask me"), "configuration": {"taskPushNotificationConfig": push}}))
+            .await;
+        w.wait_state(&task, TaskState::InputRequired).await;
+        let follow_up = json!({"messageId": format!("tck-complete-task-{n}"), "role": "ROLE_USER", "taskId": task, "parts": [{"text": "go on"}]});
+        w.send(json!({"message": follow_up})).await;
+        w.wait_state(&task, TaskState::Completed).await;
+        w.pusher.settled().await;
+        assert_eq!(hook.bodies()[whats.len()..], w.pushable(&task), "{url}: the whole task, in order");
+        whats.extend(hook.bodies()[whats.len()..].iter().map(|body| what(body)));
     }
-    w.pusher.settled().await;
-    let seen = hook.seen();
-    assert_eq!(seen.len(), 4, "each configuration told the task from its start: {seen:?}");
-    assert!(seen.iter().all(|seen| seen.headers["authorization"] == "Bearer tck-test-token"));
+    assert_eq!(whats.len(), 8);
     assert_eq!(
-        hook.bodies().iter().map(|body| what(body)).collect::<std::collections::BTreeSet<_>>(),
-        ["status TASK_STATE_SUBMITTED".to_string(), "status TASK_STATE_INPUT_REQUIRED".to_string()].into()
+        whats[..4],
+        [
+            "status TASK_STATE_SUBMITTED",
+            "status TASK_STATE_INPUT_REQUIRED",
+            "status TASK_STATE_WORKING",
+            "status TASK_STATE_COMPLETED"
+        ]
     );
+    assert!(hook.seen().iter().all(|seen| seen.headers["authorization"] == "Bearer tck-test-token"));
+
+    let unlisted = json!({"url": "http://127.0.0.1:9/webhook"});
+    let refused = w
+        .a2a
+        .send(
+            &w.caller,
+            serde_json::from_value(
+                json!({"message": message("tck-input-required-9", "x"), "configuration": {"taskPushNotificationConfig": unlisted}}),
+            )
+            .unwrap(),
+            false,
+        )
+        .await;
+    assert!(refused.is_err(), "a loopback port the entry does not list is refused when it is made");
 }
 
 #[tokio::test]
