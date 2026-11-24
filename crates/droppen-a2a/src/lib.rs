@@ -8,6 +8,8 @@
 //! * [`store`] — the A2A tables of the instance database;
 //! * [`backend`] — [`SessionBackend`], the port the sessions are reached
 //!   through, and its events;
+//! * [`devices`] — A2A proxies as callers, and [`devices::DeviceGate`], the
+//!   port the device chain is asked through;
 //! * [`engine`] — [`A2a`]: what each operation and each event does to a task;
 //! * [`protocol`] — `/a2a/*`: the Agent Card and the JSON-RPC and HTTP+JSON
 //!   bindings;
@@ -16,12 +18,14 @@
 //!   go;
 //! * `tck` — the A2A TCK's stand-in entry.
 //!
-//! The server builds [`A2a`] with a backend and an [`backend::EventInbox`],
-//! attaches a [`push::Pusher`], nests [`protocol::router`] at `/a2a`,
-//! registers [`manage::A2aState`]'s routes, and calls [`A2a::resume`] once it
-//! owns its instance.
+//! The server builds [`A2a`] with a backend, a device gate
+//! ([`devices::DeviceGate`]) and an [`backend::EventInbox`], attaches a
+//! [`push::Pusher`], nests [`protocol::router`] at `/a2a`, registers
+//! [`manage::A2aState`]'s routes, and calls [`A2a::resume`] once it owns its
+//! instance.
 
 pub mod backend;
+pub mod devices;
 pub mod engine;
 pub mod entry;
 pub mod error;
@@ -38,8 +42,11 @@ pub mod token;
 pub mod wire;
 
 #[cfg(test)]
+mod device_tests;
+#[cfg(test)]
 mod tests;
 
 pub use backend::SessionBackend;
-pub use engine::{A2a, Caller, EventKind, Settings, TaskEvent, TaskEventSink};
+pub use devices::DeviceGate;
+pub use engine::{A2a, Caller, EventKind, Principal, Settings, TaskEvent, TaskEventSink};
 pub use manage::A2aState;

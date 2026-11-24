@@ -2,13 +2,14 @@
 //! every route the server registers: read off the router it serves and off
 //! its source, which only the server has.
 
-use droppen_agent::bridge::{classify, refusal, Refusal, RouteClass, Standing, View, LOCAL_PREFIX, ROUTES};
+use droppen_agent::bridge::{classify, refusal, Access, Refusal, RouteClass, Standing, View, LOCAL_PREFIX, ROUTES};
 use droppen_agent::testing::plugin_route;
 
 const ADMIN: Standing = Standing {
     admin: true,
     view: View::Fresh,
     controls: true,
+    access: Access::Full,
 };
 
 /// `(METHOD, path template)` of every route the server's source

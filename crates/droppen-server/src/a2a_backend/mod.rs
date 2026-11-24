@@ -40,11 +40,14 @@
 //! (`store`), and [`SessionBackend::resume`] reads it against what the
 //! receipts, the questions and the drivers the boot adopted say now.
 
+mod devices;
 mod git;
 mod store;
 #[cfg(test)]
 mod tests;
 mod turn;
+
+pub use devices::LinkDevices;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
@@ -152,6 +155,14 @@ struct Inner {
     adopted: watch::Sender<bool>,
     /// [`ARTIFACTS_WAIT`], in milliseconds, which a test shortens.
     artifacts_wait_ms: AtomicU64,
+    /// How long every source of the artifacts takes before it starts, for a
+    /// test of a slow one.
+    #[cfg(test)]
+    artifacts_delay: Mutex<Option<Duration>>,
+    /// Run by [`Inner::follow`] between its look for an earlier cancel and
+    /// the task going into the map, for a test of a cancel landing there.
+    #[cfg(test)]
+    follow_pause: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 /// The events' way out, and in tests a copy of each for the test.
@@ -311,6 +322,10 @@ impl A2aSessions {
             internal,
             adopted: watch::channel(false).0,
             artifacts_wait_ms: AtomicU64::new(ARTIFACTS_WAIT.as_millis() as u64),
+            #[cfg(test)]
+            artifacts_delay: Mutex::new(None),
+            #[cfg(test)]
+            follow_pause: Mutex::new(None),
         });
         tokio::spawn(watch_tasks(Arc::downgrade(&inner), rx));
         Arc::new(Self {
@@ -472,14 +487,28 @@ impl Inner {
 
     /// Follow task `id` from now on, and write it down. A task cancelled
     /// before this is followed as cancelled, for its call to stop.
+    ///
+    /// The look for an earlier cancel and the insert are made under the
+    /// tasks' lock, which [`Inner::cancel`] holds while it decides too: a
+    /// cancel is either wholly before this, and left the id among the
+    /// cancelled ones, or wholly after, and finds the task followed.
     fn follow(&self, id: &str, source: Source, record: TaskRecord, stage: Stage, calling: bool) {
+        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        let cancelled = self.cancelled_early(id);
+        #[cfg(test)]
+        {
+            let pause = self.follow_pause.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            if let Some(pause) = pause {
+                pause();
+            }
+        }
         self.store.put_task(id, &record);
         let task = Task {
             record,
             source,
             stage,
             calling,
-            cancelled: self.cancelled_early(id),
+            cancelled,
             delivered_ms: None,
             progress: None,
             transcript: None,
@@ -488,7 +517,7 @@ impl Inner {
             limited: None,
             rotated: None,
         };
-        self.tasks.lock().unwrap_or_else(PoisonError::into_inner).insert(id.to_string(), task);
+        tasks.insert(id.to_string(), task);
     }
 
     /// Stop following task `id`, and forget it.
@@ -910,8 +939,6 @@ impl Inner {
         true
     }
 
-    /// Stop following task `id` and report how it ended — unless it was
-    /// cancelled meanwhile, when nothing more is said of it.
     /// Whether a failed turn of `task` is one a person stopped in Droppen:
     /// the driver said so, or its run ended interrupted. Read here, off the
     /// drivers' hook, so the hook takes no other lock than its own.
@@ -926,6 +953,8 @@ impl Inner {
             .is_some_and(|injection| injection.state == InjectionRunState::Failed && injection.interrupted)
     }
 
+    /// Stop following task `id` and report how it ended — unless it was
+    /// cancelled meanwhile, when nothing more is said of it.
     fn ended(&self, id: &str, outcome: TurnOutcome) {
         if self.unfollow(id).is_some() {
             self.report.send(BackendEvent::TurnEnded {
@@ -952,11 +981,11 @@ impl Inner {
             }
         };
         let (said, branch, changed_files, host, droppen_url) = tokio::join!(
-            within(deadline, self.said_at_end(task, &session)),
-            within(deadline, branch),
-            within(deadline, git::changed_files(&task.record.cwd, context.base.as_deref())),
-            within(deadline, self.host_name()),
-            within(deadline, self.droppen_url(task.source, &session)),
+            within(deadline, self.source_of(self.said_at_end(task, &session))),
+            within(deadline, self.source_of(branch)),
+            within(deadline, self.source_of(git::changed_files(&task.record.cwd, context.base.as_deref()))),
+            within(deadline, self.source_of(self.host_name())),
+            within(deadline, self.source_of(self.droppen_url(task.source, &session))),
         );
         let said = said.unwrap_or_default();
         TurnResult {
@@ -972,6 +1001,19 @@ impl Inner {
             },
             summary: said.summary,
         }
+    }
+
+    /// One source of the artifacts, as it is read: at once, or in a test of
+    /// a slow source after the delay the test set.
+    async fn source_of<T>(&self, read: impl std::future::Future<Output = T>) -> T {
+        #[cfg(test)]
+        {
+            let delay = *self.artifacts_delay.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(delay) = delay {
+                tokio::time::sleep(delay).await;
+            }
+        }
+        read.await
     }
 
     /// What the task's turns said, once the reply is in the transcript (or
@@ -1597,7 +1639,7 @@ impl Inner {
     async fn cancel(&self, task: &TaskRef) -> Result<(), BackendError> {
         let taken = {
             let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
-            match tasks.get_mut(&task.task_id) {
+            let taken = match tasks.get_mut(&task.task_id) {
                 // The start or the send that made it stops it once it answers.
                 Some(followed) if followed.calling => {
                     followed.cancelled = true;
@@ -1605,20 +1647,23 @@ impl Inner {
                 }
                 Some(_) => tasks.remove(&task.task_id),
                 None => None,
-            }
-        };
-        self.store.forget_task(&task.task_id);
-        if taken.is_none() {
-            // Not followed: ended already, or its start is still on its way in
-            // and has not got as far as following it.
-            let mut cancelled = self.cancelled.lock().unwrap_or_else(PoisonError::into_inner);
-            if !cancelled.iter().any(|known| *known == task.task_id) {
-                cancelled.push_back(task.task_id.clone());
-                if cancelled.len() > CANCELLED_KEPT {
-                    cancelled.pop_front();
+            };
+            self.store.forget_task(&task.task_id);
+            if taken.is_none() {
+                // Not followed: ended already, or its start is still on its
+                // way in and has not got as far as following it — which then
+                // finds the id here ([`Inner::follow`]): noted before the
+                // tasks' lock is let go.
+                let mut cancelled = self.cancelled.lock().unwrap_or_else(PoisonError::into_inner);
+                if !cancelled.iter().any(|known| *known == task.task_id) {
+                    cancelled.push_back(task.task_id.clone());
+                    if cancelled.len() > CANCELLED_KEPT {
+                        cancelled.pop_front();
+                    }
                 }
             }
-        }
+            taken
+        };
         if let Some(taken) = taken {
             self.stop(&taken).await;
         }
@@ -1803,6 +1848,24 @@ impl Inner {
             run.effort.as_deref(),
             run.permission.as_deref(),
         )?;
+        // What the flags mean to this CLI, as a scheduled task's are checked:
+        // an effort it does not take, a permission mode it does not know.
+        // Codex knows its sandboxes by their own names too (`workspace-write`
+        // is the composer's `auto`).
+        if let Some(models) = providers.models(source) {
+            if let Some(effort) = run.effort.as_deref().filter(|effort| !effort.is_empty()) {
+                if let Some(accepted) = models.accepted_efforts(run.model.as_deref()).await {
+                    if !accepted.iter().any(|known| known == effort) {
+                        return Err(format!("{source} takes no effort {effort} for that model"));
+                    }
+                }
+            }
+            if let Some(permission) = run.permission.as_deref().filter(|permission| !permission.is_empty()) {
+                if !models.permission_is_known(permission) {
+                    return Err(format!("unknown {source} permission mode: {permission}"));
+                }
+            }
+        }
         if !std::path::Path::new(&run.cwd).is_absolute() {
             return Err(format!("the directory must be an absolute path: {}", run.cwd));
         }

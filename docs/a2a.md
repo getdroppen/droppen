@@ -36,8 +36,8 @@
   - 本机登录身份（本机账号、`local:owner`、`cloud:<设备>`）都不算 A2A 调用方；调用方只有 token 和 §7 的 a2a 设备。
 - **Agent Card**：`name`/`description` 取自入口；`version` 是 Droppen 版本；`supportedInterfaces` 依次是 JSONRPC、HTTP+JSON，`protocolVersion: "1.0"`；`capabilities {streaming: true, pushNotifications: true, extendedAgentCard: false}`；`securitySchemes {bearer: {httpAuthSecurityScheme: {scheme: "Bearer"}}}`；`defaultInputModes ["text/plain", "application/json", "image/png", "image/jpeg"]`；`defaultOutputModes ["text/plain", "text/markdown", "application/json"]`；一个 skill `coding_session`。卡里不写目录、仓库名。
   - 接口 URL 的基址：实例设置 `a2a.publicBase`（可选）；没设时用请求的 `Host`，协议 `http`。§7 的代理会改写成它自己的地址。
-- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务、给会话列表打「来自 A2A」的标记）。进 OpenAPI。
-- **bridge 分类**（`crates/droppen-agent/src/bridge.rs`）：`/a2a/*` 为 `Never`（§7 之前，远端设备一律不能经通道碰 A2A 路由）；`/api/a2a/*` 为 `Posture`，只有 `GET /api/a2a/tasks` 是 `Use`。
+- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务、给会话列表打「来自 A2A」的标记）、`GET /api/a2a/devices`（这台设备接受的 a2a 设备：`id`、指纹；没登录 Droppen 时为空，给入口的 `allowedDevices` 选择用）。进 OpenAPI。
+- **bridge 分类**（`crates/droppen-agent/src/bridge.rs`）：`/a2a/*` 为 `Never`（§7 之前，远端设备一律不能经通道碰 A2A 路由）；`/api/a2a/*` 为 `Posture`，只有 `GET /api/a2a/tasks`、`GET /api/a2a/devices`、`GET /api/a2a/contexts` 是 `Use`。
 
 ## 3. 映射
 
@@ -102,7 +102,7 @@
 - `data`：`{"answers": {"<问题原文>": "<label>" 或 ["<label>", …]}, "notes": {"<问题原文>": "…"}, "requestId": "…"}`（`notes`、`requestId` 可省）；
 - `text`：自由回答。
 
-对应 `AnswerQuestion{answers, notes, response}`：`data.answers` → `answers`，`data.notes` → `notes`，文本 → `response`。入口关了 `allowRemoteAnswers` 时回错误 `droppen.remote_answers_disabled`。
+对应 `AnswerQuestion{answers, notes, response}`：`data.answers` → `answers`，`data.notes` → `notes`；只有文本时，文本 → `response`；文本和 `data.answers` 一起来时，文本接在最后一个已答问题的备注后面，不作 `response`（Claude 收到 `response` 会不看选项；与在 Droppen 界面里答题的规则相同）。入口关了 `allowRemoteAnswers` 时回错误 `droppen.remote_answers_disabled`。
 
 ### 3.5 错误码
 

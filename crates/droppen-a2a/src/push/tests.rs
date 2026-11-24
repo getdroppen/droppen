@@ -24,7 +24,7 @@ use super::{PushSettings, Pusher, Sleep};
 use crate::backend::{event_channel, Question, QuestionItem, QuestionOption};
 use crate::engine::{A2a, Caller, Sent, Settings};
 use crate::store::Store;
-use crate::testing::{Call, FakeBackend};
+use crate::testing::{Call, FakeBackend, FakeDevices};
 use crate::wire::TaskState;
 
 /* ── the webhook ─────────────────────────────────────────────────────── */
@@ -374,6 +374,8 @@ struct Rig {
     pauses: Pauses,
     /// The token's secret, once the first start made it.
     token: Mutex<Option<String>>,
+    /// The device chain: A2A proxy p-1 admitted.
+    devices: Arc<FakeDevices>,
 }
 
 impl Rig {
@@ -384,6 +386,7 @@ impl Rig {
             names: Arc::new(Names::default()),
             pauses: Pauses::new(),
             token: Mutex::new(None),
+            devices: FakeDevices::admitting(&["p-1"]),
         }
     }
 
@@ -411,7 +414,7 @@ impl Rig {
             tck,
             tck_streaming_timeout: Duration::from_millis(300),
         };
-        let a2a = A2a::new(Store::new(db), fake.clone(), inbox, settings, cancel.clone());
+        let a2a = A2a::new(Store::new(db), fake.clone(), self.devices.clone(), inbox, settings, cancel.clone());
         let pusher = Pusher::attach_with(&a2a, self.settings());
         let id = entry["id"].as_str().expect("an entry id").to_string();
         if a2a.entry(&id).is_none() {
@@ -780,6 +783,36 @@ async fn a_caller_whose_token_is_revoked_is_told_nothing_more() {
     assert_eq!(hook.seen().len(), 1, "nothing after the revocation");
     assert!(w.a2a.store().push(&task, "hook-1").is_some());
     assert_eq!(w.cursor(&task, "hook-1"), Some(1), "and nothing passed over either");
+}
+
+/// An A2A proxy's pushes ask the device chain again before each attempt
+/// (`docs/a2a.md` §6, §7.3): once it no longer admits the proxy — even before
+/// the A2A server heard of the change — nothing more goes; when it hears,
+/// the proxy's task is taken back and nothing of that goes either.
+#[tokio::test]
+async fn an_a2a_proxy_the_chain_no_longer_admits_is_told_nothing_more() {
+    let rig = Rig::new();
+    let hook = Hook::https(&rig.pki).await;
+    let mut entry = claude_entry(&[hook.origin()]);
+    entry["allowedDevices"] = json!(["p-1"]);
+    let mut w = rig.start(entry, false).await;
+    w.caller = w.a2a.authorize_device("p-1", "main").expect("the chain admits p-1");
+    let task = w.new_task("m-1", Some(push_to("hook-1", &hook.url("/a2a")))).await;
+    assert_eq!(w.a2a.store().task(&task).unwrap().caller, "a2a:device:p-1");
+    w.pusher.settled().await;
+    assert_eq!(hook.seen().len(), 1);
+
+    rig.devices.forget_quietly("p-1");
+    w.working(&task).await;
+    w.pusher.settled().await;
+    assert_eq!(hook.seen().len(), 1, "nothing once the chain no longer admits it");
+    assert!(w.a2a.store().push(&task, "hook-1").is_some(), "the check, not a deletion, stopped it");
+
+    rig.devices.forget("p-1");
+    w.wait_state(&task, TaskState::Canceled).await;
+    w.pusher.settled().await;
+    assert_eq!(hook.seen().len(), 1, "nor of its task's end");
+    assert!(w.a2a.store().pushes(&task).is_empty());
 }
 
 #[tokio::test]

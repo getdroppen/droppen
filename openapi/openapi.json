@@ -1,6 +1,46 @@
 {
   "components": {
     "schemas": {
+      "A2aDevice": {
+        "description": "An A2A proxy this device takes A2A calls from, as the entry form's\n`allowedDevices` picker lists it (`GET /api/a2a/devices`).",
+        "properties": {
+          "fingerprint": {
+            "description": "Its fingerprint, as \"My devices\" shows it.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Its device id: what `allowedDevices` holds.",
+            "type": "string"
+          },
+          "name": {
+            "description": "What the account calls it, when this device knows.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "fingerprint",
+          "name"
+        ],
+        "type": "object"
+      },
+      "A2aDeviceList": {
+        "description": "The current A2A proxies this device takes A2A calls from.",
+        "properties": {
+          "devices": {
+            "description": "Every one, by id; none on a device not linked to Droppen.",
+            "items": {
+              "$ref": "#/components/schemas/A2aDevice"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "type": "object"
+      },
       "A2aEntry": {
         "description": "One A2A agent.",
         "properties": {
@@ -18,7 +58,7 @@
             "type": "boolean"
           },
           "allowedDevices": {
-            "description": "The a2a devices (§7) that may call it, by device id. Taking one out\ncancels its unfinished tasks here. Callers are tokens only until M2.",
+            "description": "The a2a devices (§7) that may call it, by device id. Taking one out\ncancels its unfinished tasks here. An entry that lists any runs in no\nbypass permission mode (§6, [`BYPASS_PERMISSIONS`]).",
             "items": {
               "type": "string"
             },
@@ -323,7 +363,7 @@
             "type": "string"
           },
           "caller": {
-            "description": "Who sent it: `a2a:token:<token id>`.",
+            "description": "Who sent it: `a2a:token:<token id>`, or an A2A proxy's\n`a2a:device:<device id>`.",
             "type": "string"
           },
           "callerName": {
@@ -7714,6 +7754,30 @@
   },
   "openapi": "3.2.0",
   "paths": {
+    "/api/a2a/devices": {
+      "get": {
+        "deprecated": false,
+        "description": "The A2A proxies this device takes A2A calls from, as its device chain\nsays now: what an entry's `allowedDevices` may usefully name. None on a\ndevice not linked to Droppen.",
+        "operationId": "list_a2a_devices",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/A2aDeviceList"
+                }
+              }
+            },
+            "description": "The A2A proxies, by id"
+          }
+        },
+        "summary": "List the A2A proxies this device takes calls from",
+        "tags": [
+          "a2a"
+        ]
+      }
+    },
     "/api/a2a/entries": {
       "get": {
         "deprecated": false,

@@ -32,6 +32,19 @@ const MAX_DEVICES: usize = 50;
 /// The most tasks an entry may run at once.
 pub const MAX_CONCURRENT: u32 = 8;
 
+/// The permission modes that drop a CLI's guard rails: Claude's
+/// `bypassPermissions`, Codex's `full-access` and its alias
+/// `danger-full-access`, and Codex's `bypass-all`. Kept in step with
+/// `DANGEROUS_PERMISSIONS` in droppen-drive's `composer_prefs`, which this
+/// crate may not name. An entry that A2A proxies may call runs in none of
+/// them (`docs/a2a.md` §6).
+pub const BYPASS_PERMISSIONS: [&str; 4] = ["bypassPermissions", "full-access", "danger-full-access", "bypass-all"];
+
+/// Whether `permission` is one of [`BYPASS_PERMISSIONS`].
+pub fn is_bypass(permission: Option<&str>) -> bool {
+    permission.is_some_and(|permission| BYPASS_PERMISSIONS.contains(&permission))
+}
+
 /// One A2A agent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -74,7 +87,8 @@ pub struct A2aEntry {
     /// The origins (`https://host[:port]`) a task's push may go to.
     pub push_origins: Vec<String>,
     /// The a2a devices (§7) that may call it, by device id. Taking one out
-    /// cancels its unfinished tasks here. Callers are tokens only until M2.
+    /// cancels its unfinished tasks here. An entry that lists any runs in no
+    /// bypass permission mode (§6, [`BYPASS_PERMISSIONS`]).
     pub allowed_devices: Vec<String>,
     /// When it was made, ISO-8601.
     pub created_at: String,
@@ -328,8 +342,7 @@ pub fn clean_devices(devices: &[String]) -> Result<Vec<String>, String> {
     let mut clean: Vec<String> = Vec::new();
     for device in devices {
         let device = device.trim();
-        let valid = !device.is_empty() && device.len() <= 64 && device.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if !valid {
+        if !crate::devices::valid_id(device) {
             return Err(format!("{device:?} is not a device id"));
         }
         if !clean.iter().any(|known| known == device) {
