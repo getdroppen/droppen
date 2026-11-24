@@ -81,23 +81,21 @@ export const RELAY_SILENT_MS = 2 * RELAY_PROBE_MS;
  * the probe's age alone says only that the path is slow; closing on it made
  * the page ask for the same megabyte again on the next channel, over and
  * over. Gone is: the probe is {@link RELAY_SILENT_MS} old, and nothing has
- * arrived for that age less a probe interval, or for {@link RELAY_SILENT_MS}
- * at most. So:
+ * arrived for {@link RELAY_SILENT_MS} either. So:
  *
  * - a path that died is taken for gone within 15 s of the last thing it
  *   brought (by the third probe tick after it), whatever it was doing — a
- *   download, an upload, a backlog draining — and, when it had been
- *   answering within a probe interval, at the same tick as by its probe's
- *   age alone;
- * - a slow path is kept as long as something arrives at least every 5 s
- *   (while its oldest probe is 10–15 s old) or every 10 s (after): a
+ *   download, an upload, a backlog draining — and, when nothing came after
+ *   the probe its age alone would have judged it by, at the same tick;
+ * - a slow path is kept as long as something arrives at least every 10 s: a
  *   download brings a frame every 64 KiB, an upload the peer's window update
- *   every 128 KiB it reads. An upload slower than about 200 kbps can go 5 s
- *   without one and still be taken for gone.
+ *   every 128 KiB it reads, and a stall of a few seconds on a mobile link is
+ *   not taken for a death. An upload slower than about 100 kbps can go 10 s
+ *   without a window update and still be taken for gone.
  */
 export function relayPathGone(probeAgeMs: number | null, quietMs: number | null): boolean {
   if (probeAgeMs === null || quietMs === null) return false;
-  return probeAgeMs >= RELAY_SILENT_MS && quietMs >= Math.min(probeAgeMs - RELAY_PROBE_MS, RELAY_SILENT_MS);
+  return probeAgeMs >= RELAY_SILENT_MS && quietMs >= RELAY_SILENT_MS;
 }
 
 /**

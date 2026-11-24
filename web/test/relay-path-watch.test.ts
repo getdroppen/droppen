@@ -87,9 +87,20 @@ class Lane {
   lose(): void {
     this.queue.length = 0;
   }
+
+  /** Nothing gets through for `ms` from `nowMs` (a radio link's stall): everything on it arrives that much later. */
+  stall(nowMs: number, ms: number): void {
+    for (const q of this.queue) q.at = Math.max(q.at, nowMs) + ms;
+    this.freeAt = Math.max(this.freeAt, nowMs) + ms;
+  }
 }
 
-const tailOf = (driver: ChannelDriver): Promise<unknown> => (driver as unknown as { serial: { tail: Promise<unknown> } }).serial.tail;
+/** The driver's serial queue's tail (private): a rename must fail here, not let `settle` stop waiting. */
+function tailOf(driver: ChannelDriver): Promise<unknown> {
+  const tail = (driver as unknown as { serial?: { tail?: unknown } }).serial?.tail;
+  assert.ok(tail instanceof Promise, "ChannelDriver's `serial.tail` is what settle() waits on: was it renamed?");
+  return tail;
+}
 
 /** Until neither driver has anything left to do: every frame and timer goes through its serial queue. */
 async function settle(drivers: ChannelDriver[]): Promise<void> {
@@ -182,6 +193,24 @@ test("a slow download over the hub path is never taken for gone, however late it
   assert.equal(c.state.wakes, 0);
 });
 
+test("a slow download through a 7.5 s stall is not taken for gone, whenever the stall comes", async (t) => {
+  // A mobile link stalls. While the oldest probe was 10–15 s old, a rule
+  // that took 5 s of silence for a death closed this channel at some start
+  // times. The stall holds back the frame being sent too, and a 64 KiB frame
+  // takes 2.2 s at this rate: the silence it leaves is up to 9.7 s, short of
+  // RELAY_SILENT_MS (an 8 s stall can leave 10.2 s, and close it).
+  for (let at = 10_000; at < 30_000; at += 1_000) {
+    const c = await slowChannel(t, 30_000, 30_000);
+    const got = download(c, 2, 640 * 1024);
+    await c.advance(at);
+    c.down.stall(c.clock.now, 7_500);
+    await c.advance(70_000);
+    assert.equal(c.state.closed, null, `a 7.5 s stall from ${at} ms closed it`);
+    assert.equal(got.read, 2 * 640 * 1024, "all of it arrived");
+    t.mock.timers.reset();
+  }
+});
+
 test("a slow download whose relay dies is replaced within 15 s of the last thing it brought", async (t) => {
   const c = await slowChannel(t, 30_000, 30_000);
   download(c, 2, 640 * 1024);
@@ -261,3 +290,4 @@ test("a page uploading when its relay dies is replaced within 15 s, though its n
   const after = closed.atMs - c.down.lastArrivalMs;
   assert.ok(after >= RELAY_SILENT_MS && after <= GONE_WITHIN_MS, `replaced ${after} ms after the last frame`);
 });
+

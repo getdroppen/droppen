@@ -529,12 +529,12 @@ test("a hub probe that cannot leave (the page's window is spent) is timed from w
 test("a relay path is gone only once its old probe is met with silence; slow is a probe older than the round trip", () => {
   assert.equal(relayPathGone(null, null), false);
   assert.equal(relayPathGone(RELAY_SILENT_MS - 1, 60_000), false, "not old enough");
-  assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_PROBE_MS - 1), false, "something came after the probe's first interval");
-  assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_PROBE_MS), true);
-  assert.equal(relayPathGone(3 * RELAY_PROBE_MS, 2 * RELAY_PROBE_MS - 1), false, "an older probe asks a longer silence");
-  assert.equal(relayPathGone(3 * RELAY_PROBE_MS, 2 * RELAY_PROBE_MS), true);
-  // However old the probe, RELAY_SILENT_MS of silence is enough: a dead path
-  // whose probe went out long before it died is not kept waiting for ever.
+  // A full RELAY_SILENT_MS of silence, however old the probe: a stall of a
+  // few seconds is not a death, and a dead path whose probe went out long
+  // before it died is not kept waiting for ever.
+  assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_SILENT_MS - 1), false, "something came within RELAY_SILENT_MS");
+  assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_SILENT_MS), true);
+  assert.equal(relayPathGone(3 * RELAY_PROBE_MS, RELAY_PROBE_MS + 500), false, "a 5.5 s stall with a 15 s-old probe");
   assert.equal(relayPathGone(20 * RELAY_PROBE_MS, RELAY_SILENT_MS - 1), false);
   assert.equal(relayPathGone(20 * RELAY_PROBE_MS, RELAY_SILENT_MS), true);
   assert.equal(relaySlowMs(null, 3), null);
