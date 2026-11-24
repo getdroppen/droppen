@@ -4,6 +4,7 @@
  * translation. A chunk of its own, downloaded only by a page that shows zh-CN
  * (`index.ts`).
  */
+import { a2aZhCN } from "./a2a.zh-CN";
 import { cloudDevicesZhCN } from "./cloud-devices.zh-CN";
 import { crossDeviceZhCN } from "./cross-device.zh-CN";
 import { hostsZhCN } from "./hosts.zh-CN";
@@ -17,6 +18,7 @@ import { updatesZhCN } from "./updates.zh-CN";
 import { welcomeZhCN } from "./welcome.zh-CN";
 
 const translations: Record<string, string> = {
+  ...a2aZhCN,
   ...onboardingZhCN,
   ...crossDeviceZhCN,
   ...linkZhCN,
