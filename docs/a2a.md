@@ -223,7 +223,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 - 通道准入：`may_control` 不成立时再看 `may_call_a2a`，成立则准入为 `A2aOnly`；不给它直连（准入时不登记直连，`accept_direct` 也拒绝它）。
 - bridge：a2a 的判断放在 `refusal()` 里（派发时的复核也走它）。`A2aOnly` 只能开 `rpc` 子流，只能到 A2A 绑定的方法加路径（自己的白名单：JSON-RPC 的 `POST …/jsonrpc`、REST 的固定几种，含 `{id}:cancel` 这类写法；按原始路径与逐段解码各判一次，沿用点、`//`、斜杠数的规则）；其余一律 403 `a2a_only`。其它设备碰 `/a2a/*` 仍是拒绝。新鲜度（`Lapsed`）照旧最先判。
 - 转发 `A2A-Version`、`A2A-Extensions` 两个头。
-- 身份：bridge 照旧从通道得到设备 id，以 `cloud:<id>` 交给本机 server（只认本次启动的回环凭据，别的设备与本机进程伪造不了），最好再带一个类型化的标记而不是只靠字符串前缀。A2A 层把它当作调用方 `a2a:device:<id>`，并再查：链上它带 `a2a`、`may_call_a2a` 成立、入口的 `allowedDevices` 有它。
+- 身份：bridge 从通道得到设备 id，给 a2a 设备的请求加上 `x-rh-agent-kind: a2a`（只认本次启动的回环凭据，别的设备与本机进程伪造不了，由 guard 剥掉）。guard 给它的只有类型化的 `BridgedDevice { id, a2a: true }`，**不给** `cloud:<id>` 的登录身份，并且只放它到 `/a2a/*`。A2A 层把它当作调用方 `a2a:device:<id>`，并再查：经 agent 的链 `Access::A2aOnly` 仍成立、它是当前的 a2a 设备、入口的 `allowedDevices` 有它。
 - 入口多一个字段 `allowedDevices`（a2a 设备 id 列表，默认空）。
 - 提醒：加 a2a 设备、`SetA2aAccept` 变化时，告警文字要说「A2A 代理」；这台设备第一次被某个 a2a 设备连上时本机提醒一次；「我的设备」里给 a2a 设备一个徽章。
 
