@@ -349,6 +349,8 @@ impl Task {
                         }
                     }
                     Some(Frame::Credit { bytes, .. }) => {
+                        // The peer read what was sent: the hub path carries, answers or not.
+                        self.session.heard_relay(now_us());
                         if self.send_window.grant(bytes).is_err() {
                             break End::Peer(crate::bridge::CLOSE_BAD_REQUEST);
                         }

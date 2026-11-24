@@ -62,13 +62,53 @@ export const UNACKED_TIMEOUT_MS = 1_500;
 /** The hub path is probed this often for its round-trip time (for display). */
 export const RELAY_PROBE_MS = 5_000;
 /**
- * A relay path whose oldest probe has gone unanswered this long is treated as
- * gone and the channel is replaced. Without it the path only raised the round
- * trip it showed (the probe's age) until the relay link's own 60 s silence,
- * so a dead peer kept a "20005 ms" indicator and a stalled channel for most
- * of a minute.
+ * A relay path with a probe out this long (unanswered, or still waiting for
+ * credit to leave), and nothing arriving on the channel for as long, is gone
+ * and the channel is replaced ({@link relayPathGone}): within 15 s of the last
+ * thing it brought. Without it a dead peer kept a stalled channel until the
+ * relay link's own 60 s silence.
  */
 export const RELAY_SILENT_MS = 2 * RELAY_PROBE_MS;
+
+/**
+ * Whether a relay path is gone rather than slow, given how long its oldest
+ * probe has been out (`probeAgeMs`: unanswered, or still waiting for credit to
+ * leave) and how long nothing has arrived on the channel (`quietMs`: no data,
+ * no answer, no `CREDIT`), both as of the same moment.
+ *
+ * A probe's answer waits behind whatever the channel's window let the peer
+ * send first — a megabyte of history on a 1 Mbps link is several seconds — so
+ * the probe's age alone says only that the path is slow; closing on it made
+ * the page ask for the same megabyte again on the next channel, over and
+ * over. Gone is: the probe is {@link RELAY_SILENT_MS} old, and nothing has
+ * arrived for {@link RELAY_SILENT_MS} either. So:
+ *
+ * - a path that died is taken for gone within 15 s of the last thing it
+ *   brought (by the third probe tick after it), whatever it was doing — a
+ *   download, an upload, a backlog draining — and, when nothing came after
+ *   the probe its age alone would have judged it by, at the same tick;
+ * - a slow path is kept as long as something arrives at least every 10 s: a
+ *   download brings a frame every 64 KiB, an upload the peer's window update
+ *   every 128 KiB it reads, and a stall of a few seconds on a mobile link is
+ *   not taken for a death. An upload slower than about 100 kbps can go 10 s
+ *   without a window update and still be taken for gone.
+ */
+export function relayPathGone(probeAgeMs: number | null, quietMs: number | null): boolean {
+  if (probeAgeMs === null || quietMs === null) return false;
+  return probeAgeMs >= RELAY_SILENT_MS && quietMs >= RELAY_SILENT_MS;
+}
+
+/**
+ * How slow the relay path is known to be, for the indicator: the age of a
+ * probe left unanswered for a probe interval or more, while that is longer
+ * than the round trip last measured; `null` when the measured round trip says
+ * it (no probe that old, or one answered slower still). The indicator says it
+ * as "slow · ≥5 s", never as a round trip nobody measured.
+ */
+export function relaySlowMs(probeAgeMs: number | null, rttMs: number | null): number | null {
+  if (probeAgeMs === null || probeAgeMs < RELAY_PROBE_MS) return null;
+  return rttMs !== null && rttMs >= probeAgeMs ? null : probeAgeMs;
+}
 
 /** The longest SDP a signal carries. */
 export const MAX_SDP = 16 * 1024;

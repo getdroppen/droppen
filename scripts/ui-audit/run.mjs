@@ -836,7 +836,8 @@ async function auditAgents(theme, view) {
  * countdowns, the longest relay city); between tries, a countdown that is a
  * real button with a name and the 2px focus ring, never "0 s", and whole in
  * the strip before the buttons; while a channel is opened, the step in words;
- * live, the path indicator and no words. Captured: the whole fixture in each
+ * live, the path indicator and no words — a slow hub path said as slow
+ * ("slow · ≥10 s", whole), never as a round trip. Captured: the whole fixture in each
  * language, and in English each state's strip on its own and the focused
  * countdown. Each state's free space (the strip's spacer) is in
  * measurements.json.
@@ -856,6 +857,13 @@ const CLOUD_BAR_WORDS = {
   refused: "refuses this browser",
   unconfirmed: "confirmation pending",
   unsaved: "access not saved",
+};
+/** A slow hub path in each language, as the `live-slow` state draws it (a probe out 10 s), never a round trip in ms. */
+const CLOUD_BAR_SLOW = {
+  en: /^slow · ≥10 s$/,
+  "zh-CN": /^慢 · ≥10 秒$/,
+  "zh-TW": /^慢 · ≥10 秒$/,
+  ja: /^低速 · ≥10 秒$/,
 };
 /** The countdown in each language: a whole number of seconds, at least 1. */
 const CLOUD_BAR_COUNTDOWN = {
@@ -921,6 +929,10 @@ function cloudBarSnapshot(page) {
           // What the strip has left over: nothing had to give way while it is above 0.
           free: +(bar?.querySelector(":scope > .flex-1")?.getBoundingClientRect().width ?? 0).toFixed(1),
           path: bar?.querySelector("[data-path]")?.getAttribute("data-path") ?? null,
+          latency: (() => {
+            const e = bar?.querySelector("[data-path] [data-latency]");
+            return e ? { text: (e.textContent ?? "").trim(), slow: e.hasAttribute("data-slow"), ...cut(e) } : null;
+          })(),
           button: button
             ? { tag: button.tagName, type: button.getAttribute("type"), name: button.getAttribute("aria-label"), text: (button.textContent ?? "").trim(), rect: rect(button) }
             : null,
@@ -959,9 +971,13 @@ function checkCloudBarState(state, where, view, fail) {
   if (Math.round(state.bar?.h ?? 0) !== 28) fail("cloud-bar.height", { ...where, h: state.bar?.h }, "a 28px strip");
   if (!state.switcher || state.switcher.w < 1) fail("cloud-bar.switcher", { ...where, switcher: state.switcher }, "the device switcher drawn, as for an account of two devices");
   if (state.device?.truncated) fail("cloud-bar.name-truncated", { ...where, ...state.device }, "the device's name whole, no ellipsis");
-  if (state.name === "live") {
+  if (state.name === "live" || state.name.startsWith("live-")) {
     if (state.label) fail("cloud-bar.live-words", { ...where, label: state.label }, "no words while live");
     if (state.path !== "relay") fail("cloud-bar.live-path", { ...where, path: state.path }, "the path indicator");
+    if (state.latency?.truncated) fail("cloud-bar.latency-truncated", { ...where, ...state.latency }, "the indicator's round trip (or slowness) whole");
+    const slow = state.name === "live-slow";
+    if (slow !== Boolean(state.latency?.slow)) fail("cloud-bar.live-slow", { ...where, latency: state.latency }, slow ? "a slow path said as slow" : "a round trip, not slowness");
+    if (slow && !CLOUD_BAR_SLOW[where.lang].test(state.latency?.text ?? "")) fail("cloud-bar.slow-words", { ...where, text: state.latency?.text }, `${CLOUD_BAR_SLOW[where.lang]}`);
     return;
   }
   if (!state.label) {

@@ -6,7 +6,9 @@
 // direct, through a relay (or the hub, when no relay could carry the
 // channel) — the active one in ink, then the active path's
 // latest round trip, rounded, and "—" until one was measured; the number is
-// coloured by how fast it is (green < 100 ms, amber < 250 ms, red beyond); no
+// coloured by how fast it is (green < 100 ms, amber < 250 ms, red beyond); a
+// hub probe out a probe interval or more, longer than the last round trip,
+// reads "slow · ≥5 s" (red), never as a round trip, until an answer comes; no
 // words, but an aria-label naming the path and the relay's city; an amber
 // dot for an emergency relay; nothing says "encrypted" (every path is); the
 // direct-connection setting is a switch, said as what it allows (faster, not
@@ -40,7 +42,18 @@ const i18n = makeI18n({
 
 const draw = pageDraw(i18n);
 
-const stats = (over: Partial<PathStats>): PathStats => ({ direct: false, relayRttMs: null, directRttMs: null, ups: 0, downs: 0, resent: 0, duplicates: 0, ...over });
+const stats = (over: Partial<PathStats>): PathStats => ({
+  direct: false,
+  relayRttMs: null,
+  directRttMs: null,
+  relayProbeAgeMs: null,
+  relayQuietMs: null,
+  ups: 0,
+  downs: 0,
+  resent: 0,
+  duplicates: 0,
+  ...over,
+});
 const text = (html: string) => html.replace(/<[^>]+>/g, "");
 
 const relay = { kind: "relay" as const, relay: { id: "nrt-1", city: "tokyo", region: "nrt", origin: "wss://nrt-1.relay.example", state: "up", load: 0.1 }, mode: "auto" as const };
@@ -92,6 +105,40 @@ test("a channel the hub carries (no relay could) shows the relay icon and says t
   assert.match(draw(<PathIndicator paths={stats({ relayRttMs: 41 })} route={hub} />, "ja"), /aria-label="Hub 経由、往復 41 ms"/);
   // Direct next to the hub: direct, as with a relay.
   assert.match(draw(<PathIndicator paths={stats({ direct: true, directRttMs: 2, relayRttMs: 41 })} route={hub} />), /aria-label="direct, round trip 2 ms"/);
+});
+
+test("a hub probe out a probe interval says the path is slow, never a round trip nobody measured", () => {
+  const slow = draw(<PathIndicator paths={stats({ relayRttMs: 38.4, relayProbeAgeMs: 5_001, relayQuietMs: 200 })} route={relay} />);
+  assert.equal(text(slow), "slow · ≥5 s");
+  assert.doesNotMatch(slow, /5001|38 ms/);
+  assert.match(slow, /data-latency="danger" data-slow=""[^>]*class="[^"]*text-danger/);
+  assert.match(slow, /aria-label="through the Tokyo relay, slow: round trip at least 5 s"/);
+  assert.equal(text(draw(<PathIndicator paths={stats({ relayRttMs: 38.4, relayProbeAgeMs: 10_001 })} route={relay} />)), "slow · ≥10 s", "whole seconds, rounded down");
+  assert.equal(text(draw(<PathIndicator paths={stats({ relayProbeAgeMs: 5_000 })} route={relay} />)), "slow · ≥5 s", "before any round trip was measured");
+  // Out less than an interval: the round trip says it.
+  assert.equal(text(draw(<PathIndicator paths={stats({ relayRttMs: 38.4, relayProbeAgeMs: 4_999 })} route={relay} />)), "38 ms");
+  // The answer came: its round trip, however slow, is what shows again.
+  const answered = draw(<PathIndicator paths={stats({ relayRttMs: 6_577, relayProbeAgeMs: 1_400, relayQuietMs: 0 })} route={relay} />);
+  assert.equal(text(answered), "6577 ms");
+  assert.doesNotMatch(answered, /data-slow/);
+  assert.match(answered, /aria-label="through the Tokyo relay, round trip 6577 ms"/);
+  assert.equal(text(draw(<PathIndicator paths={stats({ relayRttMs: 6_577, relayProbeAgeMs: 5_001 })} route={relay} />)), "6577 ms", "a slower round trip measured says more");
+  // On the hub, and in each language.
+  const hub = { kind: "hub" as const };
+  assert.match(draw(<PathIndicator paths={stats({ relayRttMs: 41, relayProbeAgeMs: 5_001 })} route={hub} />), /aria-label="through the Hub, slow: round trip at least 5 s"/);
+  const zh = draw(<PathIndicator paths={stats({ relayRttMs: 41, relayProbeAgeMs: 5_001 })} route={relay} />, "zh-CN");
+  assert.equal(text(zh), "慢 · ≥5 秒");
+  assert.match(zh, /aria-label="经东京中继，较慢：往返至少 5 秒"/);
+  const tw = draw(<PathIndicator paths={stats({ relayRttMs: 41, relayProbeAgeMs: 5_001 })} route={relay} />, "zh-TW");
+  assert.equal(text(tw), "慢 · ≥5 秒");
+  assert.match(tw, /aria-label="經東京中繼，較慢：往返至少 5 秒"/);
+  const ja = draw(<PathIndicator paths={stats({ relayRttMs: 41, relayProbeAgeMs: 5_001 })} route={hub} />, "ja");
+  assert.equal(text(ja), "低速 · ≥5 秒");
+  assert.match(ja, /aria-label="Hub 経由、低速：往復 5 秒以上"/);
+  // On a direct path the direct round trip shows; a slow hub path next to it does not take over.
+  const direct = draw(<PathIndicator paths={stats({ direct: true, directRttMs: 2, relayRttMs: 41, relayProbeAgeMs: 5_001 })} route={relay} />);
+  assert.equal(text(direct), "2 ms");
+  assert.doesNotMatch(direct, /data-slow/);
 });
 
 test("round trips are green under 100 ms, amber under 250 ms and red beyond", () => {

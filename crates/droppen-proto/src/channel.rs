@@ -96,8 +96,25 @@ pub enum PathEvent {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PathStats {
     pub direct: bool,
+    /// The latest round trip a probe measured on the hub path; never a guess.
     pub relay_rtt_ms: Option<f64>,
     pub direct_rtt_ms: Option<f64>,
+    /// How long the oldest hub probe still out had gone unanswered (or waited
+    /// for credit to leave), as of the latest probe tick or answer (`None`
+    /// with none out then): the hub path is at least that slow. Kept apart
+    /// from [`PathStats::relay_rtt_ms`].
+    ///
+    /// This and [`PathStats::relay_quiet_ms`] mirror the page's
+    /// `relayProbeAgeMs` / `relayQuietMs` (`web/src/lib/e2e/channel.ts`), so
+    /// the two halves of the protocol keep the same stats the same way and
+    /// the ported tests pin both. Only the page acts on them (it replaces a
+    /// channel whose hub path is gone, `relayPathGone`); the agent never
+    /// probes the hub path, and a headless device only reports them.
+    pub relay_probe_age_ms: Option<f64>,
+    /// How long nothing had arrived on the hub path at that same moment
+    /// (`None` with no probe out): a slow path keeps delivering, a gone one
+    /// does not.
+    pub relay_quiet_ms: Option<f64>,
     pub ups: u32,
     pub downs: u32,
     pub lanes: LaneStats,
@@ -116,6 +133,10 @@ struct Paths {
     /// Probes and their answers for the direct path.
     out_direct: VecDeque<Envelope>,
     probes: HashMap<u64, (Via, u64)>,
+    /// Hub probes queued and not sent yet, and since when (µs): the hub window
+    /// is spent and the peer has handed no credit back. One that cannot leave
+    /// says the hub path is as slow as one unanswered.
+    unsent_relay_probes: HashMap<u64, u64>,
     next_nonce: u64,
     last_direct_rx_us: u64,
     /// When the direct path last showed it delivers: the peer's data arrived
@@ -125,6 +146,9 @@ struct Paths {
     last_direct_progress_us: u64,
     next_direct_probe_us: u64,
     next_relay_probe_us: u64,
+    /// When anything last arrived for this channel over the hub: a `DATA`
+    /// frame (data, an acknowledgement, a probe or its answer) or a `CREDIT`.
+    last_relay_rx_us: u64,
     events: VecDeque<PathEvent>,
     stats: PathStats,
 }
@@ -160,12 +184,14 @@ impl Session {
                 out_relay: VecDeque::new(),
                 out_direct: VecDeque::new(),
                 probes: HashMap::new(),
+                unsent_relay_probes: HashMap::new(),
                 next_nonce: 1,
                 last_direct_rx_us: now_us,
                 last_direct_progress_us: now_us,
                 next_direct_probe_us: now_us,
                 // The first hub probe goes out at once, so the indicator has a number.
                 next_relay_probe_us: now_us,
+                last_relay_rx_us: now_us,
                 events: VecDeque::new(),
                 stats: PathStats::default(),
             }),
@@ -363,8 +389,18 @@ impl Session {
             let frame = MuxFrame::decode(&plaintext).map_err(MuxError::from)?;
             return Ok(self.mux.receive(frame)?.into_iter().collect());
         }
+        self.heard_relay(now_us);
         let env = Envelope::decode(&plaintext).map_err(PathError::from)?;
         self.on_envelope(env, Via::Relay, now_us)
+    }
+
+    /// Something for this channel came over the hub (a `DATA` frame, or a
+    /// `CREDIT`): the hub path still carries, however late its probes are
+    /// answered.
+    pub fn heard_relay(&mut self, now_us: u64) {
+        if let Some(p) = self.paths.as_mut() {
+            p.last_relay_rx_us = p.last_relay_rx_us.max(now_us);
+        }
     }
 
     /// One DataChannel message. Trouble with the direct path itself (a message
@@ -433,6 +469,10 @@ impl Session {
                         }
                         p.events.push_back(PathEvent::Rtt { via, ms });
                     }
+                    // What is still out is younger: say how old now.
+                    if sent_via == Via::Relay {
+                        p.age_relay_probe(now_us);
+                    }
                 }
             }
             Envelope::Down { reason } => {
@@ -476,9 +516,10 @@ impl Session {
         }
         if p.opts.probe_relay && now_us >= p.next_relay_probe_us {
             p.next_relay_probe_us = now_us + RELAY_PROBE_MS * 1000;
-            p.age_relay_rtt(now_us);
+            p.age_relay_probe(now_us);
             let nonce = p.nonce();
             p.out_relay.push_back(Envelope::Probe { nonce });
+            p.unsent_relay_probes.insert(nonce, now_us);
         }
     }
 
@@ -548,22 +589,27 @@ impl Paths {
         n
     }
 
-    /// A hub probe still unanswered says the hub path is at least that slow:
-    /// the round trip shown is raised to its age, so the indicator never keeps
-    /// an older, faster number for a path that stopped answering.
-    fn age_relay_rtt(&mut self, now_us: u64) {
-        let Some(oldest) = self.probes.values().filter(|(via, _)| *via == Via::Relay).map(|(_, at)| *at).min() else {
-            return;
-        };
-        let age_ms = now_us.saturating_sub(oldest) as f64 / 1000.0;
-        if self.stats.relay_rtt_ms.is_none_or(|ms| age_ms > ms) {
-            self.stats.relay_rtt_ms = Some(age_ms);
-        }
+    /// A hub probe still unanswered (or still waiting for credit to leave)
+    /// says the hub path is at least that slow: note how long the oldest one
+    /// has been out, and how long nothing has arrived on the hub path, as of
+    /// `now_us` (whole milliseconds). Kept apart from the round trip, which
+    /// only a probe's answer sets: the page says an old probe as "slow", and
+    /// the two together tell a slow path, which keeps delivering, from one
+    /// that is gone.
+    fn age_relay_probe(&mut self, now_us: u64) {
+        let sent = self.probes.values().filter(|(via, _)| *via == Via::Relay).map(|(_, at)| *at);
+        let oldest = sent.chain(self.unsent_relay_probes.values().copied()).min();
+        let whole_ms = |us: u64| (us as f64 / 1000.0).round();
+        self.stats.relay_probe_age_ms = oldest.map(|at| whole_ms(now_us.saturating_sub(at)));
+        self.stats.relay_quiet_ms = oldest.map(|_| whole_ms(now_us.saturating_sub(self.last_relay_rx_us)));
     }
 
     /// Remember when a probe left (and on which path).
     fn note_probe(&mut self, env: &Envelope, via: Via, now_us: u64) {
         if let Envelope::Probe { nonce } = env {
+            if via == Via::Relay {
+                self.unsent_relay_probes.remove(nonce);
+            }
             if self.probes.len() >= MAX_PROBES {
                 if let Some(oldest) = self.probes.keys().min().copied() {
                     self.probes.remove(&oldest);
@@ -825,10 +871,11 @@ mod tests {
         assert!(p.a.next_deadline_us(Room { relay: true, direct: true }).is_some());
     }
 
-    /// A hub path that stops answering its probes shows ever slower — the age
-    /// of the oldest unanswered probe — never its last good round trip.
+    /// A hub path that stops answering its probes says how long the oldest
+    /// has been out, and how long nothing has arrived — kept apart from its
+    /// last good round trip, which it never passes off as a new one.
     #[test]
-    fn a_hub_path_that_stops_answering_its_probes_shows_ever_slower() {
+    fn a_hub_path_that_stops_answering_its_probes_says_how_long() {
         let mut p = Pair::new();
         open_stream(&mut p);
         p.a.tick(p.now);
@@ -838,16 +885,24 @@ mod tests {
         p.send_all();
         while p.deliver(1, Via::Relay) {}
         assert_eq!(p.a.stats().relay_rtt_ms, Some(3.0));
+        assert_eq!(p.a.stats().relay_probe_age_ms, None, "nothing out");
         // The hub stops carrying anything: the probes queue up, unanswered.
         for at in [RELAY_PROBE_MS, 2 * RELAY_PROBE_MS, 3 * RELAY_PROBE_MS] {
             p.now = at * 1000;
             p.a.tick(p.now);
             p.send_all();
         }
+        let s = p.a.stats();
+        assert_eq!(s.relay_rtt_ms, Some(3.0), "the round trip measured, not the probe's age");
         assert_eq!(
-            p.a.stats().relay_rtt_ms,
+            s.relay_probe_age_ms,
             Some((2 * RELAY_PROBE_MS) as f64),
-            "the oldest unanswered probe's age, not 3 ms"
+            "the oldest unanswered probe's age"
+        );
+        assert_eq!(
+            s.relay_quiet_ms,
+            Some((3 * RELAY_PROBE_MS - 3) as f64),
+            "nothing since the answer at 3 ms"
         );
         // When the hub carries again, the answers are round trips again.
         p.now = 4 * RELAY_PROBE_MS * 1000;
@@ -856,11 +911,80 @@ mod tests {
         while p.deliver(0, Via::Relay) {}
         p.send_all();
         while p.deliver(1, Via::Relay) {}
+        let s = p.a.stats();
+        assert_eq!(s.relay_rtt_ms, Some(0.0), "measured afresh: the latest probe was answered at once");
+        assert_eq!((s.relay_probe_age_ms, s.relay_quiet_ms), (None, None), "nothing out any more");
+    }
+
+    /// A hub probe that cannot leave (the hub window is spent, no credit comes
+    /// back) is timed from when it was queued: on a path that died while this
+    /// side was sending, it is the only probe out.
+    #[test]
+    fn a_hub_probe_that_cannot_leave_is_timed_from_when_it_was_queued() {
+        let mut p = Pair::new();
+        open_stream(&mut p);
+        for at in [0, RELAY_PROBE_MS, 2 * RELAY_PROBE_MS] {
+            p.now = at * 1000;
+            p.a.tick(p.now);
+        }
         assert_eq!(
-            p.a.stats().relay_rtt_ms,
-            Some(0.0),
-            "measured afresh: the latest probe was answered at once"
+            p.a.stats().relay_probe_age_ms,
+            Some((2 * RELAY_PROBE_MS) as f64),
+            "queued at 0, and still there"
         );
+        // They leave; from then on they are timed from when they left.
+        p.send_all();
+        p.now = 3 * RELAY_PROBE_MS * 1000;
+        p.a.tick(p.now);
+        assert_eq!(p.a.stats().relay_probe_age_ms, Some(RELAY_PROBE_MS as f64));
+    }
+
+    /// A slow hub path — its probes' answers queued behind a download the link
+    /// carries one frame a second — keeps delivering: its oldest probe grows
+    /// old while the hub path is never quiet for long, and once the answers
+    /// arrive their round trips are what it says.
+    #[test]
+    fn a_slow_hub_path_that_keeps_delivering_is_never_quiet() {
+        let mut p = Pair::new();
+        let sid = open_stream(&mut p);
+        p.a.tick(p.now);
+        p.send_all();
+        p.now = 3_000;
+        while p.deliver(0, Via::Relay) {}
+        p.send_all();
+        while p.deliver(1, Via::Relay) {}
+        for _ in 0..40 {
+            p.b.mux().send(sid, &[7; 1000]).unwrap();
+        }
+        p.send_all();
+        let (mut oldest, mut loudest) = (0.0f64, 0.0f64);
+        for t in 1..=30u64 {
+            p.now = t * 1_000_000;
+            p.a.tick(p.now);
+            p.send_all();
+            // a's probes reach b at once; b answers behind its download.
+            while p.deliver(0, Via::Relay) {}
+            p.send_all();
+            let s = p.a.stats();
+            oldest = oldest.max(s.relay_probe_age_ms.unwrap_or(0.0));
+            loudest = loudest.max(s.relay_quiet_ms.unwrap_or(0.0));
+            // One frame a second reaches a.
+            p.deliver(1, Via::Relay);
+        }
+        assert!(oldest >= (2 * RELAY_PROBE_MS) as f64, "a probe went {oldest} ms unanswered");
+        assert!(loudest <= 1_000.0, "yet something arrived every second: {loudest} ms of quiet at most");
+        assert_eq!(p.a.stats().relay_rtt_ms, Some(3.0), "no round trip measured meanwhile");
+        while !p.relay[1].is_empty() {
+            p.now += 1_000_000;
+            p.deliver(1, Via::Relay);
+        }
+        let s = p.a.stats();
+        assert!(
+            s.relay_rtt_ms.unwrap() >= (2 * RELAY_PROBE_MS) as f64,
+            "the late answer's round trip: {s:?}"
+        );
+        assert_eq!(s.relay_probe_age_ms, None, "every probe answered");
+        assert_eq!(p.got[0].len(), 40 * 1000, "all of it arrived");
     }
 
     /// An acknowledgement that frees nothing sent on the direct path is no
