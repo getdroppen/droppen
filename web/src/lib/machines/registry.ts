@@ -45,6 +45,8 @@ export interface MachineDriver {
    * for {@link ensureLive} instead, and nothing is counted.
    */
   hold?(): () => void;
+  /** A view of one of its sessions is on the page until the returned release (`MachineRuntime.viewSession`). Optional: nothing is kept. */
+  viewSession?(source: string, id: string): () => void;
   /** Stop everything kept for the machine (its channel, its copy). Run once it is closed. */
   dispose(): void;
 }
@@ -85,6 +87,11 @@ class Runtime implements MachineRuntime {
     if (driver.hold) return once(driver.hold());
     driver.ensureLive();
     return () => undefined;
+  }
+
+  viewSession(source: string, id: string): () => void {
+    const driver = this.driver;
+    return driver.viewSession ? once(driver.viewSession(source, id)) : () => undefined;
   }
 
   /** @internal */

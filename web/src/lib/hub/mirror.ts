@@ -695,8 +695,8 @@ export class MachineMirror {
   private started = false;
   /** See {@link MirrorOptions.followSessions}. */
   private followingSessions: boolean;
-  /** What the page shows of the machine ({@link setView}): in view on its copy or not, and the session open there (`source/id`). */
-  private view: { onCopy: boolean; session: string | null } = { onCopy: false, session: null };
+  /** What the page shows of the machine ({@link setView}): in use on its copy or not, and the sessions views show there (`source/id`). */
+  private view: { onCopy: boolean; sessions: ReadonlySet<string> } = { onCopy: false, sessions: new Set() };
 
   constructor(private readonly opts: MirrorOptions) {
     this.transact = opts.transact ?? deviceTransact;
@@ -1119,7 +1119,7 @@ export class MachineMirror {
    * live traffic, one somebody is looking at does not.
    */
   private relane(slot: SessionSlot): void {
-    const looked = this.view.onCopy && this.view.session === slot.key && slot.state === null;
+    const looked = this.view.onCopy && this.view.sessions.has(slot.key) && slot.state === null;
     slot.sub?.setForeground?.(slot.waiters.size > 0 || looked);
   }
 
@@ -1131,20 +1131,22 @@ export class MachineMirror {
 
   /**
    * What the page shows of this machine (`HubMachine`): `onCopy`, it is in
-   * view and shown from its copy (the machine is not live); `session`, the
-   * one of its sessions open there, if any. While so, what the person is
-   * looking at and has no copy of — that session, the index and the status —
-   * is fetched in the foreground, however long it takes: not only while a
-   * reader waits ({@link session}'s wait gives up after a while; the person
-   * is still looking). Out of view, or live, it is all background again.
+   * use — in view, or a pane of it — and shown from its copy (the machine is
+   * not live); `sessions`, those of its sessions views show (`source/id`).
+   * While so, what the person is looking at and has no copy of — those
+   * sessions, the index and the status — is fetched in the foreground,
+   * however long it takes: not only while a reader waits ({@link session}'s
+   * wait gives up after a while; the person is still looking). Out of view,
+   * or live, it is all background again.
    */
-  setView(view: { onCopy: boolean; session: { source: string; id: string } | null }): void {
-    const next = { onCopy: view.onCopy, session: view.session ? `${view.session.source}/${view.session.id}` : null };
+  setView(view: { onCopy: boolean; sessions: readonly string[] }): void {
+    const next = { onCopy: view.onCopy, sessions: new Set(view.sessions) };
     const before = this.view;
-    if (before.onCopy === next.onCopy && before.session === next.session) return;
+    const same = before.onCopy === next.onCopy && before.sessions.size === next.sessions.size && [...next.sessions].every((k) => before.sessions.has(k));
+    if (same) return;
     this.view = next;
-    for (const key of new Set([before.session, next.session])) {
-      const slot = key ? this.sessions.get(key) : undefined;
+    for (const key of new Set([...before.sessions, ...next.sessions])) {
+      const slot = this.sessions.get(key);
       if (slot) this.relane(slot);
     }
     this.relaneCopies();
@@ -1323,7 +1325,7 @@ export class MachineMirror {
     const opened = new Set(this.opened.map((o) => `${o.source}/${o.id}`));
     for (const [key, slot] of this.sessions) {
       // One somebody waits on, or is looking at on the copy, is never let go of under them.
-      if (want.has(key) || slot.waiters.size > 0 || (this.view.onCopy && this.view.session === key)) continue;
+      if (want.has(key) || slot.waiters.size > 0 || (this.view.onCopy && this.view.sessions.has(key))) continue;
       const followed = slot.sub !== null;
       slot.sub?.close();
       slot.sub = null;

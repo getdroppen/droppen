@@ -34,7 +34,8 @@
  *   already finishes. A pause that lasts {@link TRICKLE_MS} lets one page
  *   through each {@link TRICKLE_MS}, so a copy still moves under a page that
  *   is never quiet.
- * - A page that stalls — {@link STALL_MS} with not a byte of it arriving — is
+ * - A page that stalls — {@link STALL_MS} with not a byte of it arriving, the
+ *   page itself not frozen meanwhile ({@link SUSPENDED_MS}) — is
  *   aborted and stops counting against the limits at once: on a slow link
  *   one background page at a time means one hung connection would otherwise
  *   hold every machine's copy back for as long as the browser takes to give
@@ -105,11 +106,27 @@ const MEASURED_MIN = 3;
 /** The pages a measured throughput is the median of: the last few. */
 const MEASURED_KEEP = 8;
 /**
- * The least time a page's body is taken to have lasted (ms): a page the
- * browser's cache served, or a hub next door, arrives in no time, and counts
- * as a fast link (at most some 49 Mbps for a full page) rather than as none.
+ * The least time a page's body is taken to have lasted (ms): a hub next door
+ * delivers a page in next to no time, and counts as a fast link (at most some
+ * 49 Mbps for a full page) rather than as an infinitely fast one.
  */
 const BODY_FLOOR_MS = 10;
+/**
+ * A page whose head came sooner than this (ms) after it was asked for, its
+ * body in one piece, came from the browser's cache: it says nothing of the
+ * link, and is not measured — a download starting over reads its pages back
+ * from the cache, and must not take the link for a fast one. A hub next door
+ * still measures fast from the pages it sends over the network, whose bodies
+ * come in pieces.
+ */
+const CACHED_HEAD_MS = 10;
+/**
+ * A watchdog that fires this much later than it was due (ms) was not
+ * running: the page was frozen (a tab in the background, a phone asleep),
+ * and what arrived meanwhile is still to be read. Its count starts again
+ * rather than giving up on a page that may be healthy.
+ */
+const SUSPENDED_MS = 1_000;
 /**
  * The most a gap between two pieces of a body counts for (ms): a body that
  * stalls and then goes on, or hangs until the stall watchdog, says the link
@@ -198,10 +215,13 @@ interface Queued {
 
 /** A page in flight, as its body is timed. */
 interface Running {
+  startedAt: number;
   headAt: number | null;
   lastAt: number;
   bodyMs: number;
   bytes: number;
+  /** The pieces its body came in (`PageJob.bytes`). */
+  pieces: number;
 }
 
 /** Why an aborted signal was aborted (an `AbortError`, as `fetch` rejects with). */
@@ -300,7 +320,7 @@ export class PageQueue {
     const stop = new AbortController();
     const letGo = () => stop.abort(abortReason(outer!));
     if (outer) outer.addEventListener("abort", letGo, { once: true });
-    const page: Running = { headAt: null, lastAt: now, bodyMs: 0, bytes: 0 };
+    const page: Running = { startedAt: now, headAt: null, lastAt: now, bodyMs: 0, bytes: 0, pieces: 0 };
     // Its caller hears once: how the job ended, or that it stalled — whichever comes first.
     let told = false;
     const tell = (fn: () => void) => {
@@ -319,9 +339,16 @@ export class PageQueue {
     const stallMs = this.opts.stallMs ?? STALL_MS;
     let watchdog: unknown;
     const watch = (wait: number) => {
+      const due = this.clock.now() + wait;
       watchdog = this.clock.setTimeout(() => {
         if (!counted) return;
-        const quiet = this.clock.now() - page.lastAt;
+        const at = this.clock.now();
+        if (at - due > SUSPENDED_MS) {
+          // The page was frozen, not the connection: count from now.
+          page.lastAt = at;
+          return watch(stallMs);
+        }
+        const quiet = at - page.lastAt;
         if (quiet < stallMs) return watch(stallMs - quiet);
         // Given up on: aborted, its caller told, and no longer in anybody's
         // way — even if its fetch takes a while to notice the abort.
@@ -350,6 +377,7 @@ export class PageQueue {
         page.bodyMs += Math.min(at - page.lastAt, BODY_GAP_MS);
         page.lastAt = at;
         page.bytes += n;
+        page.pieces += 1;
       },
     };
     let run: Promise<Uint8Array>;
@@ -574,9 +602,12 @@ export class PageQueue {
    * One page measured: its bytes over its body's time (gaps capped at
    * {@link BODY_GAP_MS}, at least {@link BODY_FLOOR_MS}), times the pages
    * whose bodies shared the link with it as it ended. A job that never said
-   * its bytes is timed from its head to its end.
+   * its bytes is timed from its head to its end. One the cache served
+   * ({@link CACHED_HEAD_MS}) is left out.
    */
   private measure(page: Running, length: number): void {
+    // From the browser's cache: nothing of the link in it.
+    if (page.headAt !== null && page.headAt - page.startedAt < CACHED_HEAD_MS && page.pieces <= 1) return;
     const now = this.clock.now();
     const sharing = Math.max(1, this.inBody.size);
     const bodyMs = page.bytes > 0 ? page.bodyMs + Math.min(now - page.lastAt, BODY_GAP_MS) : now - (page.headAt ?? now);

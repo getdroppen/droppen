@@ -120,6 +120,8 @@ export const CONN_EVENTS = {
   "channel.refused": "warn",
   "channel.open": "info",
   "channel.close": "warn",
+  // A request or socket the channel could not open a stream for (a head too large, every stream in use): refused here, the channel fine.
+  "pipe.refused": "warn",
   "handshake.start": "info",
   "handshake.done": "info",
   "handshake.fail": "warn",
@@ -378,6 +380,8 @@ const OWN_WORDS: readonly RegExp[] = [
   /^the request body is larger than \d{1,12} bytes$/,
   // A page download let go of (`lib/hub/streams.ts`, `page-queue.ts`): the request aborted, in the program's words.
   /^(?:the subscription was closed|another page of its download failed|the page queue is closed|the page stalled)$/,
+  // A pipe the channel could not open (`pipe.refused`): the multiplexer's and the head encoder's own words.
+  /^(?:open metadata too large|too many open streams|string too long)$/,
   // The browser's words for a request that never got an answer (`fetch`'s own TypeError).
   /^(?:Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.|Network request failed|The network connection was lost\.)$/,
   // The log's own words for why it says something.

@@ -69,6 +69,20 @@ export function useHoldMachine(machine: MachineKey | null): void {
   }, [machine, open]);
 }
 
+/**
+ * This view shows `machine`'s session `source/id` while it is mounted
+ * (`MachineRuntime.viewSession`): on droppen.app, a session looked at whose
+ * copy is not on the device yet comes from the hub ahead of the background.
+ * A machine not open (yet) has it the moment it opens.
+ */
+export function useViewSession(machine: MachineKey | null, source: string, id: string): void {
+  const open = useIsOpen(machine);
+  useEffect(() => {
+    if (machine === null || !open || !isOpen(machine)) return;
+    return runtimeFor(machine).viewSession(source, id);
+  }, [machine, open, source, id]);
+}
+
 /** Every machine open on the page, home first, as they come and go. */
 export function useOpenMachines(): readonly MachineKey[] {
   return useStore(openMachinesStore());

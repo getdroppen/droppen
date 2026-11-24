@@ -46,10 +46,15 @@ class HandClock implements PageClock {
       const due = [...this.timers].filter(([, x]) => x.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
       if (!due) break;
       this.timers.delete(due[0]);
-      this.t = due[1].at;
+      this.t = Math.max(this.t, due[1].at);
       due[1].fn();
     }
     this.t = end;
+  }
+  /** The page frozen for `ms` (a tab in the background): time passes, and the timers due meanwhile fire late, all at once, as it wakes. */
+  freeze(ms: number) {
+    this.t += ms;
+    this.advance(0);
   }
 }
 
@@ -184,13 +189,51 @@ test("where the browser says nothing of the link, measured throughput decides: s
   assert.deepEqual(queue.limits(), { limits: FAST_LIMITS, slow: false, basis: "measured" });
 });
 
-test("measured: pages that come at once (the browser's cache, a hub next door) count as a fast link, and a body that hangs does not drag it down", async () => {
+test("measured: a page the browser's cache served says nothing of the link; a hub next door still measures fast; a body that hangs does not drag it down", async () => {
   const clock = new HandClock();
   const queue = new PageQueue({ link: () => undefined, clock, log: false });
-  const instant = () => queue.run("bg", async (ctx) => (ctx.head(), new Uint8Array(61_476)));
-  for (let i = 0; i < 3; i++) await instant();
-  assert.deepEqual(queue.limits(), { limits: FAST_LIMITS, slow: false, basis: "measured" }, "not slow forever for want of a round trip");
+  // A body in four pieces, after a head `headMs` in, `pieceMs` apart.
+  const page = (headMs: number, pieceMs: number) =>
+    queue.run("bg", async (ctx) => {
+      clock.advance(headMs);
+      ctx.head();
+      for (let i = 0; i < 4; i++) {
+        clock.advance(pieceMs);
+        ctx.bytes(15_369);
+      }
+      return new Uint8Array(61_476);
+    });
+  // The browser's cache: the head at once, the whole body in one piece.
+  const cached = () => queue.run("bg", async (ctx) => (ctx.head(), ctx.bytes(61_476), new Uint8Array(61_476)));
+  // The reviewer's probe: five slow pages, then six read back from the cache (a download starting over).
+  for (let i = 0; i < 5; i++) await page(400, 100);
+  assert.deepEqual(queue.limits(), { limits: SLOW_LIMITS, slow: true, basis: "measured" });
+  for (let i = 0; i < 6; i++) await cached();
+  assert.deepEqual(queue.limits(), { limits: SLOW_LIMITS, slow: true, basis: "measured" }, "the cache's pages leave the link as it was measured");
+
+  // A hub next door: heads in a few ms, bodies in pieces, quickly.
+  const near = new PageQueue({ link: () => undefined, clock, log: false });
+  for (let i = 0; i < 3; i++) {
+    await near.run("bg", async (ctx) => {
+      clock.advance(3);
+      ctx.head();
+      for (let k = 0; k < 4; k++) {
+        clock.advance(2);
+        ctx.bytes(15_369);
+      }
+      return new Uint8Array(61_476);
+    });
+  }
+  assert.deepEqual(near.limits(), { limits: FAST_LIMITS, slow: false, basis: "measured" }, "not slow forever for want of a round trip");
+  // Only cache hits: nothing measured yet, so the link is taken for a slow one.
+  const cold = new PageQueue({ link: () => undefined, clock, log: false });
+  for (let i = 0; i < 6; i++) await cold.run("bg", async (ctx) => (ctx.head(), new Uint8Array(61_476)));
+  assert.equal(cold.limits().basis, "unmeasured");
+
   // A page whose body stops for 25 s half-way and then goes on: the gap counts for 2 s at most.
+  // The link gets better: the last pages outvote the slow ones before them.
+  for (let i = 0; i < 6; i++) await page(100, 8);
+  assert.deepEqual(queue.limits().limits, FAST_LIMITS);
   await queue.run("bg", async (ctx) => {
     clock.advance(100);
     ctx.head();
@@ -202,17 +245,7 @@ test("measured: pages that come at once (the browser's cache, a hub next door) c
   });
   assert.deepEqual(queue.limits().limits, FAST_LIMITS, "one stalled body is not a slow link");
   // A link that really is slow says so within a few pages, whatever came before.
-  const slow = () =>
-    queue.run("bg", async (ctx) => {
-      clock.advance(400);
-      ctx.head();
-      for (let i = 0; i < 4; i++) {
-        clock.advance(100);
-        ctx.bytes(15_369);
-      }
-      return new Uint8Array(61_476);
-    });
-  for (let i = 0; i < 5; i++) await slow();
+  for (let i = 0; i < 5; i++) await page(400, 100);
   assert.deepEqual(queue.limits(), { limits: SLOW_LIMITS, slow: true, basis: "measured" });
 });
 
@@ -329,6 +362,44 @@ test("a page with nothing arriving for 30 s is aborted, its caller told, and the
   assert.equal(started.length, 6);
   assert.equal(queue.queued, 0);
   assert.equal(queue.inFlight, 0);
+});
+
+test("a page frozen in a background tab past its 30 s is not taken for a stalled one: the watchdog, firing late, counts again from the wake", async () => {
+  const clock = new HandClock();
+  const queue = new PageQueue({ limits: { fg: 1, bg: 1 }, clock, log: false });
+  let ctx: PageJob | null = null;
+  let answer: (() => void) | null = null;
+  const done = queue.run("bg", (job) => {
+    ctx = job;
+    return new Promise<Uint8Array>((resolve, reject) => {
+      answer = () => resolve(new Uint8Array(61_476));
+      job.signal.addEventListener("abort", () => reject(job.signal.reason));
+    });
+  });
+  await settle();
+  ctx!.head();
+  // The tab goes to the background for a minute: nothing runs, the watchdog included.
+  clock.freeze(60_000);
+  await settle();
+  assert.equal(ctx!.signal.aborted, false, "woken late: not a stall, the chunks that came meanwhile are still to be read");
+  // Back: the body that was buffered comes in, and the page ends well.
+  ctx!.bytes(61_476);
+  answer!();
+  assert.equal((await done).length, 61_476);
+
+  // A page that really is silent for 30 s once awake is still given up on.
+  const silent = queue.run("bg", (job) => {
+    ctx = job;
+    return new Promise<Uint8Array>((_, reject) => job.signal.addEventListener("abort", () => reject(job.signal.reason)));
+  });
+  silent.catch(() => undefined);
+  await settle();
+  clock.freeze(45_000);
+  await settle();
+  assert.equal(ctx!.signal.aborted, false);
+  clock.advance(STALL_MS);
+  await settle();
+  await assert.rejects(silent, { name: "TimeoutError" });
 });
 
 test("a pause that ran out unseen is over: a live request after a quiet while holds the background back as a new pause, said for what it was", async () => {

@@ -10,10 +10,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryClient } from "@tanstack/react-query";
-import { addressOn, endHubShell, HubShell, mainMachine, selectedMachine, sessionOfAddress, switchPath } from "../src/features/cloud/hub-shell.js";
+import { addressOn, endHubShell, HubShell, mainMachine, selectedMachine, switchPath } from "../src/features/cloud/hub-shell.js";
 import { type AccountMain, HubApiError } from "../src/lib/hub/api.js";
+import { connLog } from "../src/lib/connection-log.js";
+import { MuxError } from "../src/lib/e2e/mux.js";
 import type { PresenceState } from "../src/lib/hub/link.js";
-import type { MachineStatus } from "../src/lib/hub/machine.js";
+import { type MachineStatus, PIPE_REFUSED } from "../src/lib/hub/machine.js";
 import { mq } from "../src/lib/machines/query.js";
 import { hubShell, setHubShell } from "../src/features/machines/shells.js";
 import { renewalRunner, setRenewalRunner } from "../src/lib/hub/renewal.js";
@@ -579,32 +581,43 @@ test("a request whose pipe cannot be opened rejects, and holds the page's backgr
     (channel as unknown as { setStatus(s: MachineStatus): void }).setStatus("open");
     return Promise.resolve({
       open: () => {
-        throw new Error("too many streams");
+        throw new MuxError("tooManyStreams", "too many open streams");
       },
     } as never);
   };
   shell.select("m-a");
   await until(() => shell.machine("m-a")!.transport.current === "live");
   const transport = shell.machine("m-a")!.transport;
-  await assert.rejects(transport.fetch(new Request("http://machine.test/api/prefs")), "it fails rather than waiting for ever");
+  const since = connLog.events().at(-1)?.seq ?? 0;
+  const refused = () => connLog.events().filter((e) => e.seq > since && e.name === "pipe.refused");
+  await assert.rejects(
+    transport.fetch(new Request("http://machine.test/api/prefs")),
+    { message: `tunnel: the pipe closed before the answer ended (${PIPE_REFUSED})` },
+    "it fails rather than waiting for ever, with its own code: not a channel gone (4502)",
+  );
   await until(() => holds.length === 2);
   assert.deepEqual(holds, ["hold", "release"]);
+  assert.deepEqual(
+    { error: refused()[0]?.fields.error, errName: refused()[0]?.fields.errName, errKind: refused()[0]?.fields.errKind, kind: refused()[0]?.fields.kind },
+    { error: "too many open streams", errName: "MuxError", errKind: "tooManyStreams", kind: "rpc" },
+  );
   // A head that cannot even be written (a path over 64 KiB) throws as the pipe is opened: nothing is held for it.
   await assert.rejects(transport.fetch(new Request(`http://machine.test/api/fs/list?path=${"a".repeat(70_000)}`)));
   await flush(5);
   assert.deepEqual(holds, ["hold", "release"]);
+  assert.equal(refused().length, 2);
+  assert.equal(refused()[1]!.fields.error, "string too long");
 });
 
-test("the session the address shows, on the machine in view on its copy, is what the copy is told; live or out of view, nothing", async (t) => {
-  assert.deepEqual(sessionOfAddress("/sessions/claude/abc"), { source: "claude", id: "abc" });
-  assert.deepEqual(sessionOfAddress("/m/d-7f3a/sessions/codex/x-1/agents/a-2"), { source: "codex", id: "x-1" });
-  assert.equal(sessionOfAddress("/sessions"), null);
-  assert.equal(sessionOfAddress("/m/d-7f3a/terminals"), null);
+test("the sessions views show of a machine in use on its copy are what the copy is told: the main view's and a pane's; live, or let go of, nothing", async (t) => {
   const { link, shell } = world([{ id: "m-a" }, { id: "m-b" }]);
   link.set("m-a", "online");
   shell.start();
   t.after(() => shell.stop());
-  const view = (key: string) => (shell.machine(key)!.mirror as unknown as { view: { onCopy: boolean; session: string | null } }).view;
+  const view = (key: string) => {
+    const v = (shell.machine(key)!.mirror as unknown as { view: { onCopy: boolean; sessions: ReadonlySet<string> } }).view;
+    return { onCopy: v.onCopy, sessions: [...v.sessions].sort() };
+  };
   // The channel opens when the test says.
   const channel = shell.machine("m-a")!.channel;
   let open: () => void = () => undefined;
@@ -617,21 +630,32 @@ test("the session the address shows, on the machine in view on its copy, is what
       };
     });
   };
+  dialer(shell, "m-b", "hang");
   shell.select("m-a");
-  shell.viewSession("m-a", { source: "claude", id: "abc" });
-  assert.deepEqual(view("m-a"), { onCopy: true, session: "claude/abc" }, "in view, on its copy while the channel opens");
-  assert.deepEqual(view("m-b"), { onCopy: false, session: null });
+  // The main view, through the registry as a session view does it (`useViewSession`).
+  const main = runtimeFor("m-a").viewSession("claude", "abc");
+  assert.deepEqual(view("m-a"), { onCopy: true, sessions: ["claude/abc"] }, "in view, on its copy while the channel opens");
+  // Two views of one session are two.
+  const again = runtimeFor("m-a").viewSession("claude", "abc");
+  again();
+  assert.deepEqual(view("m-a").sessions, ["claude/abc"]);
+  // A pane of another machine, held, on its copy.
+  const pane = shell.machine("m-b")!.hold();
+  const paneView = runtimeFor("m-b").viewSession("codex", "x-1");
+  assert.deepEqual(view("m-b"), { onCopy: true, sessions: ["codex/x-1"] }, "a pane's session counts as well");
+  paneView();
+  assert.deepEqual(view("m-b"), { onCopy: true, sessions: [] }, "the pane moved on");
+  pane();
+  assert.deepEqual(view("m-b"), { onCopy: false, sessions: [] }, "let go of, out of view");
   shell.select("m-b");
-  assert.deepEqual(view("m-a"), { onCopy: false, session: null }, "out of view");
+  assert.deepEqual(view("m-a"), { onCopy: false, sessions: [] }, "out of view");
   shell.select("m-a");
-  assert.deepEqual(view("m-a"), { onCopy: true, session: "claude/abc" }, "back in view");
-  shell.viewSession("m-a", null);
-  assert.deepEqual(view("m-a"), { onCopy: true, session: null }, "the address leaves the session");
-  shell.viewSession("m-a", { source: "claude", id: "abc" });
+  assert.deepEqual(view("m-a"), { onCopy: true, sessions: ["claude/abc"] }, "back in view: the view is still there");
   await until(() => channel.status === "connecting");
   open();
   await until(() => shell.machine("m-a")!.transport.current === "live");
-  assert.deepEqual(view("m-a"), { onCopy: false, session: null }, "live: the session comes from the machine itself");
+  assert.deepEqual(view("m-a"), { onCopy: false, sessions: [] }, "live: the session comes from the machine itself");
+  main();
 });
 
 test("wanted again just after it was let go: dialled at once; open while unwanted: let go again", async (t) => {
