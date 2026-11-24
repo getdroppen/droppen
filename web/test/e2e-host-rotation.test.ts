@@ -320,7 +320,7 @@ test("a retired key never names a device again — added, enrolled, back with th
   assert.equal(state.isRetiredKey(current.signKey), false, "h-2's current key is not retired");
   assert.equal(state.isRetiredKey(h(V.chain.devices[1].dhKey)), false, "nor a removed device's");
   const fresh = await freshKeys("retired");
-  const add = (id: string, signKey: Uint8Array, dhKey: Uint8Array, host = false): Action => ({ type: "addDevice3", device: { id, signKey, dhKey, flags: { host, admin: false } } });
+  const add = (id: string, signKey: Uint8Array, dhKey: Uint8Array, host = false): Action => ({ type: "addDevice3", device: { id, signKey, dhKey, flags: { host, admin: false, a2a: false } } });
   for (const [what, action] of [
     ["the first retired sign key", add("d-k", old.signKey, fresh.dhKey)],
     ["the first retired DH key", add("d-k", fresh.signKey, old.dhKey)],
@@ -334,7 +334,7 @@ test("a retired key never names a device again — added, enrolled, back with th
   // Back with the recovery words: the same refusal (the fixture's recovery key is still the account's).
   const rk = await recoveryKeys(h(V.chain.recoverySecret));
   await assert.rejects(
-    tryPush(state, { type: "recoveryJoin3", device: { id: "d-r", signKey: fresh.signKey, dhKey: old.dhKey, flags: { host: false, admin: true } } }, { type: "recovery" }, rk.signing),
+    tryPush(state, { type: "recoveryJoin3", device: { id: "d-r", signKey: fresh.signKey, dhKey: old.dhKey, flags: { host: false, admin: true, a2a: false } } }, { type: "recovery" }, rk.signing),
     rule(RULES.keyRetired),
   );
   // Before the renewal that retired it, the same key was only a current device's: a second device naming it is what chains always allowed.
@@ -357,7 +357,7 @@ test("a pending join made with a host's key before its renewal is neither approv
   const recovery: Signer = { type: "recovery" };
   // Back with the recovery words, with h-2's keys while they were current: approved or activated then, fine.
   const joined = base.clone();
-  await push(joined, { type: "recoveryJoin3", device: { ...early, flags: { host: false, admin: true } } }, recovery, rk.signing);
+  await push(joined, { type: "recoveryJoin3", device: { ...early, flags: { host: false, admin: true, a2a: false } } }, recovery, rk.signing);
   await tryPush(joined, { type: "approveDevice", id: "d-k0" });
   await tryPush(joined, { type: "activateRecovered", id: "d-k0" }, recovery, rk.signing);
   // After the renewal: neither.
@@ -372,7 +372,7 @@ test("a pending join made with a host's key before its renewal is neither approv
   const byPasskey: Signer = { type: "passkey", slot: p.slot };
   const slotted = base.clone();
   await push(slotted, { type: "passkeySlotSet", slot });
-  await push(slotted, { type: "addDevice3", device: { ...early, flags: { host: false, admin: false } } }, byPasskey, pak);
+  await push(slotted, { type: "addDevice3", device: { ...early, flags: { host: false, admin: false, a2a: false } } }, byPasskey, pak);
   await tryPush(slotted, { type: "passkeyActivate", id: "d-k0" }, byPasskey, pak);
   await renew(slotted);
   await assert.rejects(tryPush(slotted, { type: "passkeyActivate", id: "d-k0" }, byPasskey, pak), rule(RULES.keyRetired));
@@ -380,7 +380,7 @@ test("a pending join made with a host's key before its renewal is neither approv
   // A pending device whose keys were never retired is approved as before.
   const other = joined.clone();
   const ok = await freshKeys("r1b ok");
-  await push(other, { type: "recoveryJoin3", device: { id: "d-ok", signKey: ok.signKey, dhKey: ok.dhKey, flags: { host: false, admin: true } } }, recovery, rk.signing);
+  await push(other, { type: "recoveryJoin3", device: { id: "d-ok", signKey: ok.signKey, dhKey: ok.dhKey, flags: { host: false, admin: true, a2a: false } } }, recovery, rk.signing);
   await tryPush(other, { type: "approveDevice", id: "d-ok" });
 });
 
@@ -539,7 +539,7 @@ test("a renewal pause overlays the accept policy — never an admin — and leav
   const byA: Signer = { type: "device", id: "d-a" };
   await push(st, accept("m-1", { type: "all" }));
   await push(st, accept("h-2", { type: "devices", ids: ["dev-2", "m-1"] }));
-  await push(st, { type: "addDevice3", device: { id: "d-a", signKey: da.signKey, dhKey: da.dhKey, flags: { host: false, admin: true } } });
+  await push(st, { type: "addDevice3", device: { id: "d-a", signKey: da.signKey, dhKey: da.dhKey, flags: { host: false, admin: true, a2a: false } } });
   assert.ok(ok(st, "h-2", "m-1") && ok(st, "m-1", "h-2") && ok(st, "dev-0", "m-1"));
   const removals = [
     { host: "h-2", ids: ["m-1"] },

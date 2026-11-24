@@ -356,7 +356,11 @@ fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
             id: "m-1".into(),
             sign_key: current.sign_public(),
             dh_key: current.dh_public(),
-            flags: chain::Flags { host: true, admin: false },
+            flags: chain::Flags {
+                host: true,
+                admin: false,
+                a2a: false,
+            },
         }),
     );
     push(&mut hub, epoch(0));

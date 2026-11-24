@@ -127,9 +127,9 @@ test("write selection follows the chain: v3 only on a v3 chain, v2's otherwise â
   const v3 = { isV3: true };
   assert.deepEqual(joinAction(d, { host: false, admin: true }, v2), { type: "addDevice", device: { ...d, full: true } });
   assert.deepEqual(joinAction(d, { host: true, admin: false }, v2), { type: "addMachine", machine: d });
-  assert.deepEqual(joinAction(d, { host: false, admin: false }, v3), { type: "addDevice3", device: { ...d, flags: { host: false, admin: false } } });
-  assert.deepEqual(joinAction(d, { host: true, admin: false }, v3), { type: "addDevice3", device: { ...d, flags: { host: true, admin: false } } });
-  assert.deepEqual(joinAction(d, { host: false, admin: true }, v3), { type: "addDevice3", device: { ...d, flags: { host: false, admin: true } } });
+  assert.deepEqual(joinAction(d, { host: false, admin: false }, v3), { type: "addDevice3", device: { ...d, flags: { host: false, admin: false, a2a: false } } });
+  assert.deepEqual(joinAction(d, { host: true, admin: false }, v3), { type: "addDevice3", device: { ...d, flags: { host: true, admin: false, a2a: false } } });
+  assert.deepEqual(joinAction(d, { host: false, admin: true }, v3), { type: "addDevice3", device: { ...d, flags: { host: false, admin: true, a2a: false } } });
   assert.throws(() => joinAction(d, { host: false, admin: false }, v2), kindIs("notUpgraded"), "a v2 limited device is never written");
   for (const chain of [v2, v3]) assert.throws(() => joinAction(d, { host: true, admin: true }, chain), invalid(RULES.hostNotAdmin), "a host never manages the account (D1)");
 });
@@ -612,8 +612,8 @@ test("alerts name chain v3's changes, with the flags in words for an addition an
   await c.sync();
   const seen = c.alerts().map((x) => ({ kind: x.kind, subject: x.subject, flags: x.flags, on: x.on, accept: x.accept }));
   assert.deepEqual(seen, [
-    { kind: "addDevice", subject: b.deviceId, flags: { host: false, admin: false }, on: undefined, accept: undefined },
-    { kind: "addDevice", subject: "m-2", flags: { host: true, admin: false }, on: undefined, accept: undefined },
+    { kind: "addDevice", subject: b.deviceId, flags: { host: false, admin: false, a2a: false }, on: undefined, accept: undefined },
+    { kind: "addDevice", subject: "m-2", flags: { host: true, admin: false, a2a: false }, on: undefined, accept: undefined },
     { kind: "setAdmin", subject: b.deviceId, flags: undefined, on: true, accept: undefined },
     { kind: "setHost", subject: "m-2", flags: undefined, on: false, accept: undefined },
     { kind: "setAccept", subject: "m-1", flags: undefined, on: undefined, accept: { type: "all" } },
@@ -1086,7 +1086,7 @@ test("9: a rotation seals the user key to the admins only; a passkey's pending d
   const p = await hub.device("tok");
   await p.sync();
   const join = await signDraft(
-    p.chain!.draft({ type: "passkey", slot }, { type: "addDevice3", device: { id: p.deviceId, signKey: p.keys.signPublic, dhKey: p.keys.dhPublic, flags: { host: false, admin: false } } }, Date.now()),
+    p.chain!.draft({ type: "passkey", slot }, { type: "addDevice3", device: { id: p.deviceId, signKey: p.keys.signPublic, dhKey: p.keys.dhPublic, flags: { host: false, admin: false, a2a: false } } }, Date.now()),
     pak.privateKey,
   );
   await p.api.appendChain(p.session.token, [encodeEntry(join)]);
@@ -1388,7 +1388,7 @@ test("D1 extended: a device that ever ran AI is never made an admin â€” refused 
  */
 async function plantHostOwedItsKey(hub: FakeKeysHub, a: CloudAccount): Promise<void> {
   const keys = await generateDeviceKeys();
-  const action: Action = { type: "addDevice3", device: { id: "m-owed", signKey: keys.signPublic, dhKey: keys.dhPublic, flags: { host: true, admin: false } } };
+  const action: Action = { type: "addDevice3", device: { id: "m-owed", signKey: keys.signPublic, dhKey: keys.dhPublic, flags: { host: true, admin: false, a2a: false } } };
   const entry = await signDraft(hub.state!.draft({ type: "device", id: a.deviceId }, action, Date.now()), a.keys.sign.privateKey);
   await hub.state!.apply(entry, ChainClock.history());
   hub.chain.push(hex(encodeEntry(entry)));

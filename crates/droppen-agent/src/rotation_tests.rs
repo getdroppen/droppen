@@ -105,7 +105,11 @@ impl Account {
             id: "m-1".into(),
             sign_key: m.sign_public(),
             dh_key: m.dh_public(),
-            flags: Flags { host: true, admin: false },
+            flags: Flags {
+                host: true,
+                admin: false,
+                a2a: false,
+            },
         }));
         a.push(key_epoch("m-1", 0));
         let uuid = droppen_instance::identity::ensure(&a.paths).unwrap().uuid;
@@ -742,7 +746,11 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
         id: "h-2".into(),
         sign_key: h2.sign_public(),
         dh_key: h2.dh_public(),
-        flags: Flags { host: true, admin: false },
+        flags: Flags {
+            host: true,
+            admin: false,
+            a2a: false,
+        },
     }));
     a.push(key_epoch("h-2", 0));
     a.push(Action::SetAccept {
@@ -1715,7 +1723,11 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
         id: "h-2".into(),
         sign_key: h2_old.sign_public(),
         dh_key: h2_old.dh_public(),
-        flags: Flags { host: true, admin: false },
+        flags: Flags {
+            host: true,
+            admin: false,
+            a2a: false,
+        },
     }));
     a.push(key_epoch("h-2", 0));
     a.push(Action::SetAccept {
