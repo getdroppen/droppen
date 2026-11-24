@@ -176,6 +176,7 @@
   - 移除 a2a 设备时，接受过它的设备算作「暴露」：轮换它们的内容密钥，界面上说明，并建议轮换设备身份。
 - 提示注入：任务描述可能来自第三方（自动导入的 issue）。模板把它放进分隔块；入口默认不用 bypass 类权限模式；dont-do 默认不自动委派导入的 issue。
 - push 防 SSRF：只发 https；源必须在入口的 `pushOrigins` 里；解析后的地址不能是回环、私网、链路本地（除非 `pushOrigins` 明确写了这个地址）；不跟随重定向；超时 15 秒。
+  - TCK 例外（只在 `DROPPEN_A2A_TCK=1` 且入口是 `source: "tck"` 时）：`pushOrigins` 可以列 `http://127.0.0.1`、`http://localhost`；列出时不带端口的回环 http 源接受该主机的任意端口（TCK 的接收端口每次不同），带端口的只接受那个端口。建配置与发送用同一条规则（`push::guard::push_target`）。
   - 唯一的例外：实例以 `DROPPEN_A2A_TCK=1` 启动时，`source: "tck"` 的入口可以列 `http://127.0.0.1[:port]` 与 `http://localhost[:port]`（TCK 自己的 webhook）。别的入口一律不行；`tck` 入口改成别的类型时这些源不跟过去。
 - **按调用方隔离**：task、context、push 配置都按 `(调用方, id)` 查。同一个入口的两个调用方互相看不见、不能续、不能答、不能取消对方的任务；「不是你的」与「不存在」回同样的错误。
 - **吊销要彻底**：吊销 token、从入口的 `allowedDevices` 里去掉一台 a2a 设备、a2a 设备被移出链、入口停用时，这个调用方（在这个入口上）所有未结束的 task 都取消（排队的撤掉，在跑的打断），push 配置删掉，开着的流关掉；之后每个流事件、每次 push 都再验一次调用方。入口上的 `allowedDevices` 与停用，是不依赖 Hub 的紧急开关。
