@@ -36,6 +36,7 @@ import {
   LOAD_FACTOR,
   MAX_PAYLOAD_LEN,
   type NoiseKeyPair,
+  type PathEvent,
   RELAY_SILENT_MS,
   Responder,
   type Transport,
@@ -321,6 +322,44 @@ test("once the direct path goes, a hub path that has been silent all along is go
   assert.equal(closed.code, RELAY_PATH_GONE);
   // At once: the direct path's probes, seconds late behind the download, keep
   // to their own share (`MAX_PROBES` a path) and leave the hub's oldest be.
+  assert.ok(closed.atMs - released <= STEP_MS, `replaced ${closed.atMs - released} ms after the direct path went`);
+});
+
+// The same with an agent that paces. The direct path's rate the deadline
+// reads (`directDeadline`'s `bytesPerMs`) is then below the link's: it is
+// sampled over spans of two of the direct path's round trips at least, and a
+// paced download arrives in bursts its own answers clock, a round trip apart
+// (52 B/ms on this 80 B/ms link). The release still comes at the deadline it
+// reports, a message at that rate past `DIRECT_TIMEOUT_MS`: at most two
+// messages' time at the link's rate (the rate reads at least half the
+// link's), and never past `DIRECT_TIMEOUT_MAX_MS`.
+test("from an agent that paces too: once the direct path goes, a hub path silent all along is gone at once", async (t) => {
+  const c = await directChannel(t, 80_000);
+  let down: Extract<PathEvent, { type: "directDown" }> | null = null;
+  const watch = c.device.onpathevent;
+  c.device.onpathevent = (e) => {
+    watch?.(e);
+    if (e.type === "directDown") down ??= e;
+  };
+  c.download(4, 1024 * 1024);
+  await c.advance(15_000);
+  c.kill("relay");
+  await c.advance(35_000);
+  assert.equal(c.state.closed, null, "kept while the direct path carries");
+  c.kill("direct");
+  await c.advance(60_000);
+  const released = c.state.directReleasedAtMs;
+  const closed = c.state.closed;
+  assert.ok(released !== null && down !== null && down.deadline, "the direct path was let go, on its deadline");
+  const deadline = down.deadline;
+  const silentMs = released - c.down.lastArrivalMs;
+  const oneMessageMs = (LOAD_FACTOR * MAX_PAYLOAD_LEN) / (80_000 / 1000);
+  assert.ok(silentMs > DIRECT_TIMEOUT_MS, `the download in flight stretched the deadline: after ${silentMs} ms of silence`);
+  assert.ok(silentMs <= deadline.limitMs + 2 * STEP_MS, `at the deadline it reports (${deadline.limitMs} ms): after ${silentMs} ms`);
+  assert.ok(deadline.loadMs <= 2 * oneMessageMs, `a message at no less than half the link's rate (${deadline.bytesPerMs} B/ms): ${deadline.loadMs} ms`);
+  assert.ok(silentMs <= DIRECT_TIMEOUT_MAX_MS + 2 * STEP_MS);
+  assert.ok(closed, "replaced");
+  assert.equal(closed.code, RELAY_PATH_GONE);
   assert.ok(closed.atMs - released <= STEP_MS, `replaced ${closed.atMs - released} ms after the direct path went`);
 });
 
