@@ -162,6 +162,27 @@ Removing the device from the chain revokes all of its sessions at once
 4403). Clients renew by repeating the exchange (the web app does so before
 expiry and once on a `401`).
 
+**An A2A proxy's session.** An A2A proxy (`droppen a2a-proxy`,
+`docs/a2a.md` §7) is a device of the account that carries A2A calls to the
+hosts that take them: chain v3 marks it with the device flag `a2a` (bit 2),
+and `SetA2aAccept {host, devices}` (kind 23) says which proxies a host takes
+A2A calls from. The hub knows a device for one by that flag or, before the
+chain names it, by its device row, which only its enrollment makes
+(`POST /v1/enrollments` with `kind: "a2a"`, then `/v1/agent`) — never by
+anything the device says. It mints device sessions like any device (above),
+before the chain names it and after, and with them uses `GET /v1/chain`
+(always: it waits to see itself added), `GET /v1/relays` and
+`POST /v1/relays/tickets` (once the chain names it as a current A2A proxy)
+and `/v1/client` (websocket.md). Every other route answers its session
+`403 a2a_only` ("an A2A proxy reads the chain, lists the relays and gets
+relay tickets: nothing else") — `GET /v1/me`, `POST /v1/devices`,
+`/v1/keys*`, `/v1/mailbox*`, stream pages, `/v1/pairings*`,
+`/v1/main-device`, `PATCH /v1/relays/prefs`, `/v1/enrollments*`,
+`/v1/passkeys*`, `/v1/password`, `/v1/rotations*`, `DELETE /v1/account`,
+`POST /v1/email/resend` and `POST /v1/logout` included; http.md does not
+repeat it per route. No mail goes to it either (`403 a2a_device`, http.md
+`POST /v1/mailbox`): it holds no key and reads no mailbox.
+
 **Suspended accounts.** The hub's operator may suspend an account (abuse
 control; the operator routes). While it is suspended, `POST /v1/login`,
 `POST /v1/login/passkey` and `POST /v1/session` answer `403
@@ -182,11 +203,14 @@ passkey sign-in in the moments its deletion takes is `403 account_deleted`
 routes need a *current full device* of the chain (`403 not_a_full_device`),
 `requires: current` ones any current device (`403 not_in_chain` /
 `forbidden`). A registered device outside the chain may still read its own
-mail, open a pairing for itself and read the keyring.
+mail, open a pairing for itself and read the keyring — an A2A proxy
+excepted (above).
 
 **Sockets** sign in on the socket itself (websocket.md): a device with a
 `HubLogin {role: Device}` signature plus its device session token, an agent
-with `{role: Agent}` (or enrolls with a one-time token), a relay with
+with `{role: Agent}` (or enrolls with a one-time token; an A2A proxy enrolls
+on `/v1/agent` the same way, signing `{role: Device}`, and then signs in on
+`/v1/client` as a device), a relay with
 `{role: Relay}` under its pinned key; on a relay, a device or agent with
 `{role: RelayDevice | RelayAgent}` and a hub-signed ticket.
 
@@ -213,7 +237,7 @@ The codes, by status (http.md lists them per route):
 |---|---|
 | 400 | `bad_request` (a malformed or too-long field; `message` names it), `disposable_email`, `bad_token`, `confirm_mismatch` |
 | 401 | `unauthorized` (no, unknown or expired session), `bad_login`, `bad_passkey`, `unknown_passkey`, `denied` (device session exchange), `rotated` (device session exchange signed with a key an identity key renewal retired), `device_session_required` |
-| 403 | `passkeys_off`, `not_a_full_device`, `not_in_chain`, `forbidden`, `device_removed`, `email_unverified`, `signup_closed`, `bad_invite`, `turnstile_required`, `turnstile_retry`, `turnstile_failed`, `bad_key_name`, `pairing_window_closed`, `not_the_creator`, `host_devices_off`, `rotation_pending` (a host's device role while its identity key is being renewed), `isolated` (relay tickets of an isolated host), `reauth_required`, `reauth_failed`, `account_suspended`, `account_deleted` (a sign-in while the account is being deleted) |
+| 403 | `passkeys_off`, `not_a_full_device`, `not_in_chain`, `forbidden`, `device_removed`, `email_unverified`, `signup_closed`, `bad_invite`, `turnstile_required`, `turnstile_retry`, `turnstile_failed`, `bad_key_name`, `pairing_window_closed`, `not_the_creator`, `host_devices_off`, `rotation_pending` (a host's device role while its identity key is being renewed), `isolated` (relay tickets of an isolated host), `reauth_required`, `reauth_failed`, `account_suspended`, `account_deleted` (a sign-in while the account is being deleted), `a2a_only` (an A2A proxy's session on any route but the three it may use, or mail from one; above), `a2a_device` (mail to an A2A proxy) |
 | 404 | `not_found`, `no_such_renewal` |
 | 408 | `slow_request` (a route that needs no sign-in got its body too slowly: within 10 s, or not at all; the connection is closed) |
 | 409 | `limit`, `chain_conflict`, `chain_v3_not_ready`, `rotation_not_ready` (with `reason`, and `waiting` or `ready_ms`), `rotation_in_progress`, `exists`, `email_taken`, `no_chain`, `verification_off`, `already_verified`, `not_a_host`, `refused` (admin), `too_many_passkeys`, `passkey_exists`, `last_credential`, `unlock_on`, `no_passkey`, `recently_deleted` (with `until_ms`) |
@@ -275,7 +299,7 @@ A refused request costs nothing and leaves nothing behind.
 | `POST /v1/waitlist` | every attempt, junk included: 5 an hour and 20 a day per address, spent first; once the attempt passed the cheap checks (plan, the address's syntax and domain), just before it is written: 20 an hour and 100 a day per network (IPv4 /24, IPv6 /48). Across the hub past 1,000 a day the hub only logs it (once an hour) and keeps taking them, so no one source can close the list |
 | `POST /v1/email/resend` | 10 an hour per address; 1 a minute and 5 a day per account; 5 an hour and 10 a day per inbox across accounts (an address with its `+tag` folded off, and at Gmail its dots too, `googlemail.com` counting as `gmail.com`; a new account's first mail always goes, and counts towards it). Without Turnstile also 30 an hour per network, and verification mail of every kind 300 an hour and 2,000 a day across the hub |
 | `POST /v1/devices` | 10 an hour per address; 10 a day per account (`429 device_rate`; a host's own device row is not one); 3 registered devices outside the chain at once (`429 too_many_pending_devices`), each counted only within its 30-minute pairing window and deleted a day after it registered |
-| `POST /v1/enrollments` | 10 an hour per device; 5 waiting per account (`429 too_many_enrollments`); `machines.max` counts waiting ones (`409 limit`); a code lives 10 minutes |
+| `POST /v1/enrollments` | 10 an hour per device; 5 waiting per account, of either kind (`429 too_many_enrollments`); a computer's code is held to `hosts.max`, which counts the computers' codes not yet in the chain, an A2A proxy's to `devices.max`, which counts every code not yet in the chain (`409 limit`); a code lives 10 minutes |
 | `POST /v1/relays/tickets` | 120 an hour per device |
 | `PUT /v1/rotations/{host}` | 6 renewal attempts an hour and 20 a day per host (`429 rate`; marking a host pending is not one); `host_dispute` pushes, and retired-key evidence kept, 4 an hour per host |
 | `POST /v1/rotations/{host}/disputes` (no session) | 60 an hour per address; 10 an hour per host, counting only statements that verify (`429 rate`) |
@@ -315,7 +339,7 @@ tickets. WebSocket limits are in websocket.md.
   type and meaning, a required request field, a route or a message type are
   never changed or removed within `/v1/`.
 - **Features are negotiated, not assumed**: an agent says what it speaks in
-  `agent_info.features` (`relays/1`, `chain/3`, `policy/1`, `rotate/1`), and the hub tells devices
+  `agent_info.features` (`relays/1`, `chain/3`, `policy/1`, `rotate/1`, `a2a/1`), and the hub tells devices
   (`presence.relays`, `GET /v1/me` `machines[].rotates`); the hub says what it
   speaks in `welcome.features` (`rotate/1`), and a peer sends a feature's
   messages only where it was offered (a hub without it answers an unknown `t`
@@ -352,6 +376,15 @@ tickets. WebSocket limits are in websocket.md.
   `off` stops new ones, it does not undo one). The end of a pause the chain
   holds open (`completed`, `cancelled`) passes the gate and the switch: it
   starts nothing, and every reader of that chain reads kind 22 already.
+- **A2A proxies are the same kind of one-way step.** The hub must vendor a
+  `droppen-proto` that reads chain v3's device flag bit 2 (`a2a`) and
+  `SetA2aAccept` (kind 23) before any account writes either. Once an
+  account's chain holds one, a hub that cannot decode it fails to load that
+  account's chain: the hub cannot be rolled back to a build without them. A
+  page adds an A2A proxy only on a hub whose `POST /v1/enrollments` answer
+  carries `kind` (http.md): a hub from before A2A proxies answers without
+  it, takes the code as a computer's, and refuses the proxy's
+  `{role: Device}` proof.
 - **Every change to the hub API updates this folder in the same round**: the
   closed change implements, the open change documents (here) and adapts the
   clients; `check.mjs` must pass.
