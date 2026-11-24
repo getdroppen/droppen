@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use droppen_proto::identity::fingerprint_text;
+use droppen_proto::identity::device_fingerprint_text;
 use droppen_proto::keys::DhKeypair;
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
@@ -66,6 +66,16 @@ impl DeviceIdentity {
         }
     }
 
+    /// Fresh keys from the system's randomness, for a device about to join.
+    pub fn fresh_keys() -> (SigningKey, DhKeypair) {
+        use rand_core::RngCore;
+        let mut seed = Zeroizing::new([0u8; 32]);
+        let mut secret = Zeroizing::new([0u8; 32]);
+        rand_core::OsRng.fill_bytes(seed.as_mut());
+        rand_core::OsRng.fill_bytes(secret.as_mut());
+        (SigningKey::from_bytes(&seed), DhKeypair::from_secret(*secret))
+    }
+
     pub fn sign_key(&self) -> &SigningKey {
         &self.sign
     }
@@ -82,9 +92,11 @@ impl DeviceIdentity {
         self.dh.public()
     }
 
-    /// The signing key's fingerprint as a person reads it (groups of four).
+    /// The device's fingerprint as a person compares it on two screens: over
+    /// both its keys, what the web app shows in the device list (and asks
+    /// for when it adds an A2A proxy).
     pub fn fingerprint(&self) -> String {
-        fingerprint_text(&self.sign_public())
+        device_fingerprint_text(&self.sign_public(), &self.dh_public())
     }
 
     /// The identity kept in `dir`, `None` when there is none yet.

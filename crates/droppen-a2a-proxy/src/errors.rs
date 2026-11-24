@@ -18,6 +18,7 @@
 //! | `droppen.not_accepted` | -32603 | 403 | `PERMISSION_DENIED` |
 //! | `droppen.device_removed` | -32603 | 403 | `PERMISSION_DENIED` |
 //! | `droppen.quota_exceeded` (a body over 10 MiB) | -32004 | 400 | `FAILED_PRECONDITION` |
+//! | none: not joined its account yet | -32603 | 503 | `UNAVAILABLE` |
 //! | none (anything else) | -32603 | 500 | `INTERNAL` |
 
 use axum::http::{header, HeaderValue, StatusCode};
@@ -83,9 +84,11 @@ impl Code {
 /// One of the proxy's own errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxyError {
-    /// `None`: an error the proxy has no code for (an internal one).
+    /// `None`: an error the proxy has no code for.
     pub code: Option<Code>,
     pub message: String,
+    /// The proxy has not joined its account yet (503, no code).
+    not_ready: bool,
 }
 
 impl ProxyError {
@@ -93,6 +96,7 @@ impl ProxyError {
         Self {
             code: Some(code),
             message: code.message().into(),
+            not_ready: false,
         }
     }
 
@@ -100,6 +104,16 @@ impl ProxyError {
         Self {
             code: None,
             message: message.into(),
+            not_ready: false,
+        }
+    }
+
+    /// The proxy has not joined its account yet: try again later.
+    pub fn not_ready() -> Self {
+        Self {
+            code: None,
+            message: "this A2A proxy has not joined its account yet".into(),
+            not_ready: true,
         }
     }
 
@@ -115,6 +129,7 @@ impl ProxyError {
             Some(Code::DeviceOffline) => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
             Some(Code::AttestationStale | Code::QuotaExceeded) => (StatusCode::BAD_REQUEST, "FAILED_PRECONDITION"),
             Some(Code::NotAccepted | Code::DeviceRemoved) => (StatusCode::FORBIDDEN, "PERMISSION_DENIED"),
+            None if self.not_ready => (StatusCode::SERVICE_UNAVAILABLE, "UNAVAILABLE"),
             None => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL"),
         }
     }

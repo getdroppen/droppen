@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use axum::extract::ws::{Message as AxMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -51,6 +52,25 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
+
+/// The test CA, a relay certificate it issued for `127.0.0.1` and
+/// `localhost` (ECDSA P-256, good until 2126) and its key: fixtures for the
+/// `wss://` relay, made once with openssl and kept here.
+const TLS_CA: &[u8] = include_bytes!("tls/ca.der");
+const TLS_RELAY_CERT: &[u8] = include_bytes!("tls/relay.der");
+const TLS_RELAY_KEY: &[u8] = include_bytes!("tls/relay.key.der");
+
+/// A device's TLS for the test relays: the test CA as its only root.
+pub fn test_tls() -> tokio_tungstenite::Connector {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(rustls::pki_types::CertificateDer::from(TLS_CA.to_vec())).unwrap();
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    tokio_tungstenite::Connector::Rustls(Arc::new(config))
+}
 
 pub const ACCOUNT: &str = "acct-1";
 pub const ADMIN: &str = "admin-1";
@@ -90,6 +110,24 @@ impl Account {
     /// machine key epoch, the device under test (an A2A proxy: the a2a flag
     /// alone), and the host taking A2A calls from it (`SetA2aAccept`).
     pub fn new() -> Account {
+        let mut account = Account::hosts_only();
+        let (proxy, proxy_dh) = keys(3);
+        account.append(vec![Action::AddDevice3(DeviceV3 {
+            id: PROXY.into(),
+            sign_key: proxy.verifying_key().to_bytes(),
+            dh_key: proxy_dh.public(),
+            flags: Flags::A2A_DEVICE,
+        })]);
+        account.append(vec![Action::SetA2aAccept {
+            host: HOST.into(),
+            devices: vec![PROXY.into()],
+        }]);
+        account
+    }
+
+    /// The account before any A2A proxy joined: genesis (the admin), user key
+    /// epoch 0, the host with its first machine key epoch.
+    pub fn hosts_only() -> Account {
         let ak = SigningKey::from_bytes(&[9; 32]);
         let (admin, admin_dh) = keys(1);
         let genesis = genesis3_draft(
@@ -145,17 +183,6 @@ impl Account {
                 )],
             }),
         ]);
-        let (proxy, proxy_dh) = keys(3);
-        account.append(vec![Action::AddDevice3(DeviceV3 {
-            id: PROXY.into(),
-            sign_key: proxy.verifying_key().to_bytes(),
-            dh_key: proxy_dh.public(),
-            flags: Flags::A2A_DEVICE,
-        })]);
-        account.append(vec![Action::SetA2aAccept {
-            host: HOST.into(),
-            devices: vec![PROXY.into()],
-        }]);
         account
     }
 
@@ -200,7 +227,11 @@ impl Account {
 /// A relay in this process, tickets checked against the test hub's key.
 pub struct TestRelay {
     pub id: String,
+    /// What its sign-ins name and devices dial: `ws://` on its own port, or
+    /// `wss://` on a TLS front ([`TestRelay::start_tls`]).
     pub origin: String,
+    /// Where the host's agent dials it (plain, behind any TLS front).
+    pub dial: String,
     pub addr: SocketAddr,
     pub server: Arc<droppen_relay_core::Server>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
@@ -231,9 +262,46 @@ impl TestRelay {
     }
 
     async fn start_on(id: &str, addr: SocketAddr, timing: Timing) -> TestRelay {
+        Self::start_as(id, addr, timing, None).await
+    }
+
+    /// A relay behind a TLS front on its own port: devices dial `wss://`
+    /// there, verified against the test CA ([`test_tls`]); the host's agent
+    /// dials the relay itself.
+    pub async fn start_tls(id: &str, timing: Timing) -> TestRelay {
+        let front = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("wss://{}", front.local_addr().unwrap());
+        let relay = Self::start_as(id, "127.0.0.1:0".parse().unwrap(), timing, Some(origin)).await;
+        let behind = relay.addr;
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![rustls::pki_types::CertificateDer::from(TLS_RELAY_CERT.to_vec())],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(TLS_RELAY_KEY.to_vec().into()),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = front.accept().await {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let (Ok(mut tls), Ok(mut plain)) = (acceptor.accept(tcp).await, tokio::net::TcpStream::connect(behind).await) else {
+                        return;
+                    };
+                    let _ = tokio::io::copy_bidirectional(&mut tls, &mut plain).await;
+                });
+            }
+        });
+        relay
+    }
+
+    async fn start_as(id: &str, addr: SocketAddr, timing: Timing, origin: Option<String>) -> TestRelay {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let origin = format!("ws://{addr}");
+        let dial = format!("ws://{addr}");
+        let origin = origin.unwrap_or_else(|| dial.clone());
         let config = Config {
             bind: addr,
             origin: origin.clone(),
@@ -256,6 +324,7 @@ impl TestRelay {
         TestRelay {
             id: id.into(),
             origin,
+            dial,
             addr,
             server,
             stop: Some(stop),
@@ -289,10 +358,14 @@ pub struct HubState {
     pub agents: HashMap<String, HashMap<String, u64>>,
     /// How long a ticket lasts.
     pub ticket_ttl_ms: u64,
-    /// The device's signing key, which its tickets name.
-    pub device_key: [u8; 32],
+    /// The device session tokens it minted, and whose they are.
+    pub session_devices: HashMap<String, String>,
     /// Hosts its tickets name (`None`: the hosts the chain lets it control).
     pub peers: Option<Vec<String>>,
+    /// Enrollment codes a page registered, by token (hex).
+    pub enrollments: HashMap<String, Enrollment>,
+    /// Its own origin, as sign-ins name it.
+    pub origin: String,
     /// Answer every session with this status and error code.
     pub refuse_sessions: Option<(u16, &'static str)>,
     pub tickets: u32,
@@ -307,14 +380,15 @@ pub struct TestHub {
 
 impl TestHub {
     pub async fn start(account: &Account, relays: &[&TestRelay]) -> TestHub {
-        let (proxy, _) = keys(3);
         let state = Arc::new(Mutex::new(HubState {
             entries: account.entries(),
             relays: relays.iter().map(|r| (r.id.clone(), r.origin.clone())).collect(),
             agents: HashMap::from([(HOST.to_string(), relays.iter().map(|r| (r.id.clone(), 10)).collect())]),
             ticket_ttl_ms: 15 * 60 * 1000,
-            device_key: proxy.verifying_key().to_bytes(),
+            session_devices: HashMap::new(),
             peers: None,
+            enrollments: HashMap::new(),
+            origin: String::new(),
             refuse_sessions: None,
             tickets: 0,
             sessions: 0,
@@ -325,9 +399,12 @@ impl TestHub {
             .route("/v1/chain", get(chain))
             .route("/v1/relays", get(directory))
             .route("/v1/relays/tickets", post(tickets))
+            .route("/v1/agent", get(enroll_socket))
+            .route("/v1/client", get(client_socket))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
+        state.lock().unwrap().origin = format!("ws://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await });
         TestHub { url, state }
     }
@@ -341,18 +418,171 @@ impl TestHub {
     }
 }
 
+impl TestHub {
+    /// A page registers an enrollment code's token, of `kind`.
+    pub fn register_code(&self, token: &[u8; 16], kind: &str) {
+        self.state.lock().unwrap().enrollments.insert(
+            hex(token),
+            Enrollment {
+                kind: kind.into(),
+                proved: None,
+            },
+        );
+    }
+
+    /// What the device that claimed the code with `token` proved, once it did.
+    pub fn proved(&self, token: &[u8; 16]) -> Option<Proved> {
+        self.state.lock().unwrap().enrollments.get(&hex(token)).and_then(|e| e.proved.clone())
+    }
+}
+
+/// An enrollment code a page registered.
+pub struct Enrollment {
+    pub kind: String,
+    pub proved: Option<Proved>,
+}
+
+/// What a device proved for a code: the id the hub gave it, its keys, the proof.
+#[derive(Debug, Clone)]
+pub struct Proved {
+    pub device: String,
+    pub sign_key: [u8; 32],
+    pub dh_key: [u8; 32],
+    pub proof: [u8; 32],
+}
+
+/// The hub's enrollment socket (`/v1/agent`), as an A2A proxy claims a code
+/// there: `enroll {token, kind}`, `enroll_assigned`, `enroll_proof` (the
+/// `HubLogin {role: Device}` signature checked), `enrolled`.
+async fn enroll_socket(ws: WebSocketUpgrade, State(state): State<Arc<Mutex<HubState>>>) -> axum::response::Response {
+    ws.on_upgrade(move |socket| claim(socket, state))
+}
+
+fn text(v: Value) -> AxMessage {
+    AxMessage::Text(v.to_string().into())
+}
+
+fn json_of(m: Option<Result<AxMessage, axum::Error>>) -> Option<Value> {
+    match m {
+        Some(Ok(AxMessage::Text(t))) => serde_json::from_str(t.as_str()).ok(),
+        _ => None,
+    }
+}
+
+async fn claim(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let nonce = [n as u8; 32];
+    if socket.send(text(json!({"t": "challenge", "nonce": hex(&nonce)}))).await.is_err() {
+        return;
+    }
+    let Some(enroll) = json_of(socket.recv().await) else { return };
+    let token = enroll["token"].as_str().unwrap_or_default().to_string();
+    let known = {
+        let st = state.lock().unwrap();
+        st.enrollments
+            .get(&token)
+            .is_some_and(|e| e.proved.is_none() && Some(e.kind.as_str()) == enroll["kind"].as_str())
+    };
+    if enroll["t"] != "enroll" || !known {
+        let _ = socket
+            .send(text(json!({"t": "error", "code": "unknown_enrollment", "message": "no such code"})))
+            .await;
+        return;
+    }
+    let device = format!("a2a-{n}");
+    let _ = socket
+        .send(text(json!({"t": "enroll_assigned", "account": ACCOUNT, "device": device})))
+        .await;
+    let Some(proof) = json_of(socket.recv().await) else { return };
+    let key = |name: &str| droppen_client::key32(proof[name].as_str().unwrap_or_default()).ok();
+    let sig: Option<[u8; 64]> = droppen_client::unhex(proof["sig"].as_str().unwrap_or_default())
+        .ok()
+        .and_then(|s| s.try_into().ok());
+    let origin = state.lock().unwrap().origin.clone();
+    let (Some(sign_key), Some(dh_key), Some(p), Some(sig)) = (key("sign_key"), key("dh_key"), key("proof"), sig) else {
+        let _ = socket.send(text(json!({"t": "error", "code": "bad_keys", "message": "malformed"}))).await;
+        return;
+    };
+    let login = HubLogin {
+        role: LoginRole::Device,
+        account: ACCOUNT.into(),
+        id: device.clone(),
+        hub: origin,
+        nonce,
+        time_ms: proof["time_ms"].as_u64().unwrap_or_default(),
+    };
+    if proof["t"] != "enroll_proof" || proof["kind"] != "a2a" || !login.verify(&sign_key, &sig) {
+        let _ = socket
+            .send(text(json!({"t": "error", "code": "denied", "message": "the signature does not hold"})))
+            .await;
+        return;
+    }
+    if let Some(e) = state.lock().unwrap().enrollments.get_mut(&token) {
+        e.proved = Some(Proved {
+            device: device.clone(),
+            sign_key,
+            dh_key,
+            proof: p,
+        });
+    }
+    let _ = socket.send(text(json!({"t": "enrolled", "account": ACCOUNT, "device": device}))).await;
+}
+
+/// The hub's device socket (`/v1/client`) as far as a device follows the
+/// chain on it: a sign-in taken as it comes, then `CHAIN` frames from a
+/// `chain_sub`'s `from`, and every entry the hub gets after.
+async fn client_socket(ws: WebSocketUpgrade, State(state): State<Arc<Mutex<HubState>>>) -> axum::response::Response {
+    ws.on_upgrade(move |socket| follow(socket, state))
+}
+
+async fn follow(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
+    if socket.send(text(json!({"t": "challenge", "nonce": hex(&[8; 32])}))).await.is_err() {
+        return;
+    }
+    if json_of(socket.recv().await).is_none() || socket.send(text(json!({"t": "welcome"}))).await.is_err() {
+        return;
+    }
+    let mut cursor: Option<usize> = None;
+    let mut tick = tokio::time::interval(Duration::from_millis(50));
+    loop {
+        tokio::select! {
+            m = socket.recv() => match m {
+                Some(Ok(AxMessage::Text(t))) => {
+                    let v: Value = serde_json::from_str(t.as_str()).unwrap_or_default();
+                    if v["t"] == "chain_sub" {
+                        cursor = Some(v["from"].as_u64().unwrap_or(0) as usize);
+                    }
+                }
+                Some(Ok(_)) => {}
+                _ => return,
+            },
+            _ = tick.tick() => {
+                let Some(from) = cursor else { continue };
+                let fresh: Vec<Vec<u8>> = state.lock().unwrap().entries.iter().skip(from).map(Entry::encode).collect();
+                for batch in fresh.chunks(16) {
+                    let frame = Frame::Chain { ch: 0, entries: batch.to_vec() };
+                    if socket.send(AxMessage::Binary(frame.encode().unwrap().into())).await.is_err() {
+                        return;
+                    }
+                }
+                cursor = Some(from + fresh.len());
+            }
+        }
+    }
+}
+
 async fn session(State(state): State<Arc<Mutex<HubState>>>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
     let mut st = state.lock().unwrap();
     if let Some((status, error)) = st.refuse_sessions {
         return (StatusCode::from_u16(status).unwrap(), Json(json!({"error": error})));
     }
     st.sessions += 1;
-    (
-        StatusCode::OK,
-        Json(
-            json!({"account": body["account"], "device": body["device"], "token": format!("session-{}", st.sessions), "expires_ms": now_ms() + 3_600_000}),
-        ),
-    )
+    let token = format!("session-{}", st.sessions);
+    st.session_devices
+        .insert(token.clone(), body["device"].as_str().unwrap_or_default().to_string());
+    let answer = json!({"account": body["account"], "device": body["device"], "token": token, "expires_ms": now_ms() + 3_600_000});
+    (StatusCode::OK, Json(answer))
 }
 
 type Answer = (StatusCode, Json<Value>);
@@ -393,18 +623,28 @@ async fn directory(State(state): State<Arc<Mutex<HubState>>>) -> Answer {
     )
 }
 
-async fn tickets(State(state): State<Arc<Mutex<HubState>>>, Json(body): Json<Value>) -> Answer {
+async fn tickets(State(state): State<Arc<Mutex<HubState>>>, headers: axum::http::HeaderMap, Json(body): Json<Value>) -> Answer {
     let mut st = state.lock().unwrap();
     if let Some(denied) = denied(&st) {
         return denied;
     }
+    // Whose session: its device, with the key the chain names for it.
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or_default();
+    let device = st.session_devices.get(token).cloned().unwrap_or_else(|| PROXY.into());
     let mut clock = ChainClock::history();
     let chain = ChainState::verify(&st.entries, None, &mut clock).unwrap();
+    let Some(sign_key) = chain.device_record(&device).map(|d| d.info.sign_key) else {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
+    };
     // The hosts the chain lets the device reach: an A2A proxy's by
     // `may_call_a2a`, any other device's by `may_control`.
-    let peers = st.peers.clone().unwrap_or_else(|| match chain.a2a_device(PROXY) {
-        Some(_) => chain.hosts_accepting_a2a(PROXY).map(|d| d.info.id.clone()).collect(),
-        None => chain.hosts_admitting(PROXY).map(|d| d.info.id.clone()).collect(),
+    let peers = st.peers.clone().unwrap_or_else(|| match chain.a2a_device(&device) {
+        Some(_) => chain.hosts_accepting_a2a(&device).map(|d| d.info.id.clone()).collect(),
+        None => chain.hosts_admitting(&device).map(|d| d.info.id.clone()).collect(),
     });
     let mut out = Vec::new();
     for relay in body["relays"].as_array().into_iter().flatten().filter_map(Value::as_str) {
@@ -417,8 +657,8 @@ async fn tickets(State(state): State<Arc<Mutex<HubState>>>, Json(body): Json<Val
             relay: relay.into(),
             account: ACCOUNT.into(),
             role: TicketRole::Device,
-            id: PROXY.into(),
-            sign_key: st.device_key,
+            id: device.clone(),
+            sign_key,
             peers: peers.clone(),
             limits: limits(),
             flags: 0,
@@ -579,7 +819,7 @@ impl TestAgent {
         }
         .sign(&hub_key())
         .unwrap();
-        let (ws, _) = tokio_tungstenite::connect_async(format!("{}/v1/connect", relay.origin)).await.unwrap();
+        let (ws, _) = tokio_tungstenite::connect_async(format!("{}/v1/connect", relay.dial)).await.unwrap();
         let (mut sink, mut stream) = ws.split();
         let challenge: Value = match stream.next().await.unwrap().unwrap() {
             Message::Text(t) => serde_json::from_str(t.as_str()).unwrap(),
@@ -781,7 +1021,11 @@ fn accept_a2a(st: &mut AgentState, device: &str, message: &[u8], server: &[u8]) 
         }
         Freshness::Stale { newest_ms } => {
             let (reply, _) = responder.write_reply(&reply(ReplyStatus::Stale, &st.chain).encode()?, policy, now)?;
-            return Ok(Accepted::Stale { reply, newest_ms, applied: 0 });
+            return Ok(Accepted::Stale {
+                reply,
+                newest_ms,
+                applied: 0,
+            });
         }
     }
     st.guard.check(device, &hello, now)?;
@@ -837,6 +1081,7 @@ pub fn device_options() -> DeviceOptions {
             silence: Duration::from_secs(60),
             presence_wait: Duration::from_secs(2),
             renew: true,
+            tls: None,
         },
     }
 }
@@ -871,6 +1116,10 @@ pub struct StandConfig {
     pub attach: bool,
     /// An admin vouched for the agent's view.
     pub vouched: bool,
+    /// The device under test is in the account already (else it is to join).
+    pub proxy_in_chain: bool,
+    /// The relay is `wss://`, behind a TLS front.
+    pub tls: bool,
     pub options: DeviceOptions,
 }
 
@@ -882,6 +1131,8 @@ impl StandConfig {
             ticket_ttl_ms: 15 * 60 * 1000,
             attach: true,
             vouched: true,
+            proxy_in_chain: true,
+            tls: false,
             options: device_options(),
         }
     }
@@ -903,9 +1154,14 @@ impl Stand {
         Self::with(StandConfig::new(handler)).await
     }
 
-    pub async fn with(config: StandConfig) -> Stand {
-        let account = Account::new();
-        let relay = TestRelay::start("rly-1", config.timing).await;
+    pub async fn with(mut config: StandConfig) -> Stand {
+        let account = if config.proxy_in_chain { Account::new() } else { Account::hosts_only() };
+        let relay = if config.tls {
+            config.options.relays.tls = Some(test_tls());
+            TestRelay::start_tls("rly-1", config.timing).await
+        } else {
+            TestRelay::start("rly-1", config.timing).await
+        };
         let hub = TestHub::start(&account, &[&relay]).await;
         hub.state.lock().unwrap().ticket_ttl_ms = config.ticket_ttl_ms;
         let agent = TestAgent::new(&account.entries(), config.vouched.then(|| account.attestation()), config.handler);

@@ -15,9 +15,11 @@ use std::time::Duration;
 use droppen_a2a_proxy::errors::Code;
 use droppen_a2a_proxy::server::Proxy;
 use droppen_a2a_proxy::upstream::{classify, Answer, DeviceUpstream, Upstream};
+use droppen_a2a_proxy::Config;
 use droppen_client::failure::{Failure, Refuser};
 use droppen_client::rpc::RpcRequest;
-use droppen_proto::chain::Action;
+use droppen_proto::chain::{Action, DeviceV3, Flags};
+use droppen_proto::identity::A2aEnrollCode;
 use futures_util::future::BoxFuture;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -373,31 +375,229 @@ async fn an_answer_streams_through_as_the_device_sends_it() {
     assert!(end.is_err(), "a broken stream is not a clean end: {end:?}");
 }
 
+/// The proxy's configuration: data in `dir`, at `hub`, maybe a code.
+fn config(dir: &std::path::Path, hub: &str, code: Option<&str>) -> Config {
+    let vars = [
+        ("DROPPEN_DATA_DIR", dir.display().to_string()),
+        ("DROPPEN_A2A_PROXY_TOKEN", TOKEN.to_string()),
+        ("DROPPEN_HUB", hub.to_string()),
+        ("PORT", "0".to_string()),
+        ("DROPPEN_ENROLL_CODE", code.unwrap_or_default().to_string()),
+    ];
+    Config::from_vars(|name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())).unwrap()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_proxy_starts_only_from_a_data_directory_its_joining_made() {
-    let config = |dir: &std::path::Path, hub: &str, code: Option<&str>| {
-        let vars = [
-            ("DROPPEN_DATA_DIR", dir.display().to_string()),
-            ("DROPPEN_A2A_PROXY_TOKEN", TOKEN.to_string()),
-            ("DROPPEN_HUB", hub.to_string()),
-            ("PORT", "0".to_string()),
-            ("DROPPEN_ENROLL_CODE", code.unwrap_or_default().to_string()),
-        ];
-        droppen_a2a_proxy::Config::from_vars(|name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())).unwrap()
-    };
     let empty = support::scratch("proxy-empty");
     let error = droppen_a2a_proxy::run(config(&empty, "hub.example", None), "test").await.unwrap_err();
     assert!(error.contains("has not joined an account"), "{error}");
-    let error = droppen_a2a_proxy::run(config(&empty, "hub.example", Some("RH1-x")), "test")
-        .await
-        .unwrap_err();
-    assert!(error.contains("not in this version"), "{error}");
+    // A computer's code is not a proxy's.
+    let rh1 = droppen_proto::identity::EnrollCode {
+        account_fingerprint: [1; 16],
+        secret: [2; 16],
+    }
+    .to_string();
+    for code in [rh1.clone(), rh1.replacen("RH1-", "DR1-", 1)] {
+        let error = droppen_a2a_proxy::run(config(&empty, "hub.example", Some(&code)), "test")
+            .await
+            .unwrap_err();
+        assert!(error.contains("RH1 code adds a computer"), "{error}");
+    }
+    assert!(!empty.join("identity.json").exists(), "nothing kept");
     // Joined at one hub, pointed at another: refused, nothing served.
     let stand = support::Stand::new(support::echo()).await;
     let error = droppen_a2a_proxy::run(config(&stand.dir, "https://elsewhere.example", None), "test")
         .await
         .unwrap_err();
     assert!(error.contains("joined its account at"), "{error}");
+}
+
+#[tokio::test]
+async fn health_says_up_and_whether_it_joined_and_requests_wait_for_it() {
+    let proxy = Arc::new(Proxy::waiting(TOKEN, None, BTreeMap::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(droppen_a2a_proxy::serve(listener, proxy.clone(), std::future::pending()));
+    let http = client();
+    let health = http.get(format!("http://{addr}/healthz")).send().await.unwrap();
+    assert_eq!(health.status(), 200);
+    assert_eq!(health.json::<Value>().await.unwrap(), json!({"status": "up", "enrolled": false}));
+    let addr_port = addr.port();
+    assert!(tokio::task::spawn_blocking(move || droppen_a2a_proxy::check_health(addr_port))
+        .await
+        .unwrap()
+        .is_ok());
+    // An A2A request before it joined: 503, in its binding's form; without
+    // the token, 401 as ever.
+    let body: Value = http
+        .post(format!("http://{addr}/a2a/host-1/agents/main/jsonrpc"))
+        .bearer_auth(TOKEN)
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"GetTask"}"#)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["error"]["code"], -32603);
+    let rest = http
+        .get(format!("http://{addr}/a2a/host-1/agents/main/rest/tasks"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rest.status(), 503);
+    assert_eq!(rest.json::<Value>().await.unwrap()["error"]["status"], "UNAVAILABLE");
+    assert_eq!(
+        http.get(format!("http://{addr}/a2a/host-1/agents/main/rest/tasks"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    // Joined: requests go through, and its health says so.
+    proxy.ready(fake(Box::new(|_, _| Ok(answer(200, &[], b"{}")))));
+    let health: Value = http.get(format!("http://{addr}/healthz")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(health, json!({"status": "up", "enrolled": true}));
+    assert_eq!(
+        http.get(format!("http://{addr}/a2a/host-1/agents/main/rest/tasks"))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    // Nobody listening: the check fails.
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
+    assert!(tokio::task::spawn_blocking(move || droppen_a2a_proxy::check_health(closed))
+        .await
+        .unwrap()
+        .is_err());
+}
+
+/// The page's part of adding an A2A proxy (`docs/a2a.md` §7.2 step 3), for a
+/// device that proved `code`: the proof checked, then `AddDevice3` with
+/// `flags` (an A2A proxy's: `Flags::A2A_DEVICE`) and its keys — or `keys`
+/// instead, to play a page fooled into others — and the host accepting it.
+async fn page_adds(stand: &mut support::Stand, code: &A2aEnrollCode, flags: Flags, keys: Option<([u8; 32], [u8; 32])>) -> String {
+    let token = code.token();
+    let mut proved = None;
+    assert!(
+        support::eventually(Duration::from_secs(10), || {
+            proved = stand.hub.proved(&token);
+            proved.is_some()
+        })
+        .await,
+        "the proxy proved the code"
+    );
+    let p = proved.unwrap();
+    assert!(
+        code.verify_proof(support::ACCOUNT, &p.device, &p.sign_key, &p.dh_key, &p.proof),
+        "the proof holds"
+    );
+    let (sign_key, dh_key) = keys.unwrap_or((p.sign_key, p.dh_key));
+    let mut actions = vec![Action::AddDevice3(DeviceV3 {
+        id: p.device.clone(),
+        sign_key,
+        dh_key,
+        flags,
+    })];
+    if flags.a2a {
+        actions.push(Action::SetA2aAccept {
+            host: support::HOST.into(),
+            devices: vec![p.device.clone()],
+        });
+    }
+    stand.append(actions, true);
+    p.device
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn end_to_end_a_proxy_joins_its_account_with_a_da1_code_and_carries_requests() {
+    let mut cfg = support::StandConfig::new(support::echo());
+    cfg.proxy_in_chain = false;
+    let mut stand = support::Stand::with(cfg).await;
+    let code = A2aEnrollCode {
+        account_fingerprint: stand.account.fingerprint,
+        secret: [7; 16],
+    };
+    stand.hub.register_code(&code.token(), "a2a");
+    let dir = support::scratch("join");
+    let (hub, text) = (stand.hub.url.clone(), code.to_string());
+    let joining = {
+        let dir = dir.clone();
+        tokio::spawn(async move { droppen_a2a_proxy::enroll::open_or_join(&config(&dir, &hub, Some(&text)), support::device_options()).await })
+    };
+    let added = page_adds(&mut stand, &code, Flags::A2A_DEVICE, None).await;
+    let device = tokio::time::timeout(Duration::from_secs(20), joining).await.unwrap().unwrap().unwrap();
+    assert_eq!(device.identity().device, added);
+    assert!(device.with_chain(|c| c.unwrap().may_call_a2a(&added, support::HOST).is_ok()));
+    #[cfg(unix)]
+    for file in ["identity.json", "chain.json"] {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(dir.join(file)).unwrap().permissions().mode() & 0o777, 0o600, "{file}");
+    }
+    // It carries a request through the relay to the host.
+    let addr = proxy(Arc::new(DeviceUpstream::new(Arc::new(device))), &[]).await;
+    let response = client()
+        .get(format!("http://{addr}/a2a/{}/agents/main/rest/tasks", support::HOST))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    // A restart with the code still set: the same device, the code ignored
+    // (it was used: claiming it again would be refused).
+    let again = droppen_a2a_proxy::enroll::open_or_join(&config(&dir, &stand.hub.url, Some(&code.to_string())), support::device_options())
+        .await
+        .unwrap();
+    assert_eq!(again.identity().device, added);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_proxy_refuses_to_run_as_a_device_the_account_added_otherwise() {
+    let mut cfg = support::StandConfig::new(support::echo());
+    cfg.proxy_in_chain = false;
+    let mut stand = support::Stand::with(cfg).await;
+    // A code the hub does not know.
+    let unknown = A2aEnrollCode {
+        account_fingerprint: stand.account.fingerprint,
+        secret: [1; 16],
+    };
+    let error = droppen_a2a_proxy::enroll::open_or_join(
+        &config(&support::scratch("unknown"), &stand.hub.url, Some(&unknown.to_string())),
+        support::device_options(),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert!(error.contains("does not know this DROPPEN_ENROLL_CODE"), "{error}");
+    // Added with other keys, and added without the a2a flag: refused.
+    let other = (support::keys(40).0.verifying_key().to_bytes(), support::keys(40).1.public());
+    for (n, flags, keys, says) in [
+        (2u8, Flags::A2A_DEVICE, Some(other), "other keys"),
+        (3, Flags::NONE, None, "without the a2a flag"),
+    ] {
+        let code = A2aEnrollCode {
+            account_fingerprint: stand.account.fingerprint,
+            secret: [n; 16],
+        };
+        stand.hub.register_code(&code.token(), "a2a");
+        let (dir, hub, text) = (support::scratch("refused"), stand.hub.url.clone(), code.to_string());
+        let joining =
+            tokio::spawn(async move { droppen_a2a_proxy::enroll::open_or_join(&config(&dir, &hub, Some(&text)), support::device_options()).await });
+        page_adds(&mut stand, &code, flags, keys).await;
+        let error = tokio::time::timeout(Duration::from_secs(20), joining)
+            .await
+            .unwrap()
+            .unwrap()
+            .err()
+            .unwrap();
+        assert!(error.contains(says), "{error}");
+    }
 }
 
 // ------------------------------------------------------------- end to end

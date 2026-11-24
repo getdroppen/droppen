@@ -20,7 +20,7 @@
 //! - [`card`]: the Agent Card's addresses, made the proxy's own;
 //! - [`errors`]: the proxy's own answers, in each binding's form;
 //! - [`upstream`]: where requests go, and how failures are judged;
-//! - [`enroll`]: joining an account — the seam for what comes next.
+//! - [`enroll`]: joining an account with a `DA1` code, on the first start.
 
 pub mod card;
 pub mod config;
@@ -35,7 +35,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppen_client::device::{DeviceOptions, StandaloneDevice};
+use droppen_client::device::DeviceOptions;
 
 pub use config::Config;
 use server::Proxy;
@@ -47,9 +47,25 @@ const SYNC_EVERY: Duration = Duration::from_secs(300);
 
 /// Run the proxy with `config` until a stop signal (`SIGTERM`, `SIGINT`).
 /// `version` is the program's, for the hello's client info.
+///
+/// It listens first — its health answers while it joins its account, which
+/// can take as long as the user takes on the page — then opens its device,
+/// joining the account on its first start ([`enroll::open_or_join`]), and
+/// from then on carries requests.
 pub async fn run(config: Config, version: &str) -> Result<(), String> {
     init_logging();
-    let device = Arc::new(open(&config, version).await?);
+    let proxy = Arc::new(Proxy::waiting(&config.token, config.public_base.clone(), config.aliases.clone()));
+    let listener = bind(config.bind).await?;
+    tracing::info!(addr = %listener.local_addr().map_err(|e| e.to_string())?, "the a2a proxy is listening");
+    let mut serving = tokio::spawn(serve(listener, proxy.clone(), stop_signal()));
+    let options = DeviceOptions {
+        client: format!("droppen-a2a-proxy/{version}"),
+        ..DeviceOptions::default()
+    };
+    let device = tokio::select! {
+        device = enroll::open_or_join(&config, options) => Arc::new(device?),
+        served = &mut serving => return served.map_err(|e| format!("serve: {e}"))?,
+    };
     let identity = device.identity();
     tracing::info!(
         device = %identity.device,
@@ -75,24 +91,23 @@ pub async fn run(config: Config, version: &str) -> Result<(), String> {
             }
         });
     }
-    let proxy = Arc::new(Proxy::new(
-        Arc::new(DeviceUpstream::new(device)),
-        &config.token,
-        config.public_base.clone(),
-        config.aliases.clone(),
-    ));
-    let listener = match tokio::net::TcpListener::bind(config.bind).await {
-        Ok(listener) => listener,
-        // No IPv6 here: every IPv4 address instead.
-        Err(_) if config.bind.is_ipv6() && config.bind.ip().is_unspecified() => {
-            tokio::net::TcpListener::bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), config.bind.port()))
+    proxy.ready(Arc::new(DeviceUpstream::new(device)));
+    tracing::info!("the a2a proxy carries requests");
+    serving.await.map_err(|e| format!("serve: {e}"))?
+}
+
+/// Listen on `addr`; on every IPv4 address instead when it is `[::]` and the
+/// host has no IPv6.
+async fn bind(addr: SocketAddr) -> Result<tokio::net::TcpListener, String> {
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => Ok(listener),
+        Err(_) if addr.is_ipv6() && addr.ip().is_unspecified() => {
+            tokio::net::TcpListener::bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), addr.port()))
                 .await
-                .map_err(|e| format!("listen on port {}: {e}", config.bind.port()))?
+                .map_err(|e| format!("listen on port {}: {e}", addr.port()))
         }
-        Err(e) => return Err(format!("listen on {}: {e}", config.bind)),
-    };
-    tracing::info!(addr = %listener.local_addr().map_err(|e| e.to_string())?, "the a2a proxy is listening");
-    serve(listener, proxy, stop_signal()).await
+        Err(e) => Err(format!("listen on {addr}: {e}")),
+    }
 }
 
 /// Serve `proxy` on `listener` until `stop` resolves.
@@ -103,33 +118,26 @@ pub async fn serve(listener: tokio::net::TcpListener, proxy: Arc<Proxy>, stop: i
         .map_err(|e| format!("serve: {e}"))
 }
 
-/// The proxy's device, from its data directory; joining the account first
-/// when it never did ([`enroll`]).
-async fn open(config: &Config, version: &str) -> Result<StandaloneDevice, String> {
-    let options = DeviceOptions {
-        client: format!("droppen-a2a-proxy/{version}"),
-        ..DeviceOptions::default()
-    };
-    let device = match StandaloneDevice::open_dir(&config.data_dir, options.clone())? {
-        Some(device) => {
-            if config.enroll_code.is_some() {
-                tracing::warn!("DROPPEN_ENROLL_CODE is set but the proxy has joined its account already: remove it from the environment");
-            }
-            device
-        }
-        None => {
-            enroll::enroll(config).await?;
-            StandaloneDevice::open_dir(&config.data_dir, options)?.ok_or("the proxy did not join an account")?
-        }
-    };
-    let joined = droppen_client::HubUrl::parse(&device.identity().hub)?.http;
-    if joined != config.hub {
-        return Err(format!(
-            "the proxy joined its account at {joined}, not at DROPPEN_HUB ({}): set DROPPEN_HUB to {joined}, or start from an empty DROPPEN_DATA_DIR",
-            config.hub
-        ));
+/// The container's health check (`droppen a2a-proxy --health`): `GET
+/// /healthz` on this computer's `port`, answered 200 within 5 s. Plain
+/// HTTP/1.0 over a socket: the check runs where there is no HTTP client.
+pub fn check_health(port: u16) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
+    let timeout = Duration::from_secs(5);
+    let mut socket = std::net::TcpStream::connect_timeout(&addr, timeout).map_err(|e| format!("{addr}: {e}"))?;
+    socket.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+    socket.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+    socket
+        .write_all(b"GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .map_err(|e| format!("{addr}: {e}"))?;
+    let mut answer = Vec::new();
+    socket.take(4096).read_to_end(&mut answer).map_err(|e| format!("{addr}: {e}"))?;
+    let status = String::from_utf8_lossy(&answer).lines().next().unwrap_or_default().to_string();
+    match status.split_whitespace().nth(1) {
+        Some("200") => Ok(()),
+        _ => Err(format!("{addr}/healthz answered {status:?}")),
     }
-    Ok(device)
 }
 
 /// `RUST_LOG` (default `info`) to stderr; nothing if a logger is set already.

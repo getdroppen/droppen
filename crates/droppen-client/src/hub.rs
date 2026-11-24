@@ -177,6 +177,11 @@ impl HubSession {
         Ok(session.as_ref().expect("minted").token.clone())
     }
 
+    /// A device session's token for the hub's sockets (`/v1/client`).
+    pub(crate) async fn session_token(&self) -> Result<zeroize::Zeroizing<String>, Failure> {
+        self.token(false).await
+    }
+
     /// One call, signed in; minted again once when the hub no longer takes
     /// the session (`401`).
     async fn call(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value, Failure> {

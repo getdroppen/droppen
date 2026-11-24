@@ -19,8 +19,11 @@
 //! - **Where it dials.** A relay's origin comes from the hub and is not
 //!   trusted with the network this device is on (`droppen_proto::netpolicy`,
 //!   as the agent): `wss://` at a public name or address, every address the
-//!   name resolves to public. [`RelayOptions::allow_loopback`] (local testing
-//!   only) takes `ws://` to loopback besides.
+//!   name resolves to public — and it dials those very addresses, never the
+//!   name again, so a name that answers otherwise the second time (DNS
+//!   rebinding) reaches nothing inside; TLS still verifies the certificate
+//!   for the name. [`RelayOptions::allow_loopback`] (local testing only)
+//!   takes `ws://` to loopback besides.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -35,11 +38,11 @@ use tokio::sync::watch;
 use crate::failure::{Failure, Refuser};
 use crate::hub::{HubSession, Ticket};
 use crate::identity::DeviceIdentity;
-use crate::link::{connect_relay_welcome, ConnectError, Link};
+use crate::link::{connect_relay_at, ConnectError, Link};
 use crate::now_ms;
 
 /// How the pool runs (shortened in tests).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RelayOptions {
     /// Relays on loopback, over plain `ws://` too: local testing only.
     pub allow_loopback: bool,
@@ -50,6 +53,21 @@ pub struct RelayOptions {
     /// Renew tickets before they run out. Always, but for a test that
     /// watches a relay close a connection whose ticket did (4419).
     pub renew: bool,
+    /// What a `wss://` relay's certificate is verified against: `None`, the
+    /// bundled web PKI roots; a test's own roots otherwise.
+    pub tls: Option<tokio_tungstenite::Connector>,
+}
+
+impl std::fmt::Debug for RelayOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelayOptions")
+            .field("allow_loopback", &self.allow_loopback)
+            .field("silence", &self.silence)
+            .field("presence_wait", &self.presence_wait)
+            .field("renew", &self.renew)
+            .field("tls", &self.tls.as_ref().map(|_| "(own roots)"))
+            .finish()
+    }
 }
 
 impl Default for RelayOptions {
@@ -59,6 +77,7 @@ impl Default for RelayOptions {
             silence: Duration::from_secs(60),
             presence_wait: Duration::from_secs(3),
             renew: true,
+            tls: None,
         }
     }
 }
@@ -203,8 +222,9 @@ impl RelayPool {
 
     async fn connect(&self, relay: &str) -> Result<RelayConn, Failure> {
         let ticket = self.hub.ticket(relay).await?;
-        check_origin(&ticket.origin, self.options.allow_loopback).await?;
-        let (link, welcome) = connect_relay_welcome(&ticket.origin, &self.account, &self.device, &self.sign, &ticket.ticket)
+        let addrs = check_origin(&ticket.origin, self.options.allow_loopback).await?;
+        let tls = self.options.tls.clone();
+        let (link, welcome) = connect_relay_at(&ticket.origin, &addrs, tls, &self.account, &self.device, &self.sign, &ticket.ticket)
             .await
             .map_err(|e| match e {
                 ConnectError::Refused { code, answer } if code == "denied" => Failure::Refused {
@@ -335,10 +355,11 @@ async fn drive(link: Arc<Link>, state: Arc<ConnState>, hub: Arc<HubSession>, fir
     }
 }
 
-/// Whether this device may dial a relay at `origin`: `wss://host[:port]` at a
-/// public name or address, every address the name resolves to public
-/// (`allow_loopback`: `ws://` and loopback besides, for local testing).
-async fn check_origin(origin: &str, allow_loopback: bool) -> Result<(), Failure> {
+/// Whether this device may dial a relay at `origin`, and where: `wss://host[:port]`
+/// at a public name or address, every address the name resolves to public
+/// (`allow_loopback`: `ws://` and loopback besides, for local testing). The
+/// addresses are what is dialled ([`connect_relay_at`]).
+async fn check_origin(origin: &str, allow_loopback: bool) -> Result<Vec<std::net::SocketAddr>, Failure> {
     let refuse = || Failure::Offline(format!("the hub named a relay at {origin}, which this device does not dial"));
     let (scheme, rest) = origin.split_once("://").ok_or_else(refuse)?;
     if rest.is_empty() || rest.contains(['/', '@', '?', '#']) {
@@ -377,7 +398,7 @@ async fn check_origin(origin: &str, allow_loopback: bool) -> Result<(), Failure>
     if !secure && !addrs.iter().all(|a| netpolicy::is_loopback(a.ip())) {
         return Err(refuse());
     }
-    Ok(())
+    Ok(addrs)
 }
 
 #[cfg(test)]
@@ -407,7 +428,12 @@ mod tests {
         ] {
             assert!(check_origin(bad, false).await.is_err(), "{bad}");
         }
-        assert!(check_origin("ws://127.0.0.1:9", true).await.is_ok());
+        let here: std::net::SocketAddr = "127.0.0.1:9".parse().unwrap();
+        assert_eq!(
+            check_origin("ws://127.0.0.1:9", true).await.unwrap(),
+            [here],
+            "what is dialled is what was checked"
+        );
         assert!(check_origin("wss://127.0.0.1:9", true).await.is_ok());
         assert!(check_origin("ws://127.0.0.1:9", false).await.is_err());
     }

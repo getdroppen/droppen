@@ -37,11 +37,39 @@ const STEP: Duration = Duration::from_secs(10);
 /// How long opening the socket (TCP, TLS, the upgrade) may take.
 const DIAL: Duration = Duration::from_secs(20);
 
+type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
 /// Open the socket at `url`, within [`DIAL`].
-async fn dial(url: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>> {
+async fn dial(url: &str) -> Result<Socket> {
     match tokio::time::timeout(DIAL, tokio_tungstenite::connect_async(url)).await {
         Ok(Ok((ws, _))) => Ok(ws),
         Ok(Err(e)) => Err(format!("connect: {e}")),
+        Err(_) => Err(format!("connect: no answer within {DIAL:?}")),
+    }
+}
+
+/// Open the socket at `url` on one of `addrs` — addresses its host was
+/// resolved to and checked beforehand — never resolving the name again (a
+/// name that answers differently the second time is not dialled). TLS, for
+/// `wss://`, still verifies the certificate for the URL's name, against
+/// `tls`'s roots when given (tests), else the bundled web PKI roots. Each
+/// address is tried in turn, the whole within [`DIAL`].
+async fn dial_at(url: &str, addrs: &[std::net::SocketAddr], tls: Option<tokio_tungstenite::Connector>) -> Result<Socket> {
+    let attempt = async {
+        let mut last = String::from("no address to dial");
+        for addr in addrs {
+            match tokio::net::TcpStream::connect(addr).await {
+                Ok(tcp) => match tokio_tungstenite::client_async_tls_with_config(url, tcp, None, tls.clone()).await {
+                    Ok((ws, _)) => return Ok(ws),
+                    Err(e) => last = format!("{addr}: {e}"),
+                },
+                Err(e) => last = format!("{addr}: {e}"),
+            }
+        }
+        Err(format!("connect: {last}"))
+    };
+    match tokio::time::timeout(DIAL, attempt).await {
+        Ok(result) => result,
         Err(_) => Err(format!("connect: no answer within {DIAL:?}")),
     }
 }
@@ -157,9 +185,39 @@ pub async fn connect_relay_welcome(
     sign: &SigningKey,
     ticket: &str,
 ) -> std::result::Result<(Link, Value), ConnectError> {
+    let ws = dial(&format!("{origin}{CONNECT_PATH}")).await.map_err(ConnectError::Failed)?;
+    relay_sign_in(ws, origin, account, device, sign, ticket).await
+}
+
+/// [`connect_relay_welcome`] on `addrs`, the addresses `origin`'s host was
+/// resolved to and checked ([`dial_at`]): the name is not resolved again.
+/// `tls`: the roots to verify a `wss://` relay against (tests), else the
+/// bundled web PKI roots.
+pub async fn connect_relay_at(
+    origin: &str,
+    addrs: &[std::net::SocketAddr],
+    tls: Option<tokio_tungstenite::Connector>,
+    account: &str,
+    device: &str,
+    sign: &SigningKey,
+    ticket: &str,
+) -> std::result::Result<(Link, Value), ConnectError> {
+    let ws = dial_at(&format!("{origin}{CONNECT_PATH}"), addrs, tls)
+        .await
+        .map_err(ConnectError::Failed)?;
+    relay_sign_in(ws, origin, account, device, sign, ticket).await
+}
+
+/// Sign in on a relay's socket `ws` (dialled at `origin`) with `ticket`.
+async fn relay_sign_in(
+    ws: Socket,
+    origin: &str,
+    account: &str,
+    device: &str,
+    sign: &SigningKey,
+    ticket: &str,
+) -> std::result::Result<(Link, Value), ConnectError> {
     let failed = ConnectError::Failed;
-    let url = format!("{origin}{CONNECT_PATH}");
-    let ws = dial(&url).await.map_err(failed)?;
     let (mut sink, mut stream) = ws.split();
     let challenge = next_json(&mut stream, CONNECT_PATH).await.map_err(failed)?;
     let nonce: [u8; 32] = key32(challenge["nonce"].as_str().ok_or_else(|| failed("no challenge".into()))?).map_err(failed)?;
@@ -198,6 +256,9 @@ pub async fn connect_relay_welcome(
 
 type Routes = Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<Frame>>>>;
 
+/// A `CHAIN` frame's entries, encoded, as they came.
+pub type ChainBatch = Vec<Vec<u8>>;
+
 /// How the far end closed a link: the websocket close frame's code and
 /// reason (a relay's 4419 for a ticket that ran out, 4403 for a revoked
 /// one, 1012 for a restart, …), shared with whoever watches the link's
@@ -225,6 +286,8 @@ pub struct Link {
     routes: Routes,
     next_ch: AtomicU32,
     control: tokio::sync::Mutex<mpsc::UnboundedReceiver<Value>>,
+    /// `CHAIN` frames (on `ch` 0, after a `chain_sub`).
+    chain: tokio::sync::Mutex<mpsc::UnboundedReceiver<ChainBatch>>,
     closed: tokio::sync::watch::Receiver<bool>,
     /// When (ms) the far end last sent anything (a `PONG` included).
     heard: Arc<AtomicU64>,
@@ -247,6 +310,7 @@ impl Link {
         let (out, mut out_rx) = mpsc::unbounded_channel::<Frame>();
         let (text, mut text_rx) = mpsc::unbounded_channel::<String>();
         let (control_tx, control_rx) = mpsc::unbounded_channel();
+        let (chain_tx, chain_rx) = mpsc::unbounded_channel::<ChainBatch>();
         let routes: Routes = Arc::default();
         let (closed_tx, closed) = tokio::sync::watch::channel(false);
         let heard = Arc::new(AtomicU64::new(now_ms()));
@@ -313,6 +377,10 @@ impl Link {
                         }
                         Message::Binary(b) => {
                             let Ok(frame) = Frame::decode(&b) else { continue };
+                            if let Frame::Chain { entries, .. } = frame {
+                                let _ = chain_tx.send(entries);
+                                continue;
+                            }
                             let ch = match &frame {
                                 Frame::Data { ch, .. } | Frame::Close { ch, .. } | Frame::Credit { ch, .. } => *ch,
                                 Frame::Recs { ch, .. }
@@ -352,6 +420,7 @@ impl Link {
             routes,
             next_ch: AtomicU32::new(1),
             control: tokio::sync::Mutex::new(control_rx),
+            chain: tokio::sync::Mutex::new(chain_rx),
             closed,
             heard,
             close_frame,
@@ -418,8 +487,19 @@ impl Link {
 
     /// Send a relay control message (`ticket {ticket}`, a renewal).
     pub fn send_relay(&self, message: &PeerToRelay) -> Result<()> {
+        self.send_json(message)
+    }
+
+    /// Send any JSON control message (`chain_sub {from}`).
+    pub fn send_json(&self, message: &impl serde::Serialize) -> Result<()> {
         let text = serde_json::to_string(message).map_err(err("control message"))?;
         self.text.send(text).map_err(|_| "the link is closed".to_string())
+    }
+
+    /// The next `CHAIN` frame's entries, or `None` after `timeout` (or once
+    /// the link is closed and none is left).
+    pub async fn next_chain(&self, timeout: Duration) -> Option<ChainBatch> {
+        tokio::time::timeout(timeout, self.chain.lock().await.recv()).await.ok().flatten()
     }
 
     /// The next control message, or `None` after `timeout`.
