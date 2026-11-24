@@ -2257,17 +2257,18 @@ mod tests {
                 .sign(dev.signing_key())
         };
         use droppen_proto::chain::PausePhase::{Cancelled, Completed, Start};
+        let none = std::collections::BTreeSet::new();
         assert_eq!(
             account_change(&marker(Start, &[("h-2", &["m-1", "d-2"][..]), ("m-1", &["h-2"][..])]), None).as_deref(),
             Some("control by m-1, d-2 over h-2; h-2 over m-1 is paused while identity keys are renewed (by d-1)")
         );
         let started = vec![("h-2".to_string(), vec!["m-1".to_string()])];
         assert_eq!(
-            account_change_in(&marker(Completed, &[]), None, Some(&started)).as_deref(),
+            account_change_in(&marker(Completed, &[]), None, Some(&started), &none).as_deref(),
             Some("control by m-1 over h-2 resumes (by d-1)")
         );
         assert_eq!(
-            account_change_in(&marker(Cancelled, &[]), None, Some(&started)).as_deref(),
+            account_change_in(&marker(Cancelled, &[]), None, Some(&started), &none).as_deref(),
             Some("the pause of control by m-1 over h-2 was ended (by d-1)")
         );
         assert_eq!(
@@ -2299,14 +2300,14 @@ mod tests {
         push(&mut state, accept(&["d-2", "d-3"]));
         let start = push(&mut state, pause(1, Start, &["d-2", "d-3"]));
         assert_eq!(
-            account_change_in(&start, None, pause_notice_edges(&state, &start).as_deref()).as_deref(),
+            account_change_in(&start, None, pause_notice_edges(&state, &start).as_deref(), &none).as_deref(),
             Some("control by d-2, d-3 over h-2 is paused while identity keys are renewed (by d-1)")
         );
         push(&mut state, accept(&["d-3"]));
         push(&mut state, key(2));
         let done = push(&mut state, pause(1, Completed, &[]));
         assert_eq!(
-            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref()).as_deref(),
+            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref(), &none).as_deref(),
             Some("control by d-3 over h-2 resumes (by d-1)"),
             "d-2 left the base during the pause"
         );
@@ -2314,7 +2315,7 @@ mod tests {
         push(&mut state, Action::RemoveDevice3("d-3".into()));
         let done = push(&mut state, pause(2, Completed, &[]));
         assert_eq!(
-            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref()).as_deref(),
+            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref(), &none).as_deref(),
             Some("a renewal pause was completed; none of the control it paused comes back (by d-1)")
         );
         // A pause holds an A2A proxy's calls too (`docs/a2a.md` §7.1): its end
@@ -2336,13 +2337,33 @@ mod tests {
                 devices: vec!["a-1".into()],
             },
         );
-        push(&mut state, pause(3, Start, &["a-1"]));
+        // Its edge is its A2A calls, never control; beside a device's control, both are said.
+        let proxies: std::collections::BTreeSet<String> = ["a-1".to_string()].into();
+        let start = push(&mut state, pause(3, Start, &["a-1"]));
         assert!(state.may_call_a2a("a-1", "h-2").is_err(), "held while the pause is open");
+        assert_eq!(
+            account_change_in(&start, None, pause_notice_edges(&state, &start).as_deref(), &proxies).as_deref(),
+            Some("A2A calls by a-1 to h-2 are paused while identity keys are renewed (by d-1)")
+        );
         let done = push(&mut state, pause(3, Completed, &[]));
         assert!(state.may_call_a2a("a-1", "h-2").is_ok());
         assert_eq!(
-            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref()).as_deref(),
-            Some("control by a-1 over h-2 resumes (by d-1)")
+            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref(), &proxies).as_deref(),
+            Some("A2A calls by a-1 to h-2 resume (by d-1)")
+        );
+        let both = vec![("h-2".to_string(), vec!["a-1".to_string(), "m-1".to_string()])];
+        let unapplied = |op: u8, phase, ids: &[&str]| {
+            state
+                .draft(Signer::Device("d-1".into()), pause(op, phase, ids), 9_100)
+                .sign(dev.signing_key())
+        };
+        assert_eq!(
+            account_change_in(&unapplied(4, Start, &["a-1", "m-1"]), None, None, &proxies).as_deref(),
+            Some("control by m-1 over h-2 and A2A calls by a-1 to h-2 are paused while identity keys are renewed (by d-1)")
+        );
+        assert_eq!(
+            account_change_in(&unapplied(4, Cancelled, &[]), None, Some(&both), &proxies).as_deref(),
+            Some("the pause of control by m-1 over h-2 and of A2A calls by a-1 to h-2 was ended (by d-1)")
         );
         // The renewed host is h-2 with its new keys, here as everywhere.
         assert_eq!(state.machine("h-2").map(|d| d.info.sign_key), Some(new.sign_public()));

@@ -225,8 +225,10 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   // Hosts whose identity a device that could control them may have kept (review D3), each device with what the host's status says of it —
   // those that cannot renew their identity key; the others renew it (docs/host-identity-rotation.md §4).
   const reEnroll = viewerAdmin ? account.reEnrollWarnings((h) => statuses.get(h)?.controllers) : new Map<string, ReEnrollLine[]>();
-  // Hosts an A2A proxy that could call them no longer can (docs/a2a.md §7.1): renewing their identity key is suggested, never done here.
-  const a2aExposed = (viewerAdmin && upgraded ? account.a2aExposures?.() : undefined) ?? new Map<string, Map<string, number>>();
+  // Hosts an A2A proxy that could call them no longer can (docs/a2a.md §7.1): exposed as to a lost controller, so they renew their
+  // identity key (or, one that cannot, should be added again) — the A2A proxies among each one's losses, said on its row.
+  const exposures = viewerAdmin && upgraded && chain ? account.hostsToRotate?.() : undefined;
+  const a2aLost = (host: string) => [...(exposures?.get(host)?.lost.keys() ?? [])].filter((d) => chain?.deviceRecord(d)?.a2a === true).sort();
   const renewals = useRenewals();
   // The hosts no other host may be made to accept until they renewed their identity key (§7 decision 8).
   const mustRenew = hostIds.filter((h) => account.mustRenewFirst?.(h) === true);
@@ -326,7 +328,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
       limited,
       accept: d.host && chain ? chain.acceptPolicy(id) : null,
       reEnroll: d.host ? reEnroll.get(id) : undefined,
-      a2aExposed: d.host ? [...(a2aExposed.get(id)?.keys() ?? [])].sort() : undefined,
+      a2aExposed: d.host ? a2aLost(id) : undefined,
       renewal: d.host && renewals ? renewals.status(id) : undefined,
       renewable: d.host && upgraded && account.renews?.(id) === true,
       renewalsOn: d.host && renewals?.view?.enabled === true,
@@ -1023,7 +1025,8 @@ function RemoveDevice({
         : a2aHosts.length
           ? "a2a"
           : "choice";
-  // The devices that run AI it could control (and those that let them control them) renew their identity key after it (§4.1, §4.4).
+  // The devices that run AI it could control or call the A2A of (and those that let them control them) renew their identity key after it
+  // (§4.1, §4.4; docs/a2a.md §7.1).
   const renewing = v3 && account.chain ? hostsExposedBy(account.chain, device).filter((h) => account.renews?.(h) === true) : [];
   if (report) {
     return (
@@ -1062,7 +1065,7 @@ function RemoveDevice({
         // docs/a2a.md §7.1: an A2A call starts a session on the host as its user, whatever the entry's permission mode.
         <p className="text-xs leading-5 text-warn-fg" data-signal="warn" data-testid="remove-a2a-exposed">
           {t(
-            "{{device}} is an A2A proxy that could call the A2A of {{hosts}}. A session it started there could read any file the user can read on that device, its identity key included, so treat {{hosts}} as exposed: their content keys are rotated now, and renewing their identity key (or removing and adding them again) is suggested.",
+            "{{device}} is an A2A proxy that could call the A2A of {{hosts}}. A session it started there could read any file the user can read on that device, its identity key included, so it exposed {{hosts}}: their content keys are rotated now, and they renew their identity key after it, with every device that lets them control it (one that cannot renew should be removed and added again).",
             { device, hosts: a2aHosts.join(", ") },
           )}
         </p>

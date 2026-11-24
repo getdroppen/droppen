@@ -131,9 +131,15 @@ export class ChainAlerts {
           // dropped (a hand setAccept, a removal, a host that stopped hosting) or another open pause still holds. An A2A
           // proxy's calls a pause held come back as well (docs/a2a.md §7.1).
           const phase = action.phase === PAUSE_START ? "start" : action.phase === PAUSE_COMPLETED ? "completed" : "cancelled";
+          // A proxy's edge is its A2A calls, said apart from control (`a2a`).
+          const proxy = (id: string) => chain.deviceRecord(id)?.a2a === true;
           const removals = (action.phase === PAUSE_START ? action.removals : (chain.pause(action.op)?.removals ?? []))
             .map((r) => ({ host: r.host, ids: action.phase === PAUSE_COMPLETED ? r.ids.filter((id) => admits(chain, r.host, id) || acceptsA2a(chain, r.host, id)) : [...r.ids] }))
-            .filter((r) => r.ids.length > 0);
+            .map((r) => {
+              const a2a = r.ids.filter(proxy);
+              return { host: r.host, ids: r.ids.filter((id) => !proxy(id)), ...(a2a.length ? { a2a } : {}) };
+            })
+            .filter((r) => r.ids.length > 0 || (r.a2a?.length ?? 0) > 0);
           out.push({ alert: { seq, kind: "renewalPause", by, subject: null, pause: { phase, removals }, atMs, remove: null }, pending: false });
           break;
         }

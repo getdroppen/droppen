@@ -628,6 +628,9 @@ async function a2aVectors() {
     selfActivate: true,
   };
   const [uk0, mk0, mk1, mk2] = [await seed(318), await seed(319), await seed(320), await seed(321)];
+  // A second host with a list of its own, and a third proxy (seeds 322–326).
+  const [h2, a3] = [await member("ts-h-2", 322), await member("ts-a-3", 324)];
+  const mkH2 = await seed(326);
   const byDev = (m: Member) => ({ type: "device", id: m.id }) as const;
   const v3 = (m: Member, flags: { host?: boolean; admin?: boolean; a2a?: boolean }) => ({
     id: m.id,
@@ -639,7 +642,7 @@ async function a2aVectors() {
   const genesis = await signDraft(genesis3Draft(account, akPublic, v3(dev0, { admin: true }), await recoveryKeyFor(rk, account, akPublic), 1_000), ak);
   const entries: Entry[] = [genesis];
   const state = await ChainState.verify(entries, undefined, ChainClock.history());
-  const hosts = [h1.id];
+  const hosts = [h1.id, h2.id];
   const steps: [string, Signer, CryptoKey, Action][] = [
     ["userKey", byDev(dev0), dev0.key, { type: "keyEpochs", user: { epoch: 0, hash: await userKeyCommit(account, 0, uk0) }, machines: [] }],
     ["addHost", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(h1, { host: true }) }],
@@ -667,6 +670,16 @@ async function a2aVectors() {
     // A renewal pause holds the proxy's calls as it holds control; cancelled, they come back.
     ["pauseA2", byDev(dev0), dev0.key, { type: "renewalPause", op: new Uint8Array(16).fill(0xa2), phase: PAUSE_START, removals: [{ host: h1.id, ids: [a2.id] }] }],
     ["pauseA2Ended", byDev(dev0), dev0.key, { type: "renewalPause", op: new Uint8Array(16).fill(0xa2), phase: PAUSE_CANCELLED, removals: [] }],
+    ["addHost2", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(h2, { host: true }) }],
+    ["host2Key", byDev(dev0), dev0.key, { type: "keyEpochs", user: null, machines: [{ machine: h2.id, epoch: 0, hash: await machineKeyCommit(account, h2.id, 0, mkH2) }] }],
+    ["a2aHost2", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h2.id, devices: [a2.id] }],
+    // A removal that empties both hosts' lists.
+    ["removeA2", byDev(dev0), dev0.key, { type: "removeDevice3", id: a2.id }],
+    ["addA3", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(a3, { a2a: true }) }],
+    ["a2aHost2A3", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h2.id, devices: [a3.id] }],
+    // A host removed takes its own list along.
+    ["removeHost2", byDev(dev0), dev0.key, { type: "removeDevice3", id: h2.id }],
+    ["a2aH1A3", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [a3.id] }],
   ];
   const labels: { label: string; seq: number; state: ReturnType<typeof a2aStateJson> }[] = [{ label: "genesis", seq: 0, state: a2aStateJson(state, hosts) }];
   for (const [label, signer, key, action] of steps) {
@@ -746,10 +759,12 @@ async function a2aVectors() {
   const pairs: [string, string][] = [
     [dev0.id, h1.id],
     [devP.id, h1.id],
+    [a3.id, h1.id],
     [a2.id, h1.id],
     [a1.id, h1.id],
-    [a2.id, devP.id],
-    [a2.id, a2.id],
+    [a3.id, h2.id],
+    [a3.id, devP.id],
+    [a3.id, a3.id],
     [h1.id, h1.id],
     [nobody, h1.id],
   ];
@@ -760,7 +775,7 @@ async function a2aVectors() {
     hashes: await Promise.all(entries.map(async (e) => hex(await entryHash(e)))),
     versions: entries.map((e) => e.draft.version),
     steps: labels,
-    extraDevices: [dev0, h1, devP, a1, a2, x].map((m) => ({ id: m.id, signSeed: hex(m.signSeed), signKey: hex(m.signKey), dhSecret: hex(m.dhSecret), dhKey: hex(m.dhKey) })),
+    extraDevices: [dev0, h1, devP, a1, a2, x, h2, a3].map((m) => ({ id: m.id, signSeed: hex(m.signSeed), signKey: hex(m.signKey), dhSecret: hex(m.dhSecret), dhKey: hex(m.dhKey) })),
     state: a2aStateJson(state, hosts),
     control: pairs.map(([d, host]) => relationJson((dd, hh) => state.mayControl(dd, hh), d, host)),
     a2aCalls: pairs.map(([d, host]) => relationJson((dd, hh) => state.mayCallA2a(dd, hh), d, host)),
