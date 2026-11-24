@@ -36,8 +36,8 @@
   - 本机登录身份（本机账号、`local:owner`、`cloud:<设备>`）都不算 A2A 调用方；调用方只有 token 和 §7 的 a2a 设备。
 - **Agent Card**：`name`/`description` 取自入口；`version` 是 Droppen 版本；`supportedInterfaces` 依次是 JSONRPC、HTTP+JSON，`protocolVersion: "1.0"`；`capabilities {streaming: true, pushNotifications: true, extendedAgentCard: false}`；`securitySchemes {bearer: {httpAuthSecurityScheme: {scheme: "Bearer"}}}`；`defaultInputModes ["text/plain", "application/json", "image/png", "image/jpeg"]`；`defaultOutputModes ["text/plain", "text/markdown", "application/json"]`；一个 skill `coding_session`。卡里不写目录、仓库名。
   - 接口 URL 的基址：实例设置 `a2a.publicBase`（可选）；没设时用请求的 `Host`，协议 `http`。§7 的代理会改写成它自己的地址。
-- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务、给会话列表打「来自 A2A」的标记）。进 OpenAPI。
-- **bridge 分类**（`crates/droppen-agent/src/bridge.rs`）：`/a2a/*` 为 `Never`（§7 之前，远端设备一律不能经通道碰 A2A 路由）；`/api/a2a/*` 为 `Posture`，只有 `GET /api/a2a/tasks` 是 `Use`。
+- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务、给会话列表打「来自 A2A」的标记）、`GET /api/a2a/devices`（这台设备接受的 a2a 设备：`id`、指纹；没登录 Droppen 时为空，给入口的 `allowedDevices` 选择用）。进 OpenAPI。
+- **bridge 分类**（`crates/droppen-agent/src/bridge.rs`）：`/a2a/*` 为 `Never`（§7 之前，远端设备一律不能经通道碰 A2A 路由）；`/api/a2a/*` 为 `Posture`，只有 `GET /api/a2a/tasks`、`GET /api/a2a/devices`、`GET /api/a2a/contexts` 是 `Use`。
 
 ## 3. 映射
 
