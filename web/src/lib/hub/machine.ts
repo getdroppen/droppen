@@ -76,7 +76,7 @@ import {
   STREAMS_FEATURE,
   utf8,
 } from "@/lib/e2e";
-import { RELAY_SILENT_MS } from "@/lib/e2e/path";
+import { relayPathGone } from "@/lib/e2e/path";
 import { type DirectEnv, DirectHistory, DirectPaths } from "@/lib/transport/p2p";
 import type { Pipe, PipeKind, PipeMessage, PipeMeta, PipeOpener } from "@/lib/transport/tunnel";
 import { HUB_NO_CHANNELS, LINK_LOST } from "./link";
@@ -876,12 +876,16 @@ export class MachineChannel implements PipeOpener {
         let relayFailing = false;
         driver.onpaths = (stats) => {
           if (this.driver === driver) this.setPaths(stats);
-          // A carrier path with a probe unanswered for two probe intervals is
-          // gone. Until this, only the number shown rose (the probe's age)
-          // while the channel stalled until the relay link's own 60 s silence.
+          // A carrier path with a probe unanswered for two probe intervals,
+          // and nothing at all arriving on the channel since, is gone: replace
+          // it rather than stall until the relay link's own 60 s silence. A
+          // probe answered late while data keeps coming is a slow link, not a
+          // dead one — its answer waits behind what the channel's window let
+          // the agent send first — and replacing that channel only had the
+          // page ask for the same data again, over and over (`relayPathGone`).
           // Wake the carrier with its short deadline too: a dead relay link
           // must be replaced before the next channel tries to use it.
-          if (!relayFailing && !driver.isClosed && stats.relayRttMs !== null && stats.relayRttMs >= RELAY_SILENT_MS) {
+          if (!relayFailing && !driver.isClosed && relayPathGone(stats.relayProbeAgeMs, stats.relayQuietMs)) {
             relayFailing = true;
             relayLink?.wake();
             driver.close(4000, "the relay path stopped answering");

@@ -26,8 +26,12 @@ export interface MachineInfo {
   readonly state: "online" | "offline" | "unknown";
   /** Since when it has been in `state` (ms; the page's clock). */
   readonly since: number;
-  /** How the live connection reaches it, once there is one that says (`hub`: no relay could carry it). */
-  readonly path?: { readonly kind: "direct" | "relay" | "hub"; readonly relay?: string; readonly rttMs: number | null };
+  /**
+   * How the live connection reaches it, once there is one that says (`hub`: no
+   * relay could carry it): the round trip last measured, and `slowMs` while a
+   * probe has been out longer than that (the path is at least that slow).
+   */
+  readonly path?: { readonly kind: "direct" | "relay" | "hub"; readonly relay?: string; readonly rttMs: number | null; readonly slowMs?: number };
   /** How current its offline copy is (the newest time the machine signed, ms); absent with no copy. */
   readonly copyAsOf?: number;
   readonly agentVersion?: string;
@@ -60,7 +64,7 @@ export function sameMachineInfo(a: MachineInfo, b: MachineInfo): boolean {
   const { path: pathA, ...restA } = a;
   const { path: pathB, ...restB } = b;
   if (!shallowEqual(restA, restB)) return false;
-  return pathA?.kind === pathB?.kind && pathA?.relay === pathB?.relay && pathA?.rttMs === pathB?.rttMs;
+  return pathA?.kind === pathB?.kind && pathA?.relay === pathB?.relay && pathA?.rttMs === pathB?.rttMs && pathA?.slowMs === pathB?.slowMs;
 }
 
 /** One machine as the page reaches it. */

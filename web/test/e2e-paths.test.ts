@@ -42,6 +42,9 @@ import {
   type NoiseKeyPair,
   type PathStats,
   RELAY_PROBE_MS,
+  RELAY_SILENT_MS,
+  relayPathGone,
+  relaySlowMs,
   Responder,
   Session,
   type Transport,
@@ -380,7 +383,7 @@ test("a page that slept through its timers does not read its old probes as a sil
   assert.equal(p.a.stats().relayRttMs, 3, "measured afresh after the pause");
 });
 
-test("a hub path that stops answering its probes shows ever slower, never its last good round trip", async () => {
+test("a hub path that stops answering its probes says how long, never passes its age off as a round trip, and is taken for gone", async () => {
   const p = await Pair.create();
   await openStream(p);
   // The first probe goes at once, and comes back in 3 ms.
@@ -391,14 +394,24 @@ test("a hub path that stops answering its probes shows ever slower, never its la
   await p.sendAll();
   await p.drain(1, "relay");
   assert.equal(p.a.stats().relayRttMs, 3);
+  assert.equal(p.a.stats().relayProbeAgeMs, null, "nothing out");
   // Then the hub stops carrying anything (a connection dead without a word):
   // the probes queue up, unanswered.
+  const gone: boolean[] = [];
   for (const at of [RELAY_PROBE_MS, 2 * RELAY_PROBE_MS, 3 * RELAY_PROBE_MS]) {
     p.now = at;
     p.a.tick(p.now);
     await p.sendAll();
+    const s = p.a.stats();
+    gone.push(relayPathGone(s.relayProbeAgeMs, s.relayQuietMs));
   }
-  assert.equal(p.a.stats().relayRttMs, 2 * RELAY_PROBE_MS, "the oldest unanswered probe's age, not 3 ms");
+  const s = p.a.stats();
+  assert.equal(s.relayRttMs, 3, "the round trip measured, not the probe's age");
+  assert.equal(s.relayProbeAgeMs, 2 * RELAY_PROBE_MS, "the oldest unanswered probe's age");
+  assert.equal(s.relayQuietMs, 3 * RELAY_PROBE_MS - 3, "nothing since the answer at 3 ms");
+  assert.equal(relaySlowMs(s.relayProbeAgeMs, s.relayRttMs), 2 * RELAY_PROBE_MS, "said as slow, by at least that much");
+  // Gone at the tick its oldest probe is RELAY_SILENT_MS old: the same one its age alone said before.
+  assert.deepEqual(gone, [false, false, true]);
   // When the hub carries again, the answers are round trips again.
   p.now = 4 * RELAY_PROBE_MS;
   p.a.tick(p.now);
@@ -406,7 +419,110 @@ test("a hub path that stops answering its probes shows ever slower, never its la
   await p.drain(0, "relay");
   await p.sendAll();
   await p.drain(1, "relay");
-  assert.equal(p.a.stats().relayRttMs, 0, "measured afresh: the latest probe was answered at once");
+  const back = p.a.stats();
+  assert.equal(back.relayRttMs, 0, "measured afresh: the latest probe was answered at once");
+  assert.equal(back.relayProbeAgeMs, null, "nothing out any more");
+  assert.equal(relaySlowMs(back.relayProbeAgeMs, back.relayRttMs), null, "and nothing slow to say");
+});
+
+test("a slow hub path that keeps delivering is slow, never gone, and says its round trip again once answered", async () => {
+  const p = await Pair.create();
+  const sid = await openStream(p);
+  p.a.tick(p.now);
+  await p.sendAll();
+  p.now = 3;
+  await p.drain(0, "relay");
+  await p.sendAll();
+  await p.drain(1, "relay");
+  // b answers with a long download, and the link towards a carries one frame
+  // a second: b's probe answers wait behind it, as they wait behind a
+  // channel's window of data on a 1 Mbps link.
+  for (let k = 0; k < 40; k++) p.b.mux.send(sid, new Uint8Array(1000));
+  await p.sendAll();
+  const gone: number[] = [];
+  let slowest = 0;
+  for (let t = 1; t <= 30; t++) {
+    p.now = t * 1000;
+    p.a.tick(p.now);
+    await p.sendAll();
+    // a's probes reach b at once; b answers behind its download.
+    await p.drain(0, "relay");
+    await p.sendAll();
+    const s = p.a.stats();
+    if (relayPathGone(s.relayProbeAgeMs, s.relayQuietMs)) gone.push(p.now);
+    slowest = Math.max(slowest, relaySlowMs(s.relayProbeAgeMs, s.relayRttMs) ?? 0);
+    await p.deliver(1, "relay");
+  }
+  assert.deepEqual(gone, [], "never taken for gone while data keeps coming");
+  assert.ok(slowest >= RELAY_SILENT_MS, `a probe went ${slowest} ms unanswered: slow, and said so`);
+  assert.equal(p.a.stats().relayRttMs, 3, "no round trip measured meanwhile");
+  // The download drains, one frame a second; the answers arrive, and their round trips are what it says.
+  while (p.relay[1].length > 0) {
+    p.now += 1000;
+    await p.deliver(1, "relay");
+  }
+  const s = p.a.stats();
+  assert.ok(s.relayRttMs! >= RELAY_SILENT_MS, `the late answer's round trip: ${s.relayRttMs}`);
+  assert.equal(relaySlowMs(s.relayProbeAgeMs, s.relayRttMs), null, "a measured round trip shows again");
+  assert.equal(p.got[0].length, 40 * 1000, "all of it arrived");
+});
+
+test("a hub path that dies while data is coming is taken for gone at the same probe as before", async () => {
+  const p = await Pair.create();
+  const sid = await openStream(p);
+  // A frame from b every second; the hub dies just after a's probe at 5 s left (a's frames reach b no more).
+  let gone: number | null = null;
+  let aged: number | null = null;
+  for (let t = 0; t <= 20; t++) {
+    p.now = t * 1000;
+    p.a.tick(p.now);
+    await p.sendAll();
+    if (p.now < RELAY_PROBE_MS) await p.drain(0, "relay");
+    if (p.now <= RELAY_PROBE_MS) {
+      p.b.mux.send(sid, Uint8Array.of(t));
+      await p.sendAll();
+      await p.drain(1, "relay");
+    }
+    const s = p.a.stats();
+    if (gone === null && relayPathGone(s.relayProbeAgeMs, s.relayQuietMs)) gone = p.now;
+    // What took it for gone before: the probe's age alone.
+    if (aged === null && (s.relayProbeAgeMs ?? 0) >= RELAY_SILENT_MS) aged = p.now;
+  }
+  assert.equal(aged, RELAY_PROBE_MS + RELAY_SILENT_MS);
+  assert.equal(gone, aged, "no later than the probe's age alone");
+});
+
+test("a CREDIT from the peer counts as the hub path carrying", async () => {
+  const p = await Pair.create();
+  await openStream(p);
+  for (const at of [0, RELAY_PROBE_MS, 2 * RELAY_PROBE_MS]) {
+    p.now = at;
+    p.a.tick(p.now);
+    await p.sendAll();
+  }
+  // Nothing answered since the start; a CREDIT came a second ago.
+  p.a.heardRelay(3 * RELAY_PROBE_MS - 1000);
+  p.now = 3 * RELAY_PROBE_MS;
+  p.a.tick(p.now);
+  const s = p.a.stats();
+  assert.equal(s.relayProbeAgeMs, 3 * RELAY_PROBE_MS);
+  assert.equal(s.relayQuietMs, 1000);
+  assert.equal(relayPathGone(s.relayProbeAgeMs, s.relayQuietMs), false);
+});
+
+test("a relay path is gone only once its old probe is met with silence; slow is a probe older than the round trip", () => {
+  assert.equal(relayPathGone(null, null), false);
+  assert.equal(relayPathGone(RELAY_SILENT_MS - 1, 60_000), false, "not old enough");
+  assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_PROBE_MS - 1), false, "something came after the probe's first interval");
+  assert.equal(relayPathGone(RELAY_SILENT_MS, RELAY_PROBE_MS), true);
+  assert.equal(relayPathGone(3 * RELAY_PROBE_MS, 2 * RELAY_PROBE_MS - 1), false, "an older probe asks a longer silence");
+  assert.equal(relayPathGone(3 * RELAY_PROBE_MS, 2 * RELAY_PROBE_MS), true);
+  assert.equal(relaySlowMs(null, 3), null);
+  assert.equal(relaySlowMs(RELAY_PROBE_MS - 1, 3), null, "out less than an interval: the round trip says it");
+  assert.equal(relaySlowMs(RELAY_PROBE_MS, 3), RELAY_PROBE_MS);
+  assert.equal(relaySlowMs(RELAY_PROBE_MS, null), RELAY_PROBE_MS, "slow before any round trip was measured");
+  assert.equal(relaySlowMs(RELAY_PROBE_MS, 6_577), null, "a slower round trip was measured: it says more");
+  assert.equal(relaySlowMs(2 * RELAY_PROBE_MS, 6_577), 2 * RELAY_PROBE_MS);
 });
 
 test("an acknowledgement that frees nothing sent on the direct path is no progress on it", async () => {
