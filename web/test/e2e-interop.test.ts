@@ -987,6 +987,44 @@ test("enrollment codes, tokens and proofs agree with Rust", async () => {
   }
 });
 
+test("an A2A proxy's DA1 code, its token and proof agree with Rust; a proof under the machine label never verifies", async () => {
+  const { parseA2aEnrollCode, formatA2aEnrollCode, generateA2aEnrollCode, parseEnrollCode, enrollToken, a2aEnrollProof, verifyA2aEnrollProof, enrollProof } = await import(
+    "../src/lib/e2e/index.js"
+  );
+  const e = V.identity.enrollA2a;
+  const code = parseA2aEnrollCode(e.code);
+  assert.equal(code.kind, "a2a");
+  assert.equal(formatA2aEnrollCode(code), e.code);
+  assert.equal(hex(code.secret), e.secret);
+  assert.deepEqual(parseA2aEnrollCode(e.code.toLowerCase()), code, "in any case");
+  assert.deepEqual(parseA2aEnrollCode(` ${e.code}\n`), code, "spaces around it");
+  // The same token derivation as an RH1 code's: the hub routes both kinds alike.
+  assert.equal(hex(await enrollToken(code)), e.token);
+  const sign = h(e.signKey);
+  const dh = h(e.dhKey);
+  assert.equal(hex(await a2aEnrollProof(code, e.account, e.device, sign, dh)), e.proof);
+  assert.ok(await verifyA2aEnrollProof(code, e.account, e.device, sign, dh, h(e.proof)));
+  // Bound to the account, the assigned device id and both keys.
+  assert.equal(await verifyA2aEnrollProof(code, e.account, "a2a-2", sign, dh, h(e.proof)), false);
+  assert.equal(await verifyA2aEnrollProof(code, "acct-2", e.device, sign, dh, h(e.proof)), false);
+  assert.equal(await verifyA2aEnrollProof(code, e.account, e.device, dh, sign, h(e.proof)), false);
+  // The proof an RH1 agent would make for the same secret (the machine label) is Rust's `machineLabelProof`, and is no A2A proof.
+  const asMachine = { accountFingerprint: code.accountFingerprint, secret: code.secret };
+  assert.equal(hex(await enrollProof(asMachine, e.account, e.device, sign, dh)), e.machineLabelProof);
+  assert.notEqual(e.machineLabelProof, e.proof);
+  assert.equal(await verifyA2aEnrollProof(code, e.account, e.device, sign, dh, h(e.machineLabelProof)), false);
+  // Each reader takes only its own version: DA1 is never an RH1 code, nor RH1 / DR1 a DA1 code.
+  const body = e.code.slice(4);
+  assert.throws(() => parseEnrollCode(e.code), /DA1 code joins an A2A proxy/);
+  for (const other of [`RH1-${body}`, `DR1-${body}`, `dr1-${body}`]) assert.throws(() => parseA2aEnrollCode(other), /RH1 code adds a device that runs AI/, other);
+  for (const bad of ["DA1", "DA1-AAAA-BBBB", `DA2-${body}`, `DA1-${body}-X`, `DA1${body}`, ""]) assert.throws(() => parseA2aEnrollCode(bad), bad);
+  // A fresh one: DA1-, the account's fingerprint, 16 random bytes.
+  const fresh = generateA2aEnrollCode(code.accountFingerprint);
+  assert.ok(formatA2aEnrollCode(fresh).startsWith(`DA1-${e.code.split("-")[1]}-`));
+  assert.equal(fresh.secret.length, 16);
+  assert.notEqual(hex(fresh.secret), e.secret);
+});
+
 test("handshake replies, the freshness window and the hub's credit window match Rust", () => {
   for (const r of V.handshake.replies) {
     const body = decodeReplyBody(h(r.hex));
