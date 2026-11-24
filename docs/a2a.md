@@ -28,7 +28,8 @@
 | `POST /a2a/agents/{entry}/jsonrpc`（也接受结尾 `/`） | JSON-RPC 绑定 |
 | `/a2a/agents/{entry}/rest/…` | HTTP+JSON 绑定：`message:send`、`message:stream`、`tasks`、`tasks/{id}`、`tasks/{id}:cancel`、`tasks/{id}:subscribe`（GET 与 POST 都接受）、`tasks/{id}/pushNotificationConfigs[/{configId}]` |
 
-- 方法：`SendMessage`、`SendStreamingMessage`、`GetTask`、`ListTasks`、`CancelTask`、`SubscribeToTask`、push 配置的增删查。不做 gRPC，不做 extended card，只做 v1.0（`A2A-Version: 1.0`）。
+- 方法：`SendMessage`、`SendStreamingMessage`、`GetTask`、`ListTasks`、`CancelTask`、`SubscribeToTask`、push 配置的增删查。不做 gRPC，不做 extended card（`GetExtendedAgentCard` 回 `UnsupportedOperationError`），只做 v1.0。
+- **`A2A-Version`**（请求头，或查询参数 `A2A-Version`）：每个方法调用（JSON-RPC 的每个方法、HTTP+JSON 的每个路径、两种 SSE）都要是 `1.0`，补丁号不看（`1.0.1` 也算）。没有、为空（按 v1.0 §3.6.2 视为 0.3）或别的版本都回 `VersionNotSupportedError`（-32009 / HTTP 400），在鉴权之后、做任何事之前。Agent Card 的 `GET` 不查版本。dont-do 的 `@a2a-js/sdk` 1.3.0 每次调用都带 `A2A-Version: 1.0`（取自所选接口的 `protocolVersion`），卡的 `GET` 也带。「没有版本就拒」是一个常量（`droppen_a2a::protocol` 的 `UNVERSIONED_IS_0_3`），要放宽时改它。
 - `tenant` 为空；路由靠 URL。
 - **鉴权**：`Authorization: Bearer dpa_<id>_<secret>`。`id` 只用不含 `_` 的字符；`secret` 至少 128 位随机数。只存 `sha256(secret)`，常数时间比较；token 有作用域（可用的入口列表），可吊销，只在创建时显示一次。
   - token 只接受来自回环地址的连接（本机客户端、隧道、§7 的代理经 bridge）；局域网明文 http 上不收 A2A token。
@@ -66,7 +67,7 @@
 
 - 一轮的归属：task 的消息被投递（receipts）之后的第一次轮次结束，算这个 task 的结束。
 - 在 Droppen 界面上对这个会话发的消息不属于任何 task。
-- 流（`SendStreamingMessage`、`SubscribeToTask`）：第一条是 task 快照；到终态或中断态（`INPUT_REQUIRED`）就关（v1.0 §11.7；v1.1 改了再跟）。
+- 流（`SendStreamingMessage`、`SubscribeToTask`）：第一条是 task 快照；task **到达**终态或中断态（`INPUT_REQUIRED`）时就关（v1.0 §11.7；v1.1 改了再跟）。订阅一个已经在等回答的 task 不立即关：它等回答之后的下一个终态或中断态（TCK STREAM-SUB-002）。
 - 重启：启动时载入所有未结束的 task，按会话的实际状态补成完成、失败或继续跟。
 
 ### 3.3 结果
@@ -131,15 +132,16 @@
 
 ## 4. 存储
 
-都在 `<instance>/state.db`（与 `scheduled_tasks` 同库，0600）：
+都在 `<instance>/state.db`（与 `scheduled_tasks` 同库，0600），是 `droppen-instance` 迁移链的第 12 步（`crates/droppen-instance/src/db/migrations.rs`，只增不删）。时间都是 epoch 毫秒（`*_ms`）。一个字段只在要按它查、排、约束时才是列，其余放 JSON。
 
-- `a2a_entries`：`id`（`^[a-z0-9][a-z0-9-]{0,39}$`）、`name`、`description`、`enabled`、`source`（`claude|codex|acp`）、`acpAgent`、`cwd`（绝对路径）、`accountId`、`model`、`effort`、`permission`（同 `NewSession.permission`）、`isolation`（`none|worktree`，默认 `worktree`）、`maxConcurrent`（1–8，默认 1；同时 `WORKING` 的 task 数）、`template`、`allowRemoteAnswers`（默认 true）、`pushOrigins`（允许的 push 源，`https://host[:port]`）、`createdAt`、`updatedAt`。
-- `a2a_tokens`：`id`、`name`、`entries`（作用域）、`secretHash`、`createdAt`、`lastUsedAt`、`revokedAt`。
-- `a2a_contexts`：`contextId` → `entry`、`caller`、`source`、`sessionId`（Codex 在 `thread/start` 回来后才有）、`cwd`、`branch`、`createdAt`。
-- `a2a_tasks`：`id`、`contextId`、`entry`、`caller`、`state`、`statusMessage`、`artifacts`、`clientMessageId`、`createdAt`、`updatedAt`。
-- `a2a_task_events`：按任务递增的事件（StreamResponse），给订阅重放和 push 重试。
-- `a2a_push_configs`：`id`、`taskId`、`url`、`token`、`authScheme`、`authCredentials`。
-- 幂等：`(caller, messageId)` 唯一。
+- `a2a_entries`：`id`（主键，`^[a-z0-9][a-z0-9-]{0,39}$`）、`payload`、`created_ms`、`updated_ms`。入口的设置整个是 `payload` 里的 JSON（管理 API 的 `A2aEntry`）：`name`、`description`、`enabled`（默认 false）、`source`（`claude|codex|acp|tck`）、`acpAgent`、`cwd`（绝对路径）、`account`（`{"kind": "default"}` 实例的默认账号，默认；`{"kind": "local"}` CLI 自己的登录；`{"kind": "id", "id": "…"}`）、`model`、`effort`、`permission`（同 `NewSession.permission`）、`isolation`（`none|worktree`，默认 `worktree`）、`maxConcurrent`（1–8，默认 1；同时占着名额的 task 数）、`template`（`null` 是默认模板）、`allowRemoteAnswers`（默认 true）、`pushOrigins`（`https://host[:port]`）、`allowedDevices`（§7 的 a2a 设备 id，默认空）、`createdAt`、`updatedAt`。
+- `a2a_tokens`：`id`（主键，十六进制）、`name`（只给人看，可重名）、`entries`（作用域，JSON 数组）、`secret_hash`（`sha256(secret)`）、`created_ms`、`last_used_ms`（最多每分钟写一次）、`revoked_ms`。调用方是 `a2a:token:<id>`。
+- `a2a_contexts`：`context_id`（主键）、`entry`、`caller`、`source`、`session_id`（会话有了 id 才填；Codex 在 `thread/start` 之后）、`cwd`（worktree 时是 worktree）、`branch`、`created_ms`。按 `(source, session_id)` 和 `(caller, created_ms)` 有索引。
+- `a2a_tasks`：`id`（主键）、`context_id`、`entry`、`caller`、`state`（`TASK_STATE_*`）、`status_message`（JSON Message）、`status_ms`（状态时间，列表按它倒序）、`artifacts`（JSON）、`history`（收到的消息，JSON，最多 50 条）、`client_message_id`（`a2a:<caller>:<messageId>`）、`dispatched`（第一条消息是否已交给 backend；没名额的 task 停在这里）、`seq`（最新事件的序号，流的开头快照取在这里）、`created_ms`、`updated_ms`。按 `(entry, caller, status_ms)`、`(context_id, created_ms)`、`(caller, state)` 有索引。
+- `a2a_messages`：`(caller, message_id)` 主键 → `task_id`、`created_ms`。每条收到的消息（新 task、回答、追加）都在这里占一行，所以同一个 `(caller, messageId)` 的重试找到第一次做成或改动的那个 task，不会做第二次。`tck` 入口不占（TCK 反复用同一个 message id）。
+- `a2a_task_events`：`(task_id, seq)` 主键、`kind`（`status`、`progress`（`WORKING` 的进度消息，不 push）、`artifact`）、`payload`（StreamResponse）、`created_ms`。给落后的流补读和 push 重试；已结束的 task 的事件 7 天后删。
+- `a2a_push_configs`：`(task_id, id)` 主键、`url`、`token`、`auth_scheme`、`auth_credentials`、`created_ms`。
+- 按调用方隔离：task、context 都按 `(entry, caller, id)` 查，push 配置经由它的 task 查。
 
 ## 5. 内部结构
 
@@ -171,6 +173,7 @@
 - 一个能开会话的端点等于以用户身份执行代码。所以：入口默认停用直到用户填完；权限模式只来自入口；token 只存哈希；`/a2a/*` 不经通道开放。
 - 提示注入：任务描述可能来自第三方（自动导入的 issue）。模板把它放进分隔块；入口默认不用 bypass 类权限模式；dont-do 默认不自动委派导入的 issue。
 - push 防 SSRF：只发 https；源必须在入口的 `pushOrigins` 里；解析后的地址不能是回环、私网、链路本地（除非 `pushOrigins` 明确写了这个地址）；不跟随重定向；超时 15 秒。
+  - 唯一的例外：实例以 `DROPPEN_A2A_TCK=1` 启动时，`source: "tck"` 的入口可以列 `http://127.0.0.1[:port]` 与 `http://localhost[:port]`（TCK 自己的 webhook）。别的入口一律不行；`tck` 入口改成别的类型时这些源不跟过去。
 - **按调用方隔离**：task、context、push 配置都按 `(调用方, id)` 查。同一个入口的两个调用方互相看不见、不能续、不能答、不能取消对方的任务；「不是你的」与「不存在」回同样的错误。
 - **吊销要彻底**：吊销 token、从入口的 `allowedDevices` 里去掉一台 a2a 设备、a2a 设备被移出链、入口停用时，这个调用方（在这个入口上）所有未结束的 task 都取消（排队的撤掉，在跑的打断），push 配置删掉，开着的流关掉；之后每个流事件、每次 push 都再验一次调用方。入口上的 `allowedDevices` 与停用，是不依赖 Hub 的紧急开关。
 - **审计**：每个 A2A 请求记一行本机日志（时间、调用方、入口、方法、task），不记内容和 token。

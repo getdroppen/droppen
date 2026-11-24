@@ -23,11 +23,15 @@
 # The server ends with the script, and by itself after $LIFETIME_S seconds
 # whatever happens to the script.
 #
-# Needs: git, curl, uv, python3 and cargo. Cargo builds into $CARGO_TARGET_DIR
-# when it is set, else the repository's target/.
+# Against a server started elsewhere (built in the build pod and forwarded to
+# this machine, say: docs/a2a-compat.md), give its base and the token and the
+# script only runs the TCK:
 #
-# Not expected to pass in M1a: PUSH-DELIVER-* (nothing delivers pushes before
-# M1c, and the TCK's webhook is plain http on localhost, which §6 refuses).
+#   TCK_SUT_BASE=http://localhost:4252 A2A_BEARER_TOKEN=dpa_… scripts/a2a-compat/tck.sh
+#
+# Needs: git, curl, uv and python3; and cargo when it starts the server
+# itself, building into $CARGO_TARGET_DIR when that is set, else the
+# repository's target/.
 set -euo pipefail
 
 COMPAT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,7 +53,9 @@ fi
 
 log() { printf '\n== %s\n' "$*" >&2; }
 
-for tool in git curl uv python3 cargo; do
+tools="git curl uv python3"
+[ -n "${TCK_SUT_BASE:-}" ] || tools="$tools cargo"
+for tool in $tools; do
   command -v "$tool" >/dev/null || { echo "tck.sh: $tool is required" >&2; exit 2; }
 done
 
@@ -67,38 +73,43 @@ git -C "$TCK" checkout --quiet "$TCK_REV" 2>/dev/null || {
 }
 (cd "$TCK" && { [ -x .venv/bin/python ] || uv venv --quiet --python 3.15; } && uv pip install --quiet -e .)
 
-log "building the server"
-(cd "$REPO_ROOT" && DROPPEN_ALLOW_MISSING_WEB_DIST=1 CARGO_TARGET_DIR="$TARGET" cargo build --quiet -p droppen-server)
-BIN="$TARGET/debug/droppen-server"
+if [ -n "${TCK_SUT_BASE:-}" ]; then
+  BASE="${TCK_SUT_BASE%/}"
+  TOKEN="${A2A_BEARER_TOKEN:?A2A_BEARER_TOKEN is the token of the server at TCK_SUT_BASE}"
+else
+  log "building the server"
+  (cd "$REPO_ROOT" && DROPPEN_ALLOW_MISSING_WEB_DIST=1 CARGO_TARGET_DIR="$TARGET" cargo build --quiet -p droppen-server)
+  BIN="$TARGET/debug/droppen-server"
 
-log "starting the server on 127.0.0.1:$PORT ($RUN/server.log)"
-DROPPEN_DATA_DIR="$RUN/data" DROPPEN_CONFIG_DIR="$RUN/config" APP_INSTANCE=a2a-tck \
-  APP_SERVER__HOST=127.0.0.1 APP_SERVER__PORT="$PORT" APP_AUTH__ENABLED=false \
-  DROPPEN_A2A_TCK=1 DROPPEN_ALLOW_MISSING_WEB_DIST=1 \
-  timeout "$LIFETIME_S" "$BIN" serve >"$RUN/server.log" 2>&1 &
-SERVER=$!
-trap 'kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null || true' EXIT
+  log "starting the server on 127.0.0.1:$PORT ($RUN/server.log)"
+  DROPPEN_DATA_DIR="$RUN/data" DROPPEN_CONFIG_DIR="$RUN/config" APP_INSTANCE=a2a-tck \
+    APP_SERVER__HOST=127.0.0.1 APP_SERVER__PORT="$PORT" APP_AUTH__ENABLED=false \
+    DROPPEN_A2A_TCK=1 DROPPEN_ALLOW_MISSING_WEB_DIST=1 \
+    timeout "$LIFETIME_S" "$BIN" serve >"$RUN/server.log" 2>&1 &
+  SERVER=$!
+  trap 'kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null || true' EXIT
 
-BASE="http://127.0.0.1:$PORT"
-for _ in $(seq 1 120); do
-  curl -sf -o /dev/null "$BASE/api/auth/status" && break
-  kill -0 "$SERVER" 2>/dev/null || { cat "$RUN/server.log" >&2; exit 1; }
-  sleep 0.5
-done
+  BASE="http://127.0.0.1:$PORT"
+  for _ in $(seq 1 120); do
+    curl -sf -o /dev/null "$BASE/api/auth/status" && break
+    kill -0 "$SERVER" 2>/dev/null || { cat "$RUN/server.log" >&2; exit 1; }
+    sleep 0.5
+  done
 
-log "making the tck entry and its token"
-curl -sf -X POST "$BASE/api/a2a/entries" -H 'content-type: application/json' \
-  -d '{"id": "tck", "name": "Droppen TCK", "description": "The A2A TCK scenarios.", "source": "tck", "enabled": true, "pushOrigins": ["https://example.com"]}' >/dev/null
-TOKEN=$(curl -sf -X POST "$BASE/api/a2a/tokens" -H 'content-type: application/json' \
-  -d '{"name": "a2a-tck", "entries": ["tck"]}' | python3 -c 'import json, sys; print(json.load(sys.stdin)["secret"])')
+  log "making the tck entry and its token"
+  curl -sf -X POST "$BASE/api/a2a/entries" -H 'content-type: application/json' \
+    -d '{"id": "tck", "name": "Droppen TCK", "description": "The A2A TCK scenarios.", "source": "tck", "enabled": true, "pushOrigins": ["https://example.com"]}' >/dev/null
+  TOKEN=$(curl -sf -X POST "$BASE/api/a2a/tokens" -H 'content-type: application/json' \
+    -d '{"name": "a2a-tck", "entries": ["tck"]}' | python3 -c 'import json, sys; print(json.load(sys.stdin)["secret"])')
+fi
 
 level_args=()
 [ "$LEVEL" != all ] && level_args=(--level "$LEVEL")
 log "running the TCK (level: $LEVEL) against $BASE/a2a/agents/tck"
 set +e
-(cd "$TCK" && A2A_BEARER_TOKEN="$TOKEN" PYTHONPATH="$COMPAT_DIR" TCK_STREAMING_TIMEOUT="${TCK_STREAMING_TIMEOUT:-2}" \
+(cd "$TCK" && A2A_BEARER_TOKEN="$TOKEN" PYTHONPATH="$COMPAT_DIR" PYTHONDONTWRITEBYTECODE=1 TCK_STREAMING_TIMEOUT="${TCK_STREAMING_TIMEOUT:-2}" \
   .venv/bin/python run_tck.py --sut-host "$BASE/a2a/agents/tck" ${level_args[@]+"${level_args[@]}"} -- -p a2a_bearer_plugin "$@")
 status=$?
 set -e
-log "TCK exit status $status; reports in $TCK/reports/; the server's log is $RUN/server.log"
+log "TCK exit status $status; reports in $TCK/reports/"
 exit $status
