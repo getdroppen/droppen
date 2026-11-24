@@ -175,7 +175,7 @@ impl Device {
             id: self.id.clone(),
             sign_key: self.sign.verifying_key().to_bytes(),
             dh_key: self.dh.public(),
-            flags: droppen_proto::chain::Flags { host, admin },
+            flags: droppen_proto::chain::Flags { host, admin, a2a: false },
         }
     }
 
@@ -327,7 +327,11 @@ impl Device {
             id: machine.id.clone(),
             sign_key: machine.sign_key,
             dh_key: machine.dh_key,
-            flags: droppen_proto::chain::Flags { host: true, admin },
+            flags: droppen_proto::chain::Flags {
+                host: true,
+                admin,
+                a2a: false,
+            },
         };
         let commit = droppen_proto::chain::KeyCommits {
             user: None,

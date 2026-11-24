@@ -1533,7 +1533,8 @@ fn chain_v3_vectors() -> Value {
             .sign(k0);
         let mut bytes = add.encode();
         let at = bytes.len() - 65;
-        bytes[at] = 0b100;
+        // Bit 2 is a2a (`docs/a2a.md` §7.1): bit 3 is the first unknown one.
+        bytes[at] = 0b1000;
         invalid.push(("unknown device flag bits".into(), [base_json.clone(), vec![h(&bytes)]].concat(), "decode"));
         let mut bytes = add.encode();
         bytes[0] = VERSION;
@@ -1728,6 +1729,376 @@ fn chain_v3_vectors() -> Value {
             "key": h(&mk_h2_1),
         },
         "freshness": {"controlMs": crate::chain::CONTROL_FRESHNESS_MS, "manageMs": crate::chain::MANAGE_FRESHNESS_MS},
+    })
+}
+
+/// A state as both halves' A2A proxy vectors write it (`docs/a2a.md` §7.1):
+/// every device with its three flags and status, the current A2A proxies,
+/// and — for `hosts` — whom each takes A2A calls from, whom it accepts
+/// control from, and its committed machine key epochs; and the host still
+/// owed a machine key epoch, if any (an A2A list never owes one).
+pub(crate) fn a2a_state_json(state: &ChainState, hosts: &[&str]) -> Value {
+    use crate::chain::Accept;
+    let status = |d: &crate::chain::DeviceRecord| match d.status {
+        DeviceStatus::Active => "active",
+        DeviceStatus::Pending { .. } => "pending",
+        DeviceStatus::Removed => "removed",
+    };
+    let accept_json = |a: &Accept| match a {
+        Accept::Admins => json!({"kind": "admins"}),
+        Accept::All => json!({"kind": "all"}),
+        Accept::Devices(ids) => json!({"kind": "devices", "ids": ids}),
+    };
+    json!({
+        "seq": state.seq(),
+        "head": h(&state.head()),
+        "devices": state.devices().map(|d| json!({"id": d.info.id, "host": d.host, "admin": d.admin, "a2a": d.a2a, "status": status(d)})).collect::<Vec<_>>(),
+        "a2aDevices": state.devices().filter(|d| state.a2a_device(&d.info.id).is_some()).map(|d| d.info.id.clone()).collect::<Vec<_>>(),
+        "a2aAccept": hosts.iter().map(|host| json!({"host": host, "devices": state.a2a_accept(host)})).collect::<Vec<_>>(),
+        "accept": hosts.iter().map(|host| json!({"host": host, "from": accept_json(&state.accept_policy(host))})).collect::<Vec<_>>(),
+        "hostKeyDue": state.host_key_due(),
+        "machineKeyEpochs": hosts.iter().map(|host| (host.to_string(), json!(state.machine_key_epochs(host)))).collect::<serde_json::Map<_, _>>(),
+    })
+}
+
+/// `check(device, host)` as both halves' vectors write it: whether it holds,
+/// and the error's kind when it does not.
+fn relation_json(r: Result<(), ChainError>, device: &str, host: &str) -> Value {
+    json!({"device": device, "host": host, "ok": r.is_ok(), "error": r.err().map(|e| chain_error_kind(&e))})
+}
+
+/// For every device of `state` and `nobody` (an id it never named): the hosts
+/// that admit its control — whose machine keys it may be sealed, none ever for
+/// an A2A proxy — and the hosts that take its A2A calls.
+fn a2a_reach_json(state: &ChainState, nobody: &str) -> (Value, Value) {
+    let ids: Vec<String> = state.devices().map(|d| d.info.id.clone()).chain([nobody.to_string()]).collect();
+    let admitting = ids
+        .iter()
+        .map(|d| json!({"device": d, "hosts": state.hosts_admitting(d).map(|h| h.info.id.clone()).collect::<Vec<_>>()}))
+        .collect();
+    let accepting = ids
+        .iter()
+        .map(|d| json!({"device": d, "hosts": state.hosts_accepting_a2a(d).map(|h| h.info.id.clone()).collect::<Vec<_>>()}))
+        .collect();
+    (admitting, accepting)
+}
+
+/// A2A proxies (`docs/a2a.md` §7.1) on the sample chain's v3 suffix (a
+/// second host `h-2` and its first key): two proxies join; each host takes
+/// A2A calls from some; an accept list naming a proxy (it does not count, and
+/// taking it off owes no machine key); `m-1` accepting every device (still not
+/// a proxy); a list narrowed to none and set again; a removal that drops a
+/// proxy from every list; a host that stops running AI (its list goes with
+/// it) and restarts. With each state, who may control whom, who may call
+/// whose A2A, whose machine keys each may be sealed (none for a proxy), how
+/// every flag byte reads, and the chains a verifier must refuse — by rule.
+fn a2a_vectors() -> Value {
+    use crate::a2a_regressions::proxy_keys;
+    use crate::chain::{Accept, DeviceV3, Flags, VERSION};
+    use crate::v3_regressions::{extra, mk_commit, pak, with_second_host};
+    let f = fixture();
+    let (mut state, mut entries) = with_second_host(&f);
+    let k0 = &f.devices[0].0;
+    let dev0 = || Signer::Device("dev-0".into());
+    let hosts = ["h-2", "m-1"];
+    let device = |id: &str, keys: &(SigningKey, DhKeypair), flags: Flags| DeviceV3 {
+        id: id.into(),
+        sign_key: keys.0.verifying_key().to_bytes(),
+        dh_key: keys.1.public(),
+        flags,
+    };
+    let flags = |host, admin, a2a| Flags { host, admin, a2a };
+    let a2a_accept = |host: &str, ids: &[&str]| Action::SetA2aAccept {
+        host: host.into(),
+        devices: ids.iter().map(|s| s.to_string()).collect(),
+    };
+    let set_accept = |host: &str, from: Accept| Action::SetAccept { host: host.into(), from };
+    let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mut steps = vec![("base".to_string(), state.seq(), a2a_state_json(&state, &hosts))];
+    let mut prefixes: Vec<(String, Vec<Entry>, ChainState)> = vec![("base".into(), entries.clone(), state.clone())];
+    for (label, action) in [
+        ("addA1", Action::AddDevice3(device("a-1", &proxy_keys(0), Flags::A2A_DEVICE))),
+        ("addA2", Action::AddDevice3(device("a-2", &proxy_keys(1), Flags::A2A_DEVICE))),
+        ("a2aAcceptM1", a2a_accept("m-1", &["a-1"])),
+        ("a2aAcceptH2", a2a_accept("h-2", &["a-1", "a-2"])),
+        ("acceptNamingA2a", set_accept("h-2", Accept::Devices(ids(&["a-1", "dev-2"])))),
+        ("acceptAll", set_accept("m-1", Accept::All)),
+        ("acceptDropsA2a", set_accept("h-2", Accept::Devices(ids(&["dev-2"])))),
+        ("a2aNoneM1", a2a_accept("m-1", &[])),
+        ("removeA2", Action::RemoveDevice3("a-2".into())),
+        ("a2aAgainM1", a2a_accept("m-1", &["a-1"])),
+        (
+            "stopH2",
+            Action::SetHost {
+                id: "h-2".into(),
+                host: false,
+            },
+        ),
+        (
+            "restartH2",
+            Action::SetHost {
+                id: "h-2".into(),
+                host: true,
+            },
+        ),
+        ("restartKeyH2", Action::KeyEpochs(mk_commit("h-2", 1, &[0x24; 32]))),
+    ] {
+        let entry = state.draft(dev0(), action, 60_000 + state.seq()).sign(k0);
+        state.apply(&entry, &mut ChainClock::history()).unwrap_or_else(|e| panic!("{label}: {e}"));
+        entries.push(entry);
+        steps.push((label.to_string(), state.seq(), a2a_state_json(&state, &hosts)));
+        prefixes.push((label.into(), entries.clone(), state.clone()));
+    }
+    let at = |label: &str| {
+        prefixes
+            .iter()
+            .find(|(l, _, _)| l == label)
+            .map(|(_, es, st)| (es.clone(), st.clone()))
+            .unwrap()
+    };
+    assert!(state.hosts_admitting("a-1").next().is_none() && state.host_key_due().is_none());
+
+    // The chains a verifier must refuse: a prefix and one more entry (bytes,
+    // when the entry must not even decode).
+    let mut invalid: Vec<(String, Vec<Value>, &'static str)> = Vec::new();
+    let mut refuse = |name: &str, prefix: &[Entry], tail: Vec<u8>, error: &'static str| {
+        let es: Vec<Value> = prefix.iter().map(|e| h(&e.encode())).chain([h(&tail)]).collect();
+        assert_eq!(verify_label(&es).err(), Some(error), "{name}");
+        invalid.push((name.to_string(), es, error));
+    };
+    let (es, st) = at("a2aAcceptH2");
+    let by = |st: &ChainState, signer: Signer, key: &SigningKey, action: Action| st.draft(signer, action, 70_000).sign(key).encode();
+    let ak = f.ak.verifying_key().to_bytes();
+    refuse(
+        "a genesis device that is an A2A proxy",
+        &[],
+        crate::chain::genesis3_draft("acct-1", ak, device("d-1", &extra(42), flags(false, true, true)), None, 1)
+            .sign(&f.ak)
+            .encode(),
+        "notAllowed",
+    );
+    for (name, fl) in [
+        ("an A2A proxy added as a host", flags(true, false, true)),
+        ("an A2A proxy added as an admin", flags(false, true, true)),
+        ("an A2A proxy added as a host and an admin", flags(true, true, true)),
+    ] {
+        refuse(
+            name,
+            &es,
+            by(&st, dev0(), k0, Action::AddDevice3(device("a-x", &extra(43), fl))),
+            "notAllowed",
+        );
+    }
+    {
+        let p = pak(&f, "p-1", 800, 1, true);
+        let mut slotted = st.clone();
+        let slot = slotted.draft(dev0(), Action::PasskeySlotSet(p.slot.clone()), 70_000).sign(k0);
+        slotted.apply(&slot, &mut ChainClock::history()).unwrap();
+        let join = by(
+            &slotted,
+            Signer::Passkey("p-1".into()),
+            &p.signing,
+            Action::AddDevice3(device("a-x", &extra(43), Flags::A2A_DEVICE)),
+        );
+        refuse("a passkey adds an A2A proxy", &[es.clone(), vec![slot]].concat(), join, "notAllowed");
+    }
+    refuse(
+        "an A2A proxy coming back with the recovery words",
+        &es,
+        by(
+            &st,
+            Signer::Recovery,
+            &f.recovery.signing,
+            Action::RecoveryJoin3(device("dev-r", &extra(43), flags(false, true, true))),
+        ),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A proxy made an admin",
+        &es,
+        by(
+            &st,
+            dev0(),
+            k0,
+            Action::SetAdmin {
+                id: "a-1".into(),
+                admin: true,
+            },
+        ),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A proxy made a host",
+        &es,
+        by(
+            &st,
+            dev0(),
+            k0,
+            Action::SetHost {
+                id: "a-1".into(),
+                host: true,
+            },
+        ),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A proxy signs an A2A list",
+        &es,
+        by(&st, Signer::Device("a-1".into()), &proxy_keys(0).0, a2a_accept("m-1", &["a-1", "a-2"])),
+        "notAllowed",
+    );
+    refuse(
+        "a plain device signs an A2A list",
+        &es,
+        by(&st, Signer::Device("dev-2".into()), &f.devices[2].0, a2a_accept("m-1", &["a-1", "a-2"])),
+        "notAllowed",
+    );
+    refuse(
+        "a host signs an A2A list",
+        &es,
+        by(&st, Signer::Device("m-1".into()), &f.machine.0, a2a_accept("m-1", &["a-1", "a-2"])),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A list for a device that is not a host",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("dev-2", &["a-1"])),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A list for an A2A proxy",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("a-1", &["a-2"])),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A list for a removed device",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("dev-1", &["a-1"])),
+        "unknownId",
+    );
+    refuse(
+        "an A2A list naming a plain device",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("m-1", &["a-1", "dev-2"])),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A list naming the host",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("m-1", &["m-1"])),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A list naming an admin",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("m-1", &["dev-0"])),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A list naming another host",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("m-1", &["h-2"])),
+        "notAllowed",
+    );
+    refuse(
+        "an A2A list naming nobody the chain knows",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("m-1", &["a-9"])),
+        "unknownId",
+    );
+    refuse(
+        "an A2A list that changes nothing",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("h-2", &["a-1", "a-2"])),
+        "notAllowed",
+    );
+    {
+        let (es, st) = at("addA2");
+        refuse(
+            "an empty A2A list where none is set",
+            &es,
+            by(&st, dev0(), k0, a2a_accept("m-1", &[])),
+            "notAllowed",
+        );
+    }
+    {
+        let (es, st) = at("removeA2");
+        refuse(
+            "the A2A list a removal left, written again",
+            &es,
+            by(&st, dev0(), k0, a2a_accept("h-2", &["a-1"])),
+            "notAllowed",
+        );
+        refuse(
+            "an A2A list naming a removed proxy",
+            &es,
+            by(&st, dev0(), k0, a2a_accept("h-2", &["a-1", "a-2"])),
+            "unknownId",
+        );
+    }
+    {
+        let (es, st) = at("restartKeyH2");
+        refuse(
+            "a restarted host's A2A list, set back to none",
+            &es,
+            by(&st, dev0(), k0, a2a_accept("h-2", &[])),
+            "notAllowed",
+        );
+    }
+    // Bytes that must not decode.
+    refuse(
+        "an A2A list out of order",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("m-1", &["a-2", "a-1"])),
+        "decode",
+    );
+    refuse(
+        "an A2A list naming a proxy twice",
+        &es,
+        by(&st, dev0(), k0, a2a_accept("m-1", &["a-1", "a-1"])),
+        "decode",
+    );
+    let many: Vec<String> = (0..=crate::chain::MAX_ACCEPT_IDS).map(|i| format!("a-{i:03}")).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    refuse("an A2A list of 65 proxies", &es, by(&st, dev0(), k0, a2a_accept("m-1", &many)), "decode");
+    let mut bytes = by(&st, dev0(), k0, Action::AddDevice3(device("a-x", &extra(43), Flags::A2A_DEVICE)));
+    let at_flags = bytes.len() - 65;
+    assert_eq!(bytes[at_flags], Flags::A2A);
+    bytes[at_flags] = 0b1000 | Flags::A2A;
+    refuse("a device flag beyond a2a (bit 3)", &es, bytes, "decode");
+    let mut bytes = by(&st, dev0(), k0, a2a_accept("m-1", &["a-1", "a-2"]));
+    bytes[0] = VERSION;
+    refuse("an A2A list in a v2 entry", &es, bytes, "decode");
+
+    // Every pair: may control, may call A2A.
+    let devices = ["dev-0", "dev-1", "dev-2", "m-1", "h-2", "a-1", "a-2", "nobody"];
+    let targets = ["m-1", "h-2", "dev-2", "a-1"];
+    let pairs = || devices.iter().flat_map(|d| targets.iter().map(move |t| (*d, *t)));
+    let control: Vec<Value> = pairs().map(|(d, t)| relation_json(state.may_control(d, t), d, t)).collect();
+    let calls: Vec<Value> = pairs().map(|(d, t)| relation_json(state.may_call_a2a(d, t), d, t)).collect();
+    let (admitting, accepting) = a2a_reach_json(&state, "nobody");
+    let flag_bytes: Vec<Value> = (0u8..16)
+        .map(|b| match Flags::from_byte(b) {
+            Ok(fl) => json!({"byte": b, "ok": true, "flags": {"host": fl.host, "admin": fl.admin, "a2a": fl.a2a}}),
+            Err(_) => json!({"byte": b, "ok": false, "flags": null}),
+        })
+        .collect();
+    let extra_json = |keys: (SigningKey, DhKeypair), id: &str| json!({"id": id, "signSeed": h(keys.0.as_bytes()), "signKey": h(&keys.0.verifying_key().to_bytes()), "dhSecret": h(keys.1.secret()), "dhKey": h(&keys.1.public())});
+    json!({
+        "account": "acct-1",
+        "entries": entries_json(&entries),
+        "hashes": entries.iter().map(|e| h(&e.hash())).collect::<Vec<_>>(),
+        "versions": entries.iter().map(|e| e.draft.version).collect::<Vec<_>>(),
+        "steps": steps.iter().map(|(label, seq, st)| json!({"label": label, "seq": seq, "state": st})).collect::<Vec<_>>(),
+        "extraDevices": [extra_json(extra(0), "h-2"), extra_json(proxy_keys(0), "a-1"), extra_json(proxy_keys(1), "a-2")],
+        "state": a2a_state_json(&state, &hosts),
+        "control": control,
+        "a2aCalls": calls,
+        "hostsAdmitting": admitting,
+        "hostsAcceptingA2a": accepting,
+        "flagBytes": flag_bytes,
+        "invalid": invalid.iter().map(|(name, es, error)| json!({"name": name, "entries": es, "error": error, "rule": not_allowed_reason(es)})).collect::<Vec<_>>(),
     })
 }
 
@@ -3137,6 +3508,7 @@ pub(crate) fn rust_vectors() -> Value {
         "utf8": utf8_vectors(),
         "chain": chain_vectors(),
         "chainV3": chain_v3_vectors(),
+        "a2a": a2a_vectors(),
         "hostRotation": host_rotation_vectors(),
         "records": record_vectors(),
         "streams": stream_vectors(),
@@ -3427,6 +3799,83 @@ fn ts_vectors_verify_in_rust() {
             hexv(&k["key"])
         );
         assert!(wrap::open_host_key(&me, &ctx.recipient, &state, &wrap::HostKeyContext { epoch: 1, ..ctx.clone() }, &sealed).is_err());
+    }
+
+    // A2A proxies built and signed in WebCrypto (`docs/a2a.md` §7.1):
+    // required. The same bytes, states, matrices and refusals — by rule — and
+    // no machine key is ever sealed to a proxy.
+    {
+        let a = v.get("a2a").unwrap_or_else(|| {
+            panic!(
+                "{} has no a2a section; regenerate it with `npx tsx web/scripts/e2e-vectors.ts`",
+                path.display()
+            )
+        });
+        let hex_entries = a["entries"].as_array().unwrap();
+        let entries: Vec<Entry> = hex_entries.iter().map(|e| Entry::decode(&hexv(e)).expect("a TS entry decodes")).collect();
+        for (entry, hex_entry) in entries.iter().zip(hex_entries) {
+            assert_eq!(h(&entry.encode()), *hex_entry, "a TS entry re-encodes to its bytes");
+        }
+        assert_eq!(
+            entries.iter().map(|e| json!(e.draft.version)).collect::<Vec<_>>(),
+            *a["versions"].as_array().unwrap()
+        );
+        for (entry, hash) in entries.iter().zip(a["hashes"].as_array().unwrap()) {
+            assert_eq!(entry.hash(), arr32(hash));
+        }
+        let pin: [u8; 16] = hexv(&a["accountFingerprint"]).try_into().unwrap();
+        let state = ChainState::verify(&entries, Some(&pin), &mut ChainClock::history()).expect("a TS chain with A2A proxies verifies in Rust");
+        let hosts: Vec<String> = a["state"]["a2aAccept"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["host"].as_str().unwrap().to_string())
+            .collect();
+        let hosts: Vec<&str> = hosts.iter().map(String::as_str).collect();
+        for step in a["steps"].as_array().unwrap() {
+            let seq = step["seq"].as_u64().unwrap() as usize;
+            let prefix = ChainState::verify(&entries[..=seq], None, &mut ChainClock::history()).unwrap_or_else(|e| panic!("{}: {e}", step["label"]));
+            assert_eq!(a2a_state_json(&prefix, &hosts), step["state"], "{}", step["label"]);
+        }
+        assert_eq!(
+            a2a_state_json(&state, &hosts),
+            a["state"],
+            "TS and Rust map A2A proxies to the same state"
+        );
+        for c in a["control"].as_array().unwrap() {
+            let (d, host) = (c["device"].as_str().unwrap(), c["host"].as_str().unwrap());
+            assert_eq!(relation_json(state.may_control(d, host), d, host), *c, "control {d} → {host}");
+        }
+        for c in a["a2aCalls"].as_array().unwrap() {
+            let (d, host) = (c["device"].as_str().unwrap(), c["host"].as_str().unwrap());
+            assert_eq!(relation_json(state.may_call_a2a(d, host), d, host), *c, "A2A {d} → {host}");
+        }
+        let ids = |it: Vec<&crate::chain::DeviceRecord>| json!(it.into_iter().map(|d| d.info.id.clone()).collect::<Vec<_>>());
+        for r in a["hostsAdmitting"].as_array().unwrap() {
+            let d = r["device"].as_str().unwrap();
+            assert_eq!(ids(state.hosts_admitting(d).collect()), r["hosts"], "hosts admitting {d}");
+        }
+        for r in a["hostsAcceptingA2a"].as_array().unwrap() {
+            let d = r["device"].as_str().unwrap();
+            assert_eq!(ids(state.hosts_accepting_a2a(d).collect()), r["hosts"], "hosts taking A2A calls from {d}");
+        }
+        let proxies: Vec<&crate::chain::DeviceRecord> = state.devices().filter(|d| d.a2a).collect();
+        assert!(proxies.len() >= 2, "TS's chain has A2A proxies");
+        for d in proxies {
+            assert!(
+                state.hosts_admitting(&d.info.id).next().is_none(),
+                "{} is sealed no machine key",
+                d.info.id
+            );
+        }
+        let mut ruled = 0;
+        for case in a["invalid"].as_array().unwrap() {
+            let es = case["entries"].as_array().unwrap();
+            assert_eq!(verify_label(es).err(), Some(case["error"].as_str().unwrap()), "{}", case["name"]);
+            assert_eq!(json!(not_allowed_reason(es)), case["rule"], "{}", case["name"]);
+            ruled += usize::from(case["rule"].is_string());
+        }
+        assert!(ruled >= 12, "TS names the rule of its refusals ({ruled})");
     }
 
     // Host identity renewals built and signed in WebCrypto: required (a ts.json without them is out of date).

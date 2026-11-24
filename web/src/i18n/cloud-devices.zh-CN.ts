@@ -556,6 +556,11 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "It can control the devices that let it and read their offline copies. To add or remove devices here, upgrade the account to chain v3 from another of your devices, then make this browser a full device there.": "它可以控制允许它的设备、读取它们的离线副本。要在这里添加或移除设备，请先在你的另一台设备上把账户升级到链 v3，再在那里把这个浏览器设为完整设备。",
   "{{id}} is a full device now, but its keys were not sent": "{{id}} 已是完整设备，但它的钥匙没有发出去",
   "a device that runs AI cannot be a full device (yet)": "可运行 AI 的设备暂时不能成为完整设备",
+  // A2A proxies (docs/a2a.md §7.1, §7.3): their joins, whom a device takes A2A calls from, and what they never become.
+  "{{by}} added {{device}} to this account as an A2A proxy: it can call the A2A of devices that accept it": "{{by}} 把 {{device}} 作为 A2A 代理加入了这个账户：它能调用接受它的设备的 A2A",
+  "{{by}} let the A2A proxies {{ids}} call the A2A of {{host}}": "{{by}} 允许 A2A 代理 {{ids}} 调用 {{host}} 的 A2A",
+  "{{by}} set {{host}} to take A2A calls from no A2A proxy": "{{by}} 把 {{host}} 设为不接受任何 A2A 代理的调用",
+  "an A2A proxy can be neither a full device nor a device that runs AI": "A2A 代理不能成为完整设备，也不能运行 AI",
   "{{id}} ran AI before, and its agent kept its key in a file: it cannot be a full device. Add a new browser or phone instead.": "{{id}} 运行过 AI，它的 agent 把钥匙存在了文件里：它不能成为完整设备。请改为添加一个新的浏览器或手机。",
   // The account's settings (account-settings.tsx) and joining with a passkey (passkey-join.tsx).
   "my account": "我的账户",
