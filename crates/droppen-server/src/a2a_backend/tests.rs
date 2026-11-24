@@ -19,9 +19,11 @@
 //!   claude does when an account's five hours have run out.
 //!
 //! A `refuse-start` file in the control directory makes it exit before it
-//! says it is listening. Every spawn is logged (`spawns.jsonl`), and every
-//! line it reads (`stdin.jsonl`).
+//! says it is listening. Every spawn is logged (`spawns.jsonl`), every line
+//! it reads (`stdin.jsonl`), and every answer's input as claude is handed it
+//! (`answers.jsonl`).
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use droppen_a2a::backend::{AnswerValue, Prompt, RunAccount, SessionRef};
@@ -167,6 +169,7 @@ def turn(message):
             result("error_during_execution")
             return
         given = answer.get("updatedInput", {})
+        log("answers.jsonl", given)
         say("Answered: %s %s" % (json.dumps(given.get("answers", {}), sort_keys=True), json.dumps(given.get("annotations", {}), sort_keys=True)))
     if "[hold]" in text:
         say("Working on it")
@@ -225,6 +228,10 @@ struct Harness {
     events: mpsc::UnboundedReceiver<BackendEvent>,
     /// Every event so far, for a failure to show.
     seen: Vec<BackendEvent>,
+    /// The events received while waiting for another, not yet asked for:
+    /// two tasks' events interleave as the machine's load has them, and a
+    /// wait for one task's must not lose the other's.
+    unread: VecDeque<BackendEvent>,
     /// The fake's control directory.
     control: PathBuf,
     /// The entry's directory: a repository with one commit, on `main`.
@@ -285,6 +292,7 @@ impl Harness {
             sessions,
             events,
             seen: Vec::new(),
+            unread: VecDeque::new(),
             control,
             work,
         }
@@ -332,8 +340,12 @@ impl Harness {
             .await
     }
 
-    /// The next event `matches` takes, the ones before it kept in `seen`.
+    /// The first event `matches` takes that no earlier wait took, whether it
+    /// came while another was waited for or comes now.
     async fn event(&mut self, what: &str, matches: impl Fn(&BackendEvent) -> bool) -> BackendEvent {
+        if let Some(at) = self.unread.iter().position(&matches) {
+            return self.unread.remove(at).expect("the event found");
+        }
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         loop {
             match tokio::time::timeout_at(deadline, self.events.recv()).await {
@@ -342,6 +354,7 @@ impl Harness {
                     if matches(&event) {
                         return event;
                     }
+                    self.unread.push_back(event);
                 }
                 Ok(None) => panic!("the backend's events stopped; saw {:#?}", self.seen),
                 Err(_) => panic!("{what}: not reported in time; saw {:#?}", self.seen),
@@ -389,8 +402,9 @@ impl Harness {
         while let Ok(Some(event)) = tokio::time::timeout_at(deadline, self.events.recv()).await {
             self.seen.push(event.clone());
             if event_task(&event) == Some(id) {
-                about.push(event);
+                about.push(event.clone());
             }
+            self.unread.push_back(event);
         }
         about
     }
@@ -407,6 +421,15 @@ impl Harness {
             .lines()
             .filter(|line| line.contains("\"user\""))
             .map(str::to_string)
+            .collect()
+    }
+
+    /// Every answer's input, as the fake claude was handed it.
+    fn answers(&self) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(self.control.join("answers.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("an answer"))
             .collect()
     }
 
@@ -600,6 +623,49 @@ async fn a_codex_session_completes() {
     assert_eq!(Some(result.result.session_id), started.session_id);
 }
 
+/// A Codex entry's default mode, `workspace-write`, is taken when the entry
+/// is saved and when its session starts, and is the sandbox the composer's
+/// own default (`auto`) is: the workspace may be written.
+#[tokio::test]
+async fn a_codex_entry_s_workspace_write_is_the_composer_s_auto() {
+    let mut harness = Harness::new().await;
+    let codex = |permission: &str| RunSpec {
+        source: EntrySource::Codex,
+        permission: Some(permission.to_string()),
+        ..harness.run(&harness.work(), Isolation::None)
+    };
+    assert_eq!(harness.sessions.check_entry(&codex("workspace-write")).await, Ok(()));
+    assert_eq!(harness.sessions.check_entry(&codex("auto")).await, Ok(()));
+    assert!(
+        harness.sessions.check_entry(&codex("acceptEdits")).await.is_err(),
+        "a mode of another CLI's"
+    );
+    assert!(
+        harness
+            .sessions
+            .check_entry(&RunSpec {
+                source: EntrySource::Claude,
+                ..codex("workspace-write")
+            })
+            .await
+            .is_err(),
+        "and Codex's for Claude Code"
+    );
+
+    harness
+        .start("t1", &context(), &codex("workspace-write"), "fence-1 for codex")
+        .await
+        .expect("started");
+    harness.completed("t1").await;
+    let sent = std::fs::read_to_string(harness.work.join("codex-stdin.jsonl")).expect("what codex read");
+    let turn = sent
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("json"))
+        .find(|line| line["method"] == "turn/start")
+        .expect("a turn");
+    assert_eq!(turn["params"]["sandboxPolicy"], serde_json::json!({"type": "workspaceWrite"}), "{turn}");
+}
+
 /// An entry may run an ACP agent (unlike a schedule, it names the agent): the
 /// task's turn is the agent's prompt turn, and it completes when that ends.
 #[tokio::test]
@@ -712,6 +778,55 @@ async fn a_turn_a_limit_holds_fails_the_task() {
     }
 }
 
+/// A cancel that lands while a start is putting its task in the map — after
+/// it looked for an earlier cancel, before the task is in — is not lost: the
+/// cancel waits for the task and marks it, and the start then stops it.
+#[tokio::test]
+async fn a_cancel_while_a_task_is_being_followed_is_not_lost() {
+    let harness = Harness::new().await;
+    let inner = harness.sessions.inner.clone();
+    let (entered, in_follow) = std::sync::mpsc::channel::<()>();
+    let (cancelled, done) = std::sync::mpsc::channel::<()>();
+    let (entered, done) = (Mutex::new(entered), Mutex::new(done));
+    *inner.follow_pause.lock().expect("the pause") = Some(Arc::new(move || {
+        let _ = entered.lock().expect("entered").send(());
+        // As long as the cancel takes, should it get through meanwhile.
+        let _ = done.lock().expect("done").recv_timeout(Duration::from_secs(2));
+    }));
+    let ctx = context();
+    let canceller = {
+        let sessions = harness.sessions.clone();
+        let cancel = task("t1", &ctx, None, &harness.work(), None);
+        std::thread::spawn(move || {
+            in_follow.recv().expect("the start got there");
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime");
+            runtime.block_on(sessions.cancel(&cancel)).expect("cancelled");
+            let _ = cancelled.send(());
+        })
+    };
+    let record = TaskRecord {
+        context_id: ctx.clone(),
+        source: "claude".into(),
+        session_id: None,
+        cwd: harness.work(),
+        branch: None,
+        caller: CALLER.into(),
+        main: Message {
+            qid: "q1".into(),
+            client_message_id: "m1".into(),
+            probe: "fence-1".into(),
+        },
+        appends: Vec::new(),
+        turn_started: false,
+        asked: None,
+        continued: 0,
+    };
+    inner.follow("t1", claude(), record, Stage::Running, true);
+    canceller.join().expect("the cancel");
+    *inner.follow_pause.lock().expect("the pause") = None;
+    assert_eq!(inner.with_task("t1", |task| task.cancelled), Some(true), "the cancel was not lost");
+}
+
 /// A turn a limit refuses on a session nothing moves (the CLI's own login)
 /// fails the task, and the turn of the next task queued behind it is that
 /// task's, not this one's.
@@ -743,7 +858,10 @@ async fn a_limit_nothing_moves_fails_the_task_and_not_the_next() {
 #[tokio::test]
 async fn a_task_completes_without_the_artifacts_that_take_too_long() {
     let mut harness = Harness::new().await;
-    harness.sessions.inner.artifacts_wait_ms.store(0, Ordering::Relaxed);
+    // Every source takes a minute, and the artifacts are given a fifth of a
+    // second: none is made, however fast git is today.
+    *harness.sessions.inner.artifacts_delay.lock().expect("the delay") = Some(Duration::from_secs(60));
+    harness.sessions.inner.artifacts_wait_ms.store(200, Ordering::Relaxed);
     let run = harness.run(&harness.work(), Isolation::None);
     let started = harness
         .start("t1", &context(), &run, "fence-1 [write made.txt] [pr] quick")
@@ -804,11 +922,14 @@ async fn a_question_is_answered_with_a_choice_and_words_and_the_task_completes()
     harness.sessions.answer(&asked, answer.clone()).await.expect("answered");
     let result = harness.completed("t1").await;
     assert!(result.summary.contains(r#""Which colour?": "Blue""#), "{}", result.summary);
-    assert!(
-        result.summary.contains("the darker one"),
-        "the words go with the choice: {}",
-        result.summary
-    );
+    // What claude is handed: the choice, and the words beside it as the note
+    // on that choice — as an answer from the page is. claude reads a
+    // `response` *instead of* the choices (`droppen_provider::questions::allow`).
+    let given = harness.answers();
+    assert_eq!(given.len(), 1, "{given:?}");
+    assert_eq!(given[0]["answers"], serde_json::json!({"Which colour?": "Blue"}));
+    assert_eq!(given[0]["annotations"], serde_json::json!({"Which colour?": {"notes": "the darker one"}}));
+    assert!(given[0].get("response").is_none(), "{given:?}");
     assert!(
         !harness.seen.iter().any(|event| matches!(event, BackendEvent::QuestionResolved { .. })),
         "{:#?}",
@@ -871,11 +992,74 @@ async fn a_turn_stopped_in_droppen_cancels_the_task() {
     let started = harness.start("t1", &context(), &run, "fence-1 [hold] a long one").await.expect("started");
     harness.turn_started("t1").await;
     let session = started.session_id.expect("the session");
-    assert!(harness.state.drive.providers.interrupt(claude(), &session), "stopped as the page's Stop does");
+    assert!(
+        harness.state.drive.providers.interrupt(claude(), &session),
+        "stopped as the page's Stop does"
+    );
     match harness.ended("t1").await {
         TurnOutcome::Canceled(said) => assert_eq!(said, "stopped in Droppen"),
         other => panic!("{other:?}"),
     }
+}
+
+/// Words alone answer a question as claude's free-text `response`, the way
+/// words typed on the page while a question is open do; a data part's notes
+/// go beside their choices.
+#[tokio::test]
+async fn an_answer_in_words_is_the_response_and_notes_stay_notes() {
+    let mut harness = Harness::new().await;
+    let run = harness.run(&harness.work(), Isolation::None);
+    for (n, answer) in [
+        (
+            1,
+            a2a::Answer {
+                request_id: String::new(),
+                answers: BTreeMap::new(),
+                notes: BTreeMap::new(),
+                response: Some("Blue, but a lighter one".into()),
+            },
+        ),
+        (
+            2,
+            a2a::Answer {
+                request_id: String::new(),
+                answers: BTreeMap::from([("Which colour?".to_string(), AnswerValue::One("Red".into()))]),
+                notes: BTreeMap::from([("Which colour?".to_string(), "for the header".to_string())]),
+                response: None,
+            },
+        ),
+    ] {
+        let (id, ctx) = (format!("t{n}"), context());
+        let started = harness
+            .start(&id, &ctx, &run, &format!("fence-{n} [ask] pick a colour"))
+            .await
+            .expect("started");
+        let request_id = match harness
+            .event(
+                "the question",
+                |event| matches!(event, BackendEvent::Question { task_id, .. } if *task_id == id),
+            )
+            .await
+        {
+            BackendEvent::Question { question, .. } => question.request_id,
+            _ => unreachable!(),
+        };
+        let asked = task(&id, &ctx, started.session_id.clone(), &started.cwd, None);
+        harness
+            .sessions
+            .answer(&asked, a2a::Answer { request_id, ..answer })
+            .await
+            .expect("answered");
+        harness.completed(&id).await;
+    }
+    let given = harness.answers();
+    assert_eq!(given.len(), 2, "{given:?}");
+    assert_eq!(given[0]["response"], "Blue, but a lighter one", "{given:?}");
+    assert_eq!(given[0]["answers"], serde_json::json!({}));
+    assert!(given[0].get("annotations").is_none(), "{given:?}");
+    assert_eq!(given[1]["answers"], serde_json::json!({"Which colour?": "Red"}));
+    assert_eq!(given[1]["annotations"], serde_json::json!({"Which colour?": {"notes": "for the header"}}));
+    assert!(given[1].get("response").is_none(), "{given:?}");
 }
 
 /// A question answered on the Droppen page is resolved for the task, which
@@ -1100,11 +1284,16 @@ async fn a_task_is_picked_up_again_after_a_restart() {
     let second = task("t2", &ctx, session.clone(), &started.cwd, None);
     assert_eq!(harness.sessions.resume(&second).await, Ok(Resumed::Submitted));
     assert_eq!(harness.sessions.resume(&first).await, Ok(Resumed::Working));
+    // The first task's artifacts take a while, as git does on a busy machine:
+    // the second task's turn starts before the first is reported ended, and
+    // each is still reported, in its own order.
+    *harness.sessions.inner.artifacts_delay.lock().expect("the delay") = Some(Duration::from_secs(1));
     harness.release();
     // The reply is the turn's last text, "Working on it" and all: nothing
     // came between them.
     assert_eq!(harness.completed("t1").await.summary, "Working on it\n\nDone: fence-1 long.");
     harness.turn_started("t2").await;
+    *harness.sessions.inner.artifacts_delay.lock().expect("the delay") = None;
 
     // The second turn ends while nobody is following it.
     harness.restart();
