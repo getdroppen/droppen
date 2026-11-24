@@ -90,6 +90,13 @@ export interface MachineRuntime {
    * not count holds treats one as {@link ensureLive}.
    */
   hold(): () => void;
+  /**
+   * A view of the machine's session `source/id` is on the page until the
+   * returned release — the app's main view or a pane beside it. A shell that
+   * shows a machine from its copy fetches the copy of a session being looked
+   * at ahead of what is only kept ready; one that does not keeps nothing.
+   */
+  viewSession(source: string, id: string): () => void;
 }
 
 /**

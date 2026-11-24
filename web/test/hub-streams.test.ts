@@ -19,6 +19,7 @@ import {
   streamId,
 } from "../src/lib/e2e/index.js";
 import { HubLink } from "../src/lib/hub/link.js";
+import { PageQueue } from "../src/lib/hub/page-queue.js";
 import {
   copyWindow,
   type FeedCopy,
@@ -26,7 +27,6 @@ import {
   FoldError,
   indexFold,
   type IndexState,
-  Limiter,
   statusFold,
   StreamClient,
   type StreamEvents,
@@ -628,19 +628,20 @@ test("the hub link routes stream frames by ch and sends stream controls as text"
   assert.equal(link.sendControl({ t: "x" }), false);
 });
 
-test("the limiter runs at most n at once, in order", async () => {
-  const limiter = new Limiter(2);
+test("a page queue of fixed limits runs at most n at once, in order", async () => {
+  const queue = new PageQueue({ limits: { fg: 2, bg: 2 }, log: false });
   let running = 0;
   let peak = 0;
   const order: number[] = [];
   await Promise.all(
     [0, 1, 2, 3, 4].map((i) =>
-      limiter.run(async () => {
+      queue.run("bg", async () => {
         running++;
         peak = Math.max(peak, running);
         order.push(i);
         await flush(2);
         running--;
+        return new Uint8Array();
       }),
     ),
   );

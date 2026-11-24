@@ -117,6 +117,14 @@ export type ChannelRefusal = { kind: "notAccepted"; by: "hub" | "relay"; why: st
  * take it. Retrying does not help until that is fixed there.
  */
 export const AGENT_UNSAVED = 4507;
+/**
+ * A pipe the channel could not open a stream for: its request head does not
+ * fit (over 64 KiB to write, over the channel's `MAX_META` to send) or every
+ * stream of the channel is in use. Refused here, never sent, and said in the
+ * connection log (`pipe.refused`). Not `CHANNEL_GONE` (4502): the channel
+ * itself is fine, and nothing reconnects for it.
+ */
+export const PIPE_REFUSED = 4499;
 
 /**
  * The agent's close for a hello it could not take (`refuse(.., 4401, "handshake
@@ -848,13 +856,31 @@ export class MachineChannel implements PipeOpener {
   }
 
   open(kind: PipeKind, meta: PipeMeta): Pipe {
+    // A head that cannot be written (a path over 64 KiB) throws here, before anything is counted.
+    let head: Uint8Array;
+    try {
+      head = encodeRequestHead({ method: meta.method ?? "GET", path: meta.path, headers: (meta.headers ?? []).slice(0, 48) });
+    } catch (error) {
+      this.log("pipe.refused", { kind, ...errorFields(error) }, "warn");
+      throw error;
+    }
     const pipe = new BridgePipe(kind, meta, () => {
       this.pipesOpen = Math.max(0, this.pipesOpen - 1);
     });
     this.pipesOpen += 1;
-    const head = encodeRequestHead({ method: meta.method ?? "GET", path: meta.path, headers: (meta.headers ?? []).slice(0, 48) });
     this.ensure().then(
-      (driver) => pipe.attach(driver.open(kind, head)),
+      (driver) => {
+        // The channel refusing the stream (a head over `MAX_META`, every stream in use) fails the pipe: never one left waiting.
+        let stream: ReturnType<ChannelDriver["open"]>;
+        try {
+          stream = driver.open(kind, head);
+        } catch (error) {
+          this.log("pipe.refused", { kind, ...errorFields(error) }, "warn");
+          queueMicrotask(() => pipe.fail(PIPE_REFUSED));
+          return;
+        }
+        pipe.attach(stream);
+      },
       () => queueMicrotask(() => pipe.fail(4502)),
     );
     return pipe;

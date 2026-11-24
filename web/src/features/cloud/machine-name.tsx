@@ -227,7 +227,7 @@ export async function openStatusReader(
           link,
           machineSignKey: info.signKey,
           epochs,
-          fetchPage: (stream, page) => account.api.streamPage(account.session.token, stream, page),
+          fetchPage: (stream, page, fetch) => account.api.streamPage(account.session.token, stream, page, fetch),
           // A copy kept from before the device renewed its identity key still resumes, under the key of the seq it was
           // verified at; what comes from the hub is checked under its current key, once more after a sync (§5.4).
           signKeyAt: (seq) => signKeyAt(account.chain, machine, seq),
