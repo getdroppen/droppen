@@ -77,8 +77,10 @@ export const FOLLOWED_OPENED = 8;
 export const SESSION_WAIT_MS = 8000;
 /**
  * The longest that reader waits however much is still arriving: a minute.
- * A session's checkpoint is up to 1024 pages, four at a time — at the pace a
- * big session's 250 take in about 15 s, about a minute for the biggest — and
+ * A session's checkpoint is up to 1024 pages, fetched ahead of the
+ * background while the reader waits (`PageQueue`'s foreground), four at a
+ * time on a fast link and two on a slow one — at the pace a big session's 250
+ * take in about 15 s on a fast link, about a minute for the biggest — and
  * a stream that keeps moving without ever getting there (a download that
  * fails near its end, and starts over) still ends. Given up, the reader is
  * shown no copy, and the copy replaces that once it is in.
@@ -693,6 +695,8 @@ export class MachineMirror {
   private started = false;
   /** See {@link MirrorOptions.followSessions}. */
   private followingSessions: boolean;
+  /** What the page shows of the machine ({@link setView}): in use on its copy or not, and the sessions views show there (`source/id`). */
+  private view: { onCopy: boolean; sessions: ReadonlySet<string> } = { onCopy: false, sessions: new Set() };
 
   constructor(private readonly opts: MirrorOptions) {
     this.transact = opts.transact ?? deviceTransact;
@@ -838,6 +842,7 @@ export class MachineMirror {
     if (status.saved) this.emit({ kind: "status" });
     this.indexFollow = this.followNewest(this.index, { kind: "index" }, indexPlaces, index);
     this.statusFollow = this.followNewest(this.status, { kind: "status" }, statusPlaces, status);
+    this.relaneCopies();
     this.offRoom = source.onRoom?.(() => this.reconcile()) ?? null;
     this.reconcile();
     // Other accounts' copies on this device are not ours to keep (the
@@ -875,6 +880,7 @@ export class MachineMirror {
           slot.freshestMs = change.freshestMs;
           slot.missing = false;
           this.scheduleSave(slot);
+          this.relaneCopies();
           this.emit({ kind: slot.kind as "index" | "status" });
           if (slot.kind === "index") {
             this.reconcile();
@@ -1005,6 +1011,8 @@ export class MachineMirror {
           slot.freshestMs = change.freshestMs;
           slot.missing = false;
           this.scheduleSave(slot);
+          // The copy is in: whatever it fetches next is background, looked at or not.
+          this.relane(slot);
           onUpdate(change);
         },
         onSynced: (exists) => {
@@ -1093,6 +1101,7 @@ export class MachineMirror {
     });
     slot.sub = sub;
     if (!sub) return;
+    this.relane(slot);
     // Its listeners go with it when it is closed.
     sub.onProgress?.(() => this.progressed(slot.key));
     this.progressed(slot.key);
@@ -1100,6 +1109,47 @@ export class MachineMirror {
 
   private wake(slot: SessionSlot): void {
     for (const fn of [...slot.waiters]) fn();
+  }
+
+  /**
+   * A session's pages are fetched in the foreground while somebody wants its
+   * copy and it has none — a reader waits on it ({@link session}), or it is
+   * the one open in view on the machine's copy ({@link setView}) — and in the
+   * background otherwise (`PageQueue`): a warm session kept ready gives way to
+   * live traffic, one somebody is looking at does not.
+   */
+  private relane(slot: SessionSlot): void {
+    const looked = this.view.onCopy && this.view.sessions.has(slot.key) && slot.state === null;
+    slot.sub?.setForeground?.(slot.waiters.size > 0 || looked);
+  }
+
+  /** The index and the status in the foreground while the machine is in view on its copy and has none of them. */
+  private relaneCopies(): void {
+    this.indexFollow?.setForeground?.(this.view.onCopy && !this.index?.state);
+    this.statusFollow?.setForeground?.(this.view.onCopy && !this.status?.state);
+  }
+
+  /**
+   * What the page shows of this machine (`HubMachine`): `onCopy`, it is in
+   * use — in view, or a pane of it — and shown from its copy (the machine is
+   * not live); `sessions`, those of its sessions views show (`source/id`).
+   * While so, what the person is looking at and has no copy of — those
+   * sessions, the index and the status — is fetched in the foreground,
+   * however long it takes: not only while a reader waits ({@link session}'s
+   * wait gives up after a while; the person is still looking). Out of view,
+   * or live, it is all background again.
+   */
+  setView(view: { onCopy: boolean; sessions: readonly string[] }): void {
+    const next = { onCopy: view.onCopy, sessions: new Set(view.sessions) };
+    const before = this.view;
+    const same = before.onCopy === next.onCopy && before.sessions.size === next.sessions.size && [...next.sessions].every((k) => before.sessions.has(k));
+    if (same) return;
+    this.view = next;
+    for (const key of new Set([...before.sessions, ...next.sessions])) {
+      const slot = this.sessions.get(key);
+      if (slot) this.relane(slot);
+    }
+    this.relaneCopies();
   }
 
   /**
@@ -1149,6 +1199,7 @@ export class MachineMirror {
    * has no frames): there, a stall is noticed `stallMs` late at most.
    */
   private waitFor(slot: SessionSlot, stallMs: number, capMs: number): Promise<void> {
+    const relane = () => this.relane(slot);
     return new Promise<void>((resolve) => {
       const taken = () => slot.sub?.progress?.taken ?? 0;
       let seen = taken();
@@ -1171,9 +1222,11 @@ export class MachineMirror {
         clearTimeout(cap);
         off();
         slot.waiters.delete(finish);
+        relane();
         resolve();
       }
       slot.waiters.add(finish);
+      relane();
     });
   }
 
@@ -1271,7 +1324,8 @@ export class MachineMirror {
     }
     const opened = new Set(this.opened.map((o) => `${o.source}/${o.id}`));
     for (const [key, slot] of this.sessions) {
-      if (want.has(key) || slot.waiters.size > 0) continue;
+      // One somebody waits on, or is looking at on the copy, is never let go of under them.
+      if (want.has(key) || slot.waiters.size > 0 || (this.view.onCopy && this.view.sessions.has(key))) continue;
       const followed = slot.sub !== null;
       slot.sub?.close();
       slot.sub = null;

@@ -45,6 +45,8 @@ export interface MachineDriver {
    * for {@link ensureLive} instead, and nothing is counted.
    */
   hold?(): () => void;
+  /** A view of one of its sessions is on the page until the returned release (`MachineRuntime.viewSession`). Optional: nothing is kept. */
+  viewSession?(source: string, id: string): () => void;
   /** Stop everything kept for the machine (its channel, its copy). Run once it is closed. */
   dispose(): void;
 }
@@ -87,9 +89,19 @@ class Runtime implements MachineRuntime {
     return () => undefined;
   }
 
+  viewSession(source: string, id: string): () => void {
+    const driver = this.driver;
+    return driver.viewSession ? once(driver.viewSession(source, id)) : () => undefined;
+  }
+
   /** @internal */
   setDriver(driver: MachineDriver): void {
     this.driver = driver;
+  }
+
+  /** @internal What it is now ({@link machineInstance}): its driver. */
+  get instance(): MachineDriver {
+    return this.driver;
   }
 
   /** @internal */
@@ -131,9 +143,30 @@ function sameKeys(a: readonly MachineKey[], b: readonly MachineKey[]): boolean {
   return a.length === b.length && a.every((key, i) => key === b[i]);
 }
 
-/** Say what is open now to whoever listens ({@link openMachinesStore}). */
+/** Bumped on every open, close and change of driver: what {@link machineInstancesStore} says. */
+const instancesStore = createStore(0);
+
+/** Say what is open now to whoever listens ({@link openMachinesStore}, {@link machineInstancesStore}). */
 function published(): void {
   openStore.set(openMachines());
+  instancesStore.set(instancesStore.get() + 1);
+}
+
+/**
+ * What `machine` is now, as a thing to hold on to: its runtime's driver while
+ * it is open, `null` while it is not. A machine closed and opened again in
+ * the same moment — the shell itself replaced — or given another driver is
+ * another one, though its key, and the list of open machines, are the same:
+ * whoever held the old one holds it on the new one ({@link machineInstancesStore}).
+ */
+export function machineInstance(machine: MachineKey): object | null {
+  if (!isOpen(machine)) return null;
+  return (runtimeFor(machine) as Runtime).instance;
+}
+
+/** Changes whenever a machine opens, closes or changes driver ({@link machineInstance}). */
+export function machineInstancesStore(): Store<number> {
+  return instancesStore;
 }
 
 /** The shell the page is running as. */

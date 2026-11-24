@@ -121,6 +121,13 @@ export interface CopyFollow {
   readonly progress?: SubscriptionProgress;
   /** Hear when {@link progress} changes (at most once a frame). Nothing more once it is closed. */
   onProgress?(fn: (progress: SubscriptionProgress) => void): () => void;
+  /**
+   * Somebody is looking at this copy and does not have it (`true`), or
+   * nobody is any more: its pages are fetched ahead of the background's,
+   * never held back for live traffic (`PageQueue`'s lanes). The hub's
+   * follows have it; the gateway's install has no pages to fetch.
+   */
+  setForeground?(on: boolean): void;
 }
 
 export interface CopySource {
@@ -543,6 +550,7 @@ export class HubCopySource implements CopySource {
           return sub.progress;
         },
         onProgress: (fn) => sub.onProgress(fn),
+        setForeground: (on) => sub.setLane(on ? "fg" : "bg"),
       };
     }
     // The index and the status are counted, never refused, as the names
@@ -584,6 +592,7 @@ export class HubCopySource implements CopySource {
         offEpochs();
         newest.close();
       },
+      setForeground: (on) => newest.setLane(on ? "fg" : "bg"),
     };
   }
 
