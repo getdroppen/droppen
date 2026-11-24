@@ -1162,6 +1162,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
+name = "droppen-a2a"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "droppen-base",
+ "droppen-http",
+ "droppen-instance",
+ "futures-util",
+ "gotcha",
+ "rand 0.8.7",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tower-service",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "droppen-a2a-proxy"
 version = "0.1.0"
 dependencies = [
@@ -1716,6 +1739,7 @@ version = "0.2.141"
 dependencies = [
  "axum",
  "clap",
+ "droppen-a2a",
  "droppen-a2a-proxy",
  "droppen-accounts",
  "droppen-agent",

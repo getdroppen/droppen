@@ -137,6 +137,12 @@ impl FromRef<AppState> for AttentionState {
     }
 }
 
+impl FromRef<AppState> for droppen_a2a::A2aState {
+    fn from_ref(state: &AppState) -> Self {
+        Self { a2a: state.a2a.clone() }
+    }
+}
+
 impl FromRef<AppState> for ScheduleState {
     fn from_ref(state: &AppState) -> Self {
         Self {

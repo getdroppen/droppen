@@ -75,6 +75,30 @@ pub struct AppConfig {
     /// Plugins the configuration pins on or off: see [`PluginSettings`].
     #[serde(default)]
     pub plugins: PluginSettings,
+    /// The A2A server: see [`A2aSettings`].
+    #[serde(default)]
+    pub a2a: A2aSettings,
+}
+
+/// `[a2a]` — `public_base = "https://agents.example.com"`, or
+/// `APP_A2A__PUBLIC_BASE`.
+///
+/// The base of the interface URLs an Agent Card names (`docs/a2a.md` §2):
+/// what a client reaches this server's `/a2a/*` at, when that is not the
+/// request's own `Host` over `http` (a tunnel, a reverse proxy). Empty or
+/// unset is the request's `Host`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct A2aSettings {
+    /// The base, without a trailing slash.
+    #[serde(default)]
+    pub public_base: Option<String>,
+}
+
+impl A2aSettings {
+    /// The base, if one is set.
+    pub fn public_base(&self) -> Option<String> {
+        self.public_base.as_deref().map(str::trim).filter(|base| !base.is_empty()).map(str::to_string)
+    }
 }
 
 /// `[plugins]` — `enable = "a,b"`, `disable = "c"`, or `APP_PLUGINS__ENABLE` /
@@ -249,6 +273,14 @@ struct Defaults {
     server: ServerConfig,
     auth: AuthDefaults,
     plugins: PluginDefaults,
+    a2a: A2aDefaults,
+}
+
+/// The A2A section, present with its type like [`PluginDefaults`]; the empty
+/// base is unset.
+#[derive(Serialize)]
+struct A2aDefaults {
+    public_base: String,
 }
 
 /// The numeric auth defaults, typed so the environment can override them.
@@ -283,6 +315,7 @@ impl Default for Defaults {
                 enable: String::new(),
                 disable: String::new(),
             },
+            a2a: A2aDefaults { public_base: String::new() },
         }
     }
 }

@@ -81,7 +81,7 @@
 //!
 //! # What is deliberately *not* behind the guard
 //!
-//! Five things, and nothing else:
+//! Six things, and nothing else:
 //!
 //! * `POST /api/auth/login`, `POST /api/auth/setup`, `POST /api/auth/local-open`
 //!   and `GET /api/auth/status` — the three ways in, and the way to ask which
@@ -101,7 +101,12 @@
 //!   `GET /api/apps` hands out, and the proxied VS Code server speaks its own
 //!   protocol on paths this server does not model. The residual risk is real and
 //!   written down in docs/manual.zh-CN.md: anyone who learns an id reaches that
-//!   app.
+//!   app;
+//! * `/a2a/*`, every method — the A2A server (the server's `droppen_a2a`), which
+//!   has a credential of its own and checks it on every request: an A2A token,
+//!   from a loopback peer only. No login is resolved there and none counts, and
+//!   a request bridged from another device is refused outright: no device
+//!   reaches `/a2a/*` over a channel (`docs/a2a.md` §2, §6).
 //!
 //! `/openapi.json`, `/redoc`, `/scalar`, `/api/settings`, `/api/push/vapid` and
 //! `POST /api/server/self-upgrade` are **not** exempt. The first three describe
@@ -567,6 +572,12 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     request.headers_mut().remove(droppen_http::bridge::CREDENTIAL_HEADER);
     request.headers_mut().remove(droppen_http::bridge::DEVICE_HEADER);
 
+    // `/a2a/*` answers to an A2A token alone, which the A2A server checks; a
+    // device bridged in has none to give, and reaches it in no case.
+    if is_a2a(&path) && bridged.is_some() {
+        return ApiError::new(StatusCode::FORBIDDEN, "not from another device").into_response().with_guard_headers(&path);
+    }
+
     let is_exempt = exempt(&method, &path);
     // Resolved wherever it could matter, which is two overlapping sets. Every
     // `/api/` path, exempt or not: `GET /api/auth/status` is exempt and still has
@@ -682,11 +693,21 @@ fn exempt(method: &Method, path: &str) -> bool {
     if is_embed(path) {
         return true;
     }
+    // The A2A server's own credential is checked by the A2A server, on every
+    // request and every method; a login is no A2A caller.
+    if is_a2a(path) {
+        return true;
+    }
     // The SPA and its assets. An unauthenticated browser must be able to load
     // the shell, or there is nowhere to type a password. `index.html` and the
     // hashed bundles say nothing about the machine they are served from; the
     // three documentation paths do, so they are carved back out.
     (method == Method::GET || method == Method::HEAD) && !path.starts_with("/api/") && !DOC_PATHS.contains(&path)
+}
+
+/// The A2A server's paths: `/a2a` and everything under it.
+fn is_a2a(path: &str) -> bool {
+    path == "/a2a" || path.starts_with("/a2a/")
 }
 
 /// The `/embed/{id}` prefix, matched exactly as
