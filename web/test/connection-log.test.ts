@@ -22,10 +22,13 @@ import test from "node:test";
 import { CONN_EVENTS, ConnectionLog, maskId, routeTemplate, safeText } from "../src/lib/connection-log.js";
 import { COPY_MAX_CHARS, eventLine, filterEvents, headerLines, logText, type LogHeader, PRIVACY_LINE } from "../src/features/cloud/connection-log-format.js";
 import {
+  ASSUMED_BYTES_PER_MS,
   DEFAULT_REKEY,
   DIRECT_TIMEOUT_MS,
+  directDeadline,
   generateDeviceKeys,
   Initiator,
+  MAX_PAYLOAD_LEN,
   type NoiseKeyPair,
   RELAY_PROBE_MS,
   Responder,
@@ -36,6 +39,7 @@ import {
 import { connLog } from "../src/lib/connection-log.js";
 import { decodeFrame, encodeFrame, type Frame } from "../src/lib/e2e/index.js";
 import { HubLink } from "../src/lib/hub/link.js";
+import { directTimeoutFields } from "../src/lib/hub/machine.js";
 
 /** A log on clocks the test moves. */
 function clocked(opts: { maxEvents?: number; maxChatter?: number; maxAgeMs?: number; sampleMs?: number; quietSampleMs?: number } = {}) {
@@ -404,7 +408,52 @@ test("the paths say a probe sent, a probe gone a probe interval unanswered (once
   s.takeEvents();
   s.tick(at + DIRECT_TIMEOUT_MS + 1);
   const down = s.takeEvents().find((e) => e.type === "directDown");
-  assert.deepEqual(down, { type: "directDown", reason: "timeout", remote: false, timer: "DIRECT_TIMEOUT_MS", elapsedMs: DIRECT_TIMEOUT_MS + 1, unackedBytes: 0 });
+  // Nothing carried: the floor itself, and the inputs that left it there.
+  assert.deepEqual(down, {
+    type: "directDown",
+    reason: "timeout",
+    remote: false,
+    timer: "DIRECT_TIMEOUT_MS",
+    elapsedMs: DIRECT_TIMEOUT_MS + 1,
+    unackedBytes: 0,
+    deadline: { limitMs: DIRECT_TIMEOUT_MS, floorMs: DIRECT_TIMEOUT_MS, loadMs: 0, aheadBytes: 0, bytesPerMs: ASSUMED_BYTES_PER_MS },
+    load: { rttMs: null, unackedBytes: 0, bytesPerMs: null, relayBulkSent: false, relayBulkReceived: false, directBulkReceived: false },
+  });
+});
+
+test("a direct path's timeout logs the deadline it missed and what made it, numbers and flags the log keeps as they are", () => {
+  // As a loaded path's: 132 bytes waiting, the peer's bulk coming over the
+  // direct path at a measured 77 bytes a millisecond, a round trip measured idle.
+  const load = { rttMs: 47.7, unackedBytes: 132, bytesPerMs: 77.09411764705882, relayBulkSent: false, relayBulkReceived: false, directBulkReceived: true };
+  const deadline = directDeadline("UNACKED_TIMEOUT_MS", load);
+  const fields = directTimeoutFields("ch:nrt-1/2", { type: "directDown", reason: "timeout", remote: false, timer: "UNACKED_TIMEOUT_MS", elapsedMs: 5_208.123, unackedBytes: 132, deadline, load });
+  const log = new ConnectionLog({ now: () => 0, wall: () => 0 });
+  log.emit("timeout", fields!);
+  const e = log.events().at(-1)!;
+  assert.equal(e.level, "error");
+  assert.deepEqual(e.fields, {
+    timer: "UNACKED_TIMEOUT_MS",
+    limitMs: Math.round(deadline.limitMs * 10) / 10,
+    elapsedMs: 5_208.1,
+    floorMs: DIRECT_TIMEOUT_MS,
+    loadMs: Math.round(deadline.loadMs * 10) / 10,
+    aheadBytes: 132 + MAX_PAYLOAD_LEN,
+    rateBytesPerSec: 77_094,
+    rateMeasured: true,
+    unackedBytes: 132,
+    rttMs: 47.7,
+    relayBulkSent: false,
+    relayBulkReceived: false,
+    directBulkReceived: true,
+    on: "ch:nrt-1/2.direct",
+  });
+  // A path let go any other way has no timeout to log.
+  assert.equal(directTimeoutFields("ch:nrt-1/2", { type: "directDown", reason: "failed", remote: false }), null);
+  // The agent's word that it let go, come after the page had: a problem, with the agent's reason as a code.
+  assert.equal(CONN_EVENTS["path.peerDown"], "warn");
+  log.emit("path.peerDown", { on: "ch:nrt-1/2", cause: "timeout" });
+  const peerDown = log.events().at(-1)!;
+  assert.deepEqual([peerDown.name, peerDown.level, peerDown.fields], ["path.peerDown", "warn", { on: "ch:nrt-1/2", cause: "timeout" }]);
 });
 
 // -- the export ---------------------------------------------------------------

@@ -115,6 +115,8 @@ export const CONN_EVENTS = {
   "handshake.fail": "warn",
   "path.switch": "info",
   "path.slow": "warn",
+  // The agent's word that it let the direct path go, come after this page had (its reason for it).
+  "path.peerDown": "warn",
   "mode.switch": "info",
   "reconnect.replay": "info",
   // The direct path (`lib/transport/p2p.ts`).

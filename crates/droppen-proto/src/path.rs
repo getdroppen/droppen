@@ -70,17 +70,41 @@ pub const ACK_DELAY_MS: u64 = 15;
 pub const ACK_EVERY: u32 = 16;
 /// The direct path is probed this often (also its keep-alive)…
 pub const DIRECT_PROBE_MS: u64 = 1_000;
-/// …and declared dead when nothing has come over it for this long.
+/// …and declared dead when nothing has come over it for this long — on a
+/// path that carries nothing much: what it does carry stretches this
+/// ([`direct_deadline`]).
 pub const DIRECT_TIMEOUT_MS: u64 = 3_500;
 /// While frames sent on the direct path wait for an acknowledgement, it is
 /// declared dead once it has made no progress for this long (or ten round
-/// trips, whichever is longer) — sooner than [`DIRECT_TIMEOUT_MS`] of silence,
-/// so a typist waits less for a path that went dark mid-typing. Progress is
-/// data from the peer arriving over it, or an acknowledgement freeing what was
-/// sent over it — not the mere age of the oldest frame: a path slowly draining
-/// a backlog (a DataChannel buffer filled faster than a cellular link empties
-/// it, with the peer's acknowledgements queued behind its own) is not dead.
+/// trips, whichever is longer, and stretched by what the path carries,
+/// [`direct_deadline`]) — sooner than [`DIRECT_TIMEOUT_MS`] of silence, so a
+/// typist waits less for a path that went dark mid-typing. Progress is data
+/// from the peer arriving over it, or an acknowledgement freeing what was
+/// sent over it — not the mere age of the oldest frame: a path slowly
+/// draining a backlog (a DataChannel buffer filled faster than a cellular
+/// link empties it, with the peer's acknowledgements queued behind its own)
+/// is not dead.
 pub const UNACKED_TIMEOUT_MS: u64 = 1_500;
+/// However much the direct path carries, it is given up once it has gone
+/// this long without progress, or without bringing anything at all: the most
+/// [`direct_deadline`] stretches either deadline to, and so how long a path
+/// that died under load can hold what it carries. Below the page's
+/// `RELAY_SILENT_MS` (10 s), so a dead direct path is let go before its
+/// silence could count against the channel.
+pub const DIRECT_TIMEOUT_MAX_MS: u64 = 8_000;
+/// A delivery-rate sample is taken over at least this many bytes: fewer, and
+/// the round trip rather than the link sets how long they took. It is also
+/// what a message must weigh to count as bulk.
+pub const RATE_SAMPLE_BYTES: usize = 16 * 1024;
+/// Until the path has shown how fast it carries, it is taken to carry 64
+/// bytes a millisecond (512 kbit/s).
+pub const ASSUMED_BYTES_PER_MS: f64 = 64.0;
+/// Bulk counts as recent while it came (or left) within this long of the
+/// latest thing that came: two probe intervals.
+pub const BULK_RECENT_MS: u64 = 2 * DIRECT_PROBE_MS;
+/// The deadlines allow this many times the time the bytes standing ahead of
+/// the next sign of life take at the measured rate.
+pub const LOAD_FACTOR: f64 = 2.0;
 /// The hub path is probed this often for its round-trip time (for display).
 pub const RELAY_PROBE_MS: u64 = 5_000;
 
@@ -153,6 +177,144 @@ impl DownReason {
                 })
             }
         })
+    }
+}
+
+/// Which of the direct path's deadlines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectTimer {
+    /// Nothing came over it ([`DIRECT_TIMEOUT_MS`]).
+    Silence,
+    /// Frames sent on it wait for an acknowledgement while it makes no
+    /// progress ([`UNACKED_TIMEOUT_MS`]).
+    Progress,
+}
+
+impl DirectTimer {
+    /// The constant's name, as logs say it.
+    pub fn name(self) -> &'static str {
+        match self {
+            DirectTimer::Silence => "DIRECT_TIMEOUT_MS",
+            DirectTimer::Progress => "UNACKED_TIMEOUT_MS",
+        }
+    }
+}
+
+/// What the direct path carries, as one side sees it: what
+/// [`direct_deadline`] stretches the deadlines by.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DirectLoad {
+    /// The latest round trip a probe measured on the direct path (ms).
+    pub rtt_ms: Option<f64>,
+    /// Sent on the direct path and not acknowledged yet (bytes).
+    pub unacked_bytes: usize,
+    /// The slowest the channel's link has lately carried, on either path and
+    /// either way (bytes/ms; `None`: not measured yet).
+    pub bytes_per_ms: Option<f64>,
+    /// The frames waiting for an acknowledgement left right behind this
+    /// side's own bulk on the hub path.
+    pub relay_bulk_sent: bool,
+    /// The peer's bulk has been coming over the hub path (a message of
+    /// [`RATE_SAMPLE_BYTES`] or more, within [`BULK_RECENT_MS`] of the latest
+    /// arrival).
+    pub relay_bulk_received: bool,
+    /// The peer's bulk has been coming over the direct path (the same, there).
+    pub direct_bulk_received: bool,
+}
+
+/// One of the direct path's deadlines, and what made it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DirectDeadline {
+    /// How long the path may go without (ms): `floor_ms + load_ms`, at most
+    /// [`DIRECT_TIMEOUT_MAX_MS`].
+    pub limit_ms: f64,
+    /// The deadline of a path that carries nothing much: the timer's constant
+    /// — for no progress, ten round trips if longer, and
+    /// [`DIRECT_TIMEOUT_MS`] while the peer's bulk is on its way here.
+    pub floor_ms: f64,
+    /// What the path carries adds: [`LOAD_FACTOR`] times `ahead_bytes` at
+    /// `bytes_per_ms`.
+    pub load_ms: f64,
+    /// The bytes that may stand ahead of the next sign of life.
+    pub ahead_bytes: usize,
+    /// The rate they were timed at (bytes/ms): the measured one, or
+    /// [`ASSUMED_BYTES_PER_MS`].
+    pub bytes_per_ms: f64,
+}
+
+/// How long the direct path may go without bringing anything
+/// ([`DirectTimer::Silence`]) or, while frames sent on it wait for an
+/// acknowledgement, without progress ([`DirectTimer::Progress`]), given what
+/// it carries.
+///
+/// A round trip measured idle says nothing about a loaded path: on a
+/// 1 Mbit/s link with half a megabyte queued, the next acknowledgement can be
+/// seconds away while the link delivers all along — and on a link both paths
+/// share, the hub path's backlog stands ahead of the direct path's frames
+/// too. So the deadline is the timer's floor plus [`LOAD_FACTOR`] times the
+/// time the bytes that may stand ahead of the next sign of life need at the
+/// slowest rate the link has lately carried:
+///
+/// - for no progress, what this side has unacknowledged on the direct path;
+///   plus a whole hub window ([`crate::flow::INITIAL_CREDIT`]) when bulk
+///   crossed the hub path either way just before (this side's frames, or the
+///   peer's answers, wait behind it); plus one whole message when the peer
+///   has been sending bulk over the direct path (its acknowledgement rides
+///   behind it). While the peer's bulk is on its way here, the
+///   acknowledgement waited for is behind it, so no progress is no sooner a
+///   sign of death than silence: the floor is [`DIRECT_TIMEOUT_MS`] then;
+/// - for silence, only what the peer may have ahead of anything it sends: a
+///   hub window when its bulk has been coming over the hub path, one message
+///   when over the direct path. What this side has outstanding does not
+///   delay the peer's probes, acknowledgements or answers' way back.
+///
+/// A path that carries nothing much keeps the floors (1.5 s and 3.5 s); none
+/// waits longer than [`DIRECT_TIMEOUT_MAX_MS`]. Progress at any rate resets
+/// the no-progress clock, and anything arriving the silence one, so a slow
+/// path is kept as long as it moves; a dead one is let go by the cap at the
+/// latest. The page's `directDeadline` (`web/src/lib/e2e/path.ts`) is the
+/// same arithmetic, pinned by the vectors.
+pub fn direct_deadline(timer: DirectTimer, load: &DirectLoad) -> DirectDeadline {
+    let progress = timer == DirectTimer::Progress;
+    let peer_bulk = load.relay_bulk_received || load.direct_bulk_received;
+    let floor_ms = if progress {
+        let base = if peer_bulk { DIRECT_TIMEOUT_MS } else { UNACKED_TIMEOUT_MS };
+        (base as f64).max(10.0 * load.rtt_ms.unwrap_or(0.0))
+    } else {
+        DIRECT_TIMEOUT_MS as f64
+    };
+    let window = crate::flow::INITIAL_CREDIT as usize;
+    let mut ahead_bytes = 0;
+    if progress {
+        ahead_bytes += load.unacked_bytes;
+        if load.relay_bulk_sent || load.relay_bulk_received {
+            ahead_bytes += window;
+        }
+    } else if load.relay_bulk_received {
+        ahead_bytes += window;
+    }
+    if load.direct_bulk_received {
+        ahead_bytes += crate::frame::MAX_PAYLOAD_LEN;
+    }
+    let bytes_per_ms = load.bytes_per_ms.filter(|r| *r > 0.0).unwrap_or(ASSUMED_BYTES_PER_MS);
+    let load_ms = (LOAD_FACTOR * ahead_bytes as f64) / bytes_per_ms;
+    DirectDeadline {
+        limit_ms: (floor_ms + load_ms).min(DIRECT_TIMEOUT_MAX_MS as f64),
+        floor_ms,
+        load_ms,
+        ahead_bytes,
+        bytes_per_ms,
+    }
+}
+
+/// The next estimate of how fast the link carries, after `sample`
+/// (bytes/ms): at once down to a slower sample, a quarter of the way up to a
+/// faster one — the deadlines believe the slowest recent evidence, so a link
+/// that just got busier is not judged by how fast it was.
+pub fn next_rate(rate: Option<f64>, sample: f64) -> f64 {
+    match rate {
+        Some(r) if sample >= r => r + (sample - r) / 4.0,
+        _ => sample,
     }
 }
 
@@ -984,6 +1146,97 @@ mod tests {
         let mut hub = Lanes::new();
         hub.receive(1, vec![], false, 0).unwrap();
         assert_eq!(hub.ack_due_ms(), None);
+    }
+
+    #[test]
+    fn the_deadlines_keep_their_floors_unloaded_stretch_with_the_bytes_ahead_and_stop_at_the_cap() {
+        let none = DirectLoad {
+            rtt_ms: Some(50.0),
+            ..DirectLoad::default()
+        };
+        let d = direct_deadline(DirectTimer::Silence, &none);
+        assert_eq!(
+            d,
+            DirectDeadline {
+                limit_ms: DIRECT_TIMEOUT_MS as f64,
+                floor_ms: DIRECT_TIMEOUT_MS as f64,
+                load_ms: 0.0,
+                ahead_bytes: 0,
+                bytes_per_ms: ASSUMED_BYTES_PER_MS,
+            }
+        );
+        assert_eq!(direct_deadline(DirectTimer::Progress, &none).limit_ms, UNACKED_TIMEOUT_MS as f64);
+        // Ten round trips, when longer, for no progress only (as before).
+        let slow = DirectLoad { rtt_ms: Some(485.0), ..none };
+        assert_eq!(direct_deadline(DirectTimer::Progress, &slow).floor_ms, 4_850.0);
+        assert_eq!(direct_deadline(DirectTimer::Silence, &slow).floor_ms, DIRECT_TIMEOUT_MS as f64);
+        // 300 KB unacknowledged at 1 Mbit/s: twice the 2.4 s they take; 600 KB: the cap.
+        let full = |bytes| DirectLoad {
+            unacked_bytes: bytes,
+            bytes_per_ms: Some(125.0),
+            ..none
+        };
+        let d = direct_deadline(DirectTimer::Progress, &full(300_000));
+        assert_eq!(
+            (d.ahead_bytes, d.load_ms, d.limit_ms),
+            (300_000, 4_800.0, (UNACKED_TIMEOUT_MS + 4_800) as f64)
+        );
+        assert_eq!(
+            direct_deadline(DirectTimer::Progress, &full(600_000)).limit_ms,
+            DIRECT_TIMEOUT_MAX_MS as f64
+        );
+        // What is unacknowledged does not hold the peer's answers back.
+        assert_eq!(direct_deadline(DirectTimer::Silence, &full(600_000)).limit_ms, DIRECT_TIMEOUT_MS as f64);
+        // The peer's bulk over the direct path: one message ahead, and the
+        // no-progress floor is the silence one while it comes.
+        let bulk = DirectLoad {
+            direct_bulk_received: true,
+            bytes_per_ms: Some(125.0),
+            ..none
+        };
+        let d = direct_deadline(DirectTimer::Silence, &bulk);
+        assert_eq!(
+            (d.ahead_bytes, d.load_ms),
+            (crate::frame::MAX_PAYLOAD_LEN, 2.0 * crate::frame::MAX_PAYLOAD_LEN as f64 / 125.0)
+        );
+        assert_eq!(direct_deadline(DirectTimer::Progress, &bulk).floor_ms, DIRECT_TIMEOUT_MS as f64);
+        // Bulk over the hub path: a whole hub window ahead — but this side's
+        // own does not hold the peer's probes back.
+        let window = crate::flow::INITIAL_CREDIT as usize;
+        let relay_in = DirectLoad {
+            relay_bulk_received: true,
+            ..none
+        };
+        let relay_out = DirectLoad {
+            relay_bulk_sent: true,
+            ..none
+        };
+        assert_eq!(direct_deadline(DirectTimer::Silence, &relay_in).ahead_bytes, window);
+        assert_eq!(direct_deadline(DirectTimer::Progress, &relay_out).ahead_bytes, window);
+        assert_eq!(direct_deadline(DirectTimer::Silence, &relay_out).ahead_bytes, 0);
+        // Never past the cap, whatever the round trip; a rate of nothing is the assumed one.
+        let far = DirectLoad {
+            rtt_ms: Some(5_000.0),
+            ..none
+        };
+        assert_eq!(direct_deadline(DirectTimer::Progress, &far).limit_ms, DIRECT_TIMEOUT_MAX_MS as f64);
+        let zero = DirectLoad {
+            bytes_per_ms: Some(0.0),
+            ..full(1_000)
+        };
+        assert_eq!(direct_deadline(DirectTimer::Progress, &zero).bytes_per_ms, ASSUMED_BYTES_PER_MS);
+        assert_eq!(
+            (DirectTimer::Silence.name(), DirectTimer::Progress.name()),
+            ("DIRECT_TIMEOUT_MS", "UNACKED_TIMEOUT_MS")
+        );
+    }
+
+    #[test]
+    fn the_rate_falls_at_once_and_rises_a_quarter_of_the_way() {
+        assert_eq!(next_rate(None, 100.0), 100.0);
+        assert_eq!(next_rate(Some(100.0), 40.0), 40.0);
+        assert_eq!(next_rate(Some(40.0), 120.0), 60.0);
+        assert_eq!(next_rate(Some(60.0), 60.0), 60.0);
     }
 
     /// Two paths, a sender that switches between them, a direct path that

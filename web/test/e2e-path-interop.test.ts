@@ -8,17 +8,23 @@
 // WebCrypto Noise IK under that prologue writes exactly Rust's first message,
 // reads Rust's reply, and seals the same sequenced envelopes; the device's
 // direct hello is a normal chain hello the machine reads only under the very
-// binding the device used.
+// binding the device used; and the direct path's deadlines (`directDeadline`,
+// `nextRate`) come to Rust's numbers for every load the vectors spell out.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  ASSUMED_BYTES_PER_MS,
+  BULK_RECENT_MS,
   ChainClock,
   ChainState,
   checkFingerprint,
   CLIENT_FEATURE,
   clientWantsPaths,
   DEFAULT_REKEY,
+  DIRECT_TIMEOUT_MAX_MS,
+  DIRECT_TIMEOUT_MS,
+  directDeadline,
   decodeDcMessage,
   decodeEntry,
   decodeEnvelope,
@@ -39,13 +45,16 @@ import {
   hex,
   Initiator,
   keyPairFromSecret,
+  LOAD_FACTOR,
   MAX_CANDIDATE,
   MAX_CHUNK,
   MAX_PAYLOAD_LEN,
   MAX_SDP,
+  nextRate,
   parseFingerprintHex,
   PathError,
   prologue,
+  RATE_SAMPLE_BYTES,
   Responder,
   sdpFingerprint,
   serverFeatures,
@@ -53,6 +62,7 @@ import {
   SIGNAL_PATH,
   startDirectHandshake,
   stripCandidates,
+  UNACKED_TIMEOUT_MS,
   utf8,
 } from "../src/lib/e2e/index.js";
 
@@ -98,6 +108,23 @@ test("the path constants are Rust's", () => {
   assert.equal(P.signalPath, SIGNAL_PATH);
   assert.equal(P.envelopeHeader, ENVELOPE_HEADER);
   assert.equal(P.maxChunk, MAX_CHUNK, "a mux chunk leaves room for the envelope");
+});
+
+test("the direct path's deadlines are Rust's, to the last bit: the constants, every case, and the rate's steps", () => {
+  const D = P.deadlines;
+  assert.ok(D, "rust.json has the deadlines: regenerate it with DROPPEN_PROTO_WRITE_VECTORS=1");
+  assert.deepEqual(D.constants, {
+    unackedTimeoutMs: UNACKED_TIMEOUT_MS,
+    directTimeoutMs: DIRECT_TIMEOUT_MS,
+    directTimeoutMaxMs: DIRECT_TIMEOUT_MAX_MS,
+    rateSampleBytes: RATE_SAMPLE_BYTES,
+    assumedBytesPerMs: ASSUMED_BYTES_PER_MS,
+    bulkRecentMs: BULK_RECENT_MS,
+    loadFactor: LOAD_FACTOR,
+  });
+  assert.ok(D.cases.length >= 24);
+  for (const { timer, load, deadline } of D.cases) assert.deepEqual(directDeadline(timer, load), deadline, `${timer} ${JSON.stringify(load)}`);
+  for (const { rate, sample, next } of D.rates) assert.equal(nextRate(rate, sample), next, `${rate} then ${sample}`);
 });
 
 test("envelopes encode to Rust's bytes and decode back; junk is refused", () => {

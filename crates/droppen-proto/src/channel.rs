@@ -14,10 +14,12 @@
 //! with [`Session::attach_direct`]. While it is attached, new frames go that
 //! way ([`Wire::Direct`]); frames sent there are kept until the peer
 //! acknowledges them. When it fails (the DataChannel closes, nothing comes
-//! over it for [`DIRECT_TIMEOUT_MS`], what it carries waits for an
-//! acknowledgement while the path makes no progress for
-//! [`UNACKED_TIMEOUT_MS`] or ten round trips, a message on it does not open,
-//! or the peer says so with [`Envelope::Down`]), [`Session::detach_direct`] sends
+//! over it for [`DIRECT_TIMEOUT_MS`](crate::path::DIRECT_TIMEOUT_MS), what it
+//! carries waits for an acknowledgement while the path makes no progress for
+//! [`UNACKED_TIMEOUT_MS`](crate::path::UNACKED_TIMEOUT_MS) or ten round
+//! trips — both stretched by what the path carries,
+//! [`crate::path::direct_deadline`] — a message on it does not open, or the
+//! peer says so with [`Envelope::Down`]), [`Session::detach_direct`] sends
 //! everything unacknowledged again over the hub, and the receiver drops what
 //! it already had. So the multiplexer above never sees a frame lost,
 //! repeated or out of order, whichever way each one went.
@@ -37,8 +39,8 @@ use crate::frame::Frame;
 use crate::mux::{Mux, MuxError, MuxEvent, MuxFrame, Role};
 use crate::noise::{ChannelError, Transport};
 use crate::path::{
-    DcMessage, DownReason, Envelope, LaneStats, Lanes, PathError, Via, DIRECT_PROBE_MS, DIRECT_TIMEOUT_MS, RELAY_PROBE_MS, UNACKED_LIMIT,
-    UNACKED_TIMEOUT_MS,
+    direct_deadline, next_rate, DcMessage, DirectDeadline, DirectLoad, DirectTimer, DownReason, Envelope, LaneStats, Lanes, PathError, Via,
+    ASSUMED_BYTES_PER_MS, BULK_RECENT_MS, DIRECT_PROBE_MS, RATE_SAMPLE_BYTES, RELAY_PROBE_MS, UNACKED_LIMIT,
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -126,6 +128,22 @@ pub struct PathStats {
 /// The most probes outstanding at once (older ones are forgotten).
 const MAX_PROBES: usize = 16;
 
+/// A direct path given up on a deadline: which, after how long, and what the
+/// deadline was made of ([`Session::last_direct_timeout`], for logs).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DirectTimeout {
+    pub timer: DirectTimer,
+    /// How long the path had gone without (ms).
+    pub elapsed_ms: f64,
+    pub deadline: DirectDeadline,
+    pub load: DirectLoad,
+}
+
+/// Milliseconds as whole microseconds.
+fn us(ms: f64) -> u64 {
+    (ms * 1000.0) as u64
+}
+
 struct Paths {
     opts: PathOptions,
     lanes: Lanes,
@@ -152,6 +170,26 @@ struct Paths {
     /// When anything last arrived for this channel over the hub: a `DATA`
     /// frame (data, an acknowledgement, a probe or its answer) or a `CREDIT`.
     last_relay_rx_us: u64,
+    /// The slowest the channel's link has lately carried, on either path and
+    /// either way (bytes/ms, [`next_rate`]): from acknowledgements freeing
+    /// what this side sent on the direct path, and from the peer's bulk
+    /// arriving back to back. What the direct path's deadlines time the bytes
+    /// ahead at.
+    bytes_per_ms: Option<f64>,
+    /// Acknowledged bytes, and the time they took (µs), gathered toward the
+    /// next sample while the direct path stays backlogged.
+    acked_bytes: usize,
+    acked_us: u64,
+    /// When an acknowledgement last freed frames sent on the direct path
+    /// (`None`: none since it was attached).
+    last_acked_us: Option<u64>,
+    /// When bulk (a message of [`RATE_SAMPLE_BYTES`] or more) last came over
+    /// the hub path, and over the direct path.
+    bulk_in_relay_us: Option<u64>,
+    bulk_in_direct_us: Option<u64>,
+    /// When this side last sealed bulk for the hub path.
+    relay_bulk_out_us: Option<u64>,
+    last_timeout: Option<DirectTimeout>,
     events: VecDeque<PathEvent>,
     stats: PathStats,
 }
@@ -195,6 +233,14 @@ impl Session {
                 // The first hub probe goes out at once, so the indicator has a number.
                 next_relay_probe_us: now_us,
                 last_relay_rx_us: now_us,
+                bytes_per_ms: None,
+                acked_bytes: 0,
+                acked_us: 0,
+                last_acked_us: None,
+                bulk_in_relay_us: None,
+                bulk_in_direct_us: None,
+                relay_bulk_out_us: None,
+                last_timeout: None,
                 events: VecDeque::new(),
                 stats: PathStats::default(),
             }),
@@ -232,6 +278,12 @@ impl Session {
         })
     }
 
+    /// The latest time a deadline gave the direct path up: which, after how
+    /// long, and what the deadline was made of.
+    pub fn last_direct_timeout(&self) -> Option<DirectTimeout> {
+        self.paths.as_ref().and_then(|p| p.last_timeout)
+    }
+
     /// What happened to the paths since the last call.
     pub fn take_events(&mut self) -> Vec<PathEvent> {
         self.paths.as_mut().map(|p| p.events.drain(..).collect()).unwrap_or_default()
@@ -252,6 +304,7 @@ impl Session {
         p.last_direct_progress_us = now_us;
         p.next_direct_probe_us = now_us;
         p.out_direct.clear();
+        p.attached();
         p.stats.ups += 1;
         p.events.push_back(PathEvent::DirectUp);
         Ok(())
@@ -328,7 +381,9 @@ impl Session {
         if room.relay {
             if let Some(env) = p.out_relay.pop_front() {
                 p.note_probe(&env, Via::Relay, now_us);
-                let sealed = self.transport.seal(now_ms, &env.encode())?;
+                let plain = env.encode();
+                p.sent_relay(plain.len(), now_us);
+                let sealed = self.transport.seal(now_ms, &plain)?;
                 return Ok(Some((
                     Wire::Relay(Frame::Data {
                         ch: self.ch,
@@ -363,7 +418,9 @@ impl Session {
         };
         Ok(Some(match via {
             Via::Relay => {
-                let sealed = self.transport.seal(now_ms, &env.encode())?;
+                let plain = env.encode();
+                p.sent_relay(plain.len(), now_us);
+                let sealed = self.transport.seal(now_ms, &plain)?;
                 (
                     Wire::Relay(Frame::Data {
                         ch: self.ch,
@@ -393,6 +450,9 @@ impl Session {
             return Ok(self.mux.receive(frame)?.into_iter().collect());
         }
         self.heard_relay(now_us);
+        if let Some(p) = self.paths.as_mut() {
+            p.heard_bulk(Via::Relay, payload.len(), now_us);
+        }
         let env = Envelope::decode(&plaintext).map_err(PathError::from)?;
         self.on_envelope(env, Via::Relay, now_us)
     }
@@ -430,6 +490,7 @@ impl Session {
             Some(Ok(env)) => env,
         };
         p.last_direct_rx_us = now_us;
+        p.heard_bulk(Via::Direct, message.len(), now_us);
         self.on_envelope(env, Via::Direct, now_us)
     }
 
@@ -498,17 +559,48 @@ impl Session {
     pub fn tick(&mut self, now_us: u64) {
         let Some(p) = self.paths.as_mut() else { return };
         if p.direct.is_some() {
-            let silent = now_us.saturating_sub(p.last_direct_rx_us) > DIRECT_TIMEOUT_MS * 1000;
-            let stuck = p.unacked_deadline_us().is_some_and(|at| now_us > at);
-            if silent || stuck {
+            let (load, silence, progress) = p.direct_deadlines();
+            let quiet_us = now_us.saturating_sub(p.last_direct_rx_us);
+            let silent = quiet_us > us(silence.limit_ms);
+            let stuck = progress.filter(|(since, d)| now_us.saturating_sub(*since) > us(d.limit_ms));
+            if silent || stuck.is_some() {
+                let (timer, deadline, elapsed_us) = match stuck {
+                    Some((since, d)) if !silent => (DirectTimer::Progress, d, now_us.saturating_sub(since)),
+                    _ => (DirectTimer::Silence, silence, quiet_us),
+                };
+                let timeout = DirectTimeout {
+                    timer,
+                    elapsed_ms: elapsed_us as f64 / 1000.0,
+                    deadline,
+                    load,
+                };
+                #[cfg(feature = "runtime")]
+                tracing::info!(
+                    timer = timer.name(),
+                    elapsed_ms = timeout.elapsed_ms,
+                    limit_ms = deadline.limit_ms,
+                    floor_ms = deadline.floor_ms,
+                    load_ms = deadline.load_ms,
+                    ahead_bytes = deadline.ahead_bytes,
+                    bytes_per_ms = deadline.bytes_per_ms,
+                    rate_measured = load.bytes_per_ms.is_some(),
+                    unacked_bytes = load.unacked_bytes,
+                    rtt_ms = ?load.rtt_ms,
+                    relay_bulk_sent = load.relay_bulk_sent,
+                    relay_bulk_received = load.relay_bulk_received,
+                    direct_bulk_received = load.direct_bulk_received,
+                    "a direct path missed its deadline"
+                );
+                p.last_timeout = Some(timeout);
                 p.detach(DownReason::Timeout, true);
                 p.events.push_back(PathEvent::DirectDown {
                     reason: DownReason::Timeout,
                     remote: false,
-                    why: if silent {
-                        "nothing came over it for DIRECT_TIMEOUT_MS"
-                    } else {
-                        "what it carried went unacknowledged while it made no progress for UNACKED_TIMEOUT_MS"
+                    why: match timer {
+                        DirectTimer::Silence => "nothing came over it within DIRECT_TIMEOUT_MS, stretched by what it carried",
+                        DirectTimer::Progress => {
+                            "what it carried went unacknowledged while it made no progress within UNACKED_TIMEOUT_MS, stretched by what it carried"
+                        }
                     },
                 });
             } else if now_us >= p.next_direct_probe_us {
@@ -540,9 +632,10 @@ impl Session {
         let mut take = |t: u64| next = Some(next.map_or(t, |n: u64| n.min(t)));
         if p.direct.is_some() {
             take(p.next_direct_probe_us);
-            take(p.last_direct_rx_us + DIRECT_TIMEOUT_MS * 1000 + 1);
-            if let Some(at) = p.unacked_deadline_us() {
-                take(at + 1);
+            let (_, silence, progress) = p.direct_deadlines();
+            take(p.last_direct_rx_us + us(silence.limit_ms) + 1);
+            if let Some((since, d)) = progress {
+                take(since + us(d.limit_ms) + 1);
             }
         }
         if p.opts.probe_relay {
@@ -563,27 +656,110 @@ impl Paths {
         }
     }
 
-    /// When frames wait for an acknowledgement on the direct path and it has
-    /// made no progress for too long: [`UNACKED_TIMEOUT_MS`] or ten round
-    /// trips, counted from the later of the oldest such frame leaving and the
-    /// path's last progress. Counted from the frame alone, a backlog the link
-    /// drains more slowly than that (the DataChannel's own buffer, or the
-    /// peer's acknowledgement queued behind its own backlog) gave a healthy
-    /// path up.
-    fn unacked_deadline_us(&self) -> Option<u64> {
-        let sent_us = self.lanes.oldest_unacked_ms()? * 1000;
-        let rtt_ms = self.stats.direct_rtt_ms.unwrap_or(0.0);
-        let wait_ms = (UNACKED_TIMEOUT_MS as f64).max(rtt_ms * 10.0) as u64;
-        Some(sent_us.max(self.last_direct_progress_us) + wait_ms * 1000)
+    /// What the direct path carries now, for its deadlines
+    /// ([`direct_deadline`]).
+    fn load(&self) -> DirectLoad {
+        let heard = self.last_direct_rx_us.max(self.last_relay_rx_us);
+        let recent = |at: Option<u64>| at.is_some_and(|at| heard.saturating_sub(at) <= BULK_RECENT_MS * 1000);
+        // A whole hub window this side sent may still be on its way for as
+        // long as the link takes to carry one.
+        let window_ms = (BULK_RECENT_MS as f64).max(f64::from(crate::flow::INITIAL_CREDIT) / self.bytes_per_ms.unwrap_or(ASSUMED_BYTES_PER_MS));
+        let oldest_us = self.lanes.oldest_unacked_ms().map(|ms| ms * 1000);
+        DirectLoad {
+            rtt_ms: self.stats.direct_rtt_ms,
+            unacked_bytes: self.lanes.unacked_bytes(),
+            bytes_per_ms: self.bytes_per_ms,
+            relay_bulk_sent: matches!((oldest_us, self.relay_bulk_out_us), (Some(o), Some(b)) if o.saturating_sub(b) as f64 <= window_ms * 1000.0),
+            relay_bulk_received: recent(self.bulk_in_relay_us),
+            direct_bulk_received: recent(self.bulk_in_direct_us),
+        }
+    }
+
+    /// The direct path's deadlines now: silence, counted from the last thing
+    /// it brought; and, while frames sent on it wait for an acknowledgement,
+    /// no progress, counted from (`since`, µs) the later of the oldest such
+    /// frame leaving and the path's last progress. Counted from the frame
+    /// alone, a backlog the link drains more slowly than that (the
+    /// DataChannel's own buffer, or the peer's acknowledgement queued behind
+    /// its own backlog) gave a healthy path up.
+    fn direct_deadlines(&self) -> (DirectLoad, DirectDeadline, Option<(u64, DirectDeadline)>) {
+        let load = self.load();
+        let silence = direct_deadline(DirectTimer::Silence, &load);
+        let progress = self.lanes.oldest_unacked_ms().map(|ms| {
+            (
+                (ms * 1000).max(self.last_direct_progress_us),
+                direct_deadline(DirectTimer::Progress, &load),
+            )
+        });
+        (load, silence, progress)
     }
 
     /// An acknowledgement came (on either path): progress on the direct path
-    /// when it freed frames sent there.
+    /// when it freed frames sent there — and, gathered while the path stays
+    /// backlogged, a sample of how fast it carries what this side sends: the
+    /// bytes freed over the time since the previous acknowledgement, or since
+    /// the oldest of them left when the path had nothing waiting before.
     fn acked(&mut self, ack: u64, now_us: u64) -> Result<(), PathError> {
-        if self.lanes.on_ack(ack)? > 0 {
-            self.last_direct_progress_us = now_us;
+        let before = self.lanes.unacked_bytes();
+        let oldest_us = self.lanes.oldest_unacked_ms().map(|ms| ms * 1000);
+        if self.lanes.on_ack(ack)? == 0 {
+            return Ok(());
+        }
+        self.last_direct_progress_us = now_us;
+        let since = oldest_us.unwrap_or(now_us).max(self.last_acked_us.unwrap_or(0));
+        self.last_acked_us = Some(now_us);
+        self.acked_bytes += before - self.lanes.unacked_bytes();
+        self.acked_us += now_us.saturating_sub(since);
+        if self.acked_bytes >= RATE_SAMPLE_BYTES && self.acked_us > 0 {
+            self.bytes_per_ms = Some(next_rate(self.bytes_per_ms, self.acked_bytes as f64 / (self.acked_us as f64 / 1000.0)));
+            self.acked_bytes = 0;
+            self.acked_us = 0;
+        } else if self.lanes.unacked_bytes() == 0 {
+            // Nothing waits any more: what comes next is not timed from this.
+            self.acked_bytes = 0;
+            self.acked_us = 0;
         }
         Ok(())
+    }
+
+    /// A message of `len` bytes came over `via`: bulk when it weighs
+    /// [`RATE_SAMPLE_BYTES`] or more, and two bulk messages in a row on one
+    /// path, within [`BULK_RECENT_MS`], time the link — the second took the
+    /// time between them to come.
+    fn heard_bulk(&mut self, via: Via, len: usize, now_us: u64) {
+        if len < RATE_SAMPLE_BYTES {
+            return;
+        }
+        let prev = match via {
+            Via::Relay => self.bulk_in_relay_us,
+            Via::Direct => self.bulk_in_direct_us,
+        };
+        if let Some(prev) = prev {
+            let gap_us = now_us.saturating_sub(prev);
+            if gap_us > 0 && gap_us <= BULK_RECENT_MS * 1000 {
+                self.bytes_per_ms = Some(next_rate(self.bytes_per_ms, len as f64 / (gap_us as f64 / 1000.0)));
+            }
+        }
+        match via {
+            Via::Relay => self.bulk_in_relay_us = Some(now_us),
+            Via::Direct => self.bulk_in_direct_us = Some(now_us),
+        }
+    }
+
+    /// This side sealed `len` bytes for the hub path.
+    fn sent_relay(&mut self, len: usize, now_us: u64) {
+        if len >= RATE_SAMPLE_BYTES {
+            self.relay_bulk_out_us = Some(now_us);
+        }
+    }
+
+    /// A new direct path: what was timed on the one before about its
+    /// acknowledgements and its bulk is not this one's.
+    fn attached(&mut self) {
+        self.acked_bytes = 0;
+        self.acked_us = 0;
+        self.last_acked_us = None;
+        self.bulk_in_direct_us = None;
     }
 
     fn nonce(&mut self) -> u64 {
@@ -653,6 +829,7 @@ mod tests {
     use crate::mux::StreamClass;
     use crate::noise::tests::binding;
     use crate::noise::{Initiator, RekeyPolicy, Responder};
+    use crate::path::{DIRECT_TIMEOUT_MS, UNACKED_TIMEOUT_MS};
     use crate::testing::bytes32;
 
     fn transports(seed: u64) -> (Transport, Transport) {
@@ -1162,5 +1339,455 @@ mod tests {
         }
         assert_eq!(got.len(), 2);
         assert_eq!(a.next_deadline_us(Room { relay: true, direct: true }), None);
+    }
+
+    /// The direct path's deadlines under load, over an access link both paths
+    /// share, on a clock the test moves: the ports of the page's
+    /// `web/test/direct-load.test.ts` (a field report: a 1 Mbit/s link, the
+    /// direct path's round trip measured idle at 41–82 ms, given up after
+    /// 1.5 s "without progress" again and again while it was only full).
+    mod load {
+        use super::*;
+        use crate::flow::INITIAL_CREDIT;
+        use crate::frame::MAX_PAYLOAD_LEN;
+        use crate::path::DIRECT_TIMEOUT_MAX_MS;
+
+        /// How far the clock moves at a time (µs).
+        const STEP_US: u64 = 10_000;
+        /// 1 Mbit/s, in bytes a millisecond.
+        const MBIT: f64 = 125.0;
+        /// What SCTP, DTLS, UDP and IP (or the WebSocket) add to a message.
+        const OVERHEAD: usize = 60;
+        /// What a DataChannel's owner takes before it holds new frames back (`driver::DIRECT_BUDGET`).
+        const BUDGET: usize = 1024 * 1024;
+        /// Three answers, so that a stream's window is not what holds a transfer back.
+        const STREAMS: usize = 3;
+
+        enum Msg {
+            Relay(Vec<u8>),
+            Direct(Vec<u8>),
+        }
+
+        impl Msg {
+            fn via(&self) -> Via {
+                match self {
+                    Msg::Relay(_) => Via::Relay,
+                    Msg::Direct(_) => Via::Direct,
+                }
+            }
+        }
+
+        /// One direction of the access link both paths share: one FIFO,
+        /// `bytes_per_ms` through it (nothing while `stalled`), then
+        /// `delay_us` on the way; a message arrives whole once its last byte
+        /// is through. Traffic the channel does not carry is what it takes of
+        /// `bytes_per_ms`.
+        struct Lane {
+            bytes_per_ms: f64,
+            delay_us: u64,
+            stalled: bool,
+            queue: VecDeque<(f64, Msg)>,
+            flying: VecDeque<(u64, Msg)>,
+            cut_direct: bool,
+        }
+
+        impl Lane {
+            fn new(bytes_per_ms: f64) -> Self {
+                Self {
+                    bytes_per_ms,
+                    delay_us: 25_000,
+                    stalled: false,
+                    queue: VecDeque::new(),
+                    flying: VecDeque::new(),
+                    cut_direct: false,
+                }
+            }
+
+            fn put(&mut self, msg: Msg) {
+                if self.cut_direct && msg.via() == Via::Direct {
+                    return;
+                }
+                let len = match &msg {
+                    Msg::Relay(m) | Msg::Direct(m) => m.len(),
+                };
+                self.queue.push_back(((len + OVERHEAD) as f64, msg));
+            }
+
+            fn step(&mut self, now_us: u64) {
+                if self.stalled {
+                    return;
+                }
+                let mut budget = self.bytes_per_ms * (STEP_US / 1000) as f64;
+                while budget > 0.0 {
+                    let Some((left, _)) = self.queue.front_mut() else { break };
+                    let take = budget.min(*left);
+                    *left -= take;
+                    budget -= take;
+                    if *left > 0.0 {
+                        break;
+                    }
+                    let (_, msg) = self.queue.pop_front().expect("front");
+                    self.flying.push_back((now_us + self.delay_us, msg));
+                }
+            }
+
+            fn due(&mut self, now_us: u64) -> Vec<Msg> {
+                let mut out = Vec::new();
+                while self.flying.front().is_some_and(|(at, _)| *at <= now_us) {
+                    out.push(self.flying.pop_front().expect("front").1);
+                }
+                out
+            }
+
+            /// A DataChannel's buffered amount: what of the direct path's is not through yet.
+            fn buffered_direct(&self) -> usize {
+                self.queue
+                    .iter()
+                    .filter_map(|(_, m)| match m {
+                        Msg::Direct(m) => Some(m.len()),
+                        Msg::Relay(_) => None,
+                    })
+                    .sum()
+            }
+
+            /// The direct path is gone this way, with what it had on the link.
+            fn kill_direct(&mut self) {
+                self.cut_direct = true;
+                self.queue.retain(|(_, m)| m.via() == Via::Relay);
+                self.flying.retain(|(_, m)| m.via() == Via::Relay);
+            }
+        }
+
+        /// A direct path given up, by which side, when, and how (`why`).
+        struct Down {
+            side: usize,
+            at_us: u64,
+            remote: bool,
+            why: &'static str,
+        }
+
+        /// A device (`a`) and an agent (`b`) on one channel, over `down`
+        /// (agent → device) and `up`: each side's hub window is
+        /// `INITIAL_CREDIT`, its DataChannel takes new frames under `BUDGET`,
+        /// and both read every stream as data comes.
+        struct Sim {
+            now: u64,
+            a: Session,
+            b: Session,
+            down: Lane,
+            up: Lane,
+            got: [usize; 2],
+            downs: Vec<Down>,
+            relay_out: [usize; 2],
+        }
+
+        impl Sim {
+            fn new(bytes_per_ms: f64) -> Self {
+                let (it, rt) = transports(1);
+                Self {
+                    now: 0,
+                    a: Session::with_paths(1, it, Role::Initiator, PathOptions { probe_relay: true }, 0),
+                    b: Session::with_paths(1, rt, Role::Responder, PathOptions::default(), 0),
+                    down: Lane::new(bytes_per_ms),
+                    up: Lane::new(bytes_per_ms),
+                    got: [0, 0],
+                    downs: Vec::new(),
+                    relay_out: [0, 0],
+                }
+            }
+
+            fn attach(&mut self) {
+                let (it, rt) = transports(10);
+                self.a.attach_direct(it, self.now).unwrap();
+                self.b.attach_direct(rt, self.now).unwrap();
+            }
+
+            fn side(&mut self, i: usize) -> &mut Session {
+                if i == 0 {
+                    &mut self.a
+                } else {
+                    &mut self.b
+                }
+            }
+
+            fn take(&mut self, i: usize, events: Vec<MuxEvent>) {
+                for e in events {
+                    if let MuxEvent::Data { sid, data } = e {
+                        self.got[i] += data.len();
+                        self.side(i).mux().consumed(sid, data.len());
+                    }
+                }
+            }
+
+            fn pump(&mut self) {
+                for i in 0..2 {
+                    loop {
+                        let lane = if i == 0 { &self.up } else { &self.down };
+                        let room = Room {
+                            relay: self.relay_out[i] + MAX_PAYLOAD_LEN <= INITIAL_CREDIT as usize,
+                            direct: lane.buffered_direct() < BUDGET,
+                        };
+                        let now = self.now;
+                        let Some((wire, _)) = self.side(i).poll(now, room).unwrap() else { break };
+                        let msg = match wire {
+                            Wire::Relay(Frame::Data { payload, .. }) => {
+                                self.relay_out[i] += payload.len();
+                                Msg::Relay(payload)
+                            }
+                            Wire::Relay(_) => continue,
+                            Wire::Direct(m) => Msg::Direct(m),
+                        };
+                        if i == 0 {
+                            self.up.put(msg);
+                        } else {
+                            self.down.put(msg);
+                        }
+                    }
+                }
+            }
+
+            /// Move the clock by `for_ms`, `each` run every step before the
+            /// sides' timers: the link carries, both sides read, tick and send.
+            fn run(&mut self, for_ms: u64, mut each: impl FnMut(&mut Sim)) {
+                let until = self.now + for_ms * 1000;
+                while self.now < until {
+                    self.now += STEP_US;
+                    let now = self.now;
+                    self.down.step(now);
+                    self.up.step(now);
+                    for (to, msg) in self
+                        .down
+                        .due(now)
+                        .into_iter()
+                        .map(|m| (0, m))
+                        .chain(self.up.due(now).into_iter().map(|m| (1, m)))
+                    {
+                        let events = match msg {
+                            Msg::Relay(payload) => {
+                                self.relay_out[1 - to] -= payload.len();
+                                self.side(to).receive_relay(&payload, now).unwrap()
+                            }
+                            Msg::Direct(m) => self.side(to).receive_direct(&m, now).unwrap(),
+                        };
+                        self.take(to, events);
+                    }
+                    each(self);
+                    for i in 0..2 {
+                        self.side(i).tick(now);
+                        for e in self.side(i).take_events() {
+                            if let PathEvent::DirectDown { remote, why, .. } = e {
+                                self.downs.push(Down {
+                                    side: i,
+                                    at_us: now,
+                                    remote,
+                                    why,
+                                });
+                            }
+                        }
+                    }
+                    self.pump();
+                }
+            }
+
+            fn first_down(&self, side: usize) -> &Down {
+                self.downs.iter().find(|d| d.side == side).expect("a side let the direct path go")
+            }
+
+            fn kept(&self, what: &str) {
+                assert!(self.downs.is_empty(), "{what}: nobody gave the direct path up");
+                for s in [&self.a, &self.b] {
+                    let st = s.stats();
+                    assert!(st.direct, "{what}: still direct");
+                    assert_eq!((st.downs, st.lanes.resent), (0, 0), "{what}: nothing given up, nothing sent twice");
+                }
+            }
+        }
+
+        /// Attached, idle for three seconds: the direct round trip measured on an idle path.
+        fn idle_direct() -> Sim {
+            let mut s = Sim::new(MBIT);
+            s.attach();
+            s.run(3_000, |_| {});
+            let rtt = s.a.stats().direct_rtt_ms.expect("measured");
+            assert!(rtt < 100.0, "measured idle: {rtt} ms");
+            s
+        }
+
+        /// The agent answers three streams the device opened with `bytes` in
+        /// all; the device opens a terminal to type into (the sid returned).
+        fn transfer(s: &mut Sim, bytes: usize) -> u32 {
+            let feeds: Vec<u32> = (0..STREAMS)
+                .map(|k| s.a.mux().open(StreamClass::Rpc, format!("GET /h/{k}").as_bytes()).unwrap())
+                .collect();
+            let term = s.a.mux().open(StreamClass::Term, b"t-1").unwrap();
+            s.pump();
+            s.run(200, |_| {});
+            for sid in feeds {
+                s.b.mux().send(sid, &vec![7u8; bytes / STREAMS]).unwrap();
+            }
+            term
+        }
+
+        /// A keystroke every 500 ms into `term`.
+        fn typing(term: u32) -> impl FnMut(&mut Sim) {
+            move |s: &mut Sim| {
+                if s.now.is_multiple_of(500_000) {
+                    s.a.mux().send(term, b"k").unwrap();
+                }
+            }
+        }
+
+        const BYTES: usize = 600 * 1024;
+
+        #[test]
+        fn six_hundred_kb_on_a_shared_one_megabit_path_is_kept_though_acknowledgements_come_seconds_apart() {
+            let mut s = idle_direct();
+            let term = transfer(&mut s, BYTES);
+            // Other traffic takes two thirds of the downlink: each 64 KiB
+            // message takes about 1.6 s, longer than UNACKED_TIMEOUT_MS.
+            s.down.bytes_per_ms = MBIT / 3.0;
+            let (mut gap_us, mut last_got, mut last_at) = (0u64, 0usize, s.now);
+            let mut keys = typing(term);
+            s.run(25_000, |s| {
+                keys(s);
+                if s.got[0] != last_got {
+                    gap_us = gap_us.max(s.now - last_at);
+                    last_got = s.got[0];
+                    last_at = s.now;
+                }
+            });
+            s.kept("shared");
+            assert_eq!(s.got[0], BYTES, "all of it, over the direct path");
+            assert!(gap_us > UNACKED_TIMEOUT_MS * 1000, "data came as much as {gap_us} µs apart");
+        }
+
+        #[test]
+        fn six_hundred_kb_on_a_one_megabit_path_that_stalls_for_two_seconds_is_kept() {
+            let mut s = idle_direct();
+            let term = transfer(&mut s, BYTES);
+            let stall_at = s.now + 1_500_000;
+            let mut keys = typing(term);
+            s.run(15_000, |s| {
+                s.down.stalled = s.now >= stall_at && s.now < stall_at + 2_000_000;
+                keys(s);
+            });
+            s.kept("stalled");
+            assert_eq!(s.got[0], BYTES);
+        }
+
+        #[test]
+        fn right_after_a_switch_the_direct_paths_frames_wait_behind_the_hub_backlog_and_the_path_is_kept() {
+            let mut s = Sim::new(MBIT);
+            let feeds: Vec<u32> = (0..STREAMS)
+                .map(|k| s.a.mux().open(StreamClass::Rpc, format!("GET /h/{k}").as_bytes()).unwrap())
+                .collect();
+            let term = s.a.mux().open(StreamClass::Term, b"t-1").unwrap();
+            s.pump();
+            s.run(500, |_| {});
+            // The agent's answers go over the hub path until the direct path
+            // comes up: a whole hub window of them on the link.
+            for sid in feeds {
+                s.b.mux().send(sid, &vec![7u8; BYTES / STREAMS]).unwrap();
+            }
+            s.pump();
+            s.run(100, |_| {});
+            s.attach();
+            s.run(15_000, typing(term));
+            s.kept("switch");
+            assert_eq!(s.got[0], BYTES);
+        }
+
+        #[test]
+        fn a_path_that_carries_nothing_much_is_given_up_on_the_floors() {
+            // Idle: only probes.
+            let mut s = idle_direct();
+            s.down.kill_direct();
+            s.up.kill_direct();
+            let died = s.now;
+            s.run(6_000, |_| {});
+            for side in 0..2 {
+                let d = s.first_down(side);
+                assert!(!d.remote && d.why.contains("nothing came"), "{side}: {}", d.why);
+                assert!(
+                    d.at_us - died <= (DIRECT_TIMEOUT_MS + 1_000) * 1000 + 2 * STEP_US,
+                    "{side} after {} µs",
+                    d.at_us - died
+                );
+            }
+            let t = s.a.last_direct_timeout().unwrap();
+            assert_eq!(
+                (t.timer, t.deadline.limit_ms),
+                (DirectTimer::Silence, DIRECT_TIMEOUT_MS as f64),
+                "nothing carried, nothing added"
+            );
+            // A keystroke on an idle path.
+            let mut s = idle_direct();
+            s.down.kill_direct();
+            s.up.kill_direct();
+            let term = s.a.mux().open(StreamClass::Term, b"t-1").unwrap();
+            s.a.mux().send(term, b"k").unwrap();
+            let sent = s.now;
+            s.run(3_000, |_| {});
+            let d = s.first_down(0);
+            assert!(d.why.contains("unacknowledged"), "{}", d.why);
+            assert!(d.at_us - sent <= UNACKED_TIMEOUT_MS * 1000 + 2 * STEP_US, "after {} µs", d.at_us - sent);
+            let t = s.a.last_direct_timeout().unwrap();
+            assert!(
+                t.deadline.limit_ms < UNACKED_TIMEOUT_MS as f64 + 10.0,
+                "a keystroke adds next to nothing: {t:?}"
+            );
+        }
+
+        #[test]
+        fn a_path_that_dies_under_load_is_given_up_within_the_cap_and_what_it_did_not_deliver_comes_over_the_hub() {
+            let mut s = idle_direct();
+            let term = transfer(&mut s, BYTES);
+            s.run(2_000, typing(term));
+            assert!(s.got[0] > 0 && s.got[0] < BYTES, "mid-transfer");
+            s.down.kill_direct();
+            s.up.kill_direct();
+            let died = s.now;
+            s.run(30_000, typing(term));
+            // The agent, sending, knows soonest: the device's acknowledgements and probes stopped.
+            let agent = s.first_down(1);
+            assert!(!agent.remote && agent.why.contains("nothing came"), "{}", agent.why);
+            assert!(
+                agent.at_us - died <= (DIRECT_TIMEOUT_MS + 1_000) * 1000 + 2 * STEP_US,
+                "the agent after {} µs",
+                agent.at_us - died
+            );
+            let device = s.first_down(0);
+            assert!(
+                device.at_us - died <= DIRECT_TIMEOUT_MAX_MS * 1000 + 2 * STEP_US,
+                "the device after {} µs",
+                device.at_us - died
+            );
+            assert_eq!(s.got[0], BYTES, "all of it, once");
+            assert!(!s.a.direct_active() && !s.b.direct_active());
+        }
+
+        #[test]
+        fn a_downlink_that_stalls_for_good_under_load_is_given_up_within_the_cap_by_both_sides() {
+            let mut s = idle_direct();
+            let term = transfer(&mut s, BYTES);
+            s.run(2_000, typing(term));
+            assert!(s.got[0] > 0 && s.got[0] < BYTES, "mid-transfer");
+            s.down.stalled = true;
+            let stuck = s.now;
+            s.run(DIRECT_TIMEOUT_MAX_MS + 1_000, typing(term));
+            let device = s.first_down(0);
+            assert!(!device.remote && device.why.contains("nothing came"), "{}", device.why);
+            for side in 0..2 {
+                let d = s.first_down(side);
+                assert!(
+                    d.at_us - stuck <= DIRECT_TIMEOUT_MAX_MS * 1000 + 2 * STEP_US,
+                    "{side} after {} µs",
+                    d.at_us - stuck
+                );
+            }
+            s.down.stalled = false;
+            s.run(30_000, typing(term));
+            assert_eq!(s.got[0], BYTES, "all of it, once, in the end");
+        }
     }
 }

@@ -195,6 +195,121 @@ fn noise_vectors() -> Value {
     })
 }
 
+/// The direct path's deadlines (`path.rs` `direct_deadline`, `next_rate`):
+/// the constants, and what each deadline comes to for a spread of loads —
+/// unloaded, a keystroke, a backlog at a measured rate and before one is,
+/// the peer's bulk over either path, this side's over the hub, a round trip
+/// that alone reaches the cap — to the last bit of the floating point.
+fn deadline_vectors() -> Value {
+    use crate::path::{direct_deadline, next_rate, DirectLoad, DirectTimer};
+    let base = DirectLoad::default();
+    let loads = [
+        base,
+        DirectLoad { rtt_ms: Some(47.7), ..base },
+        DirectLoad {
+            rtt_ms: Some(485.8),
+            unacked_bytes: 9,
+            ..base
+        },
+        DirectLoad {
+            rtt_ms: Some(81.8),
+            unacked_bytes: 48,
+            ..base
+        },
+        DirectLoad {
+            unacked_bytes: 300_000,
+            bytes_per_ms: Some(125.0),
+            ..base
+        },
+        DirectLoad {
+            unacked_bytes: 614_400,
+            bytes_per_ms: Some(125.0 / 3.0),
+            ..base
+        },
+        DirectLoad {
+            unacked_bytes: 200_000,
+            ..base
+        },
+        DirectLoad {
+            rtt_ms: Some(47.7),
+            unacked_bytes: 132,
+            bytes_per_ms: Some(77.09411764705882),
+            direct_bulk_received: true,
+            ..base
+        },
+        DirectLoad {
+            unacked_bytes: 48,
+            bytes_per_ms: Some(1_250.0),
+            relay_bulk_received: true,
+            ..base
+        },
+        DirectLoad {
+            unacked_bytes: 65_536,
+            bytes_per_ms: Some(12_500.0),
+            relay_bulk_sent: true,
+            ..base
+        },
+        DirectLoad {
+            unacked_bytes: 4 * 1024 * 1024,
+            bytes_per_ms: Some(12_500.0),
+            relay_bulk_sent: true,
+            relay_bulk_received: true,
+            direct_bulk_received: true,
+            ..base
+        },
+        DirectLoad {
+            rtt_ms: Some(1_208.4),
+            unacked_bytes: 25,
+            bytes_per_ms: Some(0.0),
+            ..base
+        },
+    ];
+    let opt = |v: Option<f64>| v.map_or(Value::Null, |v| json!(v));
+    let cases: Vec<Value> = loads
+        .iter()
+        .flat_map(|load| {
+            [DirectTimer::Silence, DirectTimer::Progress].map(|timer| {
+                let d = direct_deadline(timer, load);
+                json!({
+                    "timer": timer.name(),
+                    "load": {
+                        "rttMs": opt(load.rtt_ms),
+                        "unackedBytes": load.unacked_bytes,
+                        "bytesPerMs": opt(load.bytes_per_ms),
+                        "relayBulkSent": load.relay_bulk_sent,
+                        "relayBulkReceived": load.relay_bulk_received,
+                        "directBulkReceived": load.direct_bulk_received,
+                    },
+                    "deadline": {"limitMs": d.limit_ms, "floorMs": d.floor_ms, "loadMs": d.load_ms, "aheadBytes": d.ahead_bytes, "bytesPerMs": d.bytes_per_ms},
+                })
+            })
+        })
+        .collect();
+    let mut rate = None;
+    let rates: Vec<Value> = [100.0, 40.0, 120.0, 61.0, 33.333333333333336, 1_000.0, 999.9]
+        .iter()
+        .map(|&sample| {
+            let before = rate;
+            let next = next_rate(rate, sample);
+            rate = Some(next);
+            json!({"rate": opt(before), "sample": sample, "next": next})
+        })
+        .collect();
+    json!({
+        "constants": {
+            "unackedTimeoutMs": crate::path::UNACKED_TIMEOUT_MS,
+            "directTimeoutMs": crate::path::DIRECT_TIMEOUT_MS,
+            "directTimeoutMaxMs": crate::path::DIRECT_TIMEOUT_MAX_MS,
+            "rateSampleBytes": crate::path::RATE_SAMPLE_BYTES,
+            "assumedBytesPerMs": crate::path::ASSUMED_BYTES_PER_MS,
+            "bulkRecentMs": crate::path::BULK_RECENT_MS,
+            "loadFactor": crate::path::LOAD_FACTOR,
+        },
+        "cases": cases,
+        "rates": rates,
+    })
+}
+
 /// The direct path (`path.rs`): envelopes, signals and DataChannel messages
 /// byte for byte, the direct prologue, and a direct handshake with fixed
 /// ephemerals whose transport carries sequenced envelopes.
@@ -317,6 +432,7 @@ fn path_vectors() -> Value {
         })
         .collect();
     json!({
+        "deadlines": deadline_vectors(),
         "feature": crate::path::CLIENT_FEATURE,
         "signalPath": crate::path::SIGNAL_PATH,
         "envelopeHeader": crate::path::ENVELOPE_HEADER,

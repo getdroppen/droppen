@@ -10,33 +10,40 @@
  * new frames go that way, kept until the peer acknowledges them. When it
  * fails (the DataChannel closes, nothing comes over it for
  * `DIRECT_TIMEOUT_MS`, what it carries waits for an acknowledgement while the
- * path makes no progress for `UNACKED_TIMEOUT_MS` or ten round trips, a
- * message on it does not open, or the peer says so with a `down` envelope),
- * `detachDirect` sends everything unacknowledged again over the hub and the
- * receiver drops what it already had.
+ * path makes no progress for `UNACKED_TIMEOUT_MS` or ten round trips — both
+ * stretched by what the path carries, `directDeadline` — a message on it
+ * does not open, or the peer says so with a `down` envelope), `detachDirect`
+ * sends everything unacknowledged again over the hub and the receiver drops
+ * what it already had.
  *
  * Path times are milliseconds of a monotonic clock (`performance.now()` in
  * the driver); the transports seal with wall-clock milliseconds for
  * rekeying. Rust keeps one clock in microseconds; the rules are the same.
  */
-import type { Frame } from "./frame";
+import { type Frame, INITIAL_CREDIT } from "./frame";
 import { decodeMuxFrame, encodeMuxFrame, Mux, type MuxEvent, type MuxFrame, type Role } from "./mux";
 import type { Transport } from "./noise";
 import {
+  ASSUMED_BYTES_PER_MS,
+  BULK_RECENT_MS,
   decodeDcMessage,
   decodeEnvelope,
   DIRECT_PROBE_MS,
-  DIRECT_TIMEOUT_MS,
+  type DirectDeadline,
+  directDeadline,
+  type DirectLoad,
+  type DirectTimer,
   type DownReason,
   encodeDcMessage,
   encodeEnvelope,
   type Envelope,
   type LaneStats,
   Lanes,
+  nextRate,
   PathError,
+  RATE_SAMPLE_BYTES,
   RELAY_PROBE_MS,
   UNACKED_LIMIT,
-  UNACKED_TIMEOUT_MS,
   type Via,
 } from "./path";
 
@@ -54,12 +61,15 @@ export interface PathOptions {
 
 /**
  * Something about the paths the owner may want to know: a direct path
- * attached or let go (a timeout says which deadline, and how long the path
- * had gone without), a probe sent and the round trip of its answer, a hub
- * probe that has gone a whole probe interval unanswered (`late`, once per
- * probe: no answer, so no round trip — the path's `relayProbeAgeMs` and
- * `relayQuietMs` say how old and how quiet), and a pause of this page's
- * timers that made the probes before it forgotten.
+ * attached or let go (a timeout says which deadline, how long the path had
+ * gone without, and what the deadline was made of), the peer's word that it
+ * let the direct path go after this side already had (`peerDown`: why the
+ * peer did, when its DataChannel's closing came first), a probe sent and the
+ * round trip of its answer, a hub probe that has gone a whole probe interval
+ * unanswered (`late`, once per probe: no answer, so no round trip — the
+ * path's `relayProbeAgeMs` and `relayQuietMs` say how old and how quiet),
+ * and a pause of this page's timers that made the probes before it
+ * forgotten.
  */
 export type PathEvent =
   | { type: "directUp" }
@@ -68,10 +78,14 @@ export type PathEvent =
       reason: DownReason;
       remote: boolean;
       /** For a timeout on this side: which deadline (`DIRECT_TIMEOUT_MS` of silence, or `UNACKED_TIMEOUT_MS` with frames unacknowledged), and how long since the path last showed it was there (ms). */
-      timer?: "DIRECT_TIMEOUT_MS" | "UNACKED_TIMEOUT_MS";
+      timer?: DirectTimer;
       elapsedMs?: number;
       unackedBytes?: number;
+      /** For a timeout: the deadline it missed (`directDeadline`), and what the path carried then. */
+      deadline?: DirectDeadline;
+      load?: DirectLoad;
     }
+  | { type: "peerDown"; reason: DownReason }
   | { type: "probe"; via: Via; nonce: number }
   | { type: "rtt"; via: Via; ms: number; nonce?: number }
   /** A hub probe out a whole probe interval (`unsent`: still waiting for credit to leave), said once: its age, and how long nothing had come over the hub then. */
@@ -161,6 +175,22 @@ class Paths {
   lastRelayRxMs: number;
   /** When `tick` last ran: a long gap means this page's timers were held, not that the peer went silent. */
   lastTickMs: number;
+  /**
+   * The slowest the channel's link has lately carried, on either path and
+   * either way (bytes/ms, `nextRate`): from acknowledgements freeing what this
+   * side sent on the direct path, and from the peer's bulk arriving back to
+   * back. What the direct path's deadlines time the bytes ahead at.
+   */
+  bytesPerMs: number | null = null;
+  /** Acknowledged bytes, and the time they took, gathered toward the next sample while the direct path stays backlogged. */
+  private ackedBytes = 0;
+  private ackedMs = 0;
+  /** When an acknowledgement last freed frames sent on the direct path (`null`: none since it was attached). */
+  private lastAckedMs: number | null = null;
+  /** When bulk (a message of `RATE_SAMPLE_BYTES` or more) last came over each path. */
+  private readonly bulkIn: Record<Via, number | null> = { relay: null, direct: null };
+  /** When this side last sealed bulk for the hub path. */
+  private relayBulkOutMs: number | null = null;
   events: PathEvent[] = [];
   readonly counts = {
     relayRttMs: null as number | null,
@@ -188,23 +218,92 @@ class Paths {
     return this.nextNonce++;
   }
 
-  /**
-   * When frames wait for an acknowledgement on the direct path and it has made
-   * no progress for too long: `UNACKED_TIMEOUT_MS` or ten round trips, counted
-   * from the later of the oldest such frame leaving and the path's last
-   * progress. Counted from the frame alone, a backlog the link drains more
-   * slowly than that (the DataChannel's own buffer, or the peer's
-   * acknowledgement queued behind its own backlog) gave a healthy path up.
-   */
-  unackedDeadlineMs(): number | null {
-    const sent = this.lanes.oldestUnackedMs();
-    if (sent === null) return null;
-    return Math.max(sent, this.lastDirectProgressMs) + Math.max(UNACKED_TIMEOUT_MS, (this.counts.directRttMs ?? 0) * 10);
+  /** What the direct path carries now, for its deadlines (`directDeadline`). */
+  load(): DirectLoad {
+    const heard = Math.max(this.lastDirectRxMs, this.lastRelayRxMs);
+    const recent = (at: number | null) => at !== null && heard - at <= BULK_RECENT_MS;
+    const oldest = this.lanes.oldestUnackedMs();
+    // A whole hub window this side sent may still be on its way for as long as the link takes to carry one.
+    const windowMs = Math.max(BULK_RECENT_MS, INITIAL_CREDIT / (this.bytesPerMs ?? ASSUMED_BYTES_PER_MS));
+    return {
+      rttMs: this.counts.directRttMs,
+      unackedBytes: this.lanes.unackedBytes,
+      bytesPerMs: this.bytesPerMs,
+      relayBulkSent: oldest !== null && this.relayBulkOutMs !== null && oldest - this.relayBulkOutMs <= windowMs,
+      relayBulkReceived: recent(this.bulkIn.relay),
+      directBulkReceived: recent(this.bulkIn.direct),
+    };
   }
 
-  /** An acknowledgement came (on either path): progress on the direct one when it freed frames sent there. */
+  /**
+   * The direct path's deadlines now: silence, counted from the last thing it
+   * brought; and, while frames sent on it wait for an acknowledgement, no
+   * progress, counted from the later of the oldest such frame leaving and the
+   * path's last progress. Counted from the frame alone, a backlog the link
+   * drains more slowly than that (the DataChannel's own buffer, or the peer's
+   * acknowledgement queued behind its own backlog) gave a healthy path up.
+   */
+  directDeadlines(): { load: DirectLoad; silence: DirectDeadline; progress: { since: number; deadline: DirectDeadline } | null } {
+    const load = this.load();
+    const sent = this.lanes.oldestUnackedMs();
+    return {
+      load,
+      silence: directDeadline("DIRECT_TIMEOUT_MS", load),
+      progress: sent === null ? null : { since: Math.max(sent, this.lastDirectProgressMs), deadline: directDeadline("UNACKED_TIMEOUT_MS", load) },
+    };
+  }
+
+  /**
+   * An acknowledgement came (on either path): progress on the direct one when
+   * it freed frames sent there — and, gathered while the path stays
+   * backlogged, a sample of how fast it carries what this side sends: the
+   * bytes freed over the time since the previous acknowledgement, or since
+   * the oldest of them left when the path had nothing waiting before.
+   */
   acked(ack: number, nowMs: number): void {
-    if (this.lanes.onAck(ack) > 0) this.lastDirectProgressMs = nowMs;
+    const before = this.lanes.unackedBytes;
+    const oldest = this.lanes.oldestUnackedMs();
+    if (this.lanes.onAck(ack) === 0) return;
+    this.lastDirectProgressMs = nowMs;
+    const since = Math.max(this.lastAckedMs ?? Number.NEGATIVE_INFINITY, oldest ?? nowMs);
+    this.lastAckedMs = nowMs;
+    this.ackedBytes += before - this.lanes.unackedBytes;
+    this.ackedMs += Math.max(0, nowMs - since);
+    if (this.ackedBytes >= RATE_SAMPLE_BYTES && this.ackedMs > 0) {
+      this.bytesPerMs = nextRate(this.bytesPerMs, this.ackedBytes / this.ackedMs);
+      this.ackedBytes = 0;
+      this.ackedMs = 0;
+    } else if (this.lanes.unackedBytes === 0) {
+      // Nothing waits any more: what comes next is not timed from this.
+      this.ackedBytes = 0;
+      this.ackedMs = 0;
+    }
+  }
+
+  /**
+   * A message of `len` bytes came over `via`: bulk when it weighs
+   * `RATE_SAMPLE_BYTES` or more, and two bulk messages in a row on one path,
+   * within `BULK_RECENT_MS`, time the link — the second took the time between
+   * them to come.
+   */
+  heardBulk(via: Via, len: number, nowMs: number): void {
+    if (len < RATE_SAMPLE_BYTES) return;
+    const prev = this.bulkIn[via];
+    if (prev !== null && nowMs > prev && nowMs - prev <= BULK_RECENT_MS) this.bytesPerMs = nextRate(this.bytesPerMs, len / (nowMs - prev));
+    this.bulkIn[via] = nowMs;
+  }
+
+  /** This side sealed `len` bytes for the hub path. */
+  sentRelay(len: number, nowMs: number): void {
+    if (len >= RATE_SAMPLE_BYTES) this.relayBulkOutMs = nowMs;
+  }
+
+  /** A new direct path: what was timed on the one before about its acknowledgements and its bulk is not this one's. */
+  attached(): void {
+    this.ackedBytes = 0;
+    this.ackedMs = 0;
+    this.lastAckedMs = null;
+    this.bulkIn.direct = null;
   }
 
   /**
@@ -360,6 +459,7 @@ export class Session {
     p.lastDirectProgressMs = nowMs;
     p.nextDirectProbeMs = nowMs;
     p.outDirect = [];
+    p.attached();
     p.counts.ups += 1;
     p.events.push({ type: "directUp" });
   }
@@ -408,7 +508,9 @@ export class Session {
       const env = p.outRelay.shift();
       if (env) {
         p.noteProbe(env, "relay", nowMs);
-        return { wire: await this.relay(wallMs, encodeEnvelope(env)), data: null };
+        const plain = encodeEnvelope(env);
+        p.sentRelay(plain.length, nowMs);
+        return { wire: await this.relay(wallMs, plain), data: null };
       }
     }
     if (room.direct && p.direct) {
@@ -434,7 +536,10 @@ export class Session {
       if (due === null || due > nowMs) return null;
       env = { type: "ack", ack: p.lanes.takeAck() };
     }
-    return { wire: direct ? await this.directWire(direct, wallMs, env) : await this.relay(wallMs, encodeEnvelope(env)), data };
+    if (direct) return { wire: await this.directWire(direct, wallMs, env), data };
+    const plain = encodeEnvelope(env);
+    p.sentRelay(plain.length, nowMs);
+    return { wire: await this.relay(wallMs, plain), data };
   }
 
   /** Whether the path new envelopes go on can take one now (the hub path waits behind its own queue). */
@@ -465,6 +570,7 @@ export class Session {
       return event ? [event] : [];
     }
     this.heardRelay(nowMs);
+    this.paths.heardBulk("relay", payload.length, nowMs);
     return this.onEnvelope(decodeEnvelope(plain), "relay", nowMs);
   }
 
@@ -497,6 +603,7 @@ export class Session {
       return [];
     }
     p.lastDirectRxMs = nowMs;
+    p.heardBulk("direct", message.length, nowMs);
     return this.onEnvelope(env, "direct", nowMs);
   }
 
@@ -546,6 +653,13 @@ export class Session {
           // this `down`: its numbers afresh, not as of the last probe tick.
           p.ageRelayProbe(nowMs);
           p.events.push({ type: "directDown", reason: env.reason, remote: true });
+        } else {
+          // The peer let a direct path go after this side had — its
+          // DataChannel's closing (the peer tearing it down) came first over
+          // the direct path, or this side's own deadline did, and the `down`
+          // behind the hub path's backlog. Its reason is the only word of why
+          // the peer let go.
+          p.events.push({ type: "peerDown", reason: env.reason });
         }
         break;
     }
@@ -563,15 +677,25 @@ export class Session {
     p.lastTickMs = nowMs;
     if (paused) p.events.push({ type: "paused", gapMs, forgotten: p.forgetProbesAfterPause(nowMs) });
     if (p.direct) {
-      const silent = nowMs - p.lastDirectRxMs > DIRECT_TIMEOUT_MS;
-      const unackedAt = p.unackedDeadlineMs();
-      const stuck = unackedAt !== null && nowMs > unackedAt;
+      const { load, silence, progress } = p.directDeadlines();
+      const quietMs = nowMs - p.lastDirectRxMs;
+      const silent = quietMs > silence.limitMs;
+      const stuck = progress !== null && nowMs - progress.since > progress.deadline.limitMs;
       if (silent || stuck) {
-        const unackedBytes = p.lanes.unackedBytes;
-        const elapsedMs = silent ? nowMs - p.lastDirectRxMs : nowMs - Math.max(p.lanes.oldestUnackedMs() ?? nowMs, p.lastDirectProgressMs);
+        const deadline = silent ? silence : progress!.deadline;
+        const elapsedMs = silent ? quietMs : nowMs - progress!.since;
         p.detach("timeout", true);
         p.ageRelayProbe(nowMs);
-        p.events.push({ type: "directDown", reason: "timeout", remote: false, timer: silent ? "DIRECT_TIMEOUT_MS" : "UNACKED_TIMEOUT_MS", elapsedMs, unackedBytes });
+        p.events.push({
+          type: "directDown",
+          reason: "timeout",
+          remote: false,
+          timer: silent ? "DIRECT_TIMEOUT_MS" : "UNACKED_TIMEOUT_MS",
+          elapsedMs,
+          unackedBytes: load.unackedBytes,
+          deadline,
+          load,
+        });
       } else if (nowMs >= p.nextDirectProbeMs) {
         p.nextDirectProbeMs = nowMs + DIRECT_PROBE_MS;
         p.outDirect.push({ type: "probe", nonce: p.nonce() });
@@ -601,9 +725,9 @@ export class Session {
     };
     if (p.direct) {
       take(p.nextDirectProbeMs);
-      take(p.lastDirectRxMs + DIRECT_TIMEOUT_MS + 1);
-      const unackedAt = p.unackedDeadlineMs();
-      if (unackedAt !== null) take(unackedAt + 1);
+      const { silence, progress } = p.directDeadlines();
+      take(p.lastDirectRxMs + silence.limitMs + 1);
+      if (progress) take(progress.since + progress.deadline.limitMs + 1);
     }
     if (p.opts.probeRelay) take(p.nextRelayProbeMs);
     return next;
