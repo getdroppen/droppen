@@ -183,6 +183,27 @@ test("a path busy past the window is drained once for a clean round trip; a smal
   assert.equal(quiet.stopped(false), true, "a bigger tail is marked");
 });
 
+test("a drain ends with a small tail still out, not only with nothing out", () => {
+  const pace = new Pace(INITIAL_CREDIT);
+  assert.deepEqual(pace.next(0), { type: "marker" });
+  pace.markerSent(1, 0);
+  pace.answered(1, 70);
+  pace.dataSent(60_000, 100);
+  pace.markerSent(2, 100);
+  pace.dataSent(2_000, 150);
+  assert.deepEqual(pace.next(10_200), { type: "data", budget: { interactive: 0, bulk: 0 } });
+  assert.equal(pace.stats().draining, true);
+  assert.equal(pace.stopped(true), true, "the tail is marked");
+  pace.markerSent(3, 10_200);
+  assert.equal(pace.answered(2, 10_300), true);
+  assert.equal(pace.inflight, 2_000);
+  assert.deepEqual(pace.next(10_300), { type: "marker" }, "a clean marker, now");
+  assert.equal(pace.stats().draining, false);
+  pace.markerSent(4, 10_300);
+  const next = pace.next(10_300);
+  assert.ok(next.type === "data" && next.budget.bulk > 0, "and data behind it");
+});
+
 test("interactive data has headroom past the cap, bulk has none; a seeded path measures its own round trip", () => {
   const pace = new Pace(INITIAL_CREDIT);
   pace.next(0);
@@ -325,6 +346,20 @@ test("a paced session stops at its cap; its markers bring the room back and touc
   assert.deepEqual(p.b.takeEvents(), [], "nor an event");
   for (let i = 0; i < 20; i++) await p.round(sid);
   assert.ok(p.b.paceStats()!.inflight <= PACE_FLOOR);
+});
+
+test("a paced side that mostly reads: the multiplexer's credits for what it read do not count against its cap", async () => {
+  const p = await Pair.create();
+  p.a.setPacing(true);
+  const sid = p.a.mux.open("blob", utf8("GET /api/fs/download"));
+  await p.sendAll();
+  while (await p.deliver(0, "relay")) continue;
+  p.b.mux.send(sid, new Uint8Array(1 << 20));
+  for (let i = 0; i < 20; i++) {
+    await p.round(sid);
+    const pace = p.a.paceStats()!;
+    assert.deepEqual([pace.inflight, pace.markers], [0, 0], JSON.stringify(pace));
+  }
 });
 
 test("after a fallback the hub path's control goes ahead of the resends, and they ahead of anything new", async () => {

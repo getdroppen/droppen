@@ -42,9 +42,15 @@
 //!   [`MIN_RTT_REFRESH_US`]. Taken from a queue, the minimum would feed itself:
 //!   a bigger cap, a longer queue, a longer round trip, a bigger cap. A path
 //!   kept busy for [`MIN_RTT_WINDOW_US`] without a clean marker is *drained*:
-//!   no new data until what is out has been delivered, then a clean marker and
-//!   data again behind it (BBR's ProbeRTT: about a round trip of idle link
-//!   every ten seconds).
+//!   no new data until no more than [`SMALL`] is out, then a clean marker and
+//!   data again behind it (BBR's ProbeRTT, which keeps a few packets out too:
+//!   about a round trip of idle link every ten seconds).
+//!
+//! What counts is stream data (and what a fallback resends). The
+//! multiplexer's own frames — opens, credits, closes — never wait for the cap
+//! and are not counted against it: a side that mostly reads sends a steady
+//! trickle of credits, which would otherwise keep its count from ever falling
+//! back to nothing.
 //!
 //! Markers go **before** the first data of a flight when the minimum is due a
 //! refresh (or unknown), **every** quarter of the cap and never closer than
@@ -285,16 +291,16 @@ impl Pace {
     pub fn next(&mut self, now_us: u64) -> Next {
         self.fold(now_us);
         let clean_out = self.markers.iter().any(|m| m.clean);
-        if self.inflight() == 0 {
-            // A new flight: time the empty path first when the minimum is due.
+        if self.inflight() <= SMALL {
+            // A new flight, or a drain's end: time the (all but) empty path first when the minimum is due.
             self.draining = false;
             let due = self.min_rtt.is_none_or(|(_, at)| now_us.saturating_sub(at) >= MIN_RTT_REFRESH_US);
             if due && !clean_out {
                 return Next::Marker;
             }
         } else if self.draining || (!clean_out && self.min_rtt.is_some_and(|(_, at)| now_us.saturating_sub(at) > MIN_RTT_WINDOW_US)) {
-            // Nothing new until what is out has been delivered (the tail is
-            // marked when the sender finds itself held, [`Pace::stopped`]).
+            // Nothing new until no more than SMALL is out (the tail is marked
+            // when the sender finds itself held, [`Pace::stopped`]).
             self.draining = true;
             return Next::Data(Budget::NONE);
         }
@@ -309,7 +315,13 @@ impl Pace {
         })
     }
 
-    /// `len` bytes of data (a sequenced envelope, sealed) left on the path.
+    /// The path carries new frames again after another did: what this pace
+    /// measures next starts out app-limited (its last delivery is old news).
+    pub fn resume(&mut self) {
+        self.app_limited_until = self.sent.max(1);
+    }
+
+    /// `len` bytes of stream data (a sequenced envelope, sealed) left on the path.
     pub fn data_sent(&mut self, len: usize, now_us: u64) {
         if self.inflight() == 0 {
             // A flight starts its own sampling interval (BBR).
@@ -767,6 +779,32 @@ mod tests {
         // Draining cost the link about a round trip: 1 Mbps for 3 s, less a little.
         assert!(sim.delivered as f64 >= 0.95 * 125.0 * 3_000.0, "{}", sim.delivered);
         assert!(!sim.run(&mut pace, 5_000).drained, "not again so soon");
+    }
+
+    /// A drain ends with a few KiB still out (BBR keeps a few packets too):
+    /// waiting for nothing at all to be out held everything for as long as
+    /// small writes kept coming faster than one a round trip.
+    #[test]
+    fn a_drain_ends_with_a_small_tail_still_out() {
+        let mut pace = Pace::new(512 * 1024);
+        assert_eq!(pace.next(0), Next::Marker);
+        pace.marker_sent(1, 0);
+        pace.answered(1, 70 * MS);
+        pace.data_sent(60_000, 100 * MS);
+        pace.marker_sent(2, 100 * MS);
+        pace.data_sent(2_000, 150 * MS);
+        // Busy past the window with no clean marker: drained, and the tail marked.
+        assert_eq!(pace.next(10_200 * MS), Next::Data(Budget::NONE));
+        assert!(pace.stats().draining);
+        assert!(pace.stopped(true));
+        pace.marker_sent(3, 10_200 * MS);
+        // What came before the tail is delivered: 2000 bytes still out, and the drain is over.
+        assert!(pace.answered(2, 10_300 * MS));
+        assert_eq!(pace.inflight(), 2_000);
+        assert_eq!(pace.next(10_300 * MS), Next::Marker, "a clean marker, now");
+        assert!(!pace.stats().draining);
+        pace.marker_sent(4, 10_300 * MS);
+        assert!(matches!(pace.next(10_300 * MS), Next::Data(b) if b.bulk > 0), "and data behind it");
     }
 
     #[test]

@@ -54,20 +54,33 @@ impl Link {
     }
 }
 
+/// A DataChannel's backlog as its owner keeps it: what the driver handed it
+/// and is not on the wire yet ([`DirectPipe::queued`]), and the most it held.
+#[derive(Clone, Default)]
+struct Backlog {
+    queued: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+}
+
 /// Messages through `link`'s bottleneck: each leaves once those before it
-/// have, at the link's rate (`left` is told how many bytes, when), and
-/// arrives `one_way` later.
+/// have, at the link's rate (`left`, a DataChannel's backlog, is told how
+/// many bytes, when), and arrives `one_way` later.
 fn bottleneck<T: Send + 'static>(
     link: Link,
     mut from: mpsc::UnboundedReceiver<T>,
     to: mpsc::UnboundedSender<T>,
     size: fn(&T) -> usize,
-    left: Option<Arc<AtomicUsize>>,
+    left: Option<Backlog>,
 ) {
     let (line_tx, mut line_rx) = mpsc::unbounded_channel::<(Instant, usize, T)>();
+    let seen = left.clone();
     tokio::spawn(async move {
         let mut free = Instant::now();
         while let Some(m) = from.recv().await {
+            if let Some(b) = &seen {
+                // The driver counts a message in before handing it over.
+                b.peak.fetch_max(b.queued.load(Ordering::Relaxed), Ordering::Relaxed);
+            }
             let bytes = size(&m);
             free = free.max(Instant::now()) + link.wire_time(bytes);
             if line_tx.send((free, bytes, m)).is_err() {
@@ -80,7 +93,7 @@ fn bottleneck<T: Send + 'static>(
         while let Some((at, bytes, m)) = line_rx.recv().await {
             tokio::time::sleep_until(at).await;
             if let Some(left) = &left {
-                left.fetch_sub(bytes, Ordering::Relaxed);
+                left.queued.fetch_sub(bytes, Ordering::Relaxed);
             }
             if air_tx.send((at + link.one_way, m)).is_err() {
                 break;
@@ -113,27 +126,29 @@ fn transports(seed: u64) -> (Transport, Transport) {
 }
 
 /// A direct path between the two drivers over `link` each way: the
-/// DataChannel's buffer is what waits at the bottleneck.
-fn direct_pipes(link: Link) -> (DirectPipe, DirectPipe) {
+/// DataChannel's buffer is what waits at the bottleneck (on a real one, its
+/// `bufferedAmount` and SCTP's queue). The agent's backlog is the third.
+fn direct_pipes(link: Link) -> (DirectPipe, DirectPipe, Backlog) {
     let (d_tx, d_tx_rx) = mpsc::unbounded_channel();
     let (a_tx, a_tx_rx) = mpsc::unbounded_channel();
     let (d_rx_tx, d_rx) = mpsc::unbounded_channel();
     let (a_rx_tx, a_rx) = mpsc::unbounded_channel();
-    let d_queued = Arc::new(AtomicUsize::new(0));
-    let a_queued = Arc::new(AtomicUsize::new(0));
-    bottleneck(link, d_tx_rx, a_rx_tx, |m: &Vec<u8>| m.len(), Some(d_queued.clone()));
-    bottleneck(link, a_tx_rx, d_rx_tx, |m: &Vec<u8>| m.len(), Some(a_queued.clone()));
+    let d = Backlog::default();
+    let a = Backlog::default();
+    bottleneck(link, d_tx_rx, a_rx_tx, |m: &Vec<u8>| m.len(), Some(d.clone()));
+    bottleneck(link, a_tx_rx, d_rx_tx, |m: &Vec<u8>| m.len(), Some(a.clone()));
     (
         DirectPipe {
             tx: d_tx,
             rx: d_rx,
-            queued: d_queued,
+            queued: d.queued,
         },
         DirectPipe {
             tx: a_tx,
             rx: a_rx,
-            queued: a_queued,
+            queued: a.queued.clone(),
         },
+        a,
     )
 }
 
@@ -141,6 +156,10 @@ fn direct_pipes(link: Link) -> (DirectPipe, DirectPipe) {
 struct Run {
     link: Link,
     bulk: usize,
+    /// How many downloads share it, at once (each `bulk / downloads`).
+    downloads: usize,
+    /// Each question's body, which the agent reads whole before it answers.
+    body: usize,
     /// Which ends pace (an old agent or page does not).
     agent_paces: bool,
     device_paces: bool,
@@ -157,6 +176,8 @@ struct Report {
     link_mbps: f64,
     /// The agent's pace as the download ended.
     cap: Option<u64>,
+    /// Over a direct path, the most the agent's DataChannel held unsent.
+    dc_peak: Option<usize>,
 }
 
 impl Report {
@@ -170,7 +191,7 @@ impl Report {
 
     fn line(&self, name: &str) -> String {
         format!(
-            "{name:<28} rpc n={:<3} p50={:>6.0} ms  p95={:>6.0} ms  max={:>6.0} ms   bulk {:>6.2} Mbps ({:>5.1}% of the link)   cap at the end {}",
+            "{name:<28} rpc n={:<3} p50={:>6.0} ms  p95={:>6.0} ms  max={:>6.0} ms   bulk {:>6.2} Mbps ({:>5.1}% of the link)   cap at the end {}{}",
             self.rpc_ms.len(),
             self.pct(0.5),
             self.pct(0.95),
@@ -178,11 +199,13 @@ impl Report {
             self.mbps,
             100.0 * self.mbps / self.link_mbps,
             self.cap.map_or("-".into(), |c| format!("{} KiB", c / 1024)),
+            self.dc_peak.map_or(String::new(), |p| format!("   DataChannel backlog at most {} KiB", p / 1024)),
         )
     }
 }
 
 async fn run(r: Run) -> Report {
+    let mut dc_peak: Option<Arc<AtomicUsize>> = None;
     let base = Instant::now();
     let clock: Clock = Arc::new(move || 1_000_000_000 + base.elapsed().as_micros() as u64);
     let (it, rt) = transports(1);
@@ -202,7 +225,8 @@ async fn run(r: Run) -> Report {
     let (device, _d_acc) = Channel::spawn_with(device, d_in_rx, d_out, opts(r.device_paces));
     let (agent, mut a_acc) = Channel::spawn_with(agent, a_in_rx, a_out, opts(r.agent_paces));
     if r.direct {
-        let (d_pipe, a_pipe) = direct_pipes(r.link);
+        let (d_pipe, a_pipe, backlog) = direct_pipes(r.link);
+        dc_peak = Some(backlog.peak);
         let (dt, at) = transports(10);
         agent.attach_direct(at, a_pipe).unwrap();
         device.attach_direct(dt, d_pipe).unwrap();
@@ -213,10 +237,20 @@ async fn run(r: Run) -> Report {
     }
 
     // The agent: a download for a blob stream, a small answer for an rpc one.
-    let bulk = r.bulk;
+    let bulk = r.bulk / r.downloads;
+    let body = r.body;
     tokio::spawn(async move {
         while let Some(Incoming { class, mut stream, .. }) = a_acc.recv().await {
             tokio::spawn(async move {
+                if class == StreamClass::Rpc {
+                    let mut read = 0;
+                    while read < body {
+                        match stream.recv().await {
+                            Some(StreamEvent::Data(d)) => read += d.len(),
+                            _ => return,
+                        }
+                    }
+                }
                 let mut left = if class == StreamClass::Blob { bulk } else { ANSWER };
                 let chunk = vec![0x5a; 64 * 1024];
                 while left > 0 {
@@ -238,13 +272,18 @@ async fn run(r: Run) -> Report {
 
     // The page: the download, and a question every second while it lasts.
     let start = Instant::now();
-    let mut blob = device.open(StreamClass::Blob, b"GET /api/fs/download?path=%2Ftmp%2Fbig").await.unwrap();
+    let mut blobs = Vec::new();
+    for _ in 0..r.downloads {
+        blobs.push(device.open(StreamClass::Blob, b"GET /api/fs/download?path=%2Ftmp%2Fbig").await.unwrap());
+    }
     let download = tokio::spawn(async move {
-        let mut got = 0;
-        while got < bulk {
-            match blob.recv().await {
-                Some(StreamEvent::Data(d)) => got += d.len(),
-                other => panic!("{other:?} after {got} bytes"),
+        for mut blob in blobs {
+            let mut got = 0;
+            while got < bulk {
+                match blob.recv().await {
+                    Some(StreamEvent::Data(d)) => got += d.len(),
+                    other => panic!("{other:?} after {got} bytes"),
+                }
             }
         }
         Instant::now()
@@ -259,7 +298,10 @@ async fn run(r: Run) -> Report {
         let device = device.clone();
         asks.push(tokio::spawn(async move {
             let asked = Instant::now();
-            let mut s = device.open(StreamClass::Rpc, b"GET /api/screens").await.unwrap();
+            let mut s = device.open(StreamClass::Rpc, b"POST /api/screens").await.unwrap();
+            if body > 0 {
+                s.send(&vec![1; body]).await.unwrap();
+            }
             let mut got = 0;
             while let Some(StreamEvent::Data(d)) = s.recv().await {
                 got += d.len();
@@ -278,9 +320,10 @@ async fn run(r: Run) -> Report {
     let secs = (done - start).as_secs_f64();
     Report {
         rpc_ms,
-        mbps: bulk as f64 * 8.0 / secs / 1e6,
+        mbps: r.bulk as f64 * 8.0 / secs / 1e6,
         link_mbps: r.link.bits_per_s as f64 / 1e6,
         cap,
+        dc_peak: dc_peak.map(|p| p.load(Ordering::Relaxed)),
     }
 }
 
@@ -296,6 +339,8 @@ async fn on_a_slow_link_a_question_waits_behind_a_fraction_of_a_second_of_downlo
     let base = Run {
         link,
         bulk: 3 * MIB,
+        downloads: 1,
+        body: 0,
         agent_paces: false,
         device_paces: false,
         direct: false,
@@ -319,12 +364,17 @@ async fn on_a_slow_link_a_question_waits_behind_a_fraction_of_a_second_of_downlo
 }
 
 /// The same over a direct path on the same link: its own limits (a 1 MiB
-/// DataChannel buffer, 4 MiB unacknowledged) queued even longer before.
+/// DataChannel buffer, 4 MiB unacknowledged) let the agent's DataChannel
+/// hold a megabyte — eight seconds at 1 Mbps in front of every answer and
+/// acknowledgement on that path; paced, it holds about the cap.
 #[tokio::test(start_paused = true)]
 async fn a_slow_direct_path_is_paced_too() {
+    // Four downloads at once: one stream's window alone (256 KiB) would stop short of the DataChannel's budget.
     let base = Run {
         link: Link::mbps(1.0, 70),
         bulk: 3 * MIB,
+        downloads: 4,
+        body: 0,
         agent_paces: false,
         device_paces: false,
         direct: true,
@@ -336,9 +386,12 @@ async fn a_slow_direct_path_is_paced_too() {
         ..base
     })
     .await;
-    println!("1 Mbps, 70 ms, a deep queue, 3 MiB download, an rpc every second, over a direct path:");
+    println!("1 Mbps, 70 ms, a deep queue, four downloads of 768 KiB at once, an rpc every second, over a direct path:");
     println!("{}", before.line("before (no pace)"));
     println!("{}", after.line("after (paced)"));
+    assert!(before.dc_peak.unwrap() >= 900 * 1024, "{before:?}");
+    let peak = after.dc_peak.unwrap() as u64;
+    assert!(peak <= crate::pace::FLOOR + crate::pace::HEADROOM + 4096, "the DataChannel holds about the cap: {after:?}");
     assert!(before.pct(0.95) > 2000.0, "{before:?}");
     assert!(after.pct(0.95) < 1000.0, "{after:?}");
     assert!(after.mbps >= 0.85 * before.mbps, "{} against {}", after.mbps, before.mbps);
@@ -352,6 +405,8 @@ async fn on_a_fast_link_the_download_keeps_its_speed() {
     let base = Run {
         link,
         bulk: 16 * MIB,
+        downloads: 1,
+        body: 0,
         agent_paces: false,
         device_paces: false,
         direct: false,
@@ -393,6 +448,8 @@ async fn an_end_that_paces_and_one_that_does_not_work_together() {
     let base = Run {
         link: Link::mbps(1.0, 70),
         bulk: 2 * MIB,
+        downloads: 1,
+        body: 0,
         agent_paces: true,
         device_paces: false,
         direct: false,
@@ -413,4 +470,36 @@ async fn an_end_that_paces_and_one_that_does_not_work_together() {
     assert!(new_agent_direct.pct(0.95) < 1000.0, "{new_agent_direct:?}");
     assert!(old_agent.mbps > 0.9, "{old_agent:?}");
     assert!(!old_agent.rpc_ms.is_empty() && !new_agent.rpc_ms.is_empty());
+}
+
+/// The side that reads a long download still writes: a credit for every
+/// 128 KiB it reads on each stream, and a small request body every second.
+/// Those writes are its own, and its pace must not hold them — the
+/// multiplexer's credits do not count against it, and a drain for a clean
+/// round trip ends with no more than a few KiB out. (A drain that waited for
+/// nothing at all to be out never ended while credits kept coming faster than
+/// one a round trip, and held every body until the download was over.)
+/// A 200 ms round trip and one download for 15 s, which its stream's window
+/// holds to about 10 Mbps — a credit every 100 ms — from an old agent and
+/// from a pacing one.
+#[tokio::test(start_paused = true)]
+async fn a_page_reading_a_long_download_still_sends_its_small_requests_at_once() {
+    let base = Run {
+        link: Link::mbps(20.0, 200),
+        bulk: 18 * MIB,
+        downloads: 1,
+        body: 100,
+        agent_paces: false,
+        device_paces: true,
+        direct: false,
+    };
+    let old_agent = run(base).await;
+    let paced = run(Run { agent_paces: true, ..base }).await;
+    println!("20 Mbps, 200 ms, an 18 MiB download, a POST (100 B body, read whole before the 2 KB answer) every second:");
+    println!("{}", old_agent.line("old agent, pacing page"));
+    println!("{}", paced.line("both pacing"));
+    assert!(old_agent.rpc_ms.len() >= 14 && paced.rpc_ms.len() >= 14);
+    // Behind an old agent's whole window (0.2 s of it at 20 Mbps), never behind the page's own drain.
+    assert!(old_agent.rpc_ms.last().copied().unwrap() < 1_500.0, "{old_agent:?}");
+    assert!(paced.rpc_ms.last().copied().unwrap() < 1_000.0, "{paced:?}");
 }

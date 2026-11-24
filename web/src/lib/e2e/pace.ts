@@ -17,7 +17,9 @@
  * - The minimum round trip only falls on a queued sample; a clean marker (no
  *   more than `PACE_SMALL` ahead of it) refreshes it every
  *   `PACE_MIN_RTT_REFRESH_MS`; a path busy for `PACE_MIN_RTT_WINDOW_MS`
- *   without one is drained for one.
+ *   without one is drained for one (until no more than `PACE_SMALL` is out).
+ * - What counts is stream data (and resends), not the multiplexer's own
+ *   frames: a side that mostly reads sends a steady trickle of credits.
  * - Markers go before the first data of a flight when the minimum is due,
  *   every quarter of the cap (at least `PACE_MIN_SPACING`), and after the last
  *   data when sending stops (held, or out of data with more than `PACE_SMALL`
@@ -178,13 +180,13 @@ export class Pace {
   next(nowMs: number): PaceNext {
     this.fold(nowMs);
     const cleanOut = this.markers.some((m) => m.clean);
-    if (this.inflight === 0) {
-      // A new flight: time the empty path first when the minimum is due.
+    if (this.inflight <= PACE_SMALL) {
+      // A new flight, or a drain's end: time the (all but) empty path first when the minimum is due.
       this.draining = false;
       const due = this.minRtt === null || nowMs - this.minRtt[1] >= PACE_MIN_RTT_REFRESH_MS;
       if (due && !cleanOut) return { type: "marker" };
     } else if (this.draining || (!cleanOut && this.minRtt !== null && nowMs - this.minRtt[1] > PACE_MIN_RTT_WINDOW_MS)) {
-      // Nothing new until what is out has been delivered (the tail is marked when the sender finds itself held).
+      // Nothing new until no more than PACE_SMALL is out (the tail is marked when the sender finds itself held).
       this.draining = true;
       return { type: "data", budget: BUDGET_NONE };
     }
@@ -194,7 +196,12 @@ export class Pace {
     return { type: "data", budget: { interactive: Math.max(0, cap + PACE_HEADROOM - used), bulk: Math.max(0, cap - used) } };
   }
 
-  /** `len` bytes of data (a sequenced envelope, sealed) left on the path. */
+  /** The path carries new frames again after another did: what this pace measures next starts out app-limited. */
+  resume(): void {
+    this.appLimitedUntil = Math.max(this.sent, 1);
+  }
+
+  /** `len` bytes of stream data (a sequenced envelope, sealed) left on the path. */
   dataSent(len: number, nowMs: number): void {
     if (this.inflight === 0) {
       // A flight starts its own sampling interval (BBR).

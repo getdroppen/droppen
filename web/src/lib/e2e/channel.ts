@@ -302,7 +302,10 @@ class Paths {
     for (const [nonce, [via]] of this.probes) if (via !== "relay") this.probes.delete(nonce);
     this.counts.downs += 1;
     // The hub path carries on at its own pace; one that never had a rate starts from the direct path's.
-    if (this.directPace) this.relayPace.seedRate(this.directPace.rateSample());
+    if (this.directPace) {
+      this.relayPace.seedRate(this.directPace.rateSample());
+      this.relayPace.resume();
+    }
     this.directPace = null;
     // The resends go ahead of anything new (in order, after any from an
     // earlier fallback still waiting), behind the hub path's control — the
@@ -452,7 +455,8 @@ export class Session {
       const resend = p.resendRelay.shift();
       if (resend) {
         const wire = await this.relay(wallMs, encodeEnvelope(resend));
-        if (p.pacing) p.relayPace.dataSent(wireLength(wire), nowMs);
+        // Paced when the hub path is the one carrying (a new direct path may have taken over since).
+        if (p.pacing && !p.direct) p.relayPace.dataSent(wireLength(wire), nowMs);
         return { wire, data: null };
       }
     }
@@ -492,7 +496,8 @@ export class Session {
       env = { type: "ack", ack: p.lanes.takeAck() };
     }
     const wire = direct ? await this.directWire(direct, wallMs, env) : await this.relay(wallMs, encodeEnvelope(env));
-    if (p.pacing && env.type === "data") p.pace(via).dataSent(wireLength(wire), nowMs);
+    // Stream data counts against the cap; the multiplexer's own frames do not.
+    if (p.pacing && data !== null) p.pace(via).dataSent(wireLength(wire), nowMs);
     return { wire, data };
   }
 

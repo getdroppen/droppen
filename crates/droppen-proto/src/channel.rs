@@ -381,7 +381,8 @@ impl Session {
             }
             if let Some(env) = p.resend_relay.pop_front() {
                 let sealed = self.transport.seal(now_ms, &env.encode())?;
-                if p.pacing {
+                // Paced when the hub path is the one carrying (a new direct path may have taken over since).
+                if p.pacing && p.direct.is_none() {
                     p.relay_pace.data_sent(sealed.len(), now_us);
                 }
                 return Ok(Some((
@@ -429,7 +430,8 @@ impl Session {
         } else {
             return Ok(None);
         };
-        let is_data = matches!(env, Envelope::Data { .. });
+        // Stream data counts against the cap; the multiplexer's own frames do not.
+        let paced = p.pacing && data.is_some();
         let wire = match via {
             Via::Relay => {
                 let sealed = self.transport.seal(now_ms, &env.encode())?;
@@ -446,7 +448,7 @@ impl Session {
                 (Wire::Direct(DcMessage::Sealed(sealed).encode()), data)
             }
         };
-        if p.pacing && is_data {
+        if paced {
             let len = match &wire.0 {
                 Wire::Relay(Frame::Data { payload, .. }) => payload.len(),
                 Wire::Relay(_) => 0,
@@ -736,6 +738,7 @@ impl Paths {
         // starts from the direct path's.
         if let Some(direct) = self.direct_pace.take() {
             self.relay_pace.seed_rate(direct.rate_sample());
+            self.relay_pace.resume();
         }
         // The resends go ahead of anything new (in order, after any from an
         // earlier fallback still waiting), behind the hub path's control —
@@ -1334,6 +1337,24 @@ mod tests {
         let sent: usize = q.relay[1].iter().map(|f| if let Frame::Data { payload, .. } = f { payload.len() } else { 0 }).sum();
         assert!(sent >= 256 * 1024, "the stream's whole window: {sent}");
         assert_eq!(q.b.pace_stats(), None);
+    }
+
+    /// A paced side that mostly reads sends the multiplexer's credits for what
+    /// it read: they never wait for the cap, nor count against it — nothing
+    /// is out, no marker follows them.
+    #[test]
+    fn the_multiplexers_own_frames_do_not_count_against_the_cap() {
+        let mut p = Pair::new();
+        p.a.set_pacing(true);
+        let sid = p.a.mux().open(StreamClass::Blob, b"GET /api/fs/download").unwrap();
+        p.send_all();
+        while p.deliver(0, Via::Relay) {}
+        p.b.mux().send(sid, &vec![7; 2 << 20]).unwrap();
+        for _ in 0..30 {
+            round(&mut p, sid);
+            let pace = p.a.pace_stats().unwrap();
+            assert_eq!((pace.inflight, pace.markers), (0, 0), "{pace:?}");
+        }
     }
 
     /// After a fallback the hub path's control (the `DOWN`, a probe) goes
