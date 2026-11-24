@@ -1,0 +1,13 @@
+# The Rust workspace and the licence only; never build output, never the web app.
+**/target
+**/node_modules
+web
+docs
+prototypes
+experiments
+examples
+openapi
+desktop
+e2e
+.git
+.worktrees
