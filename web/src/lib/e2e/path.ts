@@ -100,8 +100,10 @@ export const RELAY_SILENT_MS = 2 * RELAY_PROBE_MS;
  *   direct path fills they wait behind its traffic. Closing the channel there
  *   threw the working direct path away with it. The relay path is still
  *   probed, and once the direct path is let go (`DIRECT_TIMEOUT_MS` of
- *   silence, its DataChannel closed) the rule is the relay path's alone again:
- *   a relay path silent all that while is gone at once.
+ *   silence, its DataChannel closed, the peer's `down`) the rule is the relay
+ *   path's alone again, on its numbers taken afresh then: one whose probe is
+ *   old and that has truly delivered nothing for RELAY_SILENT_MS is gone at
+ *   once — a peer's `down` came over it, so it is not.
  */
 export function relayPathGone(probeAgeMs: number | null, quietMs: number | null, channelQuietMs: number | null = null): boolean {
   if (probeAgeMs === null || quietMs === null) return false;

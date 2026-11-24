@@ -93,7 +93,11 @@ class SharedLane {
     }
   }
 
-  /** What that path had on the link is lost (its end, or the relay, went away with it). */
+  /**
+   * What that path had on the link is lost (its end, or the relay, went away
+   * with it). The link time it took is not given back (`freeAt` stays): a
+   * simulation that flaps a path often looks busier than it is.
+   */
   lose(via: Via): void {
     this.queue = this.queue.filter((q) => q.via !== via);
   }
@@ -148,6 +152,8 @@ async function directChannel(t: TestContext, bytesPerSec: number) {
     relayAloneGone: false,
     /** When the device let its direct path go. */
     directReleasedAtMs: null as number | null,
+    /** Runs on every change of the device's paths, after the watch. */
+    onpaths: null as (() => void) | null,
   };
   const [dt, at] = await transports();
   const deviceLink: DirectLink = {
@@ -174,6 +180,7 @@ async function directChannel(t: TestContext, bytesPerSec: number) {
     state.maxProbeAgeMs = Math.max(state.maxProbeAgeMs, stats.relayProbeAgeMs ?? 0);
     if ((stats.relayProbeAgeMs ?? 0) >= RELAY_SILENT_MS && (stats.relayQuietMs ?? 0) >= RELAY_SILENT_MS) state.relayAloneGone = true;
     watch(stats);
+    state.onpaths?.();
   };
   device.onclose = (code) => {
     state.closed ??= { atMs: clock.now, code };
@@ -193,6 +200,15 @@ async function directChannel(t: TestContext, bytesPerSec: number) {
     download(streams: number, bytes: number): void {
       agent!.onincoming = (stream) => stream.send(new Uint8Array(bytes));
       for (let k = 0; k < streams; k++) device!.open("rpc", utf8(`GET /history/${k}`)).ondata = (data) => void (got.read += data.length);
+    },
+    /** The device sends `bytes` on each of `streams` streams; what the agent reads is counted. */
+    upload(streams: number, bytes: number): { read: number } {
+      const sent = { read: 0 };
+      agent!.onincoming = (stream) => {
+        stream.ondata = (data) => void (sent.read += data.length);
+      };
+      for (let k = 0; k < streams; k++) device!.open("rpc", utf8(`POST /upload/${k}`)).send(new Uint8Array(bytes));
+      return sent;
     },
     /** Move the clock (and the timers) to `toMs`, handing over what the link delivers on the way. */
     async advance(toMs: number): Promise<void> {
@@ -266,4 +282,27 @@ test("once the direct path goes, a hub path that has been silent all along is go
   assert.ok(closed, "replaced");
   assert.equal(closed.code, RELAY_PATH_GONE);
   assert.ok(closed.atMs - released <= STEP_MS, `replaced ${closed.atMs - released} ms after the direct path went`);
+});
+
+test("when the agent lets the direct path go, the hub path that brought its `down` is not taken for silent", async (t) => {
+  // The page uploads over the direct path and fills the uplink: its hub
+  // probes wait behind the upload, so the hub path reads old and quiet — the
+  // direct path carries, so the channel is kept. The agent gives the direct
+  // path up right then; its `down` comes over the hub path, which judges
+  // alone from then on: by what it just delivered, not by the last probe
+  // tick's numbers.
+  const c = await directChannel(t, 80_000);
+  const sent = c.upload(4, 1024 * 1024);
+  let droppedAtMs: number | null = null;
+  c.state.onpaths = () => {
+    const s = c.device.paths!;
+    if (droppedAtMs !== null || !s.direct || (s.relayProbeAgeMs ?? 0) < RELAY_SILENT_MS || (s.relayQuietMs ?? 0) < RELAY_SILENT_MS) return;
+    droppedAtMs = c.clock.now;
+    c.agent.detachDirect("failed");
+  };
+  await c.advance(90_000);
+  assert.ok(droppedAtMs !== null, "the hub path read old and quiet while the direct path carried, and the agent let the direct path go then");
+  assert.ok(c.state.directReleasedAtMs !== null, "the device heard it, and let the direct path go too");
+  assert.equal(c.state.closed, null, "the hub path had just delivered the `down`: not gone");
+  assert.equal(sent.read, 4 * 1024 * 1024, "all of it arrived, over the hub path in the end");
 });
