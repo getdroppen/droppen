@@ -12,11 +12,14 @@
 //! * [`protocol`] — `/a2a/*`: the Agent Card and the JSON-RPC and HTTP+JSON
 //!   bindings;
 //! * [`manage`] — `/api/a2a/*`: entries, tokens and the task list;
+//! * [`push`] — push delivery to the callers' webhooks, and where a push may
+//!   go;
 //! * `tck` — the A2A TCK's stand-in entry.
 //!
 //! The server builds [`A2a`] with a backend and an [`backend::EventInbox`],
-//! nests [`protocol::router`] at `/a2a`, registers [`manage::A2aState`]'s
-//! routes, and calls [`A2a::resume`] once it owns its instance.
+//! attaches a [`push::Pusher`], nests [`protocol::router`] at `/a2a`,
+//! registers [`manage::A2aState`]'s routes, and calls [`A2a::resume`] once it
+//! owns its instance.
 
 pub mod backend;
 pub mod engine;
@@ -24,6 +27,7 @@ pub mod entry;
 pub mod error;
 pub mod manage;
 pub mod protocol;
+pub mod push;
 pub mod store;
 mod tck;
 /// A fake [`backend::SessionBackend`] for tests. Only built for tests and with

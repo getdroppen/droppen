@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 publish = false
-description = "The Droppen server's A2A v1.0 server: the protocol types, the JSON-RPC and HTTP+JSON bindings, Agent Cards, A2A tokens, the task store and the SessionBackend port"
+description = "The Droppen server's A2A v1.0 server: the protocol types, the JSON-RPC and HTTP+JSON bindings, Agent Cards, A2A tokens, the task store, push delivery and the SessionBackend port"
 
 # The A2A protocol and its bookkeeping, and nothing that runs a session: the
 # sessions an A2A task drives are reached through the `SessionBackend` port,
@@ -20,19 +20,30 @@ futures-util = "0.3"
 gotcha = { workspace = true }
 # A token's random secret, from the OS, as `droppen-auth` draws its own.
 rand = "0.8"
+# Push delivery (`push`): the client, its resolver seam and `Url`, the parser
+# the client itself reads a push URL with. rustls only, as `droppen-base`
+# takes it: `default-features = false` keeps native-tls out.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }
 # Constant-time comparison of a token's digest; already in the graph.
 subtle = "2"
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+# `net`: the system resolver a push's host name goes through (`lookup_host`).
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-util = "0.7"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# The push tests' certificate authority and webhook certificate, made when the
+# tests run so no private key is kept in the repository; with `ring`, the
+# provider rustls already links. Already in the lockfile (str0m's DTLS).
+rcgen = { version = "0.14", default-features = false, features = ["ring"] }
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
+# The push tests' HTTPS webhook; the rustls reqwest already links, on `ring`.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 # Driving the protocol router in its tests.
 tower-service = "0.3"
 

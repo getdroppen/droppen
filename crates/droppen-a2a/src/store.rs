@@ -1,5 +1,5 @@
 //! The A2A tables of the instance database (`docs/a2a.md` §4; the schema is
-//! step 12 of [`droppen_instance::db::SCHEMA`]).
+//! steps 12 and 13 of [`droppen_instance::db::SCHEMA`]).
 //!
 //! Synchronous, like every store over [`Db`]: each call is one indexed query
 //! or one transaction over a single connection. A task and the events its
@@ -788,12 +788,18 @@ impl Store {
 
     /* ── push configurations ─────────────────────────────────────────── */
 
-    /// Keep a push configuration, replacing one of the same id.
-    pub fn put_push(&self, push: &PushRow) -> rusqlite::Result<()> {
+    /// Keep a push configuration, replacing one of the same id. Its delivery
+    /// cursor starts before the task's first event when `from_start` (a
+    /// configuration the task's first message came with is told the whole
+    /// task), else at the task's newest event, read in the same transaction:
+    /// one added later is told what happens from then on, and an event
+    /// written after this is never one it was not meant to get.
+    pub fn put_push(&self, push: &PushRow, from_start: bool) -> rusqlite::Result<()> {
         self.db.write(|tx| {
             tx.execute(
-                "INSERT OR REPLACE INTO a2a_push_configs (task_id, id, url, token, auth_scheme, auth_credentials, created_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT OR REPLACE INTO a2a_push_configs (task_id, id, url, token, auth_scheme, auth_credentials, created_ms, delivered_seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                         CASE WHEN ?8 THEN 0 ELSE COALESCE((SELECT seq FROM a2a_tasks WHERE id = ?1), 0) END)",
                 params![
                     push.task_id,
                     push.id,
@@ -801,11 +807,56 @@ impl Store {
                     push.token,
                     push.auth_scheme,
                     push.auth_credentials,
-                    push.created_ms
+                    push.created_ms,
+                    from_start
                 ],
             )?;
             Ok(())
         })
+    }
+
+    /// Where a push configuration's delivery stands: the number of the last
+    /// event of its task it was told of, or gave up on. `None` when there is
+    /// no such configuration.
+    pub fn push_cursor(&self, task_id: &str, id: &str) -> Option<i64> {
+        self.db
+            .read(|conn| {
+                conn.query_row(
+                    "SELECT delivered_seq FROM a2a_push_configs WHERE task_id = ?1 AND id = ?2",
+                    params![task_id, id],
+                    |row| row.get(0),
+                )
+                .optional()
+            })
+            .ok()
+            .flatten()
+    }
+
+    /// Move a push configuration's cursor up to `seq`, never back: a
+    /// configuration replaced meanwhile keeps the cursor it was given.
+    pub fn advance_push(&self, task_id: &str, id: &str, seq: i64) -> rusqlite::Result<()> {
+        self.db.write(|tx| {
+            tx.execute(
+                "UPDATE a2a_push_configs SET delivered_seq = MAX(delivered_seq, ?3) WHERE task_id = ?1 AND id = ?2",
+                params![task_id, id, seq],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Every push configuration whose task has events after its cursor, as
+    /// `(task, id)`: what a restart has left to deliver.
+    pub fn pending_pushes(&self) -> Vec<(String, String)> {
+        self.db
+            .read(|conn| {
+                let mut statement = conn.prepare(
+                    "SELECT p.task_id, p.id FROM a2a_push_configs p JOIN a2a_tasks t ON t.id = p.task_id
+                      WHERE p.delivered_seq < t.seq ORDER BY p.created_ms, p.task_id, p.id",
+                )?;
+                let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                Ok(rows.filter_map(Result::ok).collect())
+            })
+            .unwrap_or_default()
     }
 
     /// One push configuration.

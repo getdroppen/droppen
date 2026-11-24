@@ -190,7 +190,12 @@ fn a2a_server(paths: &Paths, config: &ConfigWrapper<AppConfig>, cancel: Cancella
     let (_events, inbox) = droppen_a2a::backend::event_channel();
     let store = droppen_a2a::store::Store::new(droppen_instance::db::at(paths.instance_db()));
     let settings = droppen_a2a::Settings::from_env(droppen_http::SERVER_VERSION, config.app.a2a.public_base());
-    droppen_a2a::A2a::new(store, droppen_a2a::backend::Unwired::shared(), inbox, settings, cancel)
+    let a2a = droppen_a2a::A2a::new(store, droppen_a2a::backend::Unwired::shared(), inbox, settings, cancel);
+    // Every status change and artifact goes to the callers' webhooks from
+    // here on; what an earlier run left undelivered goes at `A2a::resume`,
+    // which only the instance's owner calls.
+    droppen_a2a::push::Pusher::attach(&a2a);
+    a2a
 }
 
 /// The instance claims [`Prepared::claim_for_process`] keeps. A static is never

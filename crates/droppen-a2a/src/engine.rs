@@ -121,7 +121,8 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    fn as_str(self) -> &'static str {
+    /// How the event table spells it.
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             EventKind::Status => "status",
             EventKind::Progress => "progress",
@@ -149,14 +150,23 @@ pub struct TaskEvent {
     pub response: StreamResponse,
 }
 
-/// The push seam (M1c): told every event of every task, in order per task,
-/// once it is written. Called under the writer's lock, so it must only hand
-/// the event on (to a queue of its own) and never call back into [`A2a`].
-/// [`A2a::push_configs`] and [`A2a::entry`] give it the rest; the event table
-/// keeps what a retry needs.
+/// The push seam (M1c, [`crate::push`]): told every event of every task, in
+/// order per task, once it is written. Called under the writer's lock, so it
+/// must only hand the event on (to a queue of its own) and never call back
+/// into [`A2a`]. [`A2a::push_configs`] and [`A2a::entry`] give it the rest;
+/// the event table keeps what a retry needs.
 pub trait TaskEventSink: Send + Sync + 'static {
     /// One event, written.
     fn task_event(&self, event: &TaskEvent);
+
+    /// A push configuration of `task_id` was kept: events it has not been
+    /// told of may be waiting already (one a message came with is told its
+    /// task from the first event). The same rules as [`Self::task_event`].
+    fn push_added(&self, _task_id: &str) {}
+
+    /// The server took its instance over after a start ([`A2a::resume`]):
+    /// what was not delivered before it stopped is due.
+    fn resume(&self) {}
 }
 
 /// Who a request is: a token that proved itself, on an entry in its scope.
@@ -1112,6 +1122,10 @@ impl A2a {
     /// up again where its session stands, and the waiting ones go out as
     /// slots allow. A TCK task, which nothing keeps across a restart, fails.
     pub async fn resume(&self) {
+        let sink = self.sink.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        if let Some(sink) = sink {
+            sink.resume();
+        }
         let mut entries = std::collections::BTreeSet::new();
         for task in self.store.open_tasks() {
             entries.insert(task.entry.clone());
@@ -1228,7 +1242,7 @@ impl A2a {
             Created::Duplicate(task_id) => return self.again(who, &task_id, history_length, blocking),
         };
         if let Some(push) = &config.task_push_notification_config {
-            self.put_push(&follow.snapshot.id, push.clone())?;
+            self.put_push(&follow.snapshot.id, push.clone(), true)?;
         }
         self.pump(&who.entry.id);
         Ok(Sent::Task {
@@ -1587,7 +1601,10 @@ impl A2a {
         Ok(())
     }
 
-    fn put_push(&self, task_id: &str, push: TaskPushNotificationConfig) -> Result<TaskPushNotificationConfig, A2aError> {
+    /// Keep a push configuration of `task_id`: told the task from its first
+    /// event when it came with the message that made the task (`from_start`),
+    /// else from the next event on.
+    fn put_push(&self, task_id: &str, push: TaskPushNotificationConfig, from_start: bool) -> Result<TaskPushNotificationConfig, A2aError> {
         let id = if push.id.is_empty() { new_id() } else { push.id.clone() };
         let existing = self.store.pushes(task_id);
         if existing.len() >= MAX_PUSH_CONFIGS && !existing.iter().any(|row| row.id == id) {
@@ -1611,8 +1628,12 @@ impl A2a {
             created_ms: now_ms(),
         };
         self.store
-            .put_push(&row)
+            .put_push(&row, from_start)
             .map_err(|error| A2aError::internal(format!("cannot keep the push configuration: {error}")))?;
+        let sink = self.sink.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+        if let Some(sink) = sink {
+            sink.push_added(task_id);
+        }
         Ok(push_config(&row))
     }
 
@@ -1620,7 +1641,7 @@ impl A2a {
     pub fn create_push(&self, who: &Caller, task_id: &str, push: TaskPushNotificationConfig) -> Result<TaskPushNotificationConfig, A2aError> {
         self.scoped(who, task_id)?;
         self.check_push(&who.entry, &push)?;
-        self.put_push(task_id, push)
+        self.put_push(task_id, push, false)
     }
 
     /// `GetTaskPushNotificationConfig`.
@@ -1698,7 +1719,7 @@ impl A2a {
 
     /// Keep a push configuration a send came with, checked already.
     pub(crate) fn add_push(&self, task_id: &str, push: TaskPushNotificationConfig) -> Result<TaskPushNotificationConfig, A2aError> {
-        self.put_push(task_id, push)
+        self.put_push(task_id, push, true)
     }
 
     /// Record a message a TCK task was sent.
