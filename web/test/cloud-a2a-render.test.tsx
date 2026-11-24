@@ -203,10 +203,15 @@ test("changing who takes its calls: a device taken off is said to get a new cont
   const pick = (next: string[]) => (tree: El[]) => (tree.find((e) => "picked" in e.props && "onChange" in e.props)!.props.onChange as (s: Set<string>) => void)(new Set(next));
   const props = { proxy: "a-1", hosts, accepted: ["m-1", "m-2"], busy: false, onSave: noop, onCancel: noop };
   const narrowed = drive(A2aAcceptPanel, props, [pick(["m-1"])]);
-  assert.match(narrowed.html, /data-testid="a2a-accept-narrowing"[^>]*>m-2 stop taking its calls and get a new content key now/);
+  assert.match(narrowed.html, /data-testid="a2a-accept-narrowing"[^>]*>m-2 stop taking its calls and are treated as exposed/);
+  assert.ok(narrowed.html.includes("They get a new content key now and renew their identity key after it"));
   assert.ok(narrowed.html.includes("save and rotate their keys"));
+  // Which devices then renew their identity key on their own, as the account works it out.
+  const renewing = drive(A2aAcceptPanel, { ...props, renewsIfNarrowed: (dropped: string[]) => [...dropped, "m-3"] }, [pick(["m-1"])]);
+  assert.match(renewing.html, /data-testid="renewals-ahead"[^>]*>2 devices that run AI will renew their identity key automatically/);
+  assert.ok(renewing.html.includes("m-2, m-3"));
   const widened = drive(A2aAcceptPanel, props, [pick(["m-1", "m-2", "m-3"])]);
   assert.doesNotMatch(widened.html, /a2a-accept-narrowing/, "adding one hands nothing over");
   const zh = drive(A2aAcceptPanel, props, [pick([])], "zh-CN");
-  assert.ok(zh.html.includes("m-1, m-2 不再接受它的调用，并会立即换新的内容密钥"));
+  assert.ok(zh.html.includes("m-1, m-2 不再接受它的调用，并被当作已暴露"));
 });

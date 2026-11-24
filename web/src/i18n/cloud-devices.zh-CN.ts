@@ -839,7 +839,7 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "An A2A call starts a session on that device as its user: what the session runs can read any file that user can. Each device also needs an A2A entry that allows the proxy, in its own A2A settings.": "一次 A2A 调用会以那台设备的用户身份开一个会话：会话里运行的东西能读到这个用户能读的任何文件。每台设备还需要在自己的 A2A 设置里有一个允许这个代理的 A2A 入口。",
   "no device that runs AI in the account yet": "账户里还没有可运行 AI 的设备",
   "which devices take its calls": "哪些设备接受它的调用",
-  "{{ids}} stop taking its calls and get a new content key now: a session the proxy started there could have read the old one.": "{{ids}} 不再接受它的调用，并会立即换新的内容密钥：代理在那里开的会话可能读到过旧的。",
+  "{{ids}} stop taking its calls and are treated as exposed: a session the proxy started there could have read their keys, the identity key included. They get a new content key now and renew their identity key after it; one that cannot renew should be removed and added again.": "{{ids}} 不再接受它的调用，并被当作已暴露：代理在那里开的会话可能读到过它们的密钥，包括身份密钥。它们会立即换新的内容密钥，之后更换身份密钥；不能更换的，应移除后重新添加。",
   "save and rotate their keys": "保存并轮换它们的密钥",
   "A2A proxy": "A2A 代理",
   "An A2A proxy: it calls the A2A of the devices that take its calls, for an A2A client that cannot reach them. It controls no device and holds none of your keys.": "A2A 代理：它替连不到你设备的 A2A 客户端，调用接受它调用的设备的 A2A。它不控制任何设备，也不持有你的任何密钥。",

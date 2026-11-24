@@ -540,6 +540,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
             hosts={hostChoices}
             accepted={a2aHostsOf(chain, id).sort()}
             busy={busy}
+            renewsIfNarrowed={(dropped) => hostsExposedBy(chain, id, dropped).filter((h) => account.renews?.(h) === true)}
             onCancel={() => setSection({ kind: "list" })}
             onSave={(picked) =>
               void run(async () => {

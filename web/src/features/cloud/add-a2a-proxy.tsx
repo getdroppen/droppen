@@ -13,6 +13,7 @@ import { DEVICES_KEY, type LimitHit, limitOf } from "@/lib/hub/plan";
 import { useTicker } from "@/lib/ticker";
 import { codeDeadline, codeTimeLeft } from "./add-computer";
 import { LimitNote, useMe } from "./plan";
+import { RenewalsAhead } from "./renewal";
 import { CopyButton, ErrorLine, errorText, field, Note, primary, quiet, secondary } from "./ui";
 
 /*
@@ -512,9 +513,12 @@ function A2aHostPicks({ hosts, picked, disabled, onChange }: { hosts: HostChoice
 
 /**
  * Which devices that run AI take A2A proxy `proxy`'s calls, changed from its
- * row. A device taken off gets a new content key in the same change (a
- * session the proxy started there could have read the old one off its disk):
- * said before it is saved. Adding one hands nothing over.
+ * row. A device taken off is exposed, as to a lost controller (docs/a2a.md
+ * §6, §7.1): a session the proxy started there could have read its keys, its
+ * identity key included — so it gets a new content key in the same change,
+ * and renews its identity key after it, with the devices that let it control
+ * them (`renewsIfNarrowed`). Said before it is saved. Adding one hands
+ * nothing over.
  */
 export function A2aAcceptPanel({
   proxy,
@@ -522,6 +526,7 @@ export function A2aAcceptPanel({
   accepted,
   busy,
   error,
+  renewsIfNarrowed,
   onSave,
   onCancel,
 }: {
@@ -531,6 +536,8 @@ export function A2aAcceptPanel({
   accepted: string[];
   busy: boolean;
   error?: string | null;
+  /** The devices that run AI that would renew their identity key after these stop taking its calls (`hostsExposedBy`). */
+  renewsIfNarrowed?: (dropped: string[]) => string[];
   onSave: (picked: string[]) => void;
   onCancel: () => void;
 }) {
@@ -545,9 +552,15 @@ export function A2aAcceptPanel({
         <A2aHostPicks hosts={hosts} picked={picked} disabled={busy} onChange={setPicked} />
         <A2aCallsNote />
         {dropped.length > 0 && (
-          <p data-testid="a2a-accept-narrowing" data-signal="warn" className="text-2xs leading-4 text-warn-fg">
-            {t("{{ids}} stop taking its calls and get a new content key now: a session the proxy started there could have read the old one.", { ids: dropped.join(", ") })}
-          </p>
+          <>
+            <p data-testid="a2a-accept-narrowing" data-signal="warn" className="text-2xs leading-4 text-warn-fg">
+              {t(
+                "{{ids}} stop taking its calls and are treated as exposed: a session the proxy started there could have read their keys, the identity key included. They get a new content key now and renew their identity key after it; one that cannot renew should be removed and added again.",
+                { ids: dropped.join(", ") },
+              )}
+            </p>
+            <RenewalsAhead ids={renewsIfNarrowed?.(dropped) ?? []} />
+          </>
         )}
         <ErrorLine message={error} />
         <div className="flex gap-2">

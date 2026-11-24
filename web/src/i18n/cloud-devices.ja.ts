@@ -839,7 +839,7 @@ export const cloudDevicesJa: Record<string, string> = {
   "An A2A call starts a session on that device as its user: what the session runs can read any file that user can. Each device also needs an A2A entry that allows the proxy, in its own A2A settings.": "A2A の呼び出しは、そのデバイスのユーザーとしてセッションを始めます：セッションで動くものは、そのユーザーが読めるファイルをすべて読めます。各デバイスには、自身の A2A 設定でこのプロキシを許可する A2A エントリも必要です。",
   "no device that runs AI in the account yet": "アカウントにはまだ AI を実行できるデバイスがありません",
   "which devices take its calls": "呼び出しを受け付けるデバイス",
-  "{{ids}} stop taking its calls and get a new content key now: a session the proxy started there could have read the old one.": "{{ids}} はこのプロキシからの呼び出しを受け付けなくなり、すぐに新しいコンテンツ鍵に替わります：プロキシがそこで始めたセッションが古い鍵を読んだかもしれないためです。",
+  "{{ids}} stop taking its calls and are treated as exposed: a session the proxy started there could have read their keys, the identity key included. They get a new content key now and renew their identity key after it; one that cannot renew should be removed and added again.": "{{ids}} はこのプロキシからの呼び出しを受け付けなくなり、露出したものとして扱われます：プロキシがそこで始めたセッションが、ID 鍵を含む鍵を読んだかもしれないためです。すぐに新しいコンテンツ鍵に替わり、その後 ID 鍵を更新します。更新できないものは、削除してから追加し直してください。",
   "save and rotate their keys": "保存して鍵をローテーション",
   "A2A proxy": "A2A プロキシ",
   "An A2A proxy: it calls the A2A of the devices that take its calls, for an A2A client that cannot reach them. It controls no device and holds none of your keys.": "A2A プロキシ：デバイスに届かない A2A クライアントの代わりに、呼び出しを受け付けるデバイスの A2A を呼び出します。どのデバイスも操作できず、あなたの鍵も一切持ちません。",
