@@ -1840,7 +1840,7 @@ export class CloudAccount {
    */
   async startTimedEnrollment(): Promise<{ code: EnrollCode; expiresMs: number | null }> {
     const code = generateEnrollCode(await this.fingerprint());
-    const expiresMs = await this.api.createEnrollment(this.session.token, this.deviceId, await enrollToken(code));
+    const { expiresMs } = await this.api.createEnrollment(this.session.token, this.deviceId, await enrollToken(code));
     return { code, expiresMs: typeof expiresMs === "number" && Number.isFinite(expiresMs) ? expiresMs : null };
   }
 
@@ -1925,6 +1925,9 @@ export class CloudAccount {
    * code ({@link a2aCodes}). Only a full device of an account upgraded to
    * chain v3 adds one; the hub counts it against the plan's devices and says
    * when the code runs out (`expires_ms`, its clock; `null` when it does not).
+   * A hub whose answer does not say it took the code as an A2A proxy's — one
+   * from before them, which took it as a computer's — goes no further: the
+   * code is forgotten (`noA2aProxies`).
    */
   async startA2aEnrollment(): Promise<{ code: A2aEnrollCode; expiresMs: number | null }> {
     this.requireUpgraded(this.requireAdmin());
@@ -1933,7 +1936,8 @@ export class CloudAccount {
     const key = hex(token);
     this.a2aCodes.set(key, code);
     try {
-      const expiresMs = await this.api.createEnrollment(this.session.token, this.deviceId, token, "a2a");
+      const { expiresMs, kind } = await this.api.createEnrollment(this.session.token, this.deviceId, token, "a2a");
+      if (kind !== "a2a") throw new AccountError("noA2aProxies", "the hub does not take A2A proxies yet: nothing was started");
       return { code, expiresMs: typeof expiresMs === "number" && Number.isFinite(expiresMs) ? expiresMs : null };
     } catch (error) {
       this.a2aCodes.delete(key);
@@ -1975,15 +1979,15 @@ export class CloudAccount {
       if (signal?.aborted) throw signal.reason ?? new DOMException("aborted", "AbortError");
       const status = await this.api.enrollment(this.session.token, token);
       if (status.state === "expired") throw refuse(new AccountError("expired", "the enrollment code expired"));
-      if (status.state === "proved" && status.device && status.signKey && status.dhKey && status.proof) {
+      if (status.state === "proved" && status.a2aDevice && status.signKey && status.dhKey && status.proof) {
         if (status.claims === undefined) throw refuse(new AccountError("claims", "the hub does not say how often the code was claimed, so it cannot add an A2A proxy yet: nothing was added"));
         if (status.claims !== 1) {
           throw refuse(new AccountError("claims", "the code was claimed more than once: someone else may hold it. Nothing was added; make a new code"));
         }
-        if (!(await verifyA2aEnrollProof(code, this.account, status.device, status.signKey, status.dhKey, status.proof))) {
+        if (!(await verifyA2aEnrollProof(code, this.account, status.a2aDevice, status.signKey, status.dhKey, status.proof))) {
           throw refuse(new AccountError("proof", "the A2A proxy's proof does not verify: it was not added"));
         }
-        return { code, device: status.device, signKey: status.signKey, dhKey: status.dhKey };
+        return { code, device: status.a2aDevice, signKey: status.signKey, dhKey: status.dhKey };
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }

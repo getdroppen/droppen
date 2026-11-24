@@ -45,6 +45,14 @@ test("the page makes the DA1 code and announces only its token, as an A2A proxy'
   assert.ok(!JSON.stringify(hub.enrollmentPosts).includes(hex(code.secret)), "the secret never reaches the hub");
 });
 
+test("a hub from before A2A proxies, which takes the code as a computer's, goes no further", async () => {
+  const { hub, a } = await account();
+  hub.noEnrollmentKinds = true;
+  await assert.rejects(a.startA2aEnrollment(), refused("noA2aProxies"));
+  // Announced once, and refused on the hub's answer: the page shows no code to set.
+  assert.equal(hub.enrollmentPosts.length, 1);
+});
+
 test("only a full device of an upgraded account makes one: refused before anything is announced", async () => {
   const hub = new FakeKeysHub();
   const a = await hub.device("tok");

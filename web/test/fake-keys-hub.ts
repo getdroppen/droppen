@@ -136,6 +136,8 @@ export class FakeKeysHub {
   >();
   /** Every `POST /v1/enrollments` body, in order. */
   enrollmentPosts: Record<string, unknown>[] = [];
+  /** A hub from before A2A proxies: enrollments are answered without `kind` and `claims`, and every code is a computer's. */
+  noEnrollmentKinds = false;
   mail: StoredMail[] = [];
   mailLog: StoredMail[] = [];
   private mailId = 0;
@@ -608,29 +610,33 @@ export class FakeKeysHub {
     }
     if (path === "/v1/enrollments") {
       this.enrollmentPosts.push({ ...body });
-      this.enrollments.set(body.token, { device: body.device, ...(body.kind === "a2a" ? { kind: "a2a" as const } : {}) });
-      return this.json(200, { expires_ms: Date.now() + 600_000 });
+      // As rh-hub: `kind` is what the hub took the code as (`machine` unless `a2a`); one from before A2A proxies says nothing of it.
+      if (body.kind !== undefined && body.kind !== "machine" && body.kind !== "a2a") return this.json(400, { error: "bad_request", message: "unknown kind" });
+      const a2a = body.kind === "a2a" && !this.noEnrollmentKinds;
+      this.enrollments.set(body.token, { device: body.device, ...(a2a ? { kind: "a2a" as const } : {}) });
+      return this.json(200, { expires_ms: Date.now() + 600_000, ...(this.noEnrollmentKinds ? {} : { kind: a2a ? "a2a" : "machine" }) });
     }
     if (path.startsWith("/v1/enrollments/")) {
       const e = this.enrollments.get(path.split("/").pop()!);
       if (!e) return this.json(404, { error: "not_found" });
-      if (e.expired) return this.json(200, { state: "expired", expires_ms: Date.now() });
-      if (!e.proof) return this.json(200, { state: "waiting", expires_ms: Date.now() + 600_000 });
-      // An A2A proxy's code (docs/a2a.md §7.2): the device the hub assigned, no machine, and how often the code was claimed.
+      // As rh-hub: `kind` and `claims` always (a hub from before A2A proxies: neither); once proved, what proved it.
+      const said = (claims: number) => (this.noEnrollmentKinds || e.claims === null ? {} : { kind: e.kind ?? "machine", claims: e.claims ?? claims });
+      if (e.expired) return this.json(200, { state: "expired", expires_ms: Date.now(), ...said(0) });
+      if (!e.proof) return this.json(200, { state: "waiting", expires_ms: Date.now() + 600_000, ...said(0) });
+      // An A2A proxy's code (docs/a2a.md §7.2): the id its claim was given (`a2a_device`), the device that registered the code, no machine.
       if (e.kind === "a2a") {
         return this.json(200, {
           state: "proved",
-          kind: "a2a",
-          device: e.assigned,
-          machine: null,
+          expires_ms: Date.now() + 600_000,
+          ...said(1),
+          a2a_device: e.assigned,
+          device: e.device,
           sign_key: hex(e.sign!),
           dh_key: hex(e.dh!),
           proof: hex(e.proof),
-          expires_ms: Date.now() + 600_000,
-          ...(e.claims === null ? {} : { claims: e.claims ?? 1 }),
         });
       }
-      return this.json(200, { state: "proved", machine: e.machine, sign_key: hex(e.sign!), dh_key: hex(e.dh!), proof: hex(e.proof) });
+      return this.json(200, { state: "proved", ...said(1), machine: e.machine, device: e.device, sign_key: hex(e.sign!), dh_key: hex(e.dh!), proof: hex(e.proof) });
     }
     if (path === "/v1/mailbox" && method === "POST") this.mailAttempts.push(`${body.sender} ${body.recipient} ${body.purpose}`);
     if (path === "/v1/mailbox" && method === "POST" && this.failMail > 0) {

@@ -818,27 +818,29 @@ export class HubApi {
    * "a2a"` announces an A2A proxy's `DA1-` code (docs/a2a.md §7.2): the hub
    * counts it against `devices.max` and makes the device that claims it a
    * device row of that kind. Without it, a code for a device that runs AI.
+   * `kind` in the answer: what the hub took the code as — `null` from a hub
+   * from before A2A proxies, which took it as a computer's.
    */
-  async createEnrollment(token: string, device: string, enrollToken: Uint8Array, kind?: "a2a"): Promise<number> {
+  async createEnrollment(token: string, device: string, enrollToken: Uint8Array, kind?: "a2a"): Promise<{ expiresMs: number; kind: string | null }> {
     // `kind` is newer than the hub's published schema (openapi/hub.json): said here, typed by hand.
     const body: components["schemas"]["NewEnrollment"] & { kind?: "a2a" } = { device, token: hex(enrollToken), ...(kind ? { kind } : {}) };
-    const r = await this.typed<components["schemas"]["EnrollmentMade"]>(
+    const r = await this.typed<components["schemas"]["EnrollmentMade"] & { kind?: unknown }>(
       (headers) => this.client.POST("/v1/enrollments", { body, headers }),
       { token },
     );
-    return r.expires_ms;
+    return { expiresMs: r.expires_ms, kind: typeof r.kind === "string" ? r.kind : null };
   }
 
   async enrollment(token: string, enrollToken: Uint8Array): Promise<EnrollmentStatus> {
-    // `claims` is newer than the hub's published schema: an A2A proxy's code (docs/a2a.md §7.2).
-    const r = await this.typed<components["schemas"]["EnrollmentState"] & { claims?: unknown }>(
+    // `kind`, `claims` and `a2a_device` are newer than the hub's published schema: an A2A proxy's code (docs/a2a.md §7.2).
+    const r = await this.typed<components["schemas"]["EnrollmentState"] & { kind?: unknown; claims?: unknown; a2a_device?: unknown }>(
       (headers) => this.client.GET("/v1/enrollments/{token}", { params: { path: { token: hex(enrollToken) } }, headers }),
       { token },
     );
     return {
       state: r.state as EnrollmentStatus["state"],
       machine: r.machine ?? undefined,
-      device: r.device ?? undefined,
+      a2aDevice: typeof r.a2a_device === "string" && r.a2a_device ? r.a2a_device : undefined,
       signKey: r.sign_key ? fromHex(r.sign_key) : undefined,
       dhKey: r.dh_key ? fromHex(r.dh_key) : undefined,
       proof: r.proof ? fromHex(r.proof) : undefined,

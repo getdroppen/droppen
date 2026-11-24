@@ -431,19 +431,19 @@ export interface EnrollmentStatus {
   state: "waiting" | "expired" | "proved";
   machine?: string;
   /**
-   * An A2A proxy's code (`kind: "a2a"`, docs/a2a.md §7.2): the device id the
-   * hub assigned the proxy that proved it (there is no machine). Read only for
-   * a code this page made as an A2A proxy's; its proof binds it.
+   * An A2A proxy's code, proved (`a2a_device`, docs/a2a.md §7.2): the device
+   * id the hub gave the proxy's claim (there is no machine). Read only for a
+   * code this page made as an A2A proxy's; its proof binds it.
    */
-  device?: string;
+  a2aDevice?: string;
   signKey?: Bytes;
   dhKey?: Bytes;
   proof?: Bytes;
   /**
-   * An A2A proxy's code: how many times the hub saw it claimed (`enroll` on
-   * `/v1/agent` naming its token, the one that proved it included). More than
-   * one is someone else holding the code; `undefined` from a hub that does
-   * not say (it takes no A2A proxy's code).
+   * How many times a socket claimed the code while it was live (`enroll` on
+   * `/v1/agent` naming its token, refused claims included). More than one is
+   * someone else holding the code; `undefined` from a hub from before A2A
+   * proxies.
    */
   claims?: number;
 }
