@@ -164,7 +164,7 @@ pub trait TaskEventSink: Send + Sync + 'static {
 pub struct Caller {
     /// The token's id.
     pub token_id: String,
-    /// `a2a:token:<name>`.
+    /// `a2a:token:<token id>`.
     pub caller: String,
     /// The entry the request is for.
     pub entry: A2aEntry,
@@ -642,7 +642,7 @@ impl A2a {
         let entry = self.store.entry(entry_id).ok_or(Denied::NotFound)?;
         Ok(Caller {
             token_id: row.id.clone(),
-            caller: crate::token::caller_of(&row.name),
+            caller: crate::token::caller_of(&row.id),
             entry,
         })
     }
@@ -669,6 +669,16 @@ impl A2a {
             .ok_or_else(A2aError::task_not_found)
     }
 
+    /// How a caller is named to the agent (`{{caller}}`): a token's name
+    /// beside its caller id, so the agent reads who it is and the id stays
+    /// the one that counts.
+    pub fn caller_label(&self, caller: &str) -> String {
+        caller
+            .strip_prefix("a2a:token:")
+            .and_then(|id| self.store.token(id))
+            .map_or_else(|| caller.to_string(), |token| format!("{} ({caller})", token.name))
+    }
+
     /// Whether `who` may still reach its entry: its token stands and has the
     /// entry in scope, and the entry is there and on. Asked again before
     /// every stream event (§6).
@@ -678,18 +688,17 @@ impl A2a {
         token.is_some_and(|token| token.revoked_ms.is_none() && token.entries.contains(&who.entry.id)) && entry.is_some_and(|entry| entry.enabled)
     }
 
-    /// Whether `caller` (`a2a:token:<name>` or `a2a:device:<id>`) may still
-    /// reach `entry_id`: what a push asks before each delivery (§6).
+    /// Whether `caller` (`a2a:token:<token id>` or `a2a:device:<id>`) may
+    /// still reach `entry_id`: what a push asks before each delivery (§6).
     pub fn caller_reaches(&self, caller: &str, entry_id: &str) -> bool {
         let Some(entry) = self.store.entry(entry_id).filter(|entry| entry.enabled) else {
             return false;
         };
-        if let Some(name) = caller.strip_prefix("a2a:token:") {
+        if let Some(token_id) = caller.strip_prefix("a2a:token:") {
             return self
                 .store
-                .tokens()
-                .iter()
-                .any(|token| token.name == name && token.revoked_ms.is_none() && token.entries.contains(&entry.id));
+                .token(token_id)
+                .is_some_and(|token| token.revoked_ms.is_none() && token.entries.contains(&entry.id));
         }
         if let Some(device) = caller.strip_prefix("a2a:device:") {
             return entry.allowed_devices.iter().any(|allowed| allowed == device);
@@ -1044,7 +1053,7 @@ impl A2a {
             },
             run: entry.run_spec(),
             prompt: Prompt {
-                text: render(entry.template(), &picked.caller, &request, &fence()),
+                text: render(entry.template(), &self.caller_label(&picked.caller), &request, &fence()),
                 images,
             },
             client_message_id: picked.client_message_id.clone(),
@@ -1406,7 +1415,7 @@ impl A2a {
                     task: task_ref,
                     kind: SendKind::Append,
                     prompt: Prompt {
-                        text: render(who.entry.template(), &who.caller, &request, &fence()),
+                        text: render(who.entry.template(), &self.caller_label(&who.caller), &request, &fence()),
                         images,
                     },
                     client_message_id: format!("a2a:{}:{}", who.caller, message.message_id),
@@ -1578,7 +1587,7 @@ impl A2a {
         if push.url.is_empty() {
             return Err(A2aError::invalid("a push configuration needs a url"));
         }
-        if !entry.allows_push_to(&push.url) {
+        if !entry.allows_push_to(&push.url, self.settings.tck && entry.source == EntrySource::Tck) {
             return Err(A2aError::invalid("a push url is https, at an origin this agent's pushOrigins lists"));
         }
         if push.id.chars().count() > 128 || push.id.chars().any(char::is_control) {

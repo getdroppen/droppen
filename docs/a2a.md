@@ -14,7 +14,7 @@
 | 名字 | 是什么 |
 |---|---|
 | 入口 entry | 一个 A2A agent，一张 Agent Card。字段见 §4 |
-| 调用方 caller | 一个 A2A token（`a2a:token:<name>`），或 §7 的 a2a 设备（`a2a:device:<id>`）。记在任务和会话上 |
+| 调用方 caller | 一个 A2A token（`a2a:token:<token id>`，按 id 不按名字：名字只是给人看的，可以重名；用一个被吊销 token 的名字新建的 token 是另一个调用方，看不到它的任务），或 §7 的 a2a 设备（`a2a:device:<id>`）。记在任务和会话上 |
 | context | 一个 Droppen 会话。`contextId` 由 Droppen 生成（UUID），映射到 `(source, sessionId)` |
 | task | 会话里的一轮：从这条 A2A 消息开始执行，到这一轮结束 |
 

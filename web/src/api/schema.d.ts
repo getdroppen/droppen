@@ -2921,8 +2921,10 @@ export interface components {
         A2aTaskSummary: {
             /** @description The worktree's branch. */
             branch: string | null;
-            /** @description Who sent it. */
+            /** @description Who sent it: `a2a:token:<token id>`. */
             caller: string;
+            /** @description The name of the token it came with, while that token is on file. */
+            callerName: string | null;
             /** @description Its context. */
             contextId: string;
             /** @description When it was made, ISO-8601. */
@@ -2950,11 +2952,14 @@ export interface components {
             createdAt: string;
             /** @description The entries it reaches. */
             entries: string[];
-            /** @description Its id: the `<id>` of `dpa_<id>_<secret>`. */
+            /**
+             * @description Its id: the `<id>` of `dpa_<id>_<secret>`. Its tasks' caller is
+             *     `a2a:token:<id>`.
+             */
             id: string;
             /** @description When it last proved a request, ISO-8601, to the minute. */
             lastUsedAt: string | null;
-            /** @description Its name; its tasks' caller is `a2a:token:<name>`. */
+            /** @description Its name, for a person: two tokens may share one. */
             name: string;
             /** @description When it was revoked, ISO-8601. */
             revokedAt: string | null;
@@ -2963,10 +2968,7 @@ export interface components {
         A2aTokenCreate: {
             /** @description The entries it may reach: at least one. */
             entries: string[];
-            /**
-             * @description Its name: letters, digits, `.`, `_` and `-`, at most 64, and no other
-             *     unrevoked token's.
-             */
+            /** @description Its name, for a person: 1 to 100 characters. */
             name: string;
         };
         /** @description A new token, with the one copy of its secret there will ever be. */

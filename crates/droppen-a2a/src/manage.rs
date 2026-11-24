@@ -55,9 +55,10 @@ pub struct A2aEntryList {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
 pub struct A2aToken {
-    /// Its id: the `<id>` of `dpa_<id>_<secret>`.
+    /// Its id: the `<id>` of `dpa_<id>_<secret>`. Its tasks' caller is
+    /// `a2a:token:<id>`.
     pub id: String,
-    /// Its name; its tasks' caller is `a2a:token:<name>`.
+    /// Its name, for a person: two tokens may share one.
     pub name: String,
     /// The entries it reaches.
     pub entries: Vec<String>,
@@ -92,8 +93,7 @@ pub struct A2aTokenList {
 /// The body of `POST /api/a2a/tokens`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
 pub struct A2aTokenCreate {
-    /// Its name: letters, digits, `.`, `_` and `-`, at most 64, and no other
-    /// unrevoked token's.
+    /// Its name, for a person: 1 to 100 characters.
     pub name: String,
     /// The entries it may reach: at least one.
     pub entries: Vec<String>,
@@ -118,8 +118,10 @@ pub struct A2aTaskSummary {
     pub context_id: String,
     /// Its entry.
     pub entry: String,
-    /// Who sent it.
+    /// Who sent it: `a2a:token:<token id>`.
     pub caller: String,
+    /// The name of the token it came with, while that token is on file.
+    pub caller_name: Nullable<String>,
     /// Where it stands.
     pub state: TaskState,
     /// Its status message's text, if any.
@@ -176,6 +178,9 @@ impl A2a {
             (source, true) if source != EntrySource::Acp => return Err(bad("acpAgent is for an acp entry only")),
             _ => {}
         }
+        // Again as the entry now stands: a `tck` entry's loopback origins do
+        // not come along when it becomes another kind.
+        entry.push_origins = clean_origins(&entry.push_origins, self.settings().tck && entry.source == EntrySource::Tck).map_err(bad)?;
         if !(1..=MAX_CONCURRENT).contains(&entry.max_concurrent) {
             return Err(bad(format!("maxConcurrent is 1 to {MAX_CONCURRENT}")));
         }
@@ -210,7 +215,11 @@ impl A2a {
             max_concurrent: body.max_concurrent.0.unwrap_or(1),
             template: Nullable(clean_template(body.template.as_deref()).map_err(bad)?),
             allow_remote_answers: body.allow_remote_answers.0.unwrap_or(true),
-            push_origins: clean_origins(body.push_origins.0.as_deref().unwrap_or_default()).map_err(bad)?,
+            push_origins: clean_origins(
+                body.push_origins.0.as_deref().unwrap_or_default(),
+                self.settings().tck && body.source == EntrySource::Tck,
+            )
+            .map_err(bad)?,
             allowed_devices: clean_devices(body.allowed_devices.0.as_deref().unwrap_or_default()).map_err(bad)?,
             created_at: iso_ms(now),
             updated_at: iso_ms(now),
@@ -267,7 +276,7 @@ impl A2a {
             entry.allow_remote_answers = allow;
         }
         if let Some(origins) = &body.push_origins.0 {
-            entry.push_origins = clean_origins(origins).map_err(bad)?;
+            entry.push_origins = clean_origins(origins, self.settings().tck && entry.source == EntrySource::Tck).map_err(bad)?;
         }
         if let Some(devices) = &body.allowed_devices.0 {
             entry.allowed_devices = clean_devices(devices).map_err(bad)?;
@@ -300,15 +309,10 @@ impl A2a {
     pub fn create_token(&self, body: A2aTokenCreate) -> Result<A2aTokenCreated, ApiError> {
         let name = body.name.trim().to_string();
         if !crate::token::valid_name(&name) {
-            return Err(bad("a token's name is letters, digits, '.', '_' and '-', at most 64"));
+            return Err(bad("a token's name is 1 to 100 characters, none of them a control character"));
         }
         let tokens = self.store().tokens();
         let live: Vec<&TokenRow> = tokens.iter().filter(|token| token.revoked_ms.is_none()).collect();
-        if live.iter().any(|token| token.name == name) {
-            return Err(ApiError::conflict(format!(
-                "a token named {name} exists: revoke it first, or choose another name"
-            )));
-        }
         if live.len() >= MAX_TOKENS {
             return Err(ApiError::conflict(format!("at most {MAX_TOKENS} A2A tokens")));
         }
@@ -351,7 +355,7 @@ impl A2a {
             .map_err(write_failed)?
             .ok_or_else(|| ApiError::not_found("A2A token not found"))?;
         if newly {
-            let caller = crate::token::caller_of(&token.name);
+            let caller = crate::token::caller_of(&token.id);
             for entry in &token.entries {
                 self.revoke(Some(&caller), Some(entry)).await;
             }
@@ -386,6 +390,12 @@ impl A2a {
                     context_id: row.context_id.clone(),
                     entry: row.entry.clone(),
                     caller: row.caller.clone(),
+                    caller_name: Nullable(
+                        row.caller
+                            .strip_prefix("a2a:token:")
+                            .and_then(|id| self.store().token(id))
+                            .map(|token| token.name),
+                    ),
                     state: row.state,
                     status_text: Nullable(status_text),
                     source: context.as_ref().map_or(EntrySource::Claude, |context| context.session.source),

@@ -93,9 +93,16 @@ fn audit(caller: Option<&Caller>, entry: &str, method: &str, task: Option<&str>,
     );
 }
 
+/// Whether a method call without an `A2A-Version` (or with an empty one) is
+/// refused. The spec reads it as 0.3 (v1.0 §3.6.2), which this server does
+/// not speak, and every client known here (dont-do's `@a2a-js/sdk` 1.3.0, the
+/// TCK) sends `1.0` on every call. `false` would read it as 1.0 instead. The
+/// Agent Card's `GET` is never checked.
+const UNVERSIONED_IS_0_3: bool = true;
+
 /// Whether the request speaks A2A 1.0 (`A2A-Version`, in a header or the
-/// query). An absent or empty version is 0.3 (v1.0 §3.6.2), which this server
-/// does not speak; a patch number is ignored.
+/// query): `1.0`, a patch number ignored. An absent or empty one is as
+/// [`UNVERSIONED_IS_0_3`] says.
 fn check_version(headers: &HeaderMap, query: Option<&str>) -> Result<(), A2aError> {
     let from_query = query.and_then(|query| {
         query
@@ -110,6 +117,9 @@ fn check_version(headers: &HeaderMap, query: Option<&str>) -> Result<(), A2aErro
         .or(from_query)
         .unwrap_or_default();
     let version = version.trim();
+    if version.is_empty() && !UNVERSIONED_IS_0_3 {
+        return Ok(());
+    }
     let mut parts = version.split('.');
     let speaks = matches!((parts.next(), parts.next()), (Some("1"), Some("0")));
     if speaks {

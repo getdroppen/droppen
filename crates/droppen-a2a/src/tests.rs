@@ -447,11 +447,15 @@ async fn a_new_task_starts_one_session_however_often_its_message_is_sent() {
     let (task, context) = h.new_task("m-1").await;
     let Call::Start(start) = h.started(&task).await else { unreachable!() };
     assert_eq!(start.task.context_id, context);
-    assert_eq!(start.task.caller, "a2a:token:dont-do");
-    assert_eq!(start.client_message_id, "a2a:a2a:token:dont-do:m-1");
+    let caller = format!("a2a:token:{}", crate::token::parse(&h.token).unwrap().0);
+    assert_eq!(start.task.caller, caller, "the caller is the token's id, never its name");
+    assert_eq!(start.client_message_id, format!("a2a:{caller}:m-1"));
     assert_eq!(start.run.cwd, "/work");
     assert!(start.prompt.text.contains("fix the bug"));
-    assert!(start.prompt.text.contains("a2a:token:dont-do"));
+    assert!(
+        start.prompt.text.contains(&format!("dont-do ({caller})")),
+        "the agent is told the token's name beside its id"
+    );
 
     let (again, again_context) = h.new_task("m-1").await;
     assert_eq!(
@@ -1091,7 +1095,10 @@ async fn revoking_a_token_takes_back_its_tasks_pushes_and_streams() {
         "the running one is interrupted; the queued one was never handed over"
     );
     assert!(h.a2a.store().pushes(&working).is_empty(), "its push configurations are gone");
-    assert!(!h.a2a.caller_reaches("a2a:token:dont-do", "main"), "a push asks again, and is told no");
+    assert!(
+        !h.a2a.caller_reaches(&format!("a2a:token:{id}"), "main"),
+        "a push asks again, and is told no"
+    );
 }
 
 #[tokio::test]
@@ -1399,4 +1406,96 @@ async fn an_entry_runs_under_the_default_account_unless_it_names_another() {
         )
         .await;
     assert!(refused.is_err(), "an account id is checked like a flag");
+}
+
+#[tokio::test]
+async fn a_new_token_under_a_revoked_ones_name_is_another_caller() {
+    let h = harness().await;
+    let (task, _) = h.new_task("m-1").await;
+    let id = crate::token::parse(&h.token).unwrap().0.to_string();
+    h.a2a.revoke_token(&id).await.unwrap();
+    let again = token(&h.a2a, "dont-do", &["main"]);
+    let twin = token(&h.a2a, "dont-do", &["main"]);
+    assert_ne!(
+        crate::token::parse(&again).unwrap().0,
+        crate::token::parse(&twin).unwrap().0,
+        "two live tokens may share a name"
+    );
+    assert_eq!(
+        h.rpc_as(&again, "GetTask", json!({"id": task})).await["error"]["code"],
+        -32001,
+        "the old caller's task is not the new one's"
+    );
+    assert_eq!(h.rpc_as(&again, "ListTasks", json!({})).await["result"]["totalSize"], 0);
+    let mine = h
+        .rpc_as(
+            &again,
+            "SendMessage",
+            json!({"message": message("m-1", "x"), "configuration": {"returnImmediately": true}}),
+        )
+        .await;
+    assert_ne!(
+        mine["result"]["task"]["id"],
+        json!(task),
+        "the same message id from another caller is a new task"
+    );
+    assert_eq!(
+        h.rpc_as(&twin, "ListTasks", json!({})).await["result"]["totalSize"],
+        0,
+        "nor does a twin see its sibling's"
+    );
+}
+
+#[tokio::test]
+async fn only_the_tck_entry_of_a_tck_instance_pushes_to_loopback_http() {
+    let h = harness().await;
+    let refused = h
+        .a2a
+        .update_entry("main", serde_json::from_value(json!({"pushOrigins": ["http://127.0.0.1:9000"]})).unwrap())
+        .await;
+    assert!(refused.is_err(), "§6 holds for every other entry");
+    entry(
+        &h.a2a,
+        json!({"id": "tck", "name": "TCK", "source": "tck", "enabled": true, "pushOrigins": ["http://localhost:9000", "https://example.com"]}),
+    )
+    .await;
+    let secret = token(&h.a2a, "tck", &["tck"]);
+    let router = crate::protocol::router(h.a2a.clone());
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {"message": message("tck-input-required-1", "x")}});
+    let sent = json_of(call(&router, request(Method::POST, "/agents/tck/jsonrpc", Some(&secret), Some(body))).await).await;
+    let task = sent["result"]["task"]["id"].as_str().unwrap().to_string();
+    let create = |url: &str| json!({"jsonrpc": "2.0", "id": 2, "method": "CreateTaskPushNotificationConfig", "params": {"taskId": task, "url": url}});
+    let ok = json_of(
+        call(
+            &router,
+            request(
+                Method::POST,
+                "/agents/tck/jsonrpc",
+                Some(&secret),
+                Some(create("http://localhost:9000/hook")),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert!(ok["result"]["id"].is_string(), "{ok}");
+    let lan = json_of(
+        call(
+            &router,
+            request(
+                Method::POST,
+                "/agents/tck/jsonrpc",
+                Some(&secret),
+                Some(create("http://192.168.1.9:9000/hook")),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(lan["error"]["code"], -32602);
+    let switched = h
+        .a2a
+        .update_entry("tck", serde_json::from_value(json!({"source": "claude", "cwd": "/w"})).unwrap())
+        .await;
+    assert!(switched.is_err(), "the loopback origins do not come along to another kind of entry");
 }
