@@ -3286,6 +3286,41 @@ mod tests {
         assert!(head_headers(&head).contains(&("x-rh-agent-device".into(), "d-1".into())));
     }
 
+    /// A renewal pause holds an A2A proxy's calls as it holds control
+    /// (`docs/a2a.md` §7.1): while one that removes m-1←p-1 is open, p-1's
+    /// open channel is closed (said as a pause) and a new one refused, on the
+    /// hub's path and a relay's; once it is completed, p-1 is let in again.
+    #[tokio::test]
+    async fn a_renewal_pause_holds_an_a2a_proxys_channel_until_it_ends() {
+        use droppen_proto::chain::PausePhase;
+        let mut a = with_proxy(account(), true);
+        let mut routes = Routes::new();
+        let _channel = connect(&a, &proxy(), "p-1", 4, &mut routes).await.expect("A2aOnly");
+        let pause = |phase: PausePhase, removals: Vec<(String, Vec<String>)>| Action::RenewalPause {
+            op: [7; 16],
+            phase,
+            removals,
+        };
+        take(&mut a, vec![pause(PausePhase::Start, vec![("m-1".to_string(), vec!["p-1".to_string()])])]);
+        attest(&a, "d-2", &d2(), 0);
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+        drop_removed(&a.shared, &mut routes, &out_tx);
+        match out_rx.try_recv() {
+            Ok(Frame::Close { ch, code, reason }) => {
+                assert_eq!((ch, code), (4, 4403));
+                assert_eq!(reason, PAUSED_REASON, "said as a pause");
+            }
+            other => panic!("{other:?}"),
+        }
+        for (ch, relay) in [(5, false), (6, true)] {
+            let (let_in, closed) = open_via(&a, &proxy(), "p-1", ch, relay);
+            assert!(!let_in && closed.contains(&(ch, 4401)), "relay {relay}: {closed:?}");
+        }
+        take(&mut a, vec![pause(PausePhase::Completed, Vec::new())]);
+        attest(&a, "d-2", &d2(), 0);
+        assert!(open_via(&a, &proxy(), "p-1", 7, false).0 && open_via(&a, &proxy(), "p-1", 8, true).0);
+    }
+
     /// An A2A proxy's request body is held to what the A2A server takes
     /// (10 MiB, `docs/a2a.md` §5): one past it is refused before the agent
     /// buffers more, and never reaches the server; one within it does.
