@@ -32,10 +32,13 @@
 //!   It is never a host nor an admin ([`rules::A2A_PLAIN`]), so it signs
 //!   nothing, attests nothing and never holds `UK`; it never joins with a
 //!   passkey; and the flag is set at its join and never changes.
-//! - It **controls nothing**: [`ChainState::may_control`] refuses it whatever
-//!   [`Action::SetAccept`] says. In this code "may control" also chooses who
-//!   is handed a host's machine key ([`ChainState::hosts_admitting`]), so an
-//!   A2A proxy is never sealed one.
+//! - It **controls nothing**: [`ChainState::may_control`] refuses it, an
+//!   [`Accept::All`] does not take it in, and an [`Action::SetAccept`] list
+//!   never names it ([`rules::A2A_NOT_CONTROLLER`]). In this code "may
+//!   control" also chooses who is handed a host's machine key
+//!   ([`ChainState::hosts_admitting`]), so an A2A proxy is never sealed one.
+//! - A renewal pause ([`Action::RenewalPause`]) that names a proxy for a host
+//!   holds its A2A calls to it, as it holds control.
 //!
 //! # Two encodings, one state
 //!
@@ -610,8 +613,9 @@ pub struct DeviceKeys {
 }
 
 /// Whom a host accepts control from (`SetAccept`), besides admin devices,
-/// which it always accepts. Never an A2A proxy, whatever it says
-/// ([`ChainState::may_control`]).
+/// which it always accepts. Never an A2A proxy ([`ChainState::may_control`]):
+/// `All` does not take it in, and a list never names one
+/// ([`rules::A2A_NOT_CONTROLLER`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Accept {
     /// Admin devices only: the default.
@@ -619,8 +623,7 @@ pub enum Accept {
     Admins,
     /// Every current device of the account (an A2A proxy is none of them).
     All,
-    /// Admin devices and these (ascending, no repeats; an A2A proxy named
-    /// here does not count).
+    /// Admin devices and these (ascending, no repeats, never an A2A proxy).
     Devices(Vec<String>),
 }
 
@@ -695,8 +698,13 @@ pub enum Action {
     /// Kind 23 (`docs/a2a.md` §7.1): which A2A proxies host `host` takes A2A
     /// calls from ([`ChainState::may_call_a2a`]) — every one of `devices`, a
     /// current a2a device, ascending by bytes, each once, at most
-    /// [`MAX_ACCEPT_IDS`]; empty: none (the default). An admin signs it. It
-    /// is not control: [`Action::SetAccept`] never lets an A2A proxy in.
+    /// [`MAX_ACCEPT_IDS`]; empty: none (the default). An admin signs it. One
+    /// that drops a proxy takes the host's next machine key epoch in the very
+    /// next entry ([`rules::HOST_KEY_NEXT`]): a session the proxy started
+    /// could read the host's key files. It is not control:
+    /// [`Action::SetAccept`] never names an A2A proxy. A
+    /// renewal pause that names the proxy for the host holds the call too
+    /// ([`ChainState::paused_edges`]).
     SetA2aAccept {
         host: String,
         devices: Vec<String>,
@@ -1899,6 +1907,9 @@ pub mod rules {
     pub const A2A_ACCEPT_NOT_A2A: &str = "an A2A accept list names only current A2A proxies";
     /// `SetA2aAccept` changes the host's list (as `SetAccept`, no no-op).
     pub const A2A_ACCEPT_SAME: &str = "the host already accepts exactly those A2A proxies";
+    /// A `SetAccept` list never names an A2A proxy: it controls nothing, and
+    /// a name written but ignored would mislead whoever reads the list.
+    pub const A2A_NOT_CONTROLLER: &str = "an A2A proxy controls nothing: an accept list never names one";
 }
 
 /// Which removal voids the recovery key: v2's `RemoveDevice` (unchanged, so
@@ -2514,6 +2525,9 @@ impl ChainState {
                         if id == host {
                             return Err(not_allowed(seq, rules::ACCEPT_SELF));
                         }
+                        if self.device(id).is_some_and(|d| d.a2a) {
+                            return Err(not_allowed(seq, rules::A2A_NOT_CONTROLLER));
+                        }
                     }
                 }
                 if self.accept_policy(host) == *from {
@@ -2661,8 +2675,14 @@ impl ChainState {
                 if self.a2a_accept(host) == devices.as_slice() {
                     return Err(not_allowed(seq, rules::A2A_ACCEPT_SAME));
                 }
-                // No machine key epoch follows a narrowing: an A2A proxy never
-                // held one.
+                // A proxy it stops taking calls from never held a machine key,
+                // but a session it started there could read the host's key
+                // files, its machine key included: as for a `SetAccept`
+                // narrowing (D2), the host's next epoch comes in the very next
+                // entry. Adding proxies owes nothing.
+                if self.a2a_accept(host).iter().any(|id| !devices.contains(id)) {
+                    host_key_due = Some(host.clone());
+                }
                 if devices.is_empty() {
                     self.a2a_accept.remove(host);
                 } else {
@@ -2913,7 +2933,9 @@ impl ChainState {
     /// The ids host `host` stops accepting while renewal pauses are open
     /// (§3.4 rule 10): every open pause's removals for it, sorted, once each.
     /// [`ChainState::may_control`] refuses them, whatever the host's
-    /// [`ChainState::base_accept`] says.
+    /// [`ChainState::base_accept`] says, and so does
+    /// [`ChainState::may_call_a2a`] for an A2A proxy, whatever its
+    /// [`ChainState::a2a_accept`] says.
     pub fn paused_edges(&self, host: &str) -> Vec<String> {
         let ids: BTreeSet<&String> = self
             .pauses
@@ -3144,8 +3166,8 @@ impl ChainState {
         self.slots.values()
     }
 
-    /// Whom host `host` accepts control from besides admin devices. A list
-    /// may name an A2A proxy; it does not count ([`ChainState::may_control`]).
+    /// Whom host `host` accepts control from besides admin devices (never an
+    /// A2A proxy: [`ChainState::may_control`]).
     pub fn accept_policy(&self, host: &str) -> Accept {
         self.accept.get(host).cloned().unwrap_or_default()
     }
@@ -3212,8 +3234,8 @@ impl ChainState {
             reason,
         };
         // Calling a host's A2A is not control (`SetA2aAccept`,
-        // [`ChainState::may_call_a2a`]): an `All` or a list naming it lets
-        // nothing in, so it is never sealed a machine key either.
+        // [`ChainState::may_call_a2a`]): `All` does not take it in (and no
+        // list names it), so it is never sealed a machine key either.
         if requester.a2a {
             return Err(refuse("an A2A proxy controls no device"));
         }
@@ -3251,7 +3273,8 @@ impl ChainState {
     }
 
     /// Whether A2A proxy `device` may call host `host`'s A2A server
-    /// (`docs/a2a.md` §7.1): a current a2a device, a current host, and the
+    /// (`docs/a2a.md` §7.1): a current a2a device, a current host, no open
+    /// renewal pause holds the call ([`ChainState::paused_edges`]), and the
     /// host's `SetA2aAccept` list names it. Not control — a full device or a
     /// host never passes it, and passing it opens nothing but the A2A
     /// routes: an agent asks it only when [`ChainState::may_control`] says
@@ -3272,6 +3295,13 @@ impl ChainState {
         }
         if self.machine(host).is_none() {
             return Err(refuse("not a current host of this account"));
+        }
+        // §3.4 rule 10, as for control: while a renewal pause names the
+        // proxy for this host, its calls wait. A pause is about who may reach
+        // a host whose identity key is renewed, not about machine keys, and
+        // an A2A call reaches it as surely as control does.
+        if self.paused_edges(host).iter().any(|id| id == device) {
+            return Err(refuse("A2A calls are paused while identity keys are renewed"));
         }
         if self.a2a_accept(host).iter().any(|id| id == device) {
             Ok(())

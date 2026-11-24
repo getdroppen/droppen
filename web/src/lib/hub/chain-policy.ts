@@ -449,7 +449,9 @@ export interface PauseEnding {
  * (§4.1 「结束之前」): each `(host, id)` it holds that no other open pause holds,
  * whose host is current, whose id is a current device, and that the host's
  * base list still names — exactly what its completion or cancellation
- * re-enables. `all`: the hosts among them whose base lets every device in.
+ * re-enables. An A2A proxy's edge comes back when the host's A2A list names it
+ * (a pause holds its calls too: docs/a2a.md §7.1), never by the accept list.
+ * `all`: the hosts among them whose base lets every device in.
  */
 export function pauseReturns(chain: ChainState, pause: OpenPause): { edges: { host: string; id: string }[]; all: string[] } {
   const others = chain.openPauses().filter((p) => !equal(p.op, pause.op));
@@ -461,9 +463,11 @@ export function pauseReturns(chain: ChainState, pause: OpenPause): { edges: { ho
     const base = chain.baseAccept(r.host);
     for (const id of r.ids) {
       const listed = chain.device(id);
-      if (!listed || heldElsewhere(r.host, id) || !acceptNames(base, id, listed.a2a)) continue;
+      if (!listed || heldElsewhere(r.host, id)) continue;
+      const back = listed.a2a ? chain.a2aAccept(r.host).includes(id) : acceptNames(base, id, false);
+      if (!back) continue;
       edges.push({ host: r.host, id });
-      if (base.type === "all") all.add(r.host);
+      if (base.type === "all" && !listed.a2a) all.add(r.host);
     }
   }
   return { edges, all: [...all].sort() };
@@ -988,9 +992,104 @@ export interface AcceptChange {
   userKey?: FreshUserKey;
 }
 
+/** What a `setA2aAccept` changed (docs/a2a.md §7.1): the proxies it names now and did not, those it no longer names — and, for a narrowing, the host's new key epoch. */
+export interface A2aAcceptChange {
+  narrowed: boolean;
+  /** Proxies the host takes A2A calls from now and did not before. */
+  admitted: string[];
+  /** Proxies it took A2A calls from and no longer does: a session one started could have read its keys off the disk. */
+  dropped: string[];
+  mkEpoch?: number;
+  result?: DeliveryResult;
+  /** The devices the new key was sealed to (never a proxy). */
+  hostKeysTo?: string[];
+  /** A new user key the narrowing carried (the newest was stale: `userKeyStale`). */
+  userKey?: FreshUserKey;
+}
+
+/**
+ * The current hosts whose A2A list names A2A proxy `id` (`setA2aAccept`, docs/a2a.md §7.1) — the list as written, a
+ * call a renewal pause holds now included: each is exposed to it (a session it starts there can read any file the
+ * host's user can, the identity key file included), so removing it turns their content keys over.
+ */
+export function a2aHostsOf(chain: ChainState, id: string): string[] {
+  return chain
+    .allDevices()
+    .filter((h) => chain.machine(h.info.id) && chain.a2aAccept(h.info.id).includes(id))
+    .map((h) => h.info.id);
+}
+
+/**
+ * The current hosts an A2A proxy that could call them no longer can (docs/a2a.md §7.1; review D3, for A2A): per host,
+ * each proxy its A2A list named that has left it since — removed, taken off the list, or the list gone with the host's
+ * hosting — with the seq it left at. A session such a proxy started could read any file the host's user can, the
+ * host's identity key file included, and hand it back in its result, whatever the entry's permission mode.
+ *
+ * A **suggestion** (renew the host's identity key, or remove and add it again), never acted on by itself: it is no part
+ * of {@link hostsToRotate}, which the renewal runner acts on, nor of {@link reEnrollCulprits}, whose evidence (the
+ * host's controllers record) does not list A2A callers. The list as written counts (a call a pause holds is still one).
+ * A proxy named again is not lost any more; a renewal of the host's identity key staged after the loss clears it (as
+ * `hostsToRotate`'s does); a host that stops running AI keeps what it was exposed to (its identity is the same when it
+ * runs AI again); a removed host is gone.
+ */
+export function a2aExposures(chain: ChainState): Map<string, Map<string, number>> {
+  const lists = new Map<string, string[]>();
+  const lost = new Map<string, Map<string, number>>();
+  const lose = (host: string, proxy: string, seq: number) => {
+    let m = lost.get(host);
+    if (!m) lost.set(host, (m = new Map()));
+    m.set(proxy, seq);
+  };
+  for (const e of chain.allEntries()) {
+    const seq = e.draft.seq;
+    const a = e.draft.action;
+    switch (a.type) {
+      case "setA2aAccept": {
+        for (const p of lists.get(a.host) ?? []) if (!a.devices.includes(p)) lose(a.host, p, seq);
+        for (const p of a.devices) lost.get(a.host)?.delete(p);
+        if (a.devices.length) lists.set(a.host, [...a.devices]);
+        else lists.delete(a.host);
+        break;
+      }
+      case "setHost":
+        if (!a.host) {
+          for (const p of lists.get(a.id) ?? []) lose(a.id, p, seq);
+          lists.delete(a.id);
+        }
+        break;
+      case "removeDevice":
+      case "removeDevice3":
+      case "removeMachine": {
+        lists.delete(a.id);
+        lost.delete(a.id);
+        for (const [host, ids] of [...lists]) {
+          if (!ids.includes(a.id)) continue;
+          lose(host, a.id, seq);
+          const kept = ids.filter((p) => p !== a.id);
+          if (kept.length) lists.set(host, kept);
+          else lists.delete(host);
+        }
+        break;
+      }
+      case "rotateHostKey": {
+        // A new identity: what a proxy could have copied up to the view its seed was staged on is no pass to it any more.
+        const upTo = Math.min(a.rotation.stagedSeq, seq);
+        const m = lost.get(a.rotation.host);
+        if (m) for (const [p, at] of [...m]) if (at <= upTo) m.delete(p);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  for (const [host, m] of [...lost]) if (m.size === 0 || !chain.machine(host)) lost.delete(host);
+  return lost;
+}
+
 /**
  * Whether `from` lets device `id` control a host (besides admins, which every host accepts) — never when it is an A2A
- * proxy (`a2a`: docs/a2a.md §7.1), even on a list that names it, so say which it is.
+ * proxy (`a2a`: docs/a2a.md §7.1): `all` does not take it in, and no list names one (`RULES.a2aNotController`), so say
+ * which it is.
  */
 export function acceptNames(from: Accept, id: string, a2a: boolean): boolean {
   return !a2a && (from.type === "all" || (from.type === "devices" && from.ids.includes(id)));

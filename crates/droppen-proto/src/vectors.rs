@@ -1735,8 +1735,9 @@ fn chain_v3_vectors() -> Value {
 /// A state as both halves' A2A proxy vectors write it (`docs/a2a.md` §7.1):
 /// every device with its three flags and status, the current A2A proxies,
 /// and — for `hosts` — whom each takes A2A calls from, whom it accepts
-/// control from, and its committed machine key epochs; and the host still
-/// owed a machine key epoch, if any (an A2A list never owes one).
+/// control from, the ids open renewal pauses hold from it (control and A2A
+/// calls alike) and its committed machine key epochs; and the host still owed
+/// a machine key epoch, if any (an A2A list that drops a proxy owes one).
 pub(crate) fn a2a_state_json(state: &ChainState, hosts: &[&str]) -> Value {
     use crate::chain::Accept;
     let status = |d: &crate::chain::DeviceRecord| match d.status {
@@ -1756,6 +1757,7 @@ pub(crate) fn a2a_state_json(state: &ChainState, hosts: &[&str]) -> Value {
         "a2aDevices": state.devices().filter(|d| state.a2a_device(&d.info.id).is_some()).map(|d| d.info.id.clone()).collect::<Vec<_>>(),
         "a2aAccept": hosts.iter().map(|host| json!({"host": host, "devices": state.a2a_accept(host)})).collect::<Vec<_>>(),
         "accept": hosts.iter().map(|host| json!({"host": host, "from": accept_json(&state.accept_policy(host))})).collect::<Vec<_>>(),
+        "paused": hosts.iter().map(|host| json!({"host": host, "ids": state.paused_edges(host)})).collect::<Vec<_>>(),
         "hostKeyDue": state.host_key_due(),
         "machineKeyEpochs": hosts.iter().map(|host| (host.to_string(), json!(state.machine_key_epochs(host)))).collect::<serde_json::Map<_, _>>(),
     })
@@ -1785,13 +1787,15 @@ fn a2a_reach_json(state: &ChainState, nobody: &str) -> (Value, Value) {
 
 /// A2A proxies (`docs/a2a.md` §7.1) on the sample chain's v3 suffix (a
 /// second host `h-2` and its first key): two proxies join; each host takes
-/// A2A calls from some; an accept list naming a proxy (it does not count, and
-/// taking it off owes no machine key); `m-1` accepting every device (still not
-/// a proxy); a list narrowed to none and set again; a removal that drops a
-/// proxy from every list; a host that stops running AI (its list goes with
-/// it) and restarts. With each state, who may control whom, who may call
-/// whose A2A, whose machine keys each may be sealed (none for a proxy), how
-/// every flag byte reads, and the chains a verifier must refuse — by rule.
+/// A2A calls from some; an accept list for a plain device (a list may never
+/// name a proxy); `m-1` accepting every device (still not a proxy); a list
+/// narrowed to none and set again; a removal that drops a proxy from every
+/// list; a renewal pause that holds a proxy's calls to `m-1` (left open); a
+/// host that stops running AI (its list goes with it), restarts and takes the
+/// proxy's calls again. With each
+/// state, who may control whom, who may call whose A2A, whose machine keys
+/// each may be sealed (none for a proxy), how every flag byte reads, and the
+/// chains a verifier must refuse — by rule.
 fn a2a_vectors() -> Value {
     use crate::a2a_regressions::proxy_keys;
     use crate::chain::{Accept, DeviceV3, Flags, VERSION};
@@ -1821,12 +1825,21 @@ fn a2a_vectors() -> Value {
         ("addA2", Action::AddDevice3(device("a-2", &proxy_keys(1), Flags::A2A_DEVICE))),
         ("a2aAcceptM1", a2a_accept("m-1", &["a-1"])),
         ("a2aAcceptH2", a2a_accept("h-2", &["a-1", "a-2"])),
-        ("acceptNamingA2a", set_accept("h-2", Accept::Devices(ids(&["a-1", "dev-2"])))),
+        ("acceptDev2H2", set_accept("h-2", Accept::Devices(ids(&["dev-2"])))),
         ("acceptAll", set_accept("m-1", Accept::All)),
-        ("acceptDropsA2a", set_accept("h-2", Accept::Devices(ids(&["dev-2"])))),
         ("a2aNoneM1", a2a_accept("m-1", &[])),
+        // Dropping a proxy takes the host's next machine key epoch next.
+        ("a2aNoneKeyM1", Action::KeyEpochs(mk_commit("m-1", 0, &[0x25; 32]))),
         ("removeA2", Action::RemoveDevice3("a-2".into())),
         ("a2aAgainM1", a2a_accept("m-1", &["a-1"])),
+        (
+            "pauseA1OnM1",
+            Action::RenewalPause {
+                op: [0xa2; 16],
+                phase: PausePhase::Start,
+                removals: vec![("m-1".into(), ids(&["a-1"]))],
+            },
+        ),
         (
             "stopH2",
             Action::SetHost {
@@ -1842,6 +1855,7 @@ fn a2a_vectors() -> Value {
             },
         ),
         ("restartKeyH2", Action::KeyEpochs(mk_commit("h-2", 1, &[0x24; 32]))),
+        ("a2aAgainH2", a2a_accept("h-2", &["a-1"])),
     ] {
         let entry = state.draft(dev0(), action, 60_000 + state.seq()).sign(k0);
         state.apply(&entry, &mut ChainClock::history()).unwrap_or_else(|e| panic!("{label}: {e}"));
@@ -1857,6 +1871,10 @@ fn a2a_vectors() -> Value {
             .unwrap()
     };
     assert!(state.hosts_admitting("a-1").next().is_none() && state.host_key_due().is_none());
+    assert!(
+        state.may_call_a2a("a-1", "m-1").is_err() && state.a2a_accept("m-1") == ["a-1"],
+        "the pause holds the call"
+    );
 
     // The chains a verifier must refuse: a prefix and one more entry (bytes,
     // when the entry must not even decode).
@@ -1966,6 +1984,18 @@ fn a2a_vectors() -> Value {
         "notAllowed",
     );
     refuse(
+        "an accept list naming an A2A proxy",
+        &es,
+        by(&st, dev0(), k0, set_accept("h-2", Accept::Devices(ids(&["a-1", "dev-2"])))),
+        "notAllowed",
+    );
+    refuse(
+        "an accept list naming only an A2A proxy",
+        &es,
+        by(&st, dev0(), k0, set_accept("m-1", Accept::Devices(ids(&["a-2"])))),
+        "notAllowed",
+    );
+    refuse(
         "an A2A list for an A2A proxy",
         &es,
         by(&st, dev0(), k0, a2a_accept("a-1", &["a-2"])),
@@ -2013,6 +2043,26 @@ fn a2a_vectors() -> Value {
         by(&st, dev0(), k0, a2a_accept("h-2", &["a-1", "a-2"])),
         "notAllowed",
     );
+    {
+        // A list that drops a proxy, followed by anything but the host's next key.
+        let mut narrowed = st.clone();
+        let drop = narrowed.draft(dev0(), a2a_accept("h-2", &["a-2"]), 70_000).sign(k0);
+        narrowed.apply(&drop, &mut ChainClock::history()).unwrap();
+        assert_eq!(narrowed.host_key_due(), Some("h-2"));
+        let prefix = [es.clone(), vec![drop]].concat();
+        refuse(
+            "an A2A list that drops a proxy, without the host's next key",
+            &prefix,
+            by(&narrowed, dev0(), k0, a2a_accept("m-1", &["a-1", "a-2"])),
+            "notAllowed",
+        );
+        refuse(
+            "an A2A list that drops a proxy, with another host's key",
+            &prefix,
+            by(&narrowed, dev0(), k0, Action::KeyEpochs(mk_commit("m-1", 0, &[0x26; 32]))),
+            "notAllowed",
+        );
+    }
     {
         let (es, st) = at("addA2");
         refuse(

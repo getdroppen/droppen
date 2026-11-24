@@ -4390,17 +4390,19 @@
       "03000b74732d616363742d6132610000000000000006e08d42fea7439f93b9cccc2e2477c36348d59d72e9b57a2675f2d6f656feedc300000000000007d501000874732d6465762d300c000674732d612d318b05446045acacc82c2feffd47ca8e4a5a6d4739d52b32e0ab9ebed2acf83cb0979d652075f81a71b3f1788848bac5313049e90329c68ea0fba6e9fa2d938b7e044bf14bbed393edeb35a9db3a1472aa0234df294c9dca613c688b1b98fbb16b04b9348f75644a1d2e8782a537aa1e5e8a57ad4d4f0e59c8126aaaec47aed18a0d",
       "03000b74732d616363742d6132610000000000000007dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d00000000000007d601000874732d6465762d300c000674732d612d329a84aae795ba3fdf0fe5876a102b2141231bbd2e025134dd033cd975bd2dd9e94aa71f8a7835e39a161c6abc341b06041e6880d1d1db84d73b34a81ceb4e9923045ae02a4734d634b619d7c3c54f28fa331f1c9667015d2924eca5013b8056c3765f5ae5c343e3ddc859330e7a94b184acf09b9627a2f43b9c484ca863e6324d0e",
       "03000b74732d616363742d61326100000000000000086fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b00000000000007d701000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b37d9e04a23f084645596253b3f92046a9e02c826891dccad545337ac028741ecd9c5c273c89ebf3f8a05154312e03e2d2ebfa595076f65deb133397c6576302",
-      "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020002000674732d612d31000874732d6465762d7045d592d4fc6d4c2514ae6776216b6b8292590eb0a187121da4af64e9135696ad2349d41a275954b02c97cbd40e1665eb779a4a9acf983108eeb26c7066a9f908",
-      "03000b74732d616363742d613261000000000000000a024e801a1b2ce0b0300a1ab0530bb2bae4da8b04e1bf2aacabea7b628435f81d00000000000007d901000874732d6465762d3013000674732d682d31020001000874732d6465762d705dd5eee36f5025e6fa2dd92eab97b94a59d3c4cad7270e9938706eab049533a5d21144f086e9f864204396ea97d25649eb2062bc202c2fa0435b18f1a592dd06",
-      "03000b74732d616363742d613261000000000000000b2050cfd1c3c186b14cc52f9eba41761a028751ded5301321abd9053cd57ab92900000000000007da01000874732d6465762d3013000674732d682d3101e68f2c80cea9d5f9c6ed3ff3297c04d508cf1a6e1e12f41ced2cb0396d671e7623dbef37be694564f23eff754fa5b69cfe2f006daaec32db0fc96ca448535d0a",
-      "03000b74732d616363742d613261000000000000000c0e1d3fccae8dd18222b3701fee033b91fcde8a6a104a2c97600f93376829ca4b00000000000007db01000874732d6465762d300f000674732d612d31c2ed03c640ac24cc0f449bc35d272796177911fdf71d2392a9a7a0303b842686b668aede75f316ebb466a8e5cf34ef8f91ba650b784dffacf1dc821203318908",
-      "03000b74732d616363742d613261000000000000000d4e4069b18bd77ee0cf052281c7650caf893c9f770ce58be8f20a270a38bd061000000000000007dc01000874732d6465762d3017000674732d682d3100008d1ed189e3415cf862b85004a38fceb0ae5e518f4f3bc3a3cf963ae2667fa262ed718e2c2b32d451d01269909c72a5eff6ff190bda71ddf4ac9a3a6d05606b0b",
-      "03000b74732d616363742d613261000000000000000e649a9aceb03810e73ac9927b79e1acda6c70e107e3e15a2927571d1e56ef2d1e00000000000007dd01000874732d6465762d3017000674732d682d310001000674732d612d321d70207bf6ec97ef2610d8f6e2acfd0e65e59df27a3707ddf1ea8e9b98279ce25b2d03440daee22a536ec4190357de1270620b580147ce370a3e8544568e8504",
-      "03000b74732d616363742d613261000000000000000f0cb67b7d08fd0bcfc4a748ef7c83cb51f7d053fd55b9d9b675be733daf4a404800000000000007de01000874732d6465762d300e000674732d682d31007da1e319dc795ef58fb5e9247ecc06878dde0ccaf1e448e556ca3368e0680e040724d55fbd2757bb41d43696f5dd2d5af0087c5dd8561373279ec217565b700f",
-      "03000b74732d616363742d6132610000000000000010eaea30fc2a0f9cea52b0f54c2f78148844fc971916d9232ce2179f749c780bc300000000000007df01000874732d6465762d300e000674732d682d3101fc2fab22684f74741b00dc2ba62ad291c04c11a6e8f4940352299b18e68b2af0088b8dfee9dfef6b59ba51642f77a62f3f24288ecf9ca668adb92d2220785b01",
-      "03000b74732d616363742d6132610000000000000011f4ee4585c3781e7547eb3e2e9ef70233dab79af33cb06a8ce23e94ecae2a679800000000000007e001000874732d6465762d300a000001000674732d682d310000000121377206b992e7e6f343154d1d4cecb4469e25efe0a0b4354504dd14974ca3616fa07f773b7456cf5137158868e84c4cd70b4e46fc3e0276b160f2af45c65ae81873d9b7ff9990fac4b077e77923465d90ede66de0693f398defb0b3fc588d0a",
-      "03000b74732d616363742d61326100000000000000121023955e5ad5368709e294ff2e7b55924ef1a350bc876e2f96159976db50629b00000000000007e101000874732d6465762d3013000674732d682d3101abd4f7b80e3067f0d192ebe1fa2b0a641962a584e12a984d2aafae476a073680cb1a1ba37808397ec091f77149a206d1ca010fd33569fbe815866928c0c58208",
-      "03000b74732d616363742d6132610000000000000013b780fc2dd0555d727083542de7d7d05d1f66ceed98bdb4984425833bf8bebb3200000000000007e201000874732d6465762d3017000674732d682d310001000674732d612d326a4c023611d8b6dfa131914a7c81a3844b3798900ba76f1f73cd96c14c3fea50fa80c2d340f90ddccdb47dbca1761ae6fe1deb5a54ab3570fb9ac484a8ca3d04"
+      "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020001000874732d6465762d70c90ef01573bdc19cea05b392cbb65489ef26a815497cd5acca3b2199fb961098ef8716d1e4855e7b37ad9b2783561893c7f0da1c7e1aae62e6065b99382f2504",
+      "03000b74732d616363742d613261000000000000000a3e29e5b6a48b11343a52460ad84290a58583d3b2768620de914daea762690bb000000000000007d901000874732d6465762d3013000674732d682d3101a8492f0335038a6b0e3287e7a339111be1c373a503005d9b4d1231d1ea0690cada30670fac5d338963e06f3f8e7fcf0f0fdd09027b69b4fe3ba082dc23d04c07",
+      "03000b74732d616363742d613261000000000000000bdffa6e9ab7c0731373ef9444d683b58e1605c928d1952d6bc89acf20fbd1999600000000000007da01000874732d6465762d300f000674732d612d315d62b225889ba3abae94208577c9934c239d618e5207726747c0e201c5f967172b420b4cc964297d955a0093c3f4713537caaadaf2685d36ed9e46a6da9e9e05",
+      "03000b74732d616363742d613261000000000000000cb3ce9a3c348a1c81f1ae9a4ff5d5608a819016c2c81adbf36eaefecf0397c1ed00000000000007db01000874732d6465762d3017000674732d682d3100000434eb9c70dc01246af9f02b2d0cfa7fc9f9cc8944dd3531ef5a7b179ed22681db856c13b40b9803361b184883181bd9bda3587aa80617f373d3a0b6f3929708",
+      "03000b74732d616363742d613261000000000000000d5513bf537755d74fdeeac2ff316cadd62c67968530fad0d3d8a0737256b709a600000000000007dc01000874732d6465762d300a000001000674732d682d31000000015763048dbcc808dbed66cb45fe7675009f608e092e20cfe567cee1d734e628745c3d58cecc514bbf476c9c53dbadeb8be3b0b645cbf0ef26be9176a14cbc0a0a58fdbf2205e9624be13b1862d022fdb34011fa9320efa2bdd01fe9cd6bd1b106",
+      "03000b74732d616363742d613261000000000000000e376beb2ac1bb949d847d812382b60d012b117d1298f0b8f906b9b31a5c7bea9700000000000007dd01000874732d6465762d3017000674732d682d310001000674732d612d32dd6549d308bd6f2d6e204f6c2fd5b67f3c244e1bab541dab29a9c725f9fa066fa520fb9164251c2cde6a478bf4846b739c392d4073044fad3da305ff5b16b501",
+      "03000b74732d616363742d613261000000000000000f565c24ec41a5acecbd45bdf18c39a72d65e70495ab6c0c6ae829372604aa0b0500000000000007de01000874732d6465762d300e000674732d682d310074f78820a0e2c5d0857e5c934196645b03447f811792043daa1089fd3364d38642dac0adf6404fddf5c993da10bce4129c1c17426c3d34aeed308233fe4e640b",
+      "03000b74732d616363742d613261000000000000001093836339a8332cb56cfffa6d3c268d63fff9a2349e591d5c0db8f6fefbf44a4200000000000007df01000874732d6465762d300e000674732d682d3101d9d262fd1330e3f2ea7268c20f21b7943e0eeaf462d54ddb7f990348664e8f4944d22b4978ac0312406248528a9da9e28468d1a02c8aaae55a2ab618612fb905",
+      "03000b74732d616363742d61326100000000000000118712f46bd4fdae8d7f0662e47b65bc490e1a9a4d6053afae5d5d9c94489e40d400000000000007e001000874732d6465762d300a000001000674732d682d3100000002dea8e2fdcb4e236e2011a12fee8662908b5fd9b3df31ec8477379a27ec908757d0ebcf039a5f823f2f0601f06da53f3f9e7d3932d47ebb3b7b8ccd1220c123e09e9fcb5f56a488571e13cbc48e7bcc30cdc506ac2b9195b38db3aa9aa1f81c0f",
+      "03000b74732d616363742d6132610000000000000012002b6392062f39a0bc0425624a6087801dbcc79676fe578fe76bd60a41f7598700000000000007e101000874732d6465762d3013000674732d682d310131eb4fcbe1a88a264cf2985cc4c802fcb7dae87abcd016f975376698bab50ea639889ef238dcf22ef96dee7e3e8fccf5cfdf79b9e9c90a7f0a89bc53c0a7960b",
+      "03000b74732d616363742d6132610000000000000013d3f35aead9dd82f9d28426a2cc31d663e21ce2b5004ccfb881c4d971b812a6e600000000000007e201000874732d6465762d3017000674732d682d310001000674732d612d326f9bd9b67f0cf250de369d9dd6b2f5d5105fa0105fbc5db4ddd968f1a9346f96cba2560f51184d5782f9aad6b64a1a104575f650866a8f9fcc4548232cef500c",
+      "03000b74732d616363742d6132610000000000000014c438c8b571b35b7a8788dd94fe65b83d74e83199dbde8dd3c1e131139b89580400000000000007e301000874732d6465762d3016a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2000001000674732d682d310001000674732d612d32f43a4e5fbc2b48c0fca3b6e2db1b02f362f00bd687d6a6f9231fcd5895c044f9d13f63f40688d919a7eee6b2c92b8d7d1289c9b18099b930fefc970ca0379a0f",
+      "03000b74732d616363742d6132610000000000000015f25f4629b42326b8cc71fbe549baec7f999c1d6de8ebea67732f8cce4bb89b6000000000000007e401000874732d6465762d3016a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a20200004078d54e66c396e8cd2dcfd86f8e72df98994df01e9b2d080a62a7a1757305739ee54b08bbe85048c39e7d56d0dcac53661571845ab374f6df6b3783fd6cae08"
     ],
     "hashes": [
       "87bcdd9fe23335b106c190457c9736880c4b7399c70f6da136a62f14c2d137f6",
@@ -4412,19 +4414,23 @@
       "dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d",
       "6fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b",
       "399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f89",
-      "024e801a1b2ce0b0300a1ab0530bb2bae4da8b04e1bf2aacabea7b628435f81d",
-      "2050cfd1c3c186b14cc52f9eba41761a028751ded5301321abd9053cd57ab929",
-      "0e1d3fccae8dd18222b3701fee033b91fcde8a6a104a2c97600f93376829ca4b",
-      "4e4069b18bd77ee0cf052281c7650caf893c9f770ce58be8f20a270a38bd0610",
-      "649a9aceb03810e73ac9927b79e1acda6c70e107e3e15a2927571d1e56ef2d1e",
-      "0cb67b7d08fd0bcfc4a748ef7c83cb51f7d053fd55b9d9b675be733daf4a4048",
-      "eaea30fc2a0f9cea52b0f54c2f78148844fc971916d9232ce2179f749c780bc3",
-      "f4ee4585c3781e7547eb3e2e9ef70233dab79af33cb06a8ce23e94ecae2a6798",
-      "1023955e5ad5368709e294ff2e7b55924ef1a350bc876e2f96159976db50629b",
-      "b780fc2dd0555d727083542de7d7d05d1f66ceed98bdb4984425833bf8bebb32",
-      "9d97a38229c310eee6825be007cc47ffac8309df8ecd4affbaf1f2395c7131e4"
+      "3e29e5b6a48b11343a52460ad84290a58583d3b2768620de914daea762690bb0",
+      "dffa6e9ab7c0731373ef9444d683b58e1605c928d1952d6bc89acf20fbd19996",
+      "b3ce9a3c348a1c81f1ae9a4ff5d5608a819016c2c81adbf36eaefecf0397c1ed",
+      "5513bf537755d74fdeeac2ff316cadd62c67968530fad0d3d8a0737256b709a6",
+      "376beb2ac1bb949d847d812382b60d012b117d1298f0b8f906b9b31a5c7bea97",
+      "565c24ec41a5acecbd45bdf18c39a72d65e70495ab6c0c6ae829372604aa0b05",
+      "93836339a8332cb56cfffa6d3c268d63fff9a2349e591d5c0db8f6fefbf44a42",
+      "8712f46bd4fdae8d7f0662e47b65bc490e1a9a4d6053afae5d5d9c94489e40d4",
+      "002b6392062f39a0bc0425624a6087801dbcc79676fe578fe76bd60a41f75987",
+      "d3f35aead9dd82f9d28426a2cc31d663e21ce2b5004ccfb881c4d971b812a6e6",
+      "c438c8b571b35b7a8788dd94fe65b83d74e83199dbde8dd3c1e131139b895804",
+      "f25f4629b42326b8cc71fbe549baec7f999c1d6de8ebea67732f8cce4bb89b60",
+      "325d1daf8d5bf3bca5fa4acbe1185489d5ca0e1a214456f7e81b3eebdf2f0cb4"
     ],
     "versions": [
+      3,
+      3,
       3,
       3,
       3,
@@ -4477,6 +4483,12 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "ts-h-1": 0
@@ -4511,6 +4523,12 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -4556,6 +4574,12 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": "ts-h-1",
           "machineKeyEpochs": {
             "ts-h-1": 0
@@ -4597,6 +4621,12 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -4649,6 +4679,12 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "ts-h-1": 1
@@ -4697,6 +4733,12 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -4756,6 +4798,12 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -4823,6 +4871,12 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -4895,6 +4949,12 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "ts-h-1": 1
@@ -4902,85 +4962,11 @@
         }
       },
       {
-        "label": "acceptNamingA2a",
+        "label": "acceptPlain",
         "seq": 9,
         "state": {
           "seq": 9,
-          "head": "024e801a1b2ce0b0300a1ab0530bb2bae4da8b04e1bf2aacabea7b628435f81d",
-          "devices": [
-            {
-              "id": "ts-a-1",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "ts-a-2",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-0",
-              "host": false,
-              "admin": true,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-p",
-              "host": false,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-h-1",
-              "host": true,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            }
-          ],
-          "a2aDevices": [
-            "ts-a-1",
-            "ts-a-2"
-          ],
-          "a2aAccept": [
-            {
-              "host": "ts-h-1",
-              "devices": [
-                "ts-a-1",
-                "ts-a-2"
-              ]
-            }
-          ],
-          "accept": [
-            {
-              "host": "ts-h-1",
-              "from": {
-                "kind": "devices",
-                "ids": [
-                  "ts-a-1",
-                  "ts-dev-p"
-                ]
-              }
-            }
-          ],
-          "hostKeyDue": null,
-          "machineKeyEpochs": {
-            "ts-h-1": 1
-          }
-        }
-      },
-      {
-        "label": "acceptDropsA2a",
-        "seq": 10,
-        "state": {
-          "seq": 10,
-          "head": "2050cfd1c3c186b14cc52f9eba41761a028751ded5301321abd9053cd57ab929",
+          "head": "3e29e5b6a48b11343a52460ad84290a58583d3b2768620de914daea762690bb0",
           "devices": [
             {
               "id": "ts-a-1",
@@ -5040,6 +5026,12 @@
                   "ts-dev-p"
                 ]
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -5050,10 +5042,10 @@
       },
       {
         "label": "acceptAll",
-        "seq": 11,
+        "seq": 10,
         "state": {
-          "seq": 11,
-          "head": "0e1d3fccae8dd18222b3701fee033b91fcde8a6a104a2c97600f93376829ca4b",
+          "seq": 10,
+          "head": "dffa6e9ab7c0731373ef9444d683b58e1605c928d1952d6bc89acf20fbd19996",
           "devices": [
             {
               "id": "ts-a-1",
@@ -5112,6 +5104,12 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "ts-h-1": 1
@@ -5120,10 +5118,10 @@
       },
       {
         "label": "removeA1",
-        "seq": 12,
+        "seq": 11,
         "state": {
-          "seq": 12,
-          "head": "4e4069b18bd77ee0cf052281c7650caf893c9f770ce58be8f20a270a38bd0610",
+          "seq": 11,
+          "head": "b3ce9a3c348a1c81f1ae9a4ff5d5608a819016c2c81adbf36eaefecf0397c1ed",
           "devices": [
             {
               "id": "ts-a-1",
@@ -5178,6 +5176,12 @@
               "from": {
                 "kind": "all"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -5188,10 +5192,10 @@
       },
       {
         "label": "a2aNone",
-        "seq": 13,
+        "seq": 12,
         "state": {
-          "seq": 13,
-          "head": "649a9aceb03810e73ac9927b79e1acda6c70e107e3e15a2927571d1e56ef2d1e",
+          "seq": 12,
+          "head": "5513bf537755d74fdeeac2ff316cadd62c67968530fad0d3d8a0737256b709a6",
           "devices": [
             {
               "id": "ts-a-1",
@@ -5246,204 +5250,10 @@
               }
             }
           ],
-          "hostKeyDue": null,
-          "machineKeyEpochs": {
-            "ts-h-1": 1
-          }
-        }
-      },
-      {
-        "label": "a2aAgain",
-        "seq": 14,
-        "state": {
-          "seq": 14,
-          "head": "0cb67b7d08fd0bcfc4a748ef7c83cb51f7d053fd55b9d9b675be733daf4a4048",
-          "devices": [
-            {
-              "id": "ts-a-1",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "removed"
-            },
-            {
-              "id": "ts-a-2",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-0",
-              "host": false,
-              "admin": true,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-p",
-              "host": false,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-h-1",
-              "host": true,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            }
-          ],
-          "a2aDevices": [
-            "ts-a-2"
-          ],
-          "a2aAccept": [
+          "paused": [
             {
               "host": "ts-h-1",
-              "devices": [
-                "ts-a-2"
-              ]
-            }
-          ],
-          "accept": [
-            {
-              "host": "ts-h-1",
-              "from": {
-                "kind": "all"
-              }
-            }
-          ],
-          "hostKeyDue": null,
-          "machineKeyEpochs": {
-            "ts-h-1": 1
-          }
-        }
-      },
-      {
-        "label": "stopHost",
-        "seq": 15,
-        "state": {
-          "seq": 15,
-          "head": "eaea30fc2a0f9cea52b0f54c2f78148844fc971916d9232ce2179f749c780bc3",
-          "devices": [
-            {
-              "id": "ts-a-1",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "removed"
-            },
-            {
-              "id": "ts-a-2",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-0",
-              "host": false,
-              "admin": true,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-p",
-              "host": false,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-h-1",
-              "host": false,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            }
-          ],
-          "a2aDevices": [
-            "ts-a-2"
-          ],
-          "a2aAccept": [
-            {
-              "host": "ts-h-1",
-              "devices": []
-            }
-          ],
-          "accept": [
-            {
-              "host": "ts-h-1",
-              "from": {
-                "kind": "admins"
-              }
-            }
-          ],
-          "hostKeyDue": null,
-          "machineKeyEpochs": {
-            "ts-h-1": 1
-          }
-        }
-      },
-      {
-        "label": "restartHost",
-        "seq": 16,
-        "state": {
-          "seq": 16,
-          "head": "f4ee4585c3781e7547eb3e2e9ef70233dab79af33cb06a8ce23e94ecae2a6798",
-          "devices": [
-            {
-              "id": "ts-a-1",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "removed"
-            },
-            {
-              "id": "ts-a-2",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-0",
-              "host": false,
-              "admin": true,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-p",
-              "host": false,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-h-1",
-              "host": true,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            }
-          ],
-          "a2aDevices": [
-            "ts-a-2"
-          ],
-          "a2aAccept": [
-            {
-              "host": "ts-h-1",
-              "devices": []
-            }
-          ],
-          "accept": [
-            {
-              "host": "ts-h-1",
-              "from": {
-                "kind": "admins"
-              }
+              "ids": []
             }
           ],
           "hostKeyDue": "ts-h-1",
@@ -5453,77 +5263,11 @@
         }
       },
       {
-        "label": "restartKey",
-        "seq": 17,
+        "label": "a2aNoneKey",
+        "seq": 13,
         "state": {
-          "seq": 17,
-          "head": "1023955e5ad5368709e294ff2e7b55924ef1a350bc876e2f96159976db50629b",
-          "devices": [
-            {
-              "id": "ts-a-1",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "removed"
-            },
-            {
-              "id": "ts-a-2",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-0",
-              "host": false,
-              "admin": true,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-dev-p",
-              "host": false,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "ts-h-1",
-              "host": true,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            }
-          ],
-          "a2aDevices": [
-            "ts-a-2"
-          ],
-          "a2aAccept": [
-            {
-              "host": "ts-h-1",
-              "devices": []
-            }
-          ],
-          "accept": [
-            {
-              "host": "ts-h-1",
-              "from": {
-                "kind": "admins"
-              }
-            }
-          ],
-          "hostKeyDue": null,
-          "machineKeyEpochs": {
-            "ts-h-1": 2
-          }
-        }
-      },
-      {
-        "label": "acceptAllAgain",
-        "seq": 18,
-        "state": {
-          "seq": 18,
-          "head": "b780fc2dd0555d727083542de7d7d05d1f66ceed98bdb4984425833bf8bebb32",
+          "seq": 13,
+          "head": "376beb2ac1bb949d847d812382b60d012b117d1298f0b8f906b9b31a5c7bea97",
           "devices": [
             {
               "id": "ts-a-1",
@@ -5578,6 +5322,12 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "ts-h-1": 2
@@ -5585,11 +5335,11 @@
         }
       },
       {
-        "label": "a2aFinal",
-        "seq": 19,
+        "label": "a2aAgain",
+        "seq": 14,
         "state": {
-          "seq": 19,
-          "head": "9d97a38229c310eee6825be007cc47ffac8309df8ecd4affbaf1f2395c7131e4",
+          "seq": 14,
+          "head": "565c24ec41a5acecbd45bdf18c39a72d65e70495ab6c0c6ae829372604aa0b05",
           "devices": [
             {
               "id": "ts-a-1",
@@ -5646,9 +5396,527 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "ts-h-1": 2
+          }
+        }
+      },
+      {
+        "label": "stopHost",
+        "seq": 15,
+        "state": {
+          "seq": 15,
+          "head": "93836339a8332cb56cfffa6d3c268d63fff9a2349e591d5c0db8f6fefbf44a42",
+          "devices": [
+            {
+              "id": "ts-a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "ts-a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-p",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-h-1",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "ts-a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "ts-h-1",
+              "devices": []
+            }
+          ],
+          "accept": [
+            {
+              "host": "ts-h-1",
+              "from": {
+                "kind": "admins"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "ts-h-1": 2
+          }
+        }
+      },
+      {
+        "label": "restartHost",
+        "seq": 16,
+        "state": {
+          "seq": 16,
+          "head": "8712f46bd4fdae8d7f0662e47b65bc490e1a9a4d6053afae5d5d9c94489e40d4",
+          "devices": [
+            {
+              "id": "ts-a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "ts-a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-p",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-h-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "ts-a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "ts-h-1",
+              "devices": []
+            }
+          ],
+          "accept": [
+            {
+              "host": "ts-h-1",
+              "from": {
+                "kind": "admins"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": "ts-h-1",
+          "machineKeyEpochs": {
+            "ts-h-1": 2
+          }
+        }
+      },
+      {
+        "label": "restartKey",
+        "seq": 17,
+        "state": {
+          "seq": 17,
+          "head": "002b6392062f39a0bc0425624a6087801dbcc79676fe578fe76bd60a41f75987",
+          "devices": [
+            {
+              "id": "ts-a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "ts-a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-p",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-h-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "ts-a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "ts-h-1",
+              "devices": []
+            }
+          ],
+          "accept": [
+            {
+              "host": "ts-h-1",
+              "from": {
+                "kind": "admins"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "ts-h-1": 3
+          }
+        }
+      },
+      {
+        "label": "acceptAllAgain",
+        "seq": 18,
+        "state": {
+          "seq": 18,
+          "head": "d3f35aead9dd82f9d28426a2cc31d663e21ce2b5004ccfb881c4d971b812a6e6",
+          "devices": [
+            {
+              "id": "ts-a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "ts-a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-p",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-h-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "ts-a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "ts-h-1",
+              "devices": []
+            }
+          ],
+          "accept": [
+            {
+              "host": "ts-h-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "ts-h-1": 3
+          }
+        }
+      },
+      {
+        "label": "a2aFinal",
+        "seq": 19,
+        "state": {
+          "seq": 19,
+          "head": "c438c8b571b35b7a8788dd94fe65b83d74e83199dbde8dd3c1e131139b895804",
+          "devices": [
+            {
+              "id": "ts-a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "ts-a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-p",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-h-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "ts-a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "ts-h-1",
+              "devices": [
+                "ts-a-2"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "ts-h-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "ts-h-1": 3
+          }
+        }
+      },
+      {
+        "label": "pauseA2",
+        "seq": 20,
+        "state": {
+          "seq": 20,
+          "head": "f25f4629b42326b8cc71fbe549baec7f999c1d6de8ebea67732f8cce4bb89b60",
+          "devices": [
+            {
+              "id": "ts-a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "ts-a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-p",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-h-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "ts-a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "ts-h-1",
+              "devices": [
+                "ts-a-2"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "ts-h-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": [
+                "ts-a-2"
+              ]
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "ts-h-1": 3
+          }
+        }
+      },
+      {
+        "label": "pauseA2Ended",
+        "seq": 21,
+        "state": {
+          "seq": 21,
+          "head": "325d1daf8d5bf3bca5fa4acbe1185489d5ca0e1a214456f7e81b3eebdf2f0cb4",
+          "devices": [
+            {
+              "id": "ts-a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "ts-a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-dev-p",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "ts-h-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "ts-a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "ts-h-1",
+              "devices": [
+                "ts-a-2"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "ts-h-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "ts-h-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "ts-h-1": 3
           }
         }
       }
@@ -5698,8 +5966,8 @@
       }
     ],
     "state": {
-      "seq": 19,
-      "head": "9d97a38229c310eee6825be007cc47ffac8309df8ecd4affbaf1f2395c7131e4",
+      "seq": 21,
+      "head": "325d1daf8d5bf3bca5fa4acbe1185489d5ca0e1a214456f7e81b3eebdf2f0cb4",
       "devices": [
         {
           "id": "ts-a-1",
@@ -5756,9 +6024,15 @@
           }
         }
       ],
+      "paused": [
+        {
+          "host": "ts-h-1",
+          "ids": []
+        }
+      ],
       "hostKeyDue": null,
       "machineKeyEpochs": {
-        "ts-h-1": 2
+        "ts-h-1": 3
       }
     },
     "control": [
@@ -6117,6 +6391,40 @@
         "rule": "only a host accepts A2A calls"
       },
       {
+        "name": "an accept list naming an A2A proxy",
+        "entries": [
+          "03000b74732d616363742d6132610000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e8000bc63bb405ec59b4716e92d57c95a4db7b64d50940eae588bf782fc557211b9593000874732d6465762d302401ac3e9117a7f86d98df0e76d2a89163b66b14b1b5e21bf1a38fbe1c5885bea8b3ecf398f88e488caefc82af2b58fb44db9b2e521b626b64e0129eb9334e1502017600450e0e9d09a1e0ce98c6d8e9355883a05333978760bb1a140b366e80dd15a3663369fd7535483c22973b8491beca971b2e359dfa8253f92b34780ef6ac85082d56c943d652a3cf0dc54d10783c03eebda6d102ea361430c9dc97106cc407f2cfd2ad033d1763457b63a3ca5686f9582e32430926822e3f99755fec1613cac8e27525f56c179d133498d148c403fb0333a9c8708124d4691e030042a75f00",
+          "03000b74732d616363742d613261000000000000000187bcdd9fe23335b106c190457c9736880c4b7399c70f6da136a62f14c2d137f600000000000007d001000874732d6465762d300a010000000039e5193fcaa6cc56a87403ddad519d6f740da8ddb89a581668aa1d6924e44f8400007576b372952aa20ff5da5c8b9dfb7c8f12206cd6a9f61332873f9ea552d8e6f9285ccf65ec115955e91d4c490a7b41a50da93ced664429217d1b20a0f235310f",
+          "03000b74732d616363742d613261000000000000000213231a1790a2931020fa12f6e81c6bc9150c4545158df4fd30a12e4f75dc2f8100000000000007d101000874732d6465762d300c000674732d682d31a513a93f22d754d2bcb65ac3e35c513d67a604009b79b93cab1a815e299f2bd29d2fd2102b93c00971d3d80718e0450d09a1ceafe8caeb571153dc399b688b3b012c83af1c1fc27a187478eddd6e574574a253a5d71737a48b9c28e1fe275a73e94c5b230c1c902aa3141cf9e2d3cd7cc9d226aad9c41761a478d814b15ab92e0a",
+          "03000b74732d616363742d6132610000000000000003b8aa096c9c72ea21d77ac41df46d0495ac117554b7dcaae616eeff5bd5432fdc00000000000007d201000874732d6465762d300a000001000674732d682d3100000000b5bccadd3a2f7053bb6bef2f99dd68165be3124ea7972685842be20d3192d5d1e85e3168d6481f39b2ba6dc2b8d0b18ab809b5f93690ecd31821b81468caba375b5072b65b19c1b57aef24e66883a1391cd7786eb7eafb499464c41d66b2c10b",
+          "03000b74732d616363742d6132610000000000000004cd1397b9b923d269e5c2a0410b4bc05035d709031a304af043d46be711a96ab000000000000007d301000874732d6465762d300c000874732d6465762d70f35da7869c132c07c6227b85964accbc3b11e931da6a822dc4222d5a7260d14ad93a8edc0927683750fba60c119fcac79e8b08d3f11cad78d3798e256e505801002a5a4e536314f91c76bbef335ce66010a80c86c0c0fab6e9208d2ae0301e633632f0f2ddacfa1dc7060215fb22730725ebf260bd048a0a6d8355a844643d8409",
+          "03000b74732d616363742d61326100000000000000056b9cb04ea0274986579196e27e33dfa3642e18f08b254a925cf02c034acef2be00000000000007d401000874732d6465762d30100005702d747361ceaa99eaefbfac5257af2ae8d656ea17b9a38f40cc8c21a1b613f966b32d723d80606c44fa389e0d8fe57094bab94c6507808ab0e577fc204dcbf033d54656b69c7941254f55ed1444c95ad3f6a8c8f5f5d0adbf307c9925dadeec7beb36f10c7fb6b2890fc83df9b15357cace5c10a48cd641719ef89c0b9b01194e6a7f5daedcf13c111ac76572163230639eea4c3ffd96003a0ce778ad0aea34b6e995fdc40001298b2dac63be2b3dbae4facb97dfbae73dcebb9b7232938a81b50e79a30dafadedf54b3603642c84616082b41ab6b31604210403504f6b4cd92e9d306ed2ae08",
+          "03000b74732d616363742d6132610000000000000006e08d42fea7439f93b9cccc2e2477c36348d59d72e9b57a2675f2d6f656feedc300000000000007d501000874732d6465762d300c000674732d612d318b05446045acacc82c2feffd47ca8e4a5a6d4739d52b32e0ab9ebed2acf83cb0979d652075f81a71b3f1788848bac5313049e90329c68ea0fba6e9fa2d938b7e044bf14bbed393edeb35a9db3a1472aa0234df294c9dca613c688b1b98fbb16b04b9348f75644a1d2e8782a537aa1e5e8a57ad4d4f0e59c8126aaaec47aed18a0d",
+          "03000b74732d616363742d6132610000000000000007dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d00000000000007d601000874732d6465762d300c000674732d612d329a84aae795ba3fdf0fe5876a102b2141231bbd2e025134dd033cd975bd2dd9e94aa71f8a7835e39a161c6abc341b06041e6880d1d1db84d73b34a81ceb4e9923045ae02a4734d634b619d7c3c54f28fa331f1c9667015d2924eca5013b8056c3765f5ae5c343e3ddc859330e7a94b184acf09b9627a2f43b9c484ca863e6324d0e",
+          "03000b74732d616363742d61326100000000000000086fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b00000000000007d701000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b37d9e04a23f084645596253b3f92046a9e02c826891dccad545337ac028741ecd9c5c273c89ebf3f8a05154312e03e2d2ebfa595076f65deb133397c6576302",
+          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f890000000000000bb801000874732d6465762d3013000674732d682d31020002000674732d612d31000874732d6465762d7027e099e170bd1bc1c35e3f39fcfe9d9e470ab8610e74f241093671cf4385db843f6635e2ce68b651a14a98d46af7997800aaadd6057da530b25dd344fbda030e"
+        ],
+        "error": "notAllowed",
+        "rule": "an A2A proxy controls nothing: an accept list never names one"
+      },
+      {
+        "name": "an accept list naming only an A2A proxy",
+        "entries": [
+          "03000b74732d616363742d6132610000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e8000bc63bb405ec59b4716e92d57c95a4db7b64d50940eae588bf782fc557211b9593000874732d6465762d302401ac3e9117a7f86d98df0e76d2a89163b66b14b1b5e21bf1a38fbe1c5885bea8b3ecf398f88e488caefc82af2b58fb44db9b2e521b626b64e0129eb9334e1502017600450e0e9d09a1e0ce98c6d8e9355883a05333978760bb1a140b366e80dd15a3663369fd7535483c22973b8491beca971b2e359dfa8253f92b34780ef6ac85082d56c943d652a3cf0dc54d10783c03eebda6d102ea361430c9dc97106cc407f2cfd2ad033d1763457b63a3ca5686f9582e32430926822e3f99755fec1613cac8e27525f56c179d133498d148c403fb0333a9c8708124d4691e030042a75f00",
+          "03000b74732d616363742d613261000000000000000187bcdd9fe23335b106c190457c9736880c4b7399c70f6da136a62f14c2d137f600000000000007d001000874732d6465762d300a010000000039e5193fcaa6cc56a87403ddad519d6f740da8ddb89a581668aa1d6924e44f8400007576b372952aa20ff5da5c8b9dfb7c8f12206cd6a9f61332873f9ea552d8e6f9285ccf65ec115955e91d4c490a7b41a50da93ced664429217d1b20a0f235310f",
+          "03000b74732d616363742d613261000000000000000213231a1790a2931020fa12f6e81c6bc9150c4545158df4fd30a12e4f75dc2f8100000000000007d101000874732d6465762d300c000674732d682d31a513a93f22d754d2bcb65ac3e35c513d67a604009b79b93cab1a815e299f2bd29d2fd2102b93c00971d3d80718e0450d09a1ceafe8caeb571153dc399b688b3b012c83af1c1fc27a187478eddd6e574574a253a5d71737a48b9c28e1fe275a73e94c5b230c1c902aa3141cf9e2d3cd7cc9d226aad9c41761a478d814b15ab92e0a",
+          "03000b74732d616363742d6132610000000000000003b8aa096c9c72ea21d77ac41df46d0495ac117554b7dcaae616eeff5bd5432fdc00000000000007d201000874732d6465762d300a000001000674732d682d3100000000b5bccadd3a2f7053bb6bef2f99dd68165be3124ea7972685842be20d3192d5d1e85e3168d6481f39b2ba6dc2b8d0b18ab809b5f93690ecd31821b81468caba375b5072b65b19c1b57aef24e66883a1391cd7786eb7eafb499464c41d66b2c10b",
+          "03000b74732d616363742d6132610000000000000004cd1397b9b923d269e5c2a0410b4bc05035d709031a304af043d46be711a96ab000000000000007d301000874732d6465762d300c000874732d6465762d70f35da7869c132c07c6227b85964accbc3b11e931da6a822dc4222d5a7260d14ad93a8edc0927683750fba60c119fcac79e8b08d3f11cad78d3798e256e505801002a5a4e536314f91c76bbef335ce66010a80c86c0c0fab6e9208d2ae0301e633632f0f2ddacfa1dc7060215fb22730725ebf260bd048a0a6d8355a844643d8409",
+          "03000b74732d616363742d61326100000000000000056b9cb04ea0274986579196e27e33dfa3642e18f08b254a925cf02c034acef2be00000000000007d401000874732d6465762d30100005702d747361ceaa99eaefbfac5257af2ae8d656ea17b9a38f40cc8c21a1b613f966b32d723d80606c44fa389e0d8fe57094bab94c6507808ab0e577fc204dcbf033d54656b69c7941254f55ed1444c95ad3f6a8c8f5f5d0adbf307c9925dadeec7beb36f10c7fb6b2890fc83df9b15357cace5c10a48cd641719ef89c0b9b01194e6a7f5daedcf13c111ac76572163230639eea4c3ffd96003a0ce778ad0aea34b6e995fdc40001298b2dac63be2b3dbae4facb97dfbae73dcebb9b7232938a81b50e79a30dafadedf54b3603642c84616082b41ab6b31604210403504f6b4cd92e9d306ed2ae08",
+          "03000b74732d616363742d6132610000000000000006e08d42fea7439f93b9cccc2e2477c36348d59d72e9b57a2675f2d6f656feedc300000000000007d501000874732d6465762d300c000674732d612d318b05446045acacc82c2feffd47ca8e4a5a6d4739d52b32e0ab9ebed2acf83cb0979d652075f81a71b3f1788848bac5313049e90329c68ea0fba6e9fa2d938b7e044bf14bbed393edeb35a9db3a1472aa0234df294c9dca613c688b1b98fbb16b04b9348f75644a1d2e8782a537aa1e5e8a57ad4d4f0e59c8126aaaec47aed18a0d",
+          "03000b74732d616363742d6132610000000000000007dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d00000000000007d601000874732d6465762d300c000674732d612d329a84aae795ba3fdf0fe5876a102b2141231bbd2e025134dd033cd975bd2dd9e94aa71f8a7835e39a161c6abc341b06041e6880d1d1db84d73b34a81ceb4e9923045ae02a4734d634b619d7c3c54f28fa331f1c9667015d2924eca5013b8056c3765f5ae5c343e3ddc859330e7a94b184acf09b9627a2f43b9c484ca863e6324d0e",
+          "03000b74732d616363742d61326100000000000000086fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b00000000000007d701000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b37d9e04a23f084645596253b3f92046a9e02c826891dccad545337ac028741ecd9c5c273c89ebf3f8a05154312e03e2d2ebfa595076f65deb133397c6576302",
+          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f890000000000000bb801000874732d6465762d3013000674732d682d31020001000674732d612d32632b0eec488aba9a02e70baba1993234105e43af3b8d71ebea9c518e9116435c9ee9578a338491e35a8fa38993760ad28b645fa54f8712edd48948d303063b0d"
+        ],
+        "error": "notAllowed",
+        "rule": "an A2A proxy controls nothing: an accept list never names one"
+      },
+      {
         "name": "an A2A list naming a plain device",
         "entries": [
           "03000b74732d616363742d6132610000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e8000bc63bb405ec59b4716e92d57c95a4db7b64d50940eae588bf782fc557211b9593000874732d6465762d302401ac3e9117a7f86d98df0e76d2a89163b66b14b1b5e21bf1a38fbe1c5885bea8b3ecf398f88e488caefc82af2b58fb44db9b2e521b626b64e0129eb9334e1502017600450e0e9d09a1e0ce98c6d8e9355883a05333978760bb1a140b366e80dd15a3663369fd7535483c22973b8491beca971b2e359dfa8253f92b34780ef6ac85082d56c943d652a3cf0dc54d10783c03eebda6d102ea361430c9dc97106cc407f2cfd2ad033d1763457b63a3ca5686f9582e32430926822e3f99755fec1613cac8e27525f56c179d133498d148c403fb0333a9c8708124d4691e030042a75f00",
@@ -6192,11 +6500,10 @@
           "03000b74732d616363742d6132610000000000000006e08d42fea7439f93b9cccc2e2477c36348d59d72e9b57a2675f2d6f656feedc300000000000007d501000874732d6465762d300c000674732d612d318b05446045acacc82c2feffd47ca8e4a5a6d4739d52b32e0ab9ebed2acf83cb0979d652075f81a71b3f1788848bac5313049e90329c68ea0fba6e9fa2d938b7e044bf14bbed393edeb35a9db3a1472aa0234df294c9dca613c688b1b98fbb16b04b9348f75644a1d2e8782a537aa1e5e8a57ad4d4f0e59c8126aaaec47aed18a0d",
           "03000b74732d616363742d6132610000000000000007dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d00000000000007d601000874732d6465762d300c000674732d612d329a84aae795ba3fdf0fe5876a102b2141231bbd2e025134dd033cd975bd2dd9e94aa71f8a7835e39a161c6abc341b06041e6880d1d1db84d73b34a81ceb4e9923045ae02a4734d634b619d7c3c54f28fa331f1c9667015d2924eca5013b8056c3765f5ae5c343e3ddc859330e7a94b184acf09b9627a2f43b9c484ca863e6324d0e",
           "03000b74732d616363742d61326100000000000000086fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b00000000000007d701000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b37d9e04a23f084645596253b3f92046a9e02c826891dccad545337ac028741ecd9c5c273c89ebf3f8a05154312e03e2d2ebfa595076f65deb133397c6576302",
-          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020002000674732d612d31000874732d6465762d7045d592d4fc6d4c2514ae6776216b6b8292590eb0a187121da4af64e9135696ad2349d41a275954b02c97cbd40e1665eb779a4a9acf983108eeb26c7066a9f908",
-          "03000b74732d616363742d613261000000000000000a024e801a1b2ce0b0300a1ab0530bb2bae4da8b04e1bf2aacabea7b628435f81d00000000000007d901000874732d6465762d3013000674732d682d31020001000874732d6465762d705dd5eee36f5025e6fa2dd92eab97b94a59d3c4cad7270e9938706eab049533a5d21144f086e9f864204396ea97d25649eb2062bc202c2fa0435b18f1a592dd06",
-          "03000b74732d616363742d613261000000000000000b2050cfd1c3c186b14cc52f9eba41761a028751ded5301321abd9053cd57ab92900000000000007da01000874732d6465762d3013000674732d682d3101e68f2c80cea9d5f9c6ed3ff3297c04d508cf1a6e1e12f41ced2cb0396d671e7623dbef37be694564f23eff754fa5b69cfe2f006daaec32db0fc96ca448535d0a",
-          "03000b74732d616363742d613261000000000000000c0e1d3fccae8dd18222b3701fee033b91fcde8a6a104a2c97600f93376829ca4b00000000000007db01000874732d6465762d300f000674732d612d31c2ed03c640ac24cc0f449bc35d272796177911fdf71d2392a9a7a0303b842686b668aede75f316ebb466a8e5cf34ef8f91ba650b784dffacf1dc821203318908",
-          "03000b74732d616363742d613261000000000000000d4e4069b18bd77ee0cf052281c7650caf893c9f770ce58be8f20a270a38bd06100000000000000bb801000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b018cf526e80c0665d9ef3c47f2e8c684b64589af0f27594d7b83397db02254a6c42b07aae0891d9b8d86bcb1bca13873657cdc110962ab9f97b74166dba9e02"
+          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020001000874732d6465762d70c90ef01573bdc19cea05b392cbb65489ef26a815497cd5acca3b2199fb961098ef8716d1e4855e7b37ad9b2783561893c7f0da1c7e1aae62e6065b99382f2504",
+          "03000b74732d616363742d613261000000000000000a3e29e5b6a48b11343a52460ad84290a58583d3b2768620de914daea762690bb000000000000007d901000874732d6465762d3013000674732d682d3101a8492f0335038a6b0e3287e7a339111be1c373a503005d9b4d1231d1ea0690cada30670fac5d338963e06f3f8e7fcf0f0fdd09027b69b4fe3ba082dc23d04c07",
+          "03000b74732d616363742d613261000000000000000bdffa6e9ab7c0731373ef9444d683b58e1605c928d1952d6bc89acf20fbd1999600000000000007da01000874732d6465762d300f000674732d612d315d62b225889ba3abae94208577c9934c239d618e5207726747c0e201c5f967172b420b4cc964297d955a0093c3f4713537caaadaf2685d36ed9e46a6da9e9e05",
+          "03000b74732d616363742d613261000000000000000cb3ce9a3c348a1c81f1ae9a4ff5d5608a819016c2c81adbf36eaefecf0397c1ed0000000000000bb801000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d325c2f5c707a75627ec02ffbc402d9cc545b5a7f3e73b46a088e325e86bce799574e770bcd518b628673734618b2643002c87d859143971b4eed34198072de3507"
         ],
         "error": "unknownId",
         "rule": null
@@ -6217,6 +6524,24 @@
         ],
         "error": "notAllowed",
         "rule": "the host already accepts exactly those A2A proxies"
+      },
+      {
+        "name": "an A2A list that drops a proxy, without the host's next key",
+        "entries": [
+          "03000b74732d616363742d6132610000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e8000bc63bb405ec59b4716e92d57c95a4db7b64d50940eae588bf782fc557211b9593000874732d6465762d302401ac3e9117a7f86d98df0e76d2a89163b66b14b1b5e21bf1a38fbe1c5885bea8b3ecf398f88e488caefc82af2b58fb44db9b2e521b626b64e0129eb9334e1502017600450e0e9d09a1e0ce98c6d8e9355883a05333978760bb1a140b366e80dd15a3663369fd7535483c22973b8491beca971b2e359dfa8253f92b34780ef6ac85082d56c943d652a3cf0dc54d10783c03eebda6d102ea361430c9dc97106cc407f2cfd2ad033d1763457b63a3ca5686f9582e32430926822e3f99755fec1613cac8e27525f56c179d133498d148c403fb0333a9c8708124d4691e030042a75f00",
+          "03000b74732d616363742d613261000000000000000187bcdd9fe23335b106c190457c9736880c4b7399c70f6da136a62f14c2d137f600000000000007d001000874732d6465762d300a010000000039e5193fcaa6cc56a87403ddad519d6f740da8ddb89a581668aa1d6924e44f8400007576b372952aa20ff5da5c8b9dfb7c8f12206cd6a9f61332873f9ea552d8e6f9285ccf65ec115955e91d4c490a7b41a50da93ced664429217d1b20a0f235310f",
+          "03000b74732d616363742d613261000000000000000213231a1790a2931020fa12f6e81c6bc9150c4545158df4fd30a12e4f75dc2f8100000000000007d101000874732d6465762d300c000674732d682d31a513a93f22d754d2bcb65ac3e35c513d67a604009b79b93cab1a815e299f2bd29d2fd2102b93c00971d3d80718e0450d09a1ceafe8caeb571153dc399b688b3b012c83af1c1fc27a187478eddd6e574574a253a5d71737a48b9c28e1fe275a73e94c5b230c1c902aa3141cf9e2d3cd7cc9d226aad9c41761a478d814b15ab92e0a",
+          "03000b74732d616363742d6132610000000000000003b8aa096c9c72ea21d77ac41df46d0495ac117554b7dcaae616eeff5bd5432fdc00000000000007d201000874732d6465762d300a000001000674732d682d3100000000b5bccadd3a2f7053bb6bef2f99dd68165be3124ea7972685842be20d3192d5d1e85e3168d6481f39b2ba6dc2b8d0b18ab809b5f93690ecd31821b81468caba375b5072b65b19c1b57aef24e66883a1391cd7786eb7eafb499464c41d66b2c10b",
+          "03000b74732d616363742d6132610000000000000004cd1397b9b923d269e5c2a0410b4bc05035d709031a304af043d46be711a96ab000000000000007d301000874732d6465762d300c000874732d6465762d70f35da7869c132c07c6227b85964accbc3b11e931da6a822dc4222d5a7260d14ad93a8edc0927683750fba60c119fcac79e8b08d3f11cad78d3798e256e505801002a5a4e536314f91c76bbef335ce66010a80c86c0c0fab6e9208d2ae0301e633632f0f2ddacfa1dc7060215fb22730725ebf260bd048a0a6d8355a844643d8409",
+          "03000b74732d616363742d61326100000000000000056b9cb04ea0274986579196e27e33dfa3642e18f08b254a925cf02c034acef2be00000000000007d401000874732d6465762d30100005702d747361ceaa99eaefbfac5257af2ae8d656ea17b9a38f40cc8c21a1b613f966b32d723d80606c44fa389e0d8fe57094bab94c6507808ab0e577fc204dcbf033d54656b69c7941254f55ed1444c95ad3f6a8c8f5f5d0adbf307c9925dadeec7beb36f10c7fb6b2890fc83df9b15357cace5c10a48cd641719ef89c0b9b01194e6a7f5daedcf13c111ac76572163230639eea4c3ffd96003a0ce778ad0aea34b6e995fdc40001298b2dac63be2b3dbae4facb97dfbae73dcebb9b7232938a81b50e79a30dafadedf54b3603642c84616082b41ab6b31604210403504f6b4cd92e9d306ed2ae08",
+          "03000b74732d616363742d6132610000000000000006e08d42fea7439f93b9cccc2e2477c36348d59d72e9b57a2675f2d6f656feedc300000000000007d501000874732d6465762d300c000674732d612d318b05446045acacc82c2feffd47ca8e4a5a6d4739d52b32e0ab9ebed2acf83cb0979d652075f81a71b3f1788848bac5313049e90329c68ea0fba6e9fa2d938b7e044bf14bbed393edeb35a9db3a1472aa0234df294c9dca613c688b1b98fbb16b04b9348f75644a1d2e8782a537aa1e5e8a57ad4d4f0e59c8126aaaec47aed18a0d",
+          "03000b74732d616363742d6132610000000000000007dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d00000000000007d601000874732d6465762d300c000674732d612d329a84aae795ba3fdf0fe5876a102b2141231bbd2e025134dd033cd975bd2dd9e94aa71f8a7835e39a161c6abc341b06041e6880d1d1db84d73b34a81ceb4e9923045ae02a4734d634b619d7c3c54f28fa331f1c9667015d2924eca5013b8056c3765f5ae5c343e3ddc859330e7a94b184acf09b9627a2f43b9c484ca863e6324d0e",
+          "03000b74732d616363742d61326100000000000000086fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b00000000000007d701000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b37d9e04a23f084645596253b3f92046a9e02c826891dccad545337ac028741ecd9c5c273c89ebf3f8a05154312e03e2d2ebfa595076f65deb133397c6576302",
+          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f890000000000000bb801000874732d6465762d3017000674732d682d310001000674732d612d329e1363bb6fc4e8545e7b5fbff54a49dcd097ead12bf193f0d6fb316927c19b417ffbe8aab003f2f986218fa74d12d96dd75d332a848ed4a0c54680178bd71205",
+          "03000b74732d616363742d613261000000000000000a2d06ecda8957e883c2390701f064ed99b4dae2f986c6689fc933e70427fc8a460000000000000bb801000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d320f3f3fd53e7cbf5e1d4232960dab21a2a8afb03e5b766d23585443d0d6e773682fcecf53c77cf3c16ee03030200467394f13ab10951f9d31f8a8160e5e7cc501"
+        ],
+        "error": "notAllowed",
+        "rule": "a new host's machine key epoch must come next"
       },
       {
         "name": "an empty A2A list where none is set",
@@ -6246,11 +6571,10 @@
           "03000b74732d616363742d6132610000000000000006e08d42fea7439f93b9cccc2e2477c36348d59d72e9b57a2675f2d6f656feedc300000000000007d501000874732d6465762d300c000674732d612d318b05446045acacc82c2feffd47ca8e4a5a6d4739d52b32e0ab9ebed2acf83cb0979d652075f81a71b3f1788848bac5313049e90329c68ea0fba6e9fa2d938b7e044bf14bbed393edeb35a9db3a1472aa0234df294c9dca613c688b1b98fbb16b04b9348f75644a1d2e8782a537aa1e5e8a57ad4d4f0e59c8126aaaec47aed18a0d",
           "03000b74732d616363742d6132610000000000000007dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d00000000000007d601000874732d6465762d300c000674732d612d329a84aae795ba3fdf0fe5876a102b2141231bbd2e025134dd033cd975bd2dd9e94aa71f8a7835e39a161c6abc341b06041e6880d1d1db84d73b34a81ceb4e9923045ae02a4734d634b619d7c3c54f28fa331f1c9667015d2924eca5013b8056c3765f5ae5c343e3ddc859330e7a94b184acf09b9627a2f43b9c484ca863e6324d0e",
           "03000b74732d616363742d61326100000000000000086fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b00000000000007d701000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b37d9e04a23f084645596253b3f92046a9e02c826891dccad545337ac028741ecd9c5c273c89ebf3f8a05154312e03e2d2ebfa595076f65deb133397c6576302",
-          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020002000674732d612d31000874732d6465762d7045d592d4fc6d4c2514ae6776216b6b8292590eb0a187121da4af64e9135696ad2349d41a275954b02c97cbd40e1665eb779a4a9acf983108eeb26c7066a9f908",
-          "03000b74732d616363742d613261000000000000000a024e801a1b2ce0b0300a1ab0530bb2bae4da8b04e1bf2aacabea7b628435f81d00000000000007d901000874732d6465762d3013000674732d682d31020001000874732d6465762d705dd5eee36f5025e6fa2dd92eab97b94a59d3c4cad7270e9938706eab049533a5d21144f086e9f864204396ea97d25649eb2062bc202c2fa0435b18f1a592dd06",
-          "03000b74732d616363742d613261000000000000000b2050cfd1c3c186b14cc52f9eba41761a028751ded5301321abd9053cd57ab92900000000000007da01000874732d6465762d3013000674732d682d3101e68f2c80cea9d5f9c6ed3ff3297c04d508cf1a6e1e12f41ced2cb0396d671e7623dbef37be694564f23eff754fa5b69cfe2f006daaec32db0fc96ca448535d0a",
-          "03000b74732d616363742d613261000000000000000c0e1d3fccae8dd18222b3701fee033b91fcde8a6a104a2c97600f93376829ca4b00000000000007db01000874732d6465762d300f000674732d612d31c2ed03c640ac24cc0f449bc35d272796177911fdf71d2392a9a7a0303b842686b668aede75f316ebb466a8e5cf34ef8f91ba650b784dffacf1dc821203318908",
-          "03000b74732d616363742d613261000000000000000d4e4069b18bd77ee0cf052281c7650caf893c9f770ce58be8f20a270a38bd06100000000000000bb801000874732d6465762d3017000674732d682d310001000674732d612d3293a10b67c41ca7581f1579e78537b63b572f0aef65128288087d232d3f60367ab81638295393ee89a1372477ac11442c50a032c5d11ab8ca04cc0fc45072f404"
+          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020001000874732d6465762d70c90ef01573bdc19cea05b392cbb65489ef26a815497cd5acca3b2199fb961098ef8716d1e4855e7b37ad9b2783561893c7f0da1c7e1aae62e6065b99382f2504",
+          "03000b74732d616363742d613261000000000000000a3e29e5b6a48b11343a52460ad84290a58583d3b2768620de914daea762690bb000000000000007d901000874732d6465762d3013000674732d682d3101a8492f0335038a6b0e3287e7a339111be1c373a503005d9b4d1231d1ea0690cada30670fac5d338963e06f3f8e7fcf0f0fdd09027b69b4fe3ba082dc23d04c07",
+          "03000b74732d616363742d613261000000000000000bdffa6e9ab7c0731373ef9444d683b58e1605c928d1952d6bc89acf20fbd1999600000000000007da01000874732d6465762d300f000674732d612d315d62b225889ba3abae94208577c9934c239d618e5207726747c0e201c5f967172b420b4cc964297d955a0093c3f4713537caaadaf2685d36ed9e46a6da9e9e05",
+          "03000b74732d616363742d613261000000000000000cb3ce9a3c348a1c81f1ae9a4ff5d5608a819016c2c81adbf36eaefecf0397c1ed0000000000000bb801000874732d6465762d3017000674732d682d310001000674732d612d321a8a08a5cbd7fc5f1818a6b3629d020e28f29930a1fca59b2a7fa8ff32762fbf0e0a88862fb950104c364479c5bb7e7a5f480b401870db2798797d6e9655b501"
         ],
         "error": "notAllowed",
         "rule": "the host already accepts exactly those A2A proxies"
@@ -6267,16 +6591,16 @@
           "03000b74732d616363742d6132610000000000000006e08d42fea7439f93b9cccc2e2477c36348d59d72e9b57a2675f2d6f656feedc300000000000007d501000874732d6465762d300c000674732d612d318b05446045acacc82c2feffd47ca8e4a5a6d4739d52b32e0ab9ebed2acf83cb0979d652075f81a71b3f1788848bac5313049e90329c68ea0fba6e9fa2d938b7e044bf14bbed393edeb35a9db3a1472aa0234df294c9dca613c688b1b98fbb16b04b9348f75644a1d2e8782a537aa1e5e8a57ad4d4f0e59c8126aaaec47aed18a0d",
           "03000b74732d616363742d6132610000000000000007dd27645ac56ffe0772dd2f3dadc3001c9bec66ae5fdda99e82ef4368212ba77d00000000000007d601000874732d6465762d300c000674732d612d329a84aae795ba3fdf0fe5876a102b2141231bbd2e025134dd033cd975bd2dd9e94aa71f8a7835e39a161c6abc341b06041e6880d1d1db84d73b34a81ceb4e9923045ae02a4734d634b619d7c3c54f28fa331f1c9667015d2924eca5013b8056c3765f5ae5c343e3ddc859330e7a94b184acf09b9627a2f43b9c484ca863e6324d0e",
           "03000b74732d616363742d61326100000000000000086fb1990c3515ce2bb7411ac71c4191e8f8229d37196f9f265595c33961c1c14b00000000000007d701000874732d6465762d3017000674732d682d310002000674732d612d31000674732d612d32b37d9e04a23f084645596253b3f92046a9e02c826891dccad545337ac028741ecd9c5c273c89ebf3f8a05154312e03e2d2ebfa595076f65deb133397c6576302",
-          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020002000674732d612d31000874732d6465762d7045d592d4fc6d4c2514ae6776216b6b8292590eb0a187121da4af64e9135696ad2349d41a275954b02c97cbd40e1665eb779a4a9acf983108eeb26c7066a9f908",
-          "03000b74732d616363742d613261000000000000000a024e801a1b2ce0b0300a1ab0530bb2bae4da8b04e1bf2aacabea7b628435f81d00000000000007d901000874732d6465762d3013000674732d682d31020001000874732d6465762d705dd5eee36f5025e6fa2dd92eab97b94a59d3c4cad7270e9938706eab049533a5d21144f086e9f864204396ea97d25649eb2062bc202c2fa0435b18f1a592dd06",
-          "03000b74732d616363742d613261000000000000000b2050cfd1c3c186b14cc52f9eba41761a028751ded5301321abd9053cd57ab92900000000000007da01000874732d6465762d3013000674732d682d3101e68f2c80cea9d5f9c6ed3ff3297c04d508cf1a6e1e12f41ced2cb0396d671e7623dbef37be694564f23eff754fa5b69cfe2f006daaec32db0fc96ca448535d0a",
-          "03000b74732d616363742d613261000000000000000c0e1d3fccae8dd18222b3701fee033b91fcde8a6a104a2c97600f93376829ca4b00000000000007db01000874732d6465762d300f000674732d612d31c2ed03c640ac24cc0f449bc35d272796177911fdf71d2392a9a7a0303b842686b668aede75f316ebb466a8e5cf34ef8f91ba650b784dffacf1dc821203318908",
-          "03000b74732d616363742d613261000000000000000d4e4069b18bd77ee0cf052281c7650caf893c9f770ce58be8f20a270a38bd061000000000000007dc01000874732d6465762d3017000674732d682d3100008d1ed189e3415cf862b85004a38fceb0ae5e518f4f3bc3a3cf963ae2667fa262ed718e2c2b32d451d01269909c72a5eff6ff190bda71ddf4ac9a3a6d05606b0b",
-          "03000b74732d616363742d613261000000000000000e649a9aceb03810e73ac9927b79e1acda6c70e107e3e15a2927571d1e56ef2d1e00000000000007dd01000874732d6465762d3017000674732d682d310001000674732d612d321d70207bf6ec97ef2610d8f6e2acfd0e65e59df27a3707ddf1ea8e9b98279ce25b2d03440daee22a536ec4190357de1270620b580147ce370a3e8544568e8504",
-          "03000b74732d616363742d613261000000000000000f0cb67b7d08fd0bcfc4a748ef7c83cb51f7d053fd55b9d9b675be733daf4a404800000000000007de01000874732d6465762d300e000674732d682d31007da1e319dc795ef58fb5e9247ecc06878dde0ccaf1e448e556ca3368e0680e040724d55fbd2757bb41d43696f5dd2d5af0087c5dd8561373279ec217565b700f",
-          "03000b74732d616363742d6132610000000000000010eaea30fc2a0f9cea52b0f54c2f78148844fc971916d9232ce2179f749c780bc300000000000007df01000874732d6465762d300e000674732d682d3101fc2fab22684f74741b00dc2ba62ad291c04c11a6e8f4940352299b18e68b2af0088b8dfee9dfef6b59ba51642f77a62f3f24288ecf9ca668adb92d2220785b01",
-          "03000b74732d616363742d6132610000000000000011f4ee4585c3781e7547eb3e2e9ef70233dab79af33cb06a8ce23e94ecae2a679800000000000007e001000874732d6465762d300a000001000674732d682d310000000121377206b992e7e6f343154d1d4cecb4469e25efe0a0b4354504dd14974ca3616fa07f773b7456cf5137158868e84c4cd70b4e46fc3e0276b160f2af45c65ae81873d9b7ff9990fac4b077e77923465d90ede66de0693f398defb0b3fc588d0a",
-          "03000b74732d616363742d61326100000000000000121023955e5ad5368709e294ff2e7b55924ef1a350bc876e2f96159976db50629b0000000000000bb801000874732d6465762d3017000674732d682d310000e2973d7db6e05a1b207a6d7e76175c1da15b90f859156cc3735e4ca50b8d408f2cb38809506ae5171a9b5cdf001df56a98a24bf8249a4a1e2edacb69a0338b0e"
+          "03000b74732d616363742d6132610000000000000009399a82539dabe1f52633da2ab44c327a2511b50e9511d28c436d598dfd4d5f8900000000000007d801000874732d6465762d3013000674732d682d31020001000874732d6465762d70c90ef01573bdc19cea05b392cbb65489ef26a815497cd5acca3b2199fb961098ef8716d1e4855e7b37ad9b2783561893c7f0da1c7e1aae62e6065b99382f2504",
+          "03000b74732d616363742d613261000000000000000a3e29e5b6a48b11343a52460ad84290a58583d3b2768620de914daea762690bb000000000000007d901000874732d6465762d3013000674732d682d3101a8492f0335038a6b0e3287e7a339111be1c373a503005d9b4d1231d1ea0690cada30670fac5d338963e06f3f8e7fcf0f0fdd09027b69b4fe3ba082dc23d04c07",
+          "03000b74732d616363742d613261000000000000000bdffa6e9ab7c0731373ef9444d683b58e1605c928d1952d6bc89acf20fbd1999600000000000007da01000874732d6465762d300f000674732d612d315d62b225889ba3abae94208577c9934c239d618e5207726747c0e201c5f967172b420b4cc964297d955a0093c3f4713537caaadaf2685d36ed9e46a6da9e9e05",
+          "03000b74732d616363742d613261000000000000000cb3ce9a3c348a1c81f1ae9a4ff5d5608a819016c2c81adbf36eaefecf0397c1ed00000000000007db01000874732d6465762d3017000674732d682d3100000434eb9c70dc01246af9f02b2d0cfa7fc9f9cc8944dd3531ef5a7b179ed22681db856c13b40b9803361b184883181bd9bda3587aa80617f373d3a0b6f3929708",
+          "03000b74732d616363742d613261000000000000000d5513bf537755d74fdeeac2ff316cadd62c67968530fad0d3d8a0737256b709a600000000000007dc01000874732d6465762d300a000001000674732d682d31000000015763048dbcc808dbed66cb45fe7675009f608e092e20cfe567cee1d734e628745c3d58cecc514bbf476c9c53dbadeb8be3b0b645cbf0ef26be9176a14cbc0a0a58fdbf2205e9624be13b1862d022fdb34011fa9320efa2bdd01fe9cd6bd1b106",
+          "03000b74732d616363742d613261000000000000000e376beb2ac1bb949d847d812382b60d012b117d1298f0b8f906b9b31a5c7bea9700000000000007dd01000874732d6465762d3017000674732d682d310001000674732d612d32dd6549d308bd6f2d6e204f6c2fd5b67f3c244e1bab541dab29a9c725f9fa066fa520fb9164251c2cde6a478bf4846b739c392d4073044fad3da305ff5b16b501",
+          "03000b74732d616363742d613261000000000000000f565c24ec41a5acecbd45bdf18c39a72d65e70495ab6c0c6ae829372604aa0b0500000000000007de01000874732d6465762d300e000674732d682d310074f78820a0e2c5d0857e5c934196645b03447f811792043daa1089fd3364d38642dac0adf6404fddf5c993da10bce4129c1c17426c3d34aeed308233fe4e640b",
+          "03000b74732d616363742d613261000000000000001093836339a8332cb56cfffa6d3c268d63fff9a2349e591d5c0db8f6fefbf44a4200000000000007df01000874732d6465762d300e000674732d682d3101d9d262fd1330e3f2ea7268c20f21b7943e0eeaf462d54ddb7f990348664e8f4944d22b4978ac0312406248528a9da9e28468d1a02c8aaae55a2ab618612fb905",
+          "03000b74732d616363742d61326100000000000000118712f46bd4fdae8d7f0662e47b65bc490e1a9a4d6053afae5d5d9c94489e40d400000000000007e001000874732d6465762d300a000001000674732d682d3100000002dea8e2fdcb4e236e2011a12fee8662908b5fd9b3df31ec8477379a27ec908757d0ebcf039a5f823f2f0601f06da53f3f9e7d3932d47ebb3b7b8ccd1220c123e09e9fcb5f56a488571e13cbc48e7bcc30cdc506ac2b9195b38db3aa9aa1f81c0f",
+          "03000b74732d616363742d6132610000000000000012002b6392062f39a0bc0425624a6087801dbcc79676fe578fe76bd60a41f759870000000000000bb801000874732d6465762d3017000674732d682d310000a79e465bd8a8431ece13d24ded8342f9dfb6dffa53d64dba0c08d336082bfe9638b4018df9dc35e6c1eb16eded05b7ea697e551301fe705c296ad6e4e1ef8904"
         ],
         "error": "notAllowed",
         "rule": "the host already accepts exactly those A2A proxies"
@@ -6567,7 +6891,7 @@
       "textDr": "DRP1-AEAAS5DTFVQWGY3UFVYAACDUOMWWIZLWFVXMANE7CXLC2TGBXQ6FOJZN5YGIAFUKATQDDR6XQ35ZYEKFBM4OY5BDBZLHMU6CXPUFNWLMOMW3R4B72Z762TAHYHLMHW7HYAZOR26AFN2ZLI66AYINASWTSBA5G5XF3QOU4ZWMETIYNX2ML5RXDAMSMQWES"
     },
     "delivery": {
-      "hex": "01000974732d616363742d70683fa56c7f8ccefd4adb2323d418e4bd000874732d6465762d30b246d230d1a4d4f85d8330bdd39ecad024de4fd52f3fcb5849421ad841e8b89bab228ee398f18a3c05ffb9694a4d86d38a14c5889d5239a5f920333b4cb0b80b000100000000005c733af4a65b36d8112b23207490f112d1ff99fc82062028781f464012bebbc04caddc3e699f348105a886069c8bad602206c78fb2d83fadca8539c1dd6b3db5bfcbd617545897d81047146c7579d13a5ef3c7ed2fbc0f15114fe2baf6a3d5f033f1843e8a3b106cc8b6406c74cef61bfd0f7a5f1af3d30d599c58e8dc",
+      "hex": "01000974732d616363742d70683fa56c7f8ccefd4adb2323d418e4bd000874732d6465762d30b246d230d1a4d4f85d8330bdd39ecad024de4fd52f3fcb5849421ad841e8b89bab228ee398f18a3c05ffb9694a4d86d38a14c5889d5239a5f920333b4cb0b80b000100000000005ca52238ec302b8bc741d0ac21b9ace5af47c1791bfe52b4c84b1910b7653a354675eefe44fb1781fd0b4d454ed4954975c53cbee4547a8d2cf982c61795788f239efeddd2ed23f2ecd5df90d8c824fda7907a3b1b64099a2ee1928d27ee2a1d7a79935e6b12e9a1ae3be227a0ada41cdace3feb4fd93567db94f96194",
       "recipient": "ts-dev-n",
       "recipientDhSecret": "f241324bebe22b2e1e101de490a6496f8df8f2fb2fc83da80236f070e0c3b039",
       "uk": "31262ae7290d0a55e852b3b37442e1f9327b43ea1ef514603b6a4557e41a2e8e",
@@ -6584,7 +6908,7 @@
       "sealPublic": "d0833cd58257408eca762fe3152218c580236b942ff7eb85db9520380ad79278",
       "sender": "ts-dev-0",
       "epoch": 2,
-      "sealed": "f778ac62dad4de77d4aa99ed3e0e31e1a9cc2f9f0a62ad946006d8bca195a23f6e9ce4a097ef81b77a4f79f2dcdd36e662a96a290fc5c1dbe22d7bc6d0948bbd6936fdc9ab46de1ed7802808449d8c6a3ea04e3109cb783b642b628e",
+      "sealed": "3c0d3637e300a7b875aee755660b855b9525a2d37e5ab84fbfa09976c28e870a732cd75d5cb22e9193c634e02046bde689c17628ce2ed6105412743575a6b23da2fcd19d22eab0c8268a046a7e815028efd3942dc17967af3fe573b3",
       "uk": "36e5e4102525da46038410e1d0f47fa2545162717c2b22ad1524bc42a6f8360e"
     }
   },

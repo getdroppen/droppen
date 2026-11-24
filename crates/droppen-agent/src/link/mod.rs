@@ -2317,6 +2317,33 @@ mod tests {
             account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref()).as_deref(),
             Some("a renewal pause was completed; none of the control it paused comes back (by d-1)")
         );
+        // A pause holds an A2A proxy's calls too (`docs/a2a.md` §7.1): its end
+        // gives them back, and the notice names the proxy among what comes back.
+        let proxy = MachineIdentity::from_seed(&[10; 32]);
+        push(
+            &mut state,
+            Action::AddDevice3(DeviceV3 {
+                id: "a-1".into(),
+                sign_key: proxy.sign_public(),
+                dh_key: proxy.dh_public(),
+                flags: Flags::A2A_DEVICE,
+            }),
+        );
+        push(
+            &mut state,
+            Action::SetA2aAccept {
+                host: "h-2".into(),
+                devices: vec!["a-1".into()],
+            },
+        );
+        push(&mut state, pause(3, Start, &["a-1"]));
+        assert!(state.may_call_a2a("a-1", "h-2").is_err(), "held while the pause is open");
+        let done = push(&mut state, pause(3, Completed, &[]));
+        assert!(state.may_call_a2a("a-1", "h-2").is_ok());
+        assert_eq!(
+            account_change_in(&done, None, pause_notice_edges(&state, &done).as_deref()).as_deref(),
+            Some("control by a-1 over h-2 resumes (by d-1)")
+        );
         // The renewed host is h-2 with its new keys, here as everywhere.
         assert_eq!(state.machine("h-2").map(|d| d.info.sign_key), Some(new.sign_public()));
         assert_eq!(state.keys_at("h-2", rotate.seq() - 1).map(|k| k.sign_key), Some(old.sign_public()));

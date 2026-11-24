@@ -174,7 +174,9 @@ pub(crate) fn part_of_a_batch(entry: &Entry, prev: Option<&Entry>) -> bool {
 /// marker applied): an ending marker names no removals, so its start's — and
 /// "resumes" only the control that comes back, never an edge the base has
 /// since dropped (a hand `SetAccept`, a removal, a host that stopped hosting)
-/// or another open pause still holds. `None` for anything else.
+/// or another open pause still holds. An A2A proxy's edge comes back as its
+/// calls do (`may_call_a2a`: a pause holds those too). `None` for anything
+/// else.
 pub(crate) fn pause_notice_edges(chain: &ChainState, entry: &Entry) -> Option<Vec<(String, Vec<String>)>> {
     let Action::RenewalPause { op, phase, .. } = &entry.draft.action else {
         return None;
@@ -187,7 +189,10 @@ pub(crate) fn pause_notice_edges(chain: &ChainState, entry: &Entry) -> Option<Ve
         removals
             .into_iter()
             .filter_map(|(host, ids)| {
-                let ids: Vec<String> = ids.into_iter().filter(|id| chain.may_control(id, &host).is_ok()).collect();
+                let ids: Vec<String> = ids
+                    .into_iter()
+                    .filter(|id| chain.may_control(id, &host).is_ok() || chain.may_call_a2a(id, &host).is_ok())
+                    .collect();
                 (!ids.is_empty()).then_some((host, ids))
             })
             .collect(),
