@@ -14,7 +14,7 @@
 //! ([`crate::pace`]) and without it (as before; also what an old agent does).
 //! The numbers are printed (`--no-capture`) for the record.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -71,6 +71,8 @@ fn bottleneck<T: Send + 'static>(
     to: mpsc::UnboundedSender<T>,
     size: fn(&T) -> usize,
     left: Option<Backlog>,
+    // More one-way delay (µs) than the link's, from when it is set on: a route that changed.
+    extra: Arc<AtomicU64>,
 ) {
     let (line_tx, mut line_rx) = mpsc::unbounded_channel::<(Instant, usize, T)>();
     let seen = left.clone();
@@ -95,7 +97,8 @@ fn bottleneck<T: Send + 'static>(
             if let Some(left) = &left {
                 left.queued.fetch_sub(bytes, Ordering::Relaxed);
             }
-            if air_tx.send((at + link.one_way, m)).is_err() {
+            let delay = link.one_way + Duration::from_micros(extra.load(Ordering::Relaxed));
+            if air_tx.send((at + delay, m)).is_err() {
                 break;
             }
         }
@@ -128,15 +131,15 @@ fn transports(seed: u64) -> (Transport, Transport) {
 /// A direct path between the two drivers over `link` each way: the
 /// DataChannel's buffer is what waits at the bottleneck (on a real one, its
 /// `bufferedAmount` and SCTP's queue). The agent's backlog is the third.
-fn direct_pipes(link: Link) -> (DirectPipe, DirectPipe, Backlog) {
+fn direct_pipes(link: Link, extra: Arc<AtomicU64>) -> (DirectPipe, DirectPipe, Backlog) {
     let (d_tx, d_tx_rx) = mpsc::unbounded_channel();
     let (a_tx, a_tx_rx) = mpsc::unbounded_channel();
     let (d_rx_tx, d_rx) = mpsc::unbounded_channel();
     let (a_rx_tx, a_rx) = mpsc::unbounded_channel();
     let d = Backlog::default();
     let a = Backlog::default();
-    bottleneck(link, d_tx_rx, a_rx_tx, |m: &Vec<u8>| m.len(), Some(d.clone()));
-    bottleneck(link, a_tx_rx, d_rx_tx, |m: &Vec<u8>| m.len(), Some(a.clone()));
+    bottleneck(link, d_tx_rx, a_rx_tx, |m: &Vec<u8>| m.len(), Some(d.clone()), extra.clone());
+    bottleneck(link, a_tx_rx, d_rx_tx, |m: &Vec<u8>| m.len(), Some(a.clone()), extra);
     (
         DirectPipe {
             tx: d_tx,
@@ -167,6 +170,11 @@ struct Run {
     device_paces: bool,
     /// Carry the channel over a direct path on the same link instead of the hub.
     direct: bool,
+    /// A terminal's output from the agent the whole time: so many bytes every so many ms (0: none).
+    term_bytes: usize,
+    term_every_ms: u64,
+    /// At so many ms, the round trip becomes so many ms (a route that changed).
+    rtt_change: Option<(u64, u64)>,
 }
 
 #[derive(Debug)]
@@ -181,6 +189,8 @@ struct Report {
     cap: Option<u64>,
     /// Over a direct path, the most the agent's DataChannel held unsent.
     dc_peak: Option<usize>,
+    /// Whether the page's pace deferred to the window at any time (looked at every 100 ms).
+    page_deferred: bool,
 }
 
 impl Report {
@@ -220,8 +230,17 @@ async fn run(r: Run) -> Report {
     let (a_out, a_out_rx) = mpsc::unbounded_channel();
     let (d_in, d_in_rx) = mpsc::unbounded_channel();
     let (a_in, a_in_rx) = mpsc::unbounded_channel();
-    bottleneck(r.link, d_out_rx, a_in, frame_size, None);
-    bottleneck(r.link, a_out_rx, d_in, frame_size, None);
+    let extra = Arc::new(AtomicU64::new(0));
+    bottleneck(r.link, d_out_rx, a_in, frame_size, None, extra.clone());
+    bottleneck(r.link, a_out_rx, d_in, frame_size, None, extra.clone());
+    if let Some((at_ms, rtt_ms)) = r.rtt_change {
+        let base_rtt_us = r.link.one_way.as_micros() as u64 * 2;
+        let extra = extra.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(at_ms)).await;
+            extra.store((rtt_ms * 1000).saturating_sub(base_rtt_us) / 2, Ordering::Relaxed);
+        });
+    }
     let opts = |pace| ChannelOptions {
         pace,
         clock: Some(clock.clone()),
@@ -229,7 +248,7 @@ async fn run(r: Run) -> Report {
     let (device, _d_acc) = Channel::spawn_with(device, d_in_rx, d_out, opts(r.device_paces));
     let (agent, mut a_acc) = Channel::spawn_with(agent, a_in_rx, a_out, opts(r.agent_paces));
     if r.direct {
-        let (d_pipe, a_pipe, backlog) = direct_pipes(r.link);
+        let (d_pipe, a_pipe, backlog) = direct_pipes(r.link, extra.clone());
         dc_peak = Some(backlog.peak);
         let (dt, at) = transports(10);
         agent.attach_direct(at, a_pipe).unwrap();
@@ -244,6 +263,7 @@ async fn run(r: Run) -> Report {
     let bulk = r.bulk / r.downloads.max(1);
     let body = r.body;
     let upload = r.upload;
+    let (term_bytes, term_every_ms) = (r.term_bytes, r.term_every_ms);
     let uploaded: Arc<std::sync::Mutex<Option<Instant>>> = Arc::default();
     let up_done = uploaded.clone();
     tokio::spawn(async move {
@@ -268,6 +288,16 @@ async fn run(r: Run) -> Report {
                         }
                     }
                     return;
+                }
+                if class == StreamClass::Term {
+                    // A terminal's output, until the page closes it.
+                    let chunk = vec![b'x'; term_bytes];
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(term_every_ms)).await;
+                        if stream.send(&chunk).await.is_err() {
+                            return;
+                        }
+                    }
                 }
                 if class == StreamClass::Rpc {
                     let mut read = 0;
@@ -302,6 +332,27 @@ async fn run(r: Run) -> Report {
     let mut blobs = Vec::new();
     for _ in 0..if r.bulk > 0 { r.downloads } else { 0 } {
         blobs.push(device.open(StreamClass::Blob, b"GET /api/fs/download?path=%2Ftmp%2Fbig").await.unwrap());
+    }
+    let term = if term_bytes > 0 {
+        let mut term = device.open(StreamClass::Term, b"t-1").await.unwrap();
+        let writer = term.writer();
+        tokio::spawn(async move { while let Some(StreamEvent::Data(_)) = term.recv().await {} });
+        Some(writer)
+    } else {
+        None
+    };
+    let deferred = Arc::new(AtomicBool::new(false));
+    let watching = Arc::new(AtomicBool::new(true));
+    {
+        let (device, deferred, watching) = (device.clone(), deferred.clone(), watching.clone());
+        tokio::spawn(async move {
+            while watching.load(Ordering::Relaxed) {
+                if device.pace().await.is_some_and(|p| p.deferring) {
+                    deferred.store(true, Ordering::Relaxed);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
     }
     if upload > 0 {
         let up = device.open(StreamClass::Blob, b"POST /api/fs/upload?path=%2Ftmp%2Fbig").await.unwrap();
@@ -356,6 +407,10 @@ async fn run(r: Run) -> Report {
     }
     let done = download.await.unwrap();
     let cap = agent.pace().await.map(|p| p.cap);
+    watching.store(false, Ordering::Relaxed);
+    if let Some(term) = term {
+        term.close(0);
+    }
     let mut rpc_ms = Vec::new();
     for ask in asks {
         rpc_ms.push(ask.await.unwrap());
@@ -370,6 +425,7 @@ async fn run(r: Run) -> Report {
         link_mbps: r.link.bits_per_s as f64 / 1e6,
         cap,
         dc_peak: dc_peak.map(|p| p.load(Ordering::Relaxed)),
+        page_deferred: deferred.load(Ordering::Relaxed),
     }
 }
 
@@ -391,6 +447,9 @@ async fn on_a_slow_link_a_question_waits_behind_a_fraction_of_a_second_of_downlo
         agent_paces: false,
         device_paces: false,
         direct: false,
+        term_bytes: 0,
+        term_every_ms: 0,
+        rtt_change: None,
     };
     let before = run(base).await;
     let after = run(Run {
@@ -426,6 +485,9 @@ async fn a_slow_direct_path_is_paced_too() {
         agent_paces: false,
         device_paces: false,
         direct: true,
+        term_bytes: 0,
+        term_every_ms: 0,
+        rtt_change: None,
     };
     let before = run(base).await;
     let after = run(Run {
@@ -459,6 +521,9 @@ async fn on_a_fast_link_the_download_keeps_its_speed() {
         agent_paces: false,
         device_paces: false,
         direct: false,
+        term_bytes: 0,
+        term_every_ms: 0,
+        rtt_change: None,
     };
     let before = run(base).await;
     let after = run(Run {
@@ -503,6 +568,9 @@ async fn an_end_that_paces_and_one_that_does_not_work_together() {
         agent_paces: true,
         device_paces: false,
         direct: false,
+        term_bytes: 0,
+        term_every_ms: 0,
+        rtt_change: None,
     };
     let new_agent = run(base).await;
     let old_agent = run(Run {
@@ -543,6 +611,9 @@ async fn a_page_reading_a_long_download_still_sends_its_small_requests_at_once()
         agent_paces: false,
         device_paces: true,
         direct: false,
+        term_bytes: 0,
+        term_every_ms: 0,
+        rtt_change: None,
     };
     let old_agent = run(base).await;
     let paced = run(Run { agent_paces: true, ..base }).await;
@@ -571,6 +642,9 @@ async fn both_ways_at_once_every_pairing_keeps_both_directions_busy() {
             agent_paces: false,
             device_paces: false,
             direct: false,
+            term_bytes: 0,
+            term_every_ms: 0,
+            rtt_change: None,
         };
         println!("{mbps} Mbps, {rtt} ms, a deep queue, a {} KiB download and upload at once, an rpc every second:", size / 1024);
         let unpaced = run(base).await;
@@ -588,4 +662,76 @@ async fn both_ways_at_once_every_pairing_keeps_both_directions_busy() {
             assert!(up >= 0.9 * was, "{name}, up: {up} against {was}");
         }
     }
+}
+
+/// The page uploads at 20 Mbps while the agent's terminal writes a little
+/// output the whole time, and at 5 s the round trip goes from 20 ms to
+/// 200 ms (a route that changed). The output is a trickle next to the
+/// upload: it does not keep the upload's minimum round trip at the old 20 ms
+/// (and its cap a tenth of what the new one needs) — the upload keeps
+/// within a tenth of its speed with no output at all.
+#[tokio::test(start_paused = true)]
+async fn a_terminals_output_does_not_freeze_the_round_trip_an_upload_paces_by() {
+    let base = Run {
+        link: Link::mbps(20.0, 20),
+        bulk: 0,
+        downloads: 1,
+        body: 0,
+        upload: 16 * MIB,
+        agent_paces: true,
+        device_paces: true,
+        direct: false,
+        term_bytes: 0,
+        term_every_ms: 0,
+        rtt_change: Some((5_000, 200)),
+    };
+    println!("20 Mbps, a 16 MiB upload, the round trip 20 ms then 200 ms from 5 s, a terminal's output meanwhile:");
+    let unpaced = run(Run {
+        agent_paces: false,
+        device_paces: false,
+        ..base
+    })
+    .await;
+    println!("{}", unpaced.line("no output, neither paces"));
+    let quiet = run(base).await;
+    println!("{}", quiet.line("no output"));
+    for (bytes, every, name) in [(4 * 1024, 100, "output 40 KB/s"), (20 * 1024, 100, "output 200 KB/s")] {
+        let r = run(Run {
+            term_bytes: bytes,
+            term_every_ms: every,
+            ..base
+        })
+        .await;
+        println!("{}", r.line(name));
+        let (up, was) = (r.up_mbps.unwrap(), quiet.up_mbps.unwrap());
+        assert!(up >= 0.9 * was, "{name}: {up} against {was} with no output");
+    }
+}
+
+/// A pacing agent's small writes — 3 KB every 100 ms, each counted as
+/// delivered before the next without a marker of its own — are still marked
+/// every 16 KiB, so the page uploading meanwhile never takes the agent for an
+/// older peer and never defers to the window: its questions keep their half
+/// a second.
+#[tokio::test(start_paused = true)]
+async fn a_pacing_agents_small_writes_never_make_the_page_defer() {
+    let r = run(Run {
+        link: Link::mbps(1.0, 70),
+        bulk: 0,
+        downloads: 1,
+        body: 0,
+        upload: 3 * MIB / 2,
+        agent_paces: true,
+        device_paces: true,
+        direct: false,
+        term_bytes: 3 * 1024,
+        term_every_ms: 100,
+        rtt_change: None,
+    })
+    .await;
+    println!("1 Mbps, 70 ms, a 1.5 MiB upload while the agent's terminal writes 3 KB every 100 ms:");
+    println!("{}", r.line("both pace"));
+    assert!(!r.page_deferred, "{r:?}");
+    assert!(r.pct(0.95) < 1000.0, "{r:?}");
+    assert!(r.up_mbps.unwrap() >= 0.85, "{r:?}");
 }

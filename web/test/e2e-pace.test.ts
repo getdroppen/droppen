@@ -282,6 +282,40 @@ test("both ways at once: a pacing peer's loaded answers change nothing but drain
   assert.equal(again.cap(), PACE_FLOOR, JSON.stringify(again.stats()));
 });
 
+test("a trickle from the peer does not freeze the minimum; a pacing sender's small writes are marked every 16 KiB", () => {
+  const pace = new Pace(INITIAL_CREDIT);
+  const sim = new Sim(2500, 20);
+  sim.run(pace, 5_000);
+  sim.rtt = 200;
+  sim.rx = 40;
+  sim.probeEvery = 16 * 1024;
+  sim.run(pace, 15_000);
+  assert.ok(pace.stats().minRttMs! >= 150, JSON.stringify(pace.stats()));
+  const tail = sim.run(pace, 5_000).delivered;
+  assert.ok(tail >= 0.9 * 2500 * 5_000, `${tail}`);
+
+  const writer = new Pace(INITIAL_CREDIT);
+  writer.next(0);
+  writer.markerSent(1, 0);
+  writer.answered(1, 70);
+  let [nonce, unprobed, most] = [1, 0, 0];
+  for (let k = 1; k <= 100; k++) {
+    const t = k * 100;
+    if (writer.next(t).type === "marker") {
+      nonce += 1;
+      writer.markerSent(nonce, t);
+      writer.answered(nonce, t + 70);
+      unprobed = 0;
+    }
+    writer.dataSent(3_000, t);
+    unprobed += 3_000;
+    most = Math.max(most, unprobed);
+    assert.equal(writer.stopped(false, true), false);
+  }
+  assert.ok(most <= 16 * 1024 + 3_000, `${most}`);
+  assert.ok(nonce >= 15, `${nonce}`);
+});
+
 function kinds(frames: MuxFrame[]): string[] {
   return frames.map((f) => (f.type === "data" ? `data${f.sid}:${f.data.length}` : `${f.type}${"sid" in f ? f.sid : ""}`));
 }

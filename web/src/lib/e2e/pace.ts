@@ -21,7 +21,9 @@
  * - What counts is stream data (and resends), not the multiplexer's own
  *   frames: a side that mostly reads sends a steady trickle of credits.
  * - Both ways at once: more than `PACE_QUIET_RX` received during a marker's
- *   round trip and its answer came back loaded, behind the peer's traffic.
+ *   round trip, and more than half what the path carries in it (a terminal's
+ *   output is a trickle), and its answer came back loaded, behind the peer's
+ *   traffic.
  *   Such a round trip never refreshes the minimum (less what a pacing peer
  *   keeps queued, `PACE_FLOOR` at the rate the peer's traffic came, it may
  *   lower it), nor starts a drain. Bulk from a peer that does not mark it —
@@ -71,8 +73,10 @@ export const PACE_QUIET_MS = 250;
 export const PACE_MAX_MARKERS = 64;
 /** What sealing adds to a multiplexer frame on its way to the wire, rounded up. */
 export const PACE_OVERHEAD = 64;
-/** More than this received during a marker's round trip, and its answer came back behind the peer's traffic. */
+/** More than this received during a marker's round trip — and more than `PACE_LOADED_SHARE` of what this path carries in it — and its answer came back behind the peer's traffic. */
 export const PACE_QUIET_RX = 8 * 1024;
+/** The peer's traffic loads the answer path when it comes at more than this share of the rate this path has carried lately; less is a trickle. */
+export const PACE_LOADED_SHARE = 0.5;
 /** The peer's bulk is unmarked (an older peer's) past this many of a pacing peer's marker spacings without a probe. */
 export const PACE_UNMARKED_SPANS = 4;
 /** While the answers come back loaded, markers go every sixteenth of the cap, never closer than this… */
@@ -117,11 +121,11 @@ interface Marker {
 class MaxFilter {
   private readonly samples: [number, number][] = [];
 
-  push(atMs: number, rate: number): void {
+  push(atMs: number, rate: number, windowMs = PACE_RATE_WINDOW_MS): void {
     while (this.samples.length > 0 && this.samples[this.samples.length - 1]![1] <= rate) this.samples.pop();
     this.samples.push([atMs, rate]);
     // The newest always stays: across a quiet spell the last estimate holds.
-    while (this.samples.length > 1 && atMs - this.samples[0]![0] > PACE_RATE_WINDOW_MS) this.samples.shift();
+    while (this.samples.length > 1 && atMs - this.samples[0]![0] > windowMs) this.samples.shift();
   }
 
   max(): [number, number] | null {
@@ -141,6 +145,10 @@ export class Pace {
   private appLimitedUntil = 0;
   private markers: Marker[] = [];
   private readonly rateFilter = new MaxFilter();
+  /** The highest rate of the last `PACE_MIN_RTT_WINDOW_MS`: what the path carries, for telling the peer's bulk from a trickle. */
+  private readonly peak = new MaxFilter();
+  /** Data sent since the last marker, a folded tail included: a peer that paces is told so at least every `PACE_MIN_SPACING`. */
+  private sinceMarker = 0;
   /** The minimum round trip and when it was taken (ms). */
   private minRtt: [number, number] | null = null;
   private draining = false;
@@ -169,7 +177,15 @@ export class Pace {
 
   /** Take another path's rate when this one has none of its own. */
   seedRate(rate: [number, number] | null): void {
-    if (rate && !this.rateFilter.max()) this.rateFilter.push(rate[0], rate[1]);
+    if (rate && !this.rateFilter.max()) {
+      this.rateFilter.push(rate[0], rate[1]);
+      this.peak.push(rate[0], rate[1], PACE_MIN_RTT_WINDOW_MS);
+    }
+  }
+
+  /** Data has gone without a marker for `PACE_MIN_SPACING` (resends, which go ahead of the pace): one is due before more. */
+  markerDue(): boolean {
+    return this.sinceMarker >= PACE_MIN_SPACING;
   }
 
   /** The rate estimate and when its sample was taken. */
@@ -243,7 +259,7 @@ export class Pace {
     }
     // Spaced by the cap this path measured, deferring or not; closer while the answers come back loaded.
     const spacing = this.answersLoaded() ? Math.max(PACE_LOADED_SPACING, Math.trunc(this.ownCap() / 16)) : Math.max(PACE_MIN_SPACING, Math.trunc(this.ownCap() / 4));
-    if (this.unmarked >= spacing) return { type: "marker" };
+    if (this.unmarked >= spacing || this.sinceMarker >= PACE_MIN_SPACING) return { type: "marker" };
     const cap = this.cap();
     const used = this.inflight + PACE_OVERHEAD;
     return { type: "data", budget: { interactive: Math.max(0, cap + PACE_HEADROOM - used), bulk: Math.max(0, cap - used) } };
@@ -274,6 +290,7 @@ export class Pace {
     }
     this.sent += len;
     this.unmarked += len;
+    this.sinceMarker += len;
     this.lastDataMs = nowMs;
   }
 
@@ -291,6 +308,7 @@ export class Pace {
       rx: this.rx,
     });
     this.unmarked = 0;
+    this.sinceMarker = 0;
     if (this.markers.length > PACE_MAX_MARKERS) this.markers.shift();
   }
 
@@ -310,13 +328,22 @@ export class Pace {
     const rttMs = Math.max(0, nowMs - m.sentMs);
     // What came in meanwhile: the answer path loaded, and at what rate.
     const rx = this.rx - m.rx;
-    this.loaded = rx > PACE_QUIET_RX;
+    const peak = this.peak.max()?.[1] ?? 0;
+    // More than a trickle: more than PACE_QUIET_RX, and more than half what the path carries in a round trip.
+    this.loaded = rx > Math.max(PACE_QUIET_RX, Math.trunc((PACE_LOADED_SHARE * peak * rttMs) / 1e3));
     if (rttMs > 0) this.rxRate = (rx * 1e3) / rttMs;
     if (!this.loaded) {
       this.noteRtt(rttMs, m.clean, nowMs);
     } else if (this.minRtt !== null) {
-      // Loaded: the whole round trip may lower the minimum, never refresh it.
-      if (rttMs <= this.minRtt[0]) this.noteRtt(rttMs, false, nowMs);
+      // Loaded: the whole round trip may lower the minimum, never refresh it — except a clean marker's, once the
+      // minimum is due: less what the peer can have had queued ahead of the answer, at the better of the two rates.
+      if (rttMs <= this.minRtt[0]) {
+        this.noteRtt(rttMs, false, nowMs);
+      } else if (m.clean && nowMs - this.minRtt[1] >= PACE_MIN_RTT_REFRESH_MS) {
+        const waitMs = (Math.min(rx, PACE_FLOOR) * 1e3) / Math.max(peak, this.rxRate);
+        const leftMs = Math.floor(rttMs - waitMs);
+        if (leftMs >= 1) this.minRtt = [leftMs, nowMs];
+      }
     } else if (this.rxRate > 0) {
       // Loaded from the first marker on: less what a pacing peer keeps queued (its floor), it seeds the minimum.
       const leftMs = Math.floor(rttMs - (PACE_FLOOR * 1e3) / this.rxRate);
@@ -332,7 +359,10 @@ export class Pace {
     if (data > 0 && interval > 0) {
       const rate = (data * 1e3) / interval;
       const max = this.rateFilter.max();
-      if (!m.appLimited || max === null || rate >= max[1]) this.rateFilter.push(nowMs, rate);
+      if (!m.appLimited || max === null || rate >= max[1]) {
+        this.rateFilter.push(nowMs, rate);
+        this.peak.push(nowMs, rate, PACE_MIN_RTT_WINDOW_MS);
+      }
     }
     if (m.delivered >= this.nextRound) {
       // A round trip's worth delivered since the last round ended (BBR's rounds).

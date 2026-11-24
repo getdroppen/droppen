@@ -555,6 +555,10 @@ export class Session {
         p.sentRelay(plain.length, nowMs);
         return { wire: await this.relay(wallMs, plain), data: null };
       }
+      if (p.resendRelay.length > 0 && p.pacing && !p.direct && p.relayPace.markerDue()) {
+        // Resends carry no markers of their own: one in every so much, so a peer that paces does not take them for an older peer's bulk.
+        return { wire: await this.marker("relay", nowMs, wallMs), data: null };
+      }
       const resend = p.resendRelay.shift();
       if (resend) {
         const plain = encodeEnvelope(resend);

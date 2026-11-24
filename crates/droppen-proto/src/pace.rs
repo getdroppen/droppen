@@ -53,12 +53,15 @@
 //! told from this side's own queue (in flight is rate × round trip either
 //! way). What this side *receives* tells:
 //!
-//! - more than [`QUIET_RX`] during a marker's round trip and the answer path
-//!   was **loaded**. Such a round trip never refreshes the minimum, which
+//! - more than [`QUIET_RX`] during a marker's round trip, and more than
+//!   [`LOADED_SHARE`] of what the path carries in it (a terminal's output is a
+//!   trickle), and the answer path was **loaded**. Such a round trip never refreshes the minimum, which
 //!   would take in the peer's queue and grow the cap from it (and a drain does
 //!   not start for one: it could not measure it); it may lower it, and on a
-//!   path loaded from its first marker on it seeds it, less what a pacing
-//!   peer keeps queued ([`FLOOR`] at the rate its traffic came).
+//!   path loaded from its first marker on it seeds it — or refreshes it, a
+//!   clean marker's once the minimum is due — less what the peer can have had
+//!   queued ahead of the answer (what came in, a pacing peer's [`FLOOR`] at
+//!   most, at the rate the path or the peer's traffic came).
 //! - A peer that paces marks its data at least every quarter of its cap; the
 //!   older ones probe once a second on a direct path and once in five seconds
 //!   on the hub path. Bulk from a peer that does not mark it is an older
@@ -89,7 +92,8 @@
 //! [`MIN_SPACING`], and **after** the last data when sending stops: held by the
 //! cap, or out of data with more than [`SMALL`] unmarked. A few keystrokes'
 //! worth is not followed by a probe each time; it counts as delivered once the
-//! path has been quiet for a round trip.
+//! path has been quiet for a round trip — but never more than [`MIN_SPACING`]
+//! of data goes unmarked, so a peer that paces is never taken for an older one.
 //!
 //! # Under the cap
 //!
@@ -158,8 +162,14 @@ pub const QUIET_US: u64 = 250_000;
 pub const MAX_MARKERS: usize = 64;
 /// What sealing adds to a multiplexer frame on its way to the wire (envelope 17, data header 5, tag 16, a DataChannel message's kind 1), rounded up.
 pub const OVERHEAD: u64 = 64;
-/// More than this received during a marker's round trip, and its answer came back behind the peer's traffic.
+/// More than this received during a marker's round trip — and more than
+/// [`LOADED_SHARE`] of what this path carries in it — and its answer came back
+/// behind the peer's traffic.
 pub const QUIET_RX: u64 = 8 * 1024;
+/// The peer's traffic loads the answer path when it comes at more than this
+/// share of the rate this path has carried lately: less, and it is a trickle
+/// (a terminal's output) that queues nothing in front of the answers.
+pub const LOADED_SHARE: f64 = 0.5;
 /// The peer's bulk is unmarked (an older peer's) past this many of a pacing peer's marker spacings without a probe.
 pub const UNMARKED_SPANS: u64 = 4;
 /// While the answers come back loaded, markers go every sixteenth of the cap, never closer than this…
@@ -221,12 +231,16 @@ struct MaxFilter {
 
 impl MaxFilter {
     fn push(&mut self, at_us: u64, rate: f64) {
+        self.push_within(at_us, rate, RATE_WINDOW_US);
+    }
+
+    fn push_within(&mut self, at_us: u64, rate: f64, window_us: u64) {
         while self.samples.back().is_some_and(|&(_, r)| r <= rate) {
             self.samples.pop_back();
         }
         self.samples.push_back((at_us, rate));
         // The newest always stays: across a quiet spell the last estimate holds.
-        while self.samples.len() > 1 && self.samples.front().is_some_and(|&(t, _)| at_us.saturating_sub(t) > RATE_WINDOW_US) {
+        while self.samples.len() > 1 && self.samples.front().is_some_and(|&(t, _)| at_us.saturating_sub(t) > window_us) {
             self.samples.pop_front();
         }
     }
@@ -253,6 +267,13 @@ pub struct Pace {
     app_limited_until: u64,
     markers: VecDeque<Marker>,
     rate: MaxFilter,
+    /// The highest rate of the last [`MIN_RTT_WINDOW_US`]: what the path
+    /// carries, for telling the peer's bulk from a trickle ([`LOADED_SHARE`]),
+    /// even while a stale minimum holds this path's own rate down.
+    peak: MaxFilter,
+    /// Data sent since the last marker, a folded tail included: a peer that
+    /// paces is told so at least every [`MIN_SPACING`].
+    since_marker: u64,
     /// The minimum round trip and when it was taken (µs).
     min_rtt: Option<(u64, u64)>,
     draining: bool,
@@ -287,6 +308,8 @@ impl Pace {
             app_limited_until: 0,
             markers: VecDeque::new(),
             rate: MaxFilter::default(),
+            peak: MaxFilter::default(),
+            since_marker: 0,
             min_rtt: None,
             draining: false,
             startup: true,
@@ -315,12 +338,19 @@ impl Pace {
     pub fn seed_rate(&mut self, rate: Option<(u64, f64)>) {
         if let (None, Some((at, r))) = (self.rate.max(), rate) {
             self.rate.push(at, r);
+            self.peak.push_within(at, r, MIN_RTT_WINDOW_US);
         }
     }
 
     /// The rate estimate and when its sample was taken.
     pub fn rate_sample(&self) -> Option<(u64, f64)> {
         self.rate.max()
+    }
+
+    /// Data has gone without a marker for [`MIN_SPACING`] (resends after a
+    /// fallback, which go ahead of the pace): one is due before more.
+    pub fn marker_due(&self) -> bool {
+        self.since_marker >= MIN_SPACING
     }
 
     pub fn inflight(&self) -> u64 {
@@ -416,7 +446,7 @@ impl Pace {
         } else {
             MIN_SPACING.max(self.own_cap() / 4)
         };
-        if self.unmarked >= spacing {
+        if self.unmarked >= spacing || self.since_marker >= MIN_SPACING {
             return Next::Marker;
         }
         let used = self.inflight() + OVERHEAD;
@@ -454,6 +484,7 @@ impl Pace {
         }
         self.sent += len as u64;
         self.unmarked += len as u64;
+        self.since_marker += len as u64;
         self.last_data_us = Some(now_us);
     }
 
@@ -471,6 +502,7 @@ impl Pace {
             rx: self.rx,
         });
         self.unmarked = 0;
+        self.since_marker = 0;
         if self.markers.len() > MAX_MARKERS {
             self.markers.pop_front();
         }
@@ -498,17 +530,29 @@ impl Pace {
         let rtt_us = now_us.saturating_sub(m.sent_us);
         // What came in meanwhile: the answer path loaded, and at what rate (ms, as the browser's half has it).
         let rx = self.rx - m.rx;
-        self.loaded = rx > QUIET_RX;
+        let rtt_ms = rtt_us as f64 / 1e3;
+        let peak = self.peak.max().map_or(0.0, |(_, r)| r);
+        // More than a trickle: more than QUIET_RX, and more than half what the path carries in a round trip.
+        self.loaded = rx > QUIET_RX.max((LOADED_SHARE * peak * rtt_ms / 1e3) as u64);
         if rtt_us > 0 {
-            self.rx_rate = rx as f64 * 1e3 / (rtt_us as f64 / 1e3);
+            self.rx_rate = rx as f64 * 1e3 / rtt_ms;
         }
         if !self.loaded {
             self.note_rtt(rtt_us, m.clean, now_us);
-        } else if let Some((min, _)) = self.min_rtt {
+        } else if let Some((min, at)) = self.min_rtt {
             // Loaded: the answer waited behind the peer's traffic. The whole
-            // round trip may lower the minimum, never refresh it.
+            // round trip may lower the minimum, never refresh it — except a
+            // clean marker's, once the minimum is due: less what the peer
+            // can have had queued in front of the answer (what came in, a
+            // pacing peer's floor at most) at the better of the two rates.
             if rtt_us <= min {
                 self.note_rtt(rtt_us, false, now_us);
+            } else if m.clean && now_us.saturating_sub(at) >= MIN_RTT_REFRESH_US {
+                let wait_ms = rx.min(FLOOR) as f64 * 1e3 / peak.max(self.rx_rate);
+                let left_ms = (rtt_ms - wait_ms).floor();
+                if left_ms >= 1.0 {
+                    self.min_rtt = Some((left_ms as u64 * 1000, now_us));
+                }
             }
         } else if self.rx_rate > 0.0 {
             // Loaded from the first marker on: less what a pacing peer keeps
@@ -530,6 +574,7 @@ impl Pace {
             let rate = data as f64 * 1e6 / interval as f64;
             if !app_limited || self.rate.max().is_none_or(|(_, max)| rate >= max) {
                 self.rate.push(now_us, rate);
+                self.peak.push_within(now_us, rate, MIN_RTT_WINDOW_US);
             }
         }
         if m.delivered >= self.next_round {
@@ -791,6 +836,8 @@ mod tests {
         probe_every: u64,
         back: u64,
         unprobed: u64,
+        /// Out of data: nothing more to send.
+        stop: bool,
     }
 
     impl Sim {
@@ -810,6 +857,7 @@ mod tests {
                 probe_every: 0,
                 back: 0,
                 unprobed: 0,
+                stop: false,
             }
         }
 
@@ -836,7 +884,10 @@ mod tests {
                     let (_, n) = self.answers.pop_front().unwrap();
                     pace.answered(n, self.now * MS);
                 }
-                loop {
+                if self.stop && pace.stopped(false, true) {
+                    self.mark(pace);
+                }
+                while !self.stop {
                     match pace.next(self.now * MS) {
                         Next::Marker => self.mark(pace),
                         Next::Data(b) if b.bulk >= crate::mux::MIN_CUT => {
@@ -1092,6 +1143,76 @@ mod tests {
         let s = pace.stats();
         assert_eq!(s.cap, FLOOR + LOADED_SLACK, "its own, and the slack two ends sending share");
         assert!(s.min_rtt_ms.unwrap() < 110.0, "the path's own round trip, not the peer's queue: {s:?}");
+    }
+
+    /// The peer's trickle (a terminal's output, 40 KB/s against a 20 Mbps
+    /// upload) is not a load on the answer path: when the round trip goes
+    /// from 20 to 200 ms, the minimum follows, and the cap with it.
+    #[test]
+    fn a_trickle_from_the_peer_does_not_freeze_the_minimum() {
+        let mut pace = Pace::new(512 * 1024);
+        let mut sim = Sim::new(2500, 20);
+        sim.run(&mut pace, 5_000);
+        sim.rtt = 200;
+        sim.rx = 40;
+        sim.probe_every = 16 * 1024;
+        sim.run(&mut pace, 15_000);
+        let s = pace.stats();
+        assert!(s.min_rtt_ms.unwrap() >= 150.0, "{s:?}");
+        let tail = sim.run(&mut pace, 5_000).delivered;
+        assert!(tail as f64 >= 0.9 * 2500.0 * 5_000.0, "{tail} {:?}", pace.stats());
+    }
+
+    /// A clean marker whose answer did come back behind the peer's bulk, once
+    /// the minimum is due: the minimum is taken from it, less what the peer
+    /// can have had queued ahead of the answer (its floor, at the path's rate).
+    #[test]
+    fn an_overdue_minimum_is_refreshed_from_a_loaded_clean_marker_less_the_peers_queue() {
+        let mut pace = Pace::new(512 * 1024);
+        let mut sim = Sim::new(2500, 20);
+        sim.run(&mut pace, 2_000);
+        let min = pace.min_rtt.unwrap();
+        // Out of data, then quiet a while; then a flight again, its lead marker clean.
+        sim.stop = true;
+        sim.run(&mut pace, 1_000);
+        assert_eq!(pace.inflight(), 0);
+        let t = (sim.now + 6_000) * MS;
+        assert_eq!(pace.next(t), Next::Marker);
+        pace.marker_sent(99, t);
+        pace.received(500_000);
+        assert!(pace.answered(99, t + 300 * MS));
+        let (rtt, at) = pace.min_rtt.unwrap();
+        assert!(at > min.1 && rtt < 300_000, "refreshed, less the wait: {rtt} µs");
+        let peak = pace.peak.max().unwrap().1;
+        let wait_ms = FLOOR as f64 * 1e3 / peak.max(500_000.0 * 1e3 / 300.0);
+        assert_eq!(rtt, (300.0 - wait_ms).floor() as u64 * 1000);
+    }
+
+    /// A pacing sender's small writes, each counted as delivered before the
+    /// next (3 KB every 100 ms on a 70 ms path), are still marked every
+    /// 16 KiB: a peer never sees more of its data than that without a probe.
+    #[test]
+    fn small_writes_are_marked_every_sixteen_kib_even_when_each_folds() {
+        let mut pace = Pace::new(512 * 1024);
+        assert_eq!(pace.next(0), Next::Marker);
+        pace.marker_sent(1, 0);
+        pace.answered(1, 70 * MS);
+        let (mut nonce, mut unprobed, mut most) = (1, 0u64, 0u64);
+        for k in 1..=100u64 {
+            let t = k * 100 * MS;
+            if pace.next(t) == Next::Marker {
+                nonce += 1;
+                pace.marker_sent(nonce, t);
+                pace.answered(nonce, t + 70 * MS);
+                unprobed = 0;
+            }
+            pace.data_sent(3_000, t);
+            unprobed += 3_000;
+            most = most.max(unprobed);
+            assert!(!pace.stopped(false, true), "a 3 KB tail is not marked as it goes");
+        }
+        assert!(most <= MIN_SPACING + 3_000, "{most}");
+        assert!(nonce >= 15, "{nonce}");
     }
 
     /// Both ways at once, with an older peer: its whole window holds the

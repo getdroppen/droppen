@@ -426,6 +426,11 @@ impl Session {
                     None,
                 )));
             }
+            if !p.resend_relay.is_empty() && p.pacing && p.direct.is_none() && p.relay_pace.marker_due() {
+                // Resends carry no markers of their own: one in every so much, so a
+                // peer that paces does not take them for an older peer's bulk.
+                return Ok(Some((self.marker(Via::Relay, now_us)?, None)));
+            }
             if let Some(env) = p.resend_relay.pop_front() {
                 let plain = env.encode();
                 p.sent_relay(plain.len(), now_us);
@@ -1576,6 +1581,43 @@ mod tests {
         assert!(p.got[1].is_empty() && !p.b.paths.as_ref().unwrap().out_relay.is_empty(), "a probe's answer queued");
         while p.deliver(0, Via::Relay) {}
         assert_eq!(p.got[1], b"abcd", "the resend, then what is new");
+    }
+
+    /// What a fallback resends goes ahead of the pace and carries no markers
+    /// of its own: a paced sender puts one in every 16 KiB of it, so a peer
+    /// that paces never sees that much of its data unmarked and takes it for
+    /// an older peer's.
+    #[test]
+    fn resends_after_a_fallback_are_marked_every_sixteen_kib() {
+        let mut p = Pair::new();
+        let sid = bulk_from_b(&mut p, 0);
+        p.attach();
+        p.b.mux().send(sid, &vec![7; 96 * 1024]).unwrap();
+        for _ in 0..20 {
+            p.send_all();
+            p.direct[1].clear();
+            p.now += 1_000;
+        }
+        let unacked = p.b.paths.as_ref().unwrap().lanes.unacked_bytes();
+        assert!(unacked >= 48 * 1024, "the direct path's floor unacknowledged: {unacked}");
+        p.b.detach_direct(DownReason::Failed, true);
+        p.send_all();
+        // Read on the other side, in order: never more than 16 KiB (and a frame) between two probes.
+        let (mut since, mut most, mut probes) = (0usize, 0usize, 0);
+        while let Some(Frame::Data { payload, .. }) = p.relay[1].pop_front() {
+            let before = p.a.paths.as_ref().unwrap().out_relay.len();
+            p.a.receive_relay(&payload, p.now).unwrap();
+            if p.a.paths.as_ref().unwrap().out_relay.len() > before {
+                probes += 1;
+                since = 0;
+            } else {
+                since += payload.len();
+                most = most.max(since);
+            }
+        }
+        assert!(probes >= 3, "{probes}");
+        // A spacing and the (16 KiB blob) frame that crossed it, sealed.
+        assert!(most <= 2 * 16 * 1024 + 1024, "{most}");
     }
 
     /// Each path keeps its own pace: a direct path starts from the hub path's
