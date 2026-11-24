@@ -12,6 +12,12 @@
 // replaced as before; and once the direct path is let go, a hub path silent
 // all that while is gone at once.
 //
+// A sender that paces (`lib/e2e/pace.ts`) keeps what it has in flight to
+// about a round trip's worth, and the hub path's probes then come back in
+// time; an old agent does not, nor did a page before its pace. The rule is
+// pinned where the probes do go unanswered that long: with the side that
+// fills the link unpaced.
+//
 // The link is one FIFO per direction that both paths' traffic shares,
 // letting so many bytes a second through, with 40 ms each way; the
 // DataChannel's `bufferedAmount` is what its sender put on it and the FIFO
@@ -129,7 +135,12 @@ async function settle(drivers: ChannelDriver[]): Promise<void> {
  * over `down` (agent → device) and `up`; the agent answers each stream the
  * device opens with `bytes`.
  */
-async function directChannel(t: TestContext, bytesPerSec: number) {
+async function directChannel(
+  t: TestContext,
+  bytesPerSec: number,
+  /** Which ends pace: by default both, as this page and a current agent do. */
+  paced: { device?: boolean; agent?: boolean } = {},
+) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const clock = { now: 0 };
   const down = new SharedLane(bytesPerSec);
@@ -140,10 +151,12 @@ async function directChannel(t: TestContext, bytesPerSec: number) {
   let agent: ChannelDriver | null = null;
   device = new ChannelDriver(1, it, "initiator", (f) => up.put(clock.now, "relay", frameLen(f), () => agent!.receive(f)), Date.now, {
     paths: { probeRelay: true },
+    pace: paced.device ?? true,
     clock: () => clock.now,
   });
   agent = new ChannelDriver(1, rt, "responder", (f) => down.put(clock.now, "relay", frameLen(f), () => device!.receive(f)), Date.now, {
     paths: { probeRelay: false },
+    pace: paced.agent ?? true,
     clock: () => clock.now,
   });
   const state = {
@@ -236,9 +249,14 @@ async function directChannel(t: TestContext, bytesPerSec: number) {
   };
 }
 
+/** An agent from before the pace: its downloads fill the direct path's whole budget. */
+const OLD_AGENT = { agent: false };
+/** A page from before its pace: its upload fills the uplink its own probes wait behind. */
+const OLD_PAGE = { device: false };
+
 test("a channel whose direct path carries is kept, however long its hub path's probes go unanswered behind that traffic", async (t) => {
-  // 640 kbps, filled by the direct path's downloads (four streams, a megabyte of them in flight): the hub path's probe answers wait behind them.
-  const c = await directChannel(t, 80_000);
+  // 640 kbps, filled by an old agent's direct-path downloads (four streams, a megabyte of them in flight): the hub path's probe answers wait behind them.
+  const c = await directChannel(t, 80_000, OLD_AGENT);
   c.download(4, 1024 * 1024);
   await c.advance(60_000);
   assert.ok(c.device.paths!.direct, "the direct path carried it throughout");
@@ -247,6 +265,17 @@ test("a channel whose direct path carries is kept, however long its hub path's p
   assert.equal(c.state.closed, null, "never closed under the direct path");
   assert.equal(c.state.wakes, 0);
   assert.equal(c.got.read, 4 * 1024 * 1024, "all of it arrived");
+});
+
+test("the same downloads from an agent that paces leave the hub path's probes answered in time", async (t) => {
+  const c = await directChannel(t, 80_000);
+  c.download(4, 1024 * 1024);
+  await c.advance(60_000);
+  assert.ok(c.device.paths!.direct, "the direct path carried it throughout");
+  assert.equal(c.got.read, 4 * 1024 * 1024, "all of it arrived");
+  assert.ok(c.state.maxProbeAgeMs < 2_000, `the oldest hub probe out was ${c.state.maxProbeAgeMs} ms old`);
+  assert.equal(c.state.relayAloneGone, false, "the relay rule never had a case");
+  assert.equal(c.state.closed, null);
 });
 
 test("a channel on which nothing arrives either way is replaced as before, direct path or not", async (t) => {
@@ -268,7 +297,7 @@ test("a channel on which nothing arrives either way is replaced as before, direc
 });
 
 test("once the direct path goes, a hub path that has been silent all along is gone at once", async (t) => {
-  const c = await directChannel(t, 80_000);
+  const c = await directChannel(t, 80_000, OLD_AGENT);
   c.download(4, 1024 * 1024);
   await c.advance(15_000);
   // The relay dies; the direct path carries on for 20 s, and the channel with it.
@@ -302,7 +331,7 @@ test("when the agent lets the direct path go, the hub path that brought its `dow
   // path up right then; its `down` comes over the hub path, which judges
   // alone from then on: by what it just delivered, not by the last probe
   // tick's numbers.
-  const c = await directChannel(t, 80_000);
+  const c = await directChannel(t, 80_000, OLD_PAGE);
   const sent = c.upload(4, 1024 * 1024);
   let droppedAtMs: number | null = null;
   c.state.onpaths = () => {
