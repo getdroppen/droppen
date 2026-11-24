@@ -105,7 +105,17 @@
 
 ### 3.5 错误码
 
-JSON-RPC 错误的 `error.data` 是 `{"code": "<下表>"}`；HTTP+JSON 的错误体按 v1.0 的格式，在其中带同一个 `code`（实现时在这里写明位置）。
+每个 `droppen.*` 错误都以一个 `google.rpc.ErrorInfo` 携带：
+
+```json
+{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "DEVICE_OFFLINE",
+ "domain": "droppen.app", "metadata": {"code": "droppen.device_offline"}}
+```
+
+- `reason` 是去掉 `droppen.` 前缀后的大写下划线形式；`metadata.code` 是下表的 code 原文。
+- JSON-RPC：放在 `error.data[]` 里；HTTP+JSON：放在 `google.rpc.Status` 的 `error.details[]` 里（`{"error": {"code": <HTTP 状态>, "status": "<google.rpc.Code>", "message": …, "details": [...]}}`，`Content-Type: application/a2a+json`）。两处都排在 spec 自己要求的那个 `ErrorInfo`（`domain: "a2a-protocol.org"`，`reason` 如 `UNSUPPORTED_OPERATION`）之后，两种绑定的 `data[]` 与 `details[]` 内容相同。
+- 它细化的 A2A 错误：`entry_disabled`、`remote_answers_disabled`、`quota_exceeded` 是 `UnsupportedOperationError`（-32004，HTTP 400）。
+- task 因下表的原因结束时（worktree 建不出来而 `REJECTED`、吊销或入口停用而 `CANCELED`），同一个 `ErrorInfo` 放在它状态消息的 `metadata.errorInfo` 里。
 
 | code | 何时 |
 |---|---|
@@ -134,6 +144,8 @@ JSON-RPC 错误的 `error.data` 是 `{"code": "<下表>"}`；HTTP+JSON 的错误
 ## 5. 内部结构
 
 - 新 crate `crates/droppen-a2a`：协议类型、JSON-RPC 与 HTTP+JSON 的处理、Agent Card、鉴权、存储、`SessionBackend` trait。官方 Rust SDK（`a2aproject/a2a-rs`，`a2a-lf` 等，Apache-2.0，0.x）先评估：只在它的类型序列化出的正是 v1.0 JSON、依赖不重时才用，否则自己按 `a2a.proto` 写。
+  - 评估结论（2026-11-25，`a2a-lf` 0.4.2、`a2a-server-lf` 0.5.3）：**不用**，按 v1.0.1 的 `a2a.proto` 自己写（`droppen_a2a::wire`）。`a2a-server-lf` 无条件依赖 `a2a-pb`（tonic、prost、构建时的 protoc），还带 reqwest 0.13（本仓库是 0.12）、tower-http 0.7、axum-server；`a2a-lf` 本身轻，但 metadata 是 `HashMap`（同一对象每次写出的键序不同，违背本仓库 JSON 字节稳定的规则），另外引入 thiserror 2、base64 0.23、UUIDv7，且 0.x 之间有破坏性变化。我们只用协议的一小部分。
+  - 自己写的类型按 ProtoJSON：写出 camelCase、默认值不写、枚举写名字（`TASK_STATE_WORKING`），对象里没有多余的键（TCK 的 schema 不允许）；读入时同时接受 proto 原名（`history_length`，TCK 的 JSON-RPC 客户端这样发）和枚举数字。
 - `SessionBackend`：开会话、发消息、回答、打断、查会话快照，以及一条事件流（这一轮开始、进度、提问、提问已解决、这一轮结束、会话没了）。真实实现在 `droppen-server` 一侧接 `ProviderRegistry`、`Alerts` 钩子和全局 feed；测试用假的。
 - push：每次状态变化（不含 `WORKING` 的进度消息）和每个 artifact 各 POST 一次 `StreamResponse`，`Content-Type: application/a2a+json`，`Authorization: <scheme> <credentials>`，给了 `token` 时同时带 `A2A-Notification-Token` 与 `X-A2A-Notification-Token`。同一任务按序；重试 3 次（立即、10 秒、60 秒）。
 - 隔离：`worktree` 时每个新 context 在 `<cwd>/.worktrees/a2a-<contextId>` 建 worktree，分支 `a2a/<contextId>`（完整 UUID，不截断；已存在就拒绝），会话在里面跑。不自动删除 worktree。
