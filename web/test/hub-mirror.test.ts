@@ -226,7 +226,7 @@ test("a session with no copy on the device waits for the hub, and one the hub ha
 class HandSource implements CopySource {
   readonly keyed = true;
   reachable = true;
-  readonly follows: { name: CopyName; events: CopyEvents<unknown>; progress: SubscriptionProgress; listeners: Set<() => void>; closed: boolean }[] = [];
+  readonly follows: { name: CopyName; events: CopyEvents<unknown>; progress: SubscriptionProgress; listeners: Set<() => void>; closed: boolean; lanes: boolean[] }[] = [];
   ready() {
     return Promise.resolve();
   }
@@ -240,13 +240,21 @@ class HandSource implements CopySource {
     return null;
   }
   follow<S>(name: CopyName, _places: readonly string[], _start: unknown, events: CopyEvents<S>): CopyFollow {
-    const f = { name, events: events as CopyEvents<unknown>, progress: { phase: "catchingUp", pages: null, taken: 0 } as SubscriptionProgress, listeners: new Set<() => void>(), closed: false };
+    const f = {
+      name,
+      events: events as CopyEvents<unknown>,
+      progress: { phase: "catchingUp", pages: null, taken: 0 } as SubscriptionProgress,
+      listeners: new Set<() => void>(),
+      closed: false,
+      lanes: [] as boolean[],
+    };
     this.follows.push(f);
     return {
       close: () => {
         f.closed = true;
         f.listeners.clear();
       },
+      setForeground: (on) => void f.lanes.push(on),
       get progress() {
         return f.progress;
       },
@@ -305,6 +313,23 @@ test("a session's progress is its follow's, and who listens hears its follow sta
   assert.equal(heard, 3, "its follow stopped");
   assert.equal(mirror.sessionProgress("claude", "big"), null);
   off();
+  mirror.setFollowSessions(false);
+  mirror.close();
+});
+
+test("a session's pages are fetched in the foreground while a reader waits on its copy, and in the background once nobody does", async () => {
+  const { source, mirror } = await handWorld();
+  const asked = mirror.session("claude", "opened");
+  await settle();
+  assert.deepEqual(source.session("opened")!.lanes.at(-1), true, "being opened, with no copy here: ahead of the background");
+  source.session("opened")!.events.onState({ state: { started: true, startIndex: 0, endIndex: 1, items: [{ kind: "user", text: "hi" }], fp: null, prefixFp: null }, at: { mark: "m", seq: 1, timeMs: 1 }, reset: true, bodies: [], freshestMs: 1 });
+  await asked;
+  assert.equal(source.session("opened")!.lanes.at(-1), false, "the copy is in: whatever it fetches next is background");
+  // Followed on as one opened here, with its copy in: nobody waits on it, so it stays in the background.
+  mirror.touch("claude", "opened");
+  mirror.setFollowSessions(true);
+  await settle();
+  assert.equal(source.session("opened")!.lanes.at(-1), false);
   mirror.setFollowSessions(false);
   mirror.close();
 });

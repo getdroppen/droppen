@@ -77,8 +77,10 @@ export const FOLLOWED_OPENED = 8;
 export const SESSION_WAIT_MS = 8000;
 /**
  * The longest that reader waits however much is still arriving: a minute.
- * A session's checkpoint is up to 1024 pages, four at a time — at the pace a
- * big session's 250 take in about 15 s, about a minute for the biggest — and
+ * A session's checkpoint is up to 1024 pages, fetched ahead of the
+ * background while the reader waits (`PageQueue`'s foreground), four at a
+ * time on a fast link and two on a slow one — at the pace a big session's 250
+ * take in about 15 s on a fast link, about a minute for the biggest — and
  * a stream that keeps moving without ever getting there (a download that
  * fails near its end, and starts over) still ends. Given up, the reader is
  * shown no copy, and the copy replaces that once it is in.
@@ -1093,6 +1095,7 @@ export class MachineMirror {
     });
     slot.sub = sub;
     if (!sub) return;
+    this.relane(slot);
     // Its listeners go with it when it is closed.
     sub.onProgress?.(() => this.progressed(slot.key));
     this.progressed(slot.key);
@@ -1100,6 +1103,16 @@ export class MachineMirror {
 
   private wake(slot: SessionSlot): void {
     for (const fn of [...slot.waiters]) fn();
+  }
+
+  /**
+   * A session's pages are fetched in the foreground while a reader waits on
+   * its copy — it is being opened, and the copy is not on the device yet —
+   * and in the background otherwise (`PageQueue`): a warm session kept ready
+   * gives way to live traffic, one somebody is waiting for does not.
+   */
+  private relane(slot: SessionSlot): void {
+    slot.sub?.setForeground?.(slot.waiters.size > 0);
   }
 
   /**
@@ -1149,6 +1162,7 @@ export class MachineMirror {
    * has no frames): there, a stall is noticed `stallMs` late at most.
    */
   private waitFor(slot: SessionSlot, stallMs: number, capMs: number): Promise<void> {
+    const relane = () => this.relane(slot);
     return new Promise<void>((resolve) => {
       const taken = () => slot.sub?.progress?.taken ?? 0;
       let seen = taken();
@@ -1171,9 +1185,11 @@ export class MachineMirror {
         clearTimeout(cap);
         off();
         slot.waiters.delete(finish);
+        relane();
         resolve();
       }
       slot.waiters.add(finish);
+      relane();
     });
   }
 

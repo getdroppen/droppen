@@ -56,6 +56,7 @@ import { agentKeyEpoch, checkAgentKey, flushPendingReencrypts, linkCourier, note
 import type { HubLink, PresenceState } from "@/lib/hub/link";
 import { MachineChannel } from "@/lib/hub/machine";
 import { deviceTransact, MachineMirror, mirrorSeal, sweepCopies, type Transact } from "@/lib/hub/mirror";
+import { PageQueue } from "@/lib/hub/page-queue";
 import type { RelayPool } from "@/lib/hub/relays";
 import type { MachineKey } from "@/lib/machines/key";
 import { invalidateMachine, machineQueryCount } from "@/lib/machines/query";
@@ -145,11 +146,20 @@ class CountedPipe implements Pipe {
   }
 }
 
-/** `channel` as the transport's pipe opener, keeping `open` as the pipes still open on it. */
-function countingOpener(channel: MachineChannel, open: Set<Pipe>): PipeOpener {
+/**
+ * `channel` as the transport's pipe opener, keeping `open` as the pipes still
+ * open on it. A request (a pipe with a method: `rpc`, `blob`; not a socket)
+ * holds the page's background page downloads back while it is in flight
+ * (`PageQueue.hold`): live traffic goes first on the person's link.
+ */
+function countingOpener(channel: MachineChannel, open: Set<Pipe>, pages: PageQueue | null): PipeOpener {
   return {
     open(kind, meta) {
-      const pipe: Pipe = new CountedPipe(channel.open(kind, meta), () => open.delete(pipe));
+      const release = meta.method !== undefined ? (pages?.hold("live") ?? null) : null;
+      const pipe: Pipe = new CountedPipe(channel.open(kind, meta), () => {
+        open.delete(pipe);
+        release?.();
+      });
       open.add(pipe);
       return pipe;
     },
@@ -223,6 +233,8 @@ export class HubMachine implements MachineDriver {
     readonly key: MachineKey,
     private readonly opts: HubShellOptions,
     budget: StreamBudget | null = null,
+    /** The page's queue of page downloads, shared by every machine's copy (the shell's). */
+    private readonly pages: PageQueue | null = null,
   ) {
     const { api, account, link, relays, store, queryClient } = opts;
     const now = opts.now ?? Date.now;
@@ -235,7 +247,9 @@ export class HubMachine implements MachineDriver {
       keys: () => account.machineKeys(key, store),
       client: {
         link,
-        fetchPage: (stream, page) => api.streamPage(account.session.token, stream, page),
+        fetchPage: (stream, page, fetch) => api.streamPage(account.session.token, stream, page, fetch),
+        ...(pages ? { pageQueue: pages } : {}),
+        logId: maskId(key),
         // A record under an epoch not held yet: look for the keys again
         // (the account's change then reaches the source).
         onMissingKey: () => void account.refreshKeys().catch((error: unknown) => console.warn("cloud: keys:", error)),
@@ -266,7 +280,7 @@ export class HubMachine implements MachineDriver {
       messages: offlineMessages(() => this.presence()),
       machineOnline: () => this.presence() === "online",
     });
-    this.transport = new SwitchingTransport({ live: tunnelTransport(countingOpener(this.channel, this.pipes), { device: maskId(key) }), offline }, "offline", {
+    this.transport = new SwitchingTransport({ live: tunnelTransport(countingOpener(this.channel, this.pipes, pages), { device: maskId(key) }), offline }, "offline", {
       onOpened: (source, id) => this.mirror.touch(source, id),
     });
     this.controller = new ModeController({
@@ -295,6 +309,8 @@ export class HubMachine implements MachineDriver {
       link.onPresence(refresh),
       relays.onChange(refresh),
       this.channel.onStatus((status) => {
+        // Its first requests come now: background page downloads wait a while (`OPENED_MS`).
+        if (status === "open") this.pages?.pauseFor("opened");
         if (status === "open") this.recheckKey(true);
         // Open while nobody wants it (something late dialled it): let it go again in a while.
         if (status === "open" && !this.wanted && !this.inUse && this.idleTimer === undefined) this.idleAfter(this.opts.idleMs ?? IDLE_MS);
@@ -640,6 +656,12 @@ export class HubShell implements AppShell {
   private stopped = false;
   /** Every machine's hub streams, counted against one budget: they share the page's one hub link. */
   readonly budget = new StreamBudget();
+  /**
+   * Every machine's checkpoint page downloads, through one queue: they share
+   * the person's link with each other and with every live channel, so lanes,
+   * limits and giving way are the page's, not a machine's (`PageQueue`).
+   */
+  readonly pages = new PageQueue();
 
   constructor(readonly opts: HubShellOptions) {}
 
@@ -780,7 +802,7 @@ export class HubShell implements AppShell {
     const want = this.active();
     for (const key of want) {
       if (this.held.has(key)) continue;
-      const machine = new HubMachine(key, this.opts, this.budget);
+      const machine = new HubMachine(key, this.opts, this.budget, this.pages);
       this.held.set(key, machine);
       openHubMachine(key, machine.transport, machine);
       this.listening.set(key, machine.info.subscribe(() => this.publish()));
@@ -1103,6 +1125,7 @@ export class HubShell implements AppShell {
     }
     this.held.clear();
     this.list.set([]);
+    this.pages.close();
   }
 
   /** For diagnostics (and the acceptance harness's latency probe): the machine in view's channel, copy and transport. */

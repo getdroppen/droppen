@@ -68,8 +68,10 @@ import {
   FMT_INDEX_V1,
   FMT_STATUS_V1,
 } from "@/lib/e2e";
+import { connLog, errorFields } from "@/lib/connection-log";
 import type { CopyKind } from "./copy-source";
 import type { LinkState } from "./link";
+import { abortReason, type PageLane, PageQueue } from "./page-queue";
 
 type SessionSummary = components["schemas"]["SessionSummary"];
 type TranscriptItem = components["schemas"]["TranscriptItem"];
@@ -416,22 +418,59 @@ export interface StreamLink {
   sendControl(message: Record<string, unknown>): boolean;
 }
 
-/** Run at most `n` jobs at once, in the order they were asked for. */
-export class Limiter {
-  private running = 0;
-  private readonly queue: (() => void)[] = [];
+/** What a page fetch is handed (`HubApi.streamPage` takes all of it). */
+export interface PageFetch {
+  /** Aborted when nobody needs the page any more: the subscription let go of it, or another page of its download failed. */
+  signal?: AbortSignal;
+  /** `low` for a background download ({@link PageLane}), so the browser puts the page's other requests first. */
+  priority?: RequestPriority;
+  /** The answer's head is in (what times the link: `PageQueue`). */
+  onHead?: () => void;
+}
 
-  constructor(private readonly n: number) {}
+/** How often a checkpoint download says how far it is in the connection log (`stream.progress`), at most. */
+export const PROGRESS_LOG_MS = 10_000;
 
-  async run<T>(job: () => Promise<T>): Promise<T> {
-    if (this.running >= this.n) await new Promise<void>((resolve) => this.queue.push(resolve));
-    this.running++;
-    try {
-      return await job();
-    } finally {
-      this.running--;
-      this.queue.shift()?.();
-    }
+/**
+ * What one checkpoint download says in the connection log: `stream.checkpoint`
+ * as it starts (how many pages, in which lane, and why: the copy was
+ * compacted away under it, it had nothing yet, or it is behind), a
+ * `stream.progress` at most every {@link PROGRESS_LOG_MS} while it lasts, and
+ * `stream.done` at the end — done, failed or cancelled, with the bytes it
+ * received and how long it took. The device is its mask, the stream only its
+ * kind.
+ */
+class DownloadLog {
+  private done = 0;
+  private bytes = 0;
+  private readonly startedAt = Date.now();
+  private saidAt = this.startedAt;
+
+  constructor(
+    private readonly fields: { device: string | null; kind: CopyKind | null },
+    private readonly total: number,
+    lane: PageLane,
+    cause: "gone" | "fresh" | "behind",
+  ) {
+    connLog.emit("stream.checkpoint", { ...fields, pages: total, lane, cause });
+  }
+
+  page(bytes: number): void {
+    this.done += 1;
+    this.bytes += bytes;
+    const now = Date.now();
+    if (now - this.saidAt < PROGRESS_LOG_MS || this.done >= this.total) return;
+    this.saidAt = now;
+    connLog.emit("stream.progress", { ...this.fields, done: this.done, total: this.total, bytes: this.bytes, ms: now - this.startedAt });
+  }
+
+  end(state: "done" | "failed" | "cancelled", error?: unknown): void {
+    const failed = state === "failed";
+    connLog.emit(
+      "stream.done",
+      { ...this.fields, state, done: this.done, total: this.total, bytes: this.bytes, ms: Date.now() - this.startedAt, ...(failed ? errorFields(error) : {}) },
+      failed ? "warn" : undefined,
+    );
   }
 }
 
@@ -467,9 +506,17 @@ export interface StreamClientOptions {
   /** Every epoch of `MK` this device holds. */
   epochs: ReadonlyMap<number, MachineKey>;
   /** `GET /v1/streams/<stream>/pages/<hash>`: the sealed page, unchecked. */
-  fetchPage(stream: Uint8Array, page: Uint8Array): Promise<Uint8Array>;
-  /** Page fetches at once, across every stream (default 4). */
+  fetchPage(stream: Uint8Array, page: Uint8Array, opts?: PageFetch): Promise<Uint8Array>;
+  /**
+   * The page's queue of page fetches, shared by every machine's client (the
+   * shell's): lanes, limits by link, giving way to live traffic. Without
+   * one, the client has a queue of its own of {@link pageConcurrency} at once.
+   */
+  pageQueue?: PageQueue;
+  /** Page fetches at once, across every stream, when the client has a queue of its own (default 4). */
   pageConcurrency?: number;
+  /** The machine's mask in the connection log (`maskId`): which device a checkpoint download is of. */
+  logId?: string | null;
   /** How long to wait before the `attempt`th restart in a row (0-based). */
   retryDelay?: (attempt: number) => number;
   /**
@@ -653,7 +700,7 @@ export interface SavedStream<S> {
 /** Every stream subscription of one machine, over one hub link. */
 export class StreamClient {
   private readonly subs = new Set<StreamSubscription<unknown>>();
-  private readonly limiter: Limiter;
+  private readonly queue: PageQueue;
   private readonly offs: (() => void)[];
   /** Every epoch key held: those it started with, and any added since (`addEpochs`). */
   private readonly epochs: Map<number, MachineKey>;
@@ -677,7 +724,8 @@ export class StreamClient {
   constructor(readonly opts: StreamClientOptions) {
     this.signKey = copy(opts.machineSignKey);
     this.epochs = new Map(opts.epochs);
-    this.limiter = new Limiter(opts.pageConcurrency ?? 4);
+    const n = opts.pageConcurrency ?? 4;
+    this.queue = opts.pageQueue ?? new PageQueue({ limits: { fg: n, bg: n }, log: false });
     this.offs = [
       opts.link.onState((state) => {
         if (state === "open") for (const sub of this.subs) sub.linkOpened();
@@ -936,6 +984,11 @@ export class StreamClient {
     return equal(this.signKey, tried) ? null : copy(this.signKey);
   }
 
+  /** @internal A subscription moved lanes: its pages still waiting may go now. */
+  relane(): void {
+    this.queue.relane();
+  }
+
   /** @internal A stream stalled on an epoch it has no key for: ask for keys (rate-limited). */
   missingKey(): void {
     const now = Date.now();
@@ -958,29 +1011,68 @@ export class StreamClient {
   }
 
   /**
-   * @internal The bodies of `m`'s pages, in order: fetched (the last first,
-   * since the newest state is the one a reader looks at), each checked
-   * against the manifest's hash, opened under its own epoch's key, and held
-   * to `fmt` — the manifest carries no format, each page says its own.
-   * `onPage` hears of each one opened (what {@link progress} counts).
+   * @internal The bodies of `m`'s pages, in order: fetched through the page's
+   * queue (the last first, since the newest state is the one a reader looks
+   * at; in `lane`, asked as each page's turn comes), each checked against the
+   * manifest's hash, opened under its own epoch's key, and held to `fmt` —
+   * the manifest carries no format, each page says its own. `onPage` hears
+   * of each one opened, with its size (what {@link progress} counts).
+   *
+   * One page failing, or `signal` aborting, ends the download: no page still
+   * waiting is fetched, the ones in flight are aborted, and it rejects — with
+   * the first failure — only once none of its fetches is running any more,
+   * so a download started over never runs beside what is left of this one.
    */
-  async pages(m: Manifest, reader: LogReader, fmt: number, onPage?: () => void): Promise<Bytes[]> {
+  async pages(
+    m: Manifest,
+    reader: LogReader,
+    fmt: number,
+    opts: { lane?: () => PageLane; signal?: AbortSignal; onPage?: (bytes: number) => void } = {},
+  ): Promise<Bytes[]> {
     const stream = m.head.head.stream;
     const out: Bytes[] = new Array(m.pages.length);
+    const stop = new AbortController();
+    const outer = opts.signal;
+    const letGo = () => stop.abort(abortReason(outer!));
+    if (outer?.aborted) letGo();
+    else outer?.addEventListener("abort", letGo, { once: true });
+    const lane = opts.lane ?? (() => "bg" as const);
+    let failure: { error: unknown } | null = null;
     const order = m.pages.map((_, i) => i).reverse();
-    await Promise.all(
-      order.map((i) =>
-        this.limiter.run(async () => {
-          const encoded = await this.opts.fetchPage(stream, m.pages[i]!);
-          const key = reader.keyFor(decodePage(encoded).epoch);
-          if (!key) throw new RecordError("noKey", `no key for page ${i}'s epoch`);
-          const page = await openManifestPage(key, m, i, encoded);
-          if (page.fmt !== fmt) throw new RecordError("malformed", `page ${i} is format ${page.fmt} on a stream of format ${fmt}`);
-          out[i] = page.body;
-          onPage?.();
+    try {
+      await Promise.allSettled(
+        order.map(async (i) => {
+          try {
+            // Opened in its turn, as it comes: counted before the next page's turn.
+            await this.queue.run(
+              lane,
+              async (job) => {
+                const encoded = await this.opts.fetchPage(stream, m.pages[i]!, {
+                  signal: job.signal,
+                  ...(job.lane === "bg" ? { priority: "low" as const } : {}),
+                  onHead: job.head,
+                });
+                const key = reader.keyFor(decodePage(encoded).epoch);
+                if (!key) throw new RecordError("noKey", `no key for page ${i}'s epoch`);
+                const page = await openManifestPage(key, m, i, encoded);
+                if (page.fmt !== fmt) throw new RecordError("malformed", `page ${i} is format ${page.fmt} on a stream of format ${fmt}`);
+                out[i] = page.body;
+                opts.onPage?.(encoded.length);
+                return encoded;
+              },
+              stop.signal,
+            );
+          } catch (error) {
+            if (failure) return;
+            failure = { error };
+            stop.abort(new DOMException("another page of its download failed", "AbortError"));
+          }
         }),
-      ),
-    );
+      );
+    } finally {
+      outer?.removeEventListener("abort", letGo);
+    }
+    if (failure) throw (failure as { error: unknown }).error;
     return out;
   }
 }
@@ -1010,6 +1102,12 @@ export class StreamSubscription<S> {
   private readonly hexId: string;
   /** The checkpoint download in flight on it: the client's count of it ({@link StreamClient.download}). */
   private downloading: PageCount | null = null;
+  /** Lets go of the checkpoint download in flight (it is closed). */
+  private fetching: AbortController | null = null;
+  /** A `GONE` came since the last checkpoint: the next one rebuilds a copy compacted away under it. */
+  private gone = false;
+  /** Which lane its checkpoint pages are fetched in ({@link setLane}). */
+  private pageLane: PageLane = "bg";
   /** See {@link SubscriptionProgress.taken}. */
   private taken = 0;
   private readonly progressListeners = new Set<(progress: SubscriptionProgress) => void>();
@@ -1089,6 +1187,22 @@ export class StreamSubscription<S> {
     }
   }
 
+  /** Which lane its checkpoint pages are fetched in: `fg` while a reader waits on it, `bg` (the default) otherwise. */
+  get lane(): PageLane {
+    return this.pageLane;
+  }
+
+  /**
+   * Fetch its checkpoint pages in `lane` from now on: a download in flight
+   * moves with the pages it has not started yet (the queue asks each page's
+   * lane as its turn comes).
+   */
+  setLane(lane: PageLane): void {
+    if (this.pageLane === lane) return;
+    this.pageLane = lane;
+    this.client.relane();
+  }
+
   /** Whether it holds a state the machine signed for (one saved and still the machine's, or one read since). */
   get hasState(): boolean {
     return this.head !== null;
@@ -1128,6 +1242,8 @@ export class StreamSubscription<S> {
     this.closed = true;
     clearTimeout(this.timer);
     this.timer = undefined;
+    // Not a page more for it: what waits is dropped, what is in flight aborted.
+    this.fetching?.abort(new DOMException("the subscription was closed", "AbortError"));
     this.dropCh();
     this.progressListeners.clear();
     this.client.forget(this as StreamSubscription<unknown>);
@@ -1296,6 +1412,7 @@ export class StreamSubscription<S> {
         case "gone":
           // Compacted past where this stood: a checkpoint follows. What was
           // shown stays shown until it is rebuilt.
+          this.gone = true;
           this.reader = null;
           this.state = null;
           this.head = null;
@@ -1339,6 +1456,8 @@ export class StreamSubscription<S> {
   }
 
   private failed(error: unknown): void {
+    // Closed meanwhile (its download let go of): nothing failed, and nothing is asked again.
+    if (this.closed) return;
     this.events.onError?.(error);
     if (error instanceof RecordError && error.kind === "noKey") this.client.missingKey();
     this.dropCh();
@@ -1400,21 +1519,36 @@ export class StreamSubscription<S> {
     ) {
       return;
     }
-    // The slow part of a catch-up (up to 1024 pages, four at a time): counted
-    // page by page from here, so the page can say how far along it is — the
-    // machine's count, and this stream's own.
+    // The slow part of a catch-up (up to 1024 pages, through the page's
+    // queue): counted page by page from here, so the page can say how far
+    // along it is — the machine's count, and this stream's own.
     this.taken += 1;
     const download = this.client.download(m.pages.length);
     this.downloading = download.count;
+    const cause = this.gone ? "gone" : this.head === null ? "fresh" : "behind";
+    this.gone = false;
+    const log = new DownloadLog({ device: this.client.opts.logId ?? null, kind: this.kind }, m.pages.length, this.pageLane, cause);
+    const stop = new AbortController();
+    this.fetching = stop;
     let pages: Bytes[];
     let next: LogReader;
     try {
       next = await this.client.keyed(await this.underCurrentKey(this.client.machineSignKey, (key) => readerFromManifest(key, m)));
-      pages = await this.client.pages(m, next, this.fold.fmt, () => {
-        this.taken += 1;
-        download.page();
+      pages = await this.client.pages(m, next, this.fold.fmt, {
+        lane: () => this.pageLane,
+        signal: stop.signal,
+        onPage: (bytes) => {
+          this.taken += 1;
+          download.page();
+          log.page(bytes);
+        },
       });
+      log.end("done");
+    } catch (error) {
+      log.end(this.closed || stop.signal.aborted ? "cancelled" : "failed", error);
+      throw error;
     } finally {
+      if (this.fetching === stop) this.fetching = null;
       this.downloading = null;
       download.end();
     }

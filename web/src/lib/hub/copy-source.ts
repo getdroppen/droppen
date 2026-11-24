@@ -121,6 +121,12 @@ export interface CopyFollow {
   readonly progress?: SubscriptionProgress;
   /** Hear when {@link progress} changes (at most once a frame). Nothing more once it is closed. */
   onProgress?(fn: (progress: SubscriptionProgress) => void): () => void;
+  /**
+   * Somebody is waiting on this copy (`true`), or nobody is any more: its
+   * pages are fetched ahead of the background's, never held back for live
+   * traffic (`PageQueue`'s lanes). Only a session's follow on the hub has it.
+   */
+  setForeground?(on: boolean): void;
 }
 
 export interface CopySource {
@@ -543,6 +549,7 @@ export class HubCopySource implements CopySource {
           return sub.progress;
         },
         onProgress: (fn) => sub.onProgress(fn),
+        setForeground: (on) => sub.setLane(on ? "fg" : "bg"),
       };
     }
     // The index and the status are counted, never refused, as the names

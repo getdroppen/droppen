@@ -513,6 +513,48 @@ test("a machine out of view keeps its channel while it still carries a download,
   assert.equal(shell.machine("m-a")!.transport.current, "offline", "on the copy at once, not after the channel has stayed down");
 });
 
+test("a live request on a machine's channel holds the page's background page downloads back until it ends; a socket does not; a channel opening pauses them", async (t) => {
+  const { link, shell } = world([{ id: "m-a" }]);
+  link.set("m-a", "online");
+  // What the machine asks of the page's queue (made before the machines, which are handed it).
+  const asked: string[] = [];
+  const pages = shell.pages;
+  const hold = pages.hold.bind(pages);
+  pages.hold = (cause = "live") => {
+    asked.push(`hold ${cause}`);
+    const release = hold(cause);
+    return () => {
+      asked.push(`release ${cause}`);
+      release();
+    };
+  };
+  const pauseFor = pages.pauseFor.bind(pages);
+  pages.pauseFor = (cause, ms) => {
+    asked.push(`pause ${cause}`);
+    pauseFor(cause, ms);
+  };
+  shell.start();
+  t.after(() => shell.stop());
+  dialer(shell, "m-a");
+  shell.select("m-a");
+  await until(() => shell.machine("m-a")!.transport.current === "live");
+  assert.ok(asked.includes("pause opened"), "the channel opened: its first requests come now");
+  assert.equal(pages.paused, "opened");
+  const holds = () => asked.filter((a) => !a.startsWith("pause"));
+  const transport = shell.machine("m-a")!.transport;
+  transport.openSocket(await transport.socketUrl("/api/events?v=2"));
+  await flush(5);
+  assert.deepEqual(holds(), [], "a socket stays open for as long as the page does: it holds nothing back");
+  const abort = new AbortController();
+  transport.fetch(new Request("http://machine.test/api/prefs", { signal: abort.signal })).catch(() => undefined);
+  await until(() => holds().length === 1);
+  assert.deepEqual(holds(), ["hold live"]);
+  assert.equal(pages.paused, "live");
+  abort.abort();
+  await until(() => holds().length === 2);
+  assert.deepEqual(holds(), ["hold live", "release live"], "let go of as the request ends");
+});
+
 test("wanted again just after it was let go: dialled at once; open while unwanted: let go again", async (t) => {
   const { link, shell } = world([{ id: "m-a" }, { id: "m-b" }]);
   Object.assign(shell.opts, { idleMs: 30 });

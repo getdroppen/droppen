@@ -20,12 +20,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CODE_FIELDS, CONN_EVENTS, type ConnEventName, ConnectionLog, connLog, FREE_TEXT, maskId, routeTemplate, setMaskSalt } from "../src/lib/connection-log.js";
 import { logText } from "../src/features/cloud/connection-log-format.js";
-import { decodeFrame, encodeFrame, type Frame, generateDeviceKeys } from "../src/lib/e2e/index.js";
+import { decodeFrame, encodeFrame, FMT_FEED_V1, type Frame, generateDeviceKeys, hex, streamId } from "../src/lib/e2e/index.js";
 import { HubApi } from "../src/lib/hub/api.js";
 import { HubLink } from "../src/lib/hub/link.js";
 import { RelayLink } from "../src/lib/hub/relay-link.js";
 import { RelayPool } from "../src/lib/hub/relays.js";
 import { type Pipe, type PipeMessage, tunnelTransport } from "../src/lib/transport/tunnel.js";
+import { PageQueue } from "../src/lib/hub/page-queue.js";
+import { feedFold, StreamClient } from "../src/lib/hub/streams.js";
+import { FakeStreamLink, makeMachine, StreamWriter } from "./stream-fixtures.js";
 
 /**
  * The credential-shaped values, made up as the test runs: no secrets scanner
@@ -353,4 +356,47 @@ test("a request and a socket over a tunnel: ids and paths in the route, and a bo
   assert.deepEqual({ route: req.fields.route, error: req.fields.error }, { route: "/api/fs/upload?dir&{key}", error: "<withheld>" });
   const closed = connLog.events().find((e) => e.seq > since && e.name === "socket.close")!;
   assert.equal(closed.fields.route, "/api/sessions/{source}/{id}/ws?fp&{key}");
+});
+
+test("a checkpoint download and the page queue: an error in someone else's words, a device's id and the stream say nothing of themselves", async () => {
+  const machine = await makeMachine();
+  const link = new FakeStreamLink();
+  const stream = await streamId(machine.mk, "claude", HOSTILE.uuid[0]);
+  const writer = await StreamWriter.open(machine, stream, FMT_FEED_V1);
+  await writer.append({ fromIndex: 0, items: [{ kind: "user", text: ALL }], endIndex: 1 });
+  const cp = await writer.manifest([{ fromIndex: 0, items: [{ kind: "user", text: ALL }], endIndex: 1 }]);
+  const device = HOSTILE.deviceName[0];
+  const queue = new PageQueue({ link: () => ({ effectiveType: "3g", downlink: 1.5, rtt: 400 }) });
+  const client = new StreamClient({
+    link,
+    machineSignKey: machine.signPublic,
+    epochs: machine.epochs,
+    pageQueue: queue,
+    logId: maskId(device),
+    retryDelay: () => 60_000,
+    fetchPage: async () => {
+      throw new TypeError(ALL);
+    },
+  });
+  const since = lastSeq(connLog);
+  const release = queue.hold("live");
+  client.subscribe(stream, feedFold);
+  await until(() => link.subs().length === 1, "subscribed");
+  link.deliver({ type: "checkpoint", ch: link.lastSub().ch, stream, uptoSeq: cp.upto, manifest: cp.manifest });
+  await until(() => connLog.events().some((e) => e.seq > since && e.name === "pages.pause"), "the pause said");
+  // Let go of: the background goes on once the 2 s after it have passed.
+  release();
+  await until(() => connLog.events().some((e) => e.seq > since && e.name === "stream.done"), "the download's end said");
+  const text = assertClean(connLog, since, "checkpoint download");
+  for (const fragment of [device, hex(stream), hex(stream).slice(0, 12)]) assert.ok(!text.includes(fragment), fragment);
+  const done = connLog.events().find((e) => e.seq > since && e.name === "stream.done")!;
+  assert.deepEqual(
+    { device: done.fields.device, kind: done.fields.kind, state: done.fields.state, error: done.fields.error, errName: done.fields.errName },
+    { device: maskId(device), kind: "session", state: "failed", error: "<withheld>", errName: "TypeError" },
+  );
+  for (const name of ["stream.checkpoint", "pages.limits", "pages.pause", "pages.resume"] as const) {
+    assert.ok(connLog.events().some((e) => e.seq > since && e.name === name), `${name} was said`);
+  }
+  client.close();
+  queue.close();
 });

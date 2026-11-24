@@ -86,6 +86,16 @@ export const CONN_EVENTS = {
   "hub.presence": "info",
   "hub.noChannels": "warn",
   "hub.req": "info",
+  // A machine's offline copy downloading a checkpoint's pages from the hub (`lib/hub/streams.ts`): its start
+  // (how many pages, in which lane, and why), how far it is at most every 10 s, and its end (bytes, time, how it ended).
+  "stream.checkpoint": "info",
+  "stream.progress": "info",
+  "stream.done": "info",
+  // The page's queue of those downloads (`lib/hub/page-queue.ts`): background held back for live traffic and let go
+  // again, and the limits it runs at as the link changes.
+  "pages.pause": "info",
+  "pages.resume": "info",
+  "pages.limits": "info",
   // Either link (the hub's, a relay's): a beat far later than due (the page's timers were held), the page back.
   "link.late": "warn",
   "link.wake": "info",
@@ -325,6 +335,8 @@ export const CODE_FIELDS: ReadonlySet<string> = new Set([
   "method",
   "cause",
   "decision",
+  "lane",
+  "basis",
 ]);
 
 /**
@@ -364,6 +376,8 @@ const OWN_WORDS: readonly RegExp[] = [
   /^tunnel: the pipe closed before the answer ended \(\d{1,5}\)$/,
   /^(?:tunnel: the answer did not start with a head|aborted|The operation was aborted\.|signal is aborted without reason)$/,
   /^the request body is larger than \d{1,12} bytes$/,
+  // A page download let go of (`lib/hub/streams.ts`, `page-queue.ts`): the request aborted, in the program's words.
+  /^(?:the subscription was closed|another page of its download failed|the page queue is closed)$/,
   // The browser's words for a request that never got an answer (`fetch`'s own TypeError).
   /^(?:Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.|Network request failed|The network connection was lost\.)$/,
   // The log's own words for why it says something.
