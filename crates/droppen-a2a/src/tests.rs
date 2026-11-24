@@ -1499,3 +1499,28 @@ async fn only_the_tck_entry_of_a_tck_instance_pushes_to_loopback_http() {
         .await;
     assert!(switched.is_err(), "the loopback origins do not come along to another kind of entry");
 }
+
+#[tokio::test]
+async fn a_subscription_to_a_waiting_task_waits_for_what_comes_after_the_answer() {
+    let h = harness().await;
+    let task = h.asking("m-1").await;
+    let mut events = h.stream("SubscribeToTask", json!({"id": task})).await;
+    let first = events.next().await.unwrap();
+    assert_eq!(
+        state_of(&first["result"]),
+        "TASK_STATE_INPUT_REQUIRED",
+        "it opens with the task as it waits"
+    );
+    let answer = json!({"messageId": "a-1", "taskId": task, "role": "ROLE_USER", "parts": [{"text": "main"}]});
+    h.rpc("SendMessage", json!({"message": answer, "configuration": {"returnImmediately": true}}))
+        .await;
+    h.fake.complete(&task, "done");
+    let rest = events.results().await;
+    let states: Vec<&str> = rest.iter().filter(|item| kind(item) == "statusUpdate").map(state_of).collect();
+    assert_eq!(states.first(), Some(&"TASK_STATE_WORKING"), "{rest:?}");
+    assert_eq!(
+        states.last(),
+        Some(&"TASK_STATE_COMPLETED"),
+        "it closes at the terminal state it reached: {rest:?}"
+    );
+}

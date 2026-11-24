@@ -850,7 +850,10 @@ impl A2a {
             who: who.cloned(),
             revocations,
             last_seq: snapshot.seq,
-            done: snapshot.state.is_settled(),
+            // A stream ends when the task *reaches* a terminal or interrupted
+            // state: one opened on a task already waiting on an answer waits
+            // with it, for what comes after the answer.
+            done: snapshot.state.is_terminal(),
             snapshot,
             rx,
             backlog: std::collections::VecDeque::new(),
