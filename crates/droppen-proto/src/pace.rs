@@ -46,6 +46,38 @@
 //!   data again behind it (BBR's ProbeRTT, which keeps a few packets out too:
 //!   about a round trip of idle link every ten seconds).
 //!
+//! # Both ways at once
+//!
+//! A marker's answer comes back behind whatever the peer is sending this way,
+//! and from round trips, rates and what is in flight alone that wait cannot be
+//! told from this side's own queue (in flight is rate × round trip either
+//! way). What this side *receives* tells:
+//!
+//! - more than [`QUIET_RX`] during a marker's round trip and the answer path
+//!   was **loaded**. Such a round trip never refreshes the minimum, which
+//!   would take in the peer's queue and grow the cap from it (and a drain does
+//!   not start for one: it could not measure it); it may lower it, and on a
+//!   path loaded from its first marker on it seeds it, less what a pacing
+//!   peer keeps queued ([`FLOOR`] at the rate its traffic came).
+//! - A peer that paces marks its data at least every quarter of its cap; the
+//!   older ones probe once a second on a direct path and once in five seconds
+//!   on the hub path. Bulk from a peer that does not mark it is an older
+//!   peer's: its whole window is queued in front of this side's answers, and
+//!   no cap below that window keeps this side's link busy. While it lasts the
+//!   cap **defers** to the window, as both ends did before; it costs little
+//!   that peer's queue did not already cost.
+//!
+//! Two pacing ends share their queues: what both keep queued comes to about
+//! a cap less a round trip, and how it splits between the two directions is
+//! nobody's to say. Each end's answers come out from behind the other's data
+//! in bursts (two-way traffic's acknowledgement compression), and a link
+//! idles when its share runs out. So while the answers come back loaded the
+//! cap is [`LOADED_SLACK`] more and markers go every sixteenth of it
+//! ([`LOADED_SPACING`] at least) rather than every quarter: within a tenth of
+//! what both directions carry unpaced, for a few hundred milliseconds more
+//! of queue at 1 Mbps. (Sending at a paced rate rather than in bursts would
+//! do better; it needs timers in both drivers.)
+//!
 //! What counts is stream data (and what a fallback resends). The
 //! multiplexer's own frames — opens, credits, closes — never wait for the cap
 //! and are not counted against it: a side that mostly reads sends a steady
@@ -81,7 +113,14 @@
 //! - Until a path has a rate and a round trip, its cap is the floor. A new
 //!   path then grows with [`STARTUP_GAIN`] (BBR's 2/ln 2) until three rounds
 //!   in a row bring less than a quarter more rate, and with [`GAIN`] after:
-//!   from the floor it reaches 50 Mbps × 20 ms in about two round trips.
+//!   from the floor it reaches 50 Mbps × 20 ms in about two round trips. A
+//!   round counts unless the sender ran out of data in it; one held by the
+//!   peer's stream window counts.
+//! - [`QUIET_RX`] 8 KiB: an answer path carrying the peer's bulk brings at
+//!   least a round trip of it (9 KB at 1 Mbps, 70 ms), a quiet one a few
+//!   control frames. [`UNMARKED_SPANS`] 4: the peer's bulk counts as unmarked
+//!   past four times the spacing a pacing peer at its rate would keep — 64 KiB
+//!   at 1 Mbps, against an older peer's 125 KB a second at the least.
 //!
 //! Times are microseconds of the session's clock; the browser's half
 //! (`web/src/lib/e2e/pace.ts`) keeps milliseconds, with the same rules, held
@@ -119,6 +158,14 @@ pub const QUIET_US: u64 = 250_000;
 pub const MAX_MARKERS: usize = 64;
 /// What sealing adds to a multiplexer frame on its way to the wire (envelope 17, data header 5, tag 16, a DataChannel message's kind 1), rounded up.
 pub const OVERHEAD: u64 = 64;
+/// More than this received during a marker's round trip, and its answer came back behind the peer's traffic.
+pub const QUIET_RX: u64 = 8 * 1024;
+/// The peer's bulk is unmarked (an older peer's) past this many of a pacing peer's marker spacings without a probe.
+pub const UNMARKED_SPANS: u64 = 4;
+/// While the answers come back loaded, markers go every sixteenth of the cap, never closer than this…
+pub const LOADED_SPACING: u64 = 4 * 1024;
+/// …and the cap is this much more: two ends both sending share their queues, and each needs some of it.
+pub const LOADED_SLACK: u64 = 24 * 1024;
 
 /// What the cap lets go next, given that there is data waiting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +193,8 @@ pub struct PaceStats {
     pub draining: bool,
     /// Still finding the path's rate ([`STARTUP_GAIN`]).
     pub startup: bool,
+    /// Deferring to the window: the peer's bulk is an older peer's ([`UNMARKED_SPANS`]).
+    pub deferring: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -160,6 +209,8 @@ struct Marker {
     first_sent_us: u64,
     app_limited: bool,
     clean: bool,
+    /// What had been received on the path when it left.
+    rx: u64,
 }
 
 /// The highest sample of a window: a deque falling in rate, rising in time.
@@ -212,6 +263,14 @@ pub struct Pace {
     flat_rounds: u32,
     /// A round ends when a marker sent with this much delivered is answered.
     next_round: u64,
+    /// Bytes received on the path, whether the last answer came back loaded
+    /// and the rate the peer's traffic came at then (bytes a second), where
+    /// the peer's last probe came, and how far apart its last two came.
+    rx: u64,
+    loaded: bool,
+    rx_rate: f64,
+    rx_at_probe: u64,
+    probe_gap: u64,
 }
 
 impl Pace {
@@ -234,6 +293,11 @@ impl Pace {
             full_rate: 0.0,
             flat_rounds: 0,
             next_round: 0,
+            rx: 0,
+            loaded: false,
+            rx_rate: 0.0,
+            rx_at_probe: 0,
+            probe_gap: 0,
         }
     }
 
@@ -264,6 +328,19 @@ impl Pace {
     }
 
     pub fn cap(&self) -> u64 {
+        if self.deferring() {
+            return self.ceiling;
+        }
+        let own = self.own_cap();
+        if self.answers_loaded() {
+            (own + LOADED_SLACK).min(self.ceiling)
+        } else {
+            own
+        }
+    }
+
+    /// The cap from what this path measured, deferring aside.
+    fn own_cap(&self) -> u64 {
         match (self.rate.max(), self.min_rtt) {
             (Some((_, rate)), Some((rtt_us, _))) => {
                 // In milliseconds, as the browser's half has it, so the two round alike.
@@ -275,6 +352,28 @@ impl Pace {
         }
     }
 
+    /// The last answer came back loaded, or the one still awaited will (as
+    /// much came in since it left): an older peer's queue can hold the first
+    /// answer back seconds.
+    fn answers_loaded(&self) -> bool {
+        self.loaded || self.markers.front().is_some_and(|m| self.rx - m.rx > QUIET_RX)
+    }
+
+    /// Whether the cap defers to the window: the answers come back loaded,
+    /// and the peer's bulk carries no marker where a pacing peer at its rate
+    /// would have put several (module docs).
+    fn deferring(&self) -> bool {
+        if !self.answers_loaded() {
+            return false;
+        }
+        // A pacing peer at the rate its traffic came: its cap, and a marker every quarter of it.
+        let rtt_ms = self.min_rtt.map_or(0.0, |(rtt, _)| rtt as f64 / 1e3);
+        let peer_cap = ((STARTUP_GAIN * self.rx_rate * rtt_ms / 1e3) as u64).max(FLOOR);
+        let spacing = MIN_SPACING.max(peer_cap / 4);
+        let unmarked = (self.rx - self.rx_at_probe).max(self.probe_gap);
+        unmarked > UNMARKED_SPANS * spacing
+    }
+
     pub fn stats(&self) -> PaceStats {
         PaceStats {
             cap: self.cap(),
@@ -284,6 +383,7 @@ impl Pace {
             markers: self.markers.len(),
             draining: self.draining,
             startup: self.startup,
+            deferring: self.deferring(),
         }
     }
 
@@ -298,13 +398,25 @@ impl Pace {
             if due && !clean_out {
                 return Next::Marker;
             }
-        } else if self.draining || (!clean_out && self.min_rtt.is_some_and(|(_, at)| now_us.saturating_sub(at) > MIN_RTT_WINDOW_US)) {
+        } else if self.draining
+            || (!clean_out && !self.loaded && self.min_rtt.is_some_and(|(_, at)| now_us.saturating_sub(at) > MIN_RTT_WINDOW_US))
+        {
             // Nothing new until no more than SMALL is out (the tail is marked
-            // when the sender finds itself held, [`Pace::stopped`]).
+            // when the sender finds itself held, [`Pace::stopped`]). Not while
+            // the answers come back loaded: no round trip then is the path's own.
             self.draining = true;
             return Next::Data(Budget::NONE);
         }
-        if self.unmarked >= MIN_SPACING.max(self.cap() / 4) {
+        // Spaced by the cap this path measured, deferring or not: a peer that
+        // paces reads it so. Closer while the answers come back loaded: what
+        // is in flight then is about all the round trip needs, and room comes
+        // back a spacing late.
+        let spacing = if self.answers_loaded() {
+            LOADED_SPACING.max(self.own_cap() / 16)
+        } else {
+            MIN_SPACING.max(self.own_cap() / 4)
+        };
+        if self.unmarked >= spacing {
             return Next::Marker;
         }
         let used = self.inflight() + OVERHEAD;
@@ -319,6 +431,18 @@ impl Pace {
     /// measures next starts out app-limited (its last delivery is old news).
     pub fn resume(&mut self) {
         self.app_limited_until = self.sent.max(1);
+    }
+
+    /// `len` bytes came in on the path (anything the peer sent this way).
+    pub fn received(&mut self, len: usize) {
+        self.rx += len as u64;
+    }
+
+    /// A probe of the peer's came in on the path (a marker of a pacing peer's,
+    /// or an older one's liveness probe).
+    pub fn peer_probe(&mut self) {
+        self.probe_gap = self.rx - self.rx_at_probe;
+        self.rx_at_probe = self.rx;
     }
 
     /// `len` bytes of stream data (a sequenced envelope, sealed) left on the path.
@@ -344,6 +468,7 @@ impl Pace {
             first_sent_us: self.first_sent_us,
             app_limited: self.app_limited_until != 0,
             clean: self.inflight() <= SMALL,
+            rx: self.rx,
         });
         self.unmarked = 0;
         if self.markers.len() > MAX_MARKERS {
@@ -351,11 +476,12 @@ impl Pace {
         }
     }
 
-    /// Sending stopped: `held` with data waiting (the cap, a drain, the
-    /// path's own limit), or out of data. Whether a marker should follow what
-    /// went.
-    pub fn stopped(&mut self, held: bool) -> bool {
-        if !held && self.inflight() < self.cap() {
+    /// Sending stopped: `held` with data waiting to go (the cap, a drain, the
+    /// path's own limit), `idle` with none queued at all (data the peer's
+    /// stream window holds back is not idle). Whether a marker should follow
+    /// what went.
+    pub fn stopped(&mut self, held: bool, idle: bool) -> bool {
+        if idle && self.inflight() < self.cap() {
             self.app_limited_until = self.sent.max(1);
         }
         self.unmarked > 0 && (held || self.unmarked > SMALL)
@@ -369,7 +495,30 @@ impl Pace {
         };
         // Those before it were read before it: its answer covers them.
         let m = self.markers.drain(..=i).next_back().expect("found");
-        self.note_rtt(now_us.saturating_sub(m.sent_us), m.clean, now_us);
+        let rtt_us = now_us.saturating_sub(m.sent_us);
+        // What came in meanwhile: the answer path loaded, and at what rate (ms, as the browser's half has it).
+        let rx = self.rx - m.rx;
+        self.loaded = rx > QUIET_RX;
+        if rtt_us > 0 {
+            self.rx_rate = rx as f64 * 1e3 / (rtt_us as f64 / 1e3);
+        }
+        if !self.loaded {
+            self.note_rtt(rtt_us, m.clean, now_us);
+        } else if let Some((min, _)) = self.min_rtt {
+            // Loaded: the answer waited behind the peer's traffic. The whole
+            // round trip may lower the minimum, never refresh it.
+            if rtt_us <= min {
+                self.note_rtt(rtt_us, false, now_us);
+            }
+        } else if self.rx_rate > 0.0 {
+            // Loaded from the first marker on: less what a pacing peer keeps
+            // queued (its floor, at the rate that traffic came), it seeds the minimum.
+            let left_ms = (rtt_us as f64 / 1e3 - FLOOR as f64 * 1e3 / self.rx_rate).floor();
+            if left_ms >= 1.0 {
+                self.note_rtt(left_ms as u64 * 1000, false, now_us);
+            }
+        }
+        let app_limited = m.app_limited;
         if m.offset > self.delivered {
             self.delivered = m.offset;
             self.delivered_at_us = now_us;
@@ -379,14 +528,14 @@ impl Pace {
         let interval = m.sent_us.saturating_sub(m.first_sent_us).max(now_us.saturating_sub(m.delivered_at_us));
         if data > 0 && interval > 0 {
             let rate = data as f64 * 1e6 / interval as f64;
-            if !m.app_limited || self.rate.max().is_none_or(|(_, max)| rate >= max) {
+            if !app_limited || self.rate.max().is_none_or(|(_, max)| rate >= max) {
                 self.rate.push(now_us, rate);
             }
         }
         if m.delivered >= self.next_round {
             // A round trip's worth delivered since the last round ended (BBR's rounds).
             self.next_round = self.delivered;
-            if self.startup && !m.app_limited {
+            if self.startup && !app_limited {
                 let rate = self.rate.max().map_or(0.0, |(_, r)| r);
                 if rate >= self.full_rate * STARTUP_GROWTH {
                     self.full_rate = rate;
@@ -435,14 +584,18 @@ impl Pace {
 ///
 /// ```text
 /// next <t> = M | D <interactive> <bulk>     mark <nonce> <t>     data <len> <t>
-/// stop <held 0|1> = <0|1>                   ans <nonce> <t> = <0|1>
+/// stop <held 0|1> <idle 0|1> = <0|1>        ans <nonce> <t> = <0|1>
+/// rx <len>                                  probe
 /// ```
 ///
-/// each followed by ` | <cap> <inflight> <rate or -> <min rtt ms or -> <markers> <draining 0|1> <startup 0|1>`.
+/// each followed by ` | <cap> <inflight> <rate or -> <min rtt ms or -> <markers> <draining 0|1> <startup 0|1> <deferring 0|1>`.
 /// The sender behind it has endless 16 KiB chunks on a 1 Mbps path with a
 /// 70 ms round trip and a deep queue for 11 s (a drain included), runs out of
 /// data, waits, then moves to a 50 Mbps path with a 20 ms round trip, and
-/// ends with a keystroke.
+/// sends a keystroke. Then, back at 1 Mbps, the peer sends bulk this way:
+/// first a pacing peer (a probe in every 16 KiB it sends, its queue 0.4 s in
+/// front of the answers), then an older one (no probe, its whole window, 3.7 s,
+/// in front), and then nothing.
 #[cfg(test)]
 pub(crate) fn pace_scenario() -> Vec<String> {
     use std::collections::BTreeSet;
@@ -457,27 +610,68 @@ pub(crate) fn pace_scenario() -> Vec<String> {
             let rate = s.rate.map_or("-".to_string(), |r| (r.floor() as u64).to_string());
             let rtt = s.min_rtt_ms.map_or("-".to_string(), |r| r.to_string());
             self.ops.push(format!(
-                "{op} | {} {} {rate} {rtt} {} {} {}",
+                "{op} | {} {} {rate} {rtt} {} {} {} {}",
                 s.cap,
                 s.inflight,
                 s.markers,
                 u8::from(s.draining),
-                u8::from(s.startup)
+                u8::from(s.startup),
+                u8::from(s.deferring)
             ));
         }
     }
-    /// A deep FIFO that drains `rate` bytes a ms; a marker is answered a round trip after what is ahead of it.
+    /// A deep FIFO that drains `rate` bytes a ms; a marker is answered a round
+    /// trip (and `back` more, behind the peer's queue) after what is ahead of
+    /// it. The peer sends `rx` bytes a ms this way, a probe in every
+    /// `probe_every` of them (0: none).
     struct Link {
         rate: u64,
         rtt: u64,
+        back: u64,
+        rx: u64,
+        probe_every: u64,
         free_at: u64,
+        rx_at: u64,
+        unprobed: u64,
         answers: BTreeSet<(u64, u64)>,
     }
     impl Link {
+        fn new(rate: u64, rtt: u64, at: u64) -> Self {
+            Self {
+                rate,
+                rtt,
+                back: 0,
+                rx: 0,
+                probe_every: 0,
+                free_at: at,
+                rx_at: at,
+                unprobed: 0,
+                answers: BTreeSet::new(),
+            }
+        }
         fn push(&mut self, t: u64, bytes: u64, marker: Option<u64>) {
             self.free_at = self.free_at.max(t) + bytes.div_ceil(self.rate);
             if let Some(n) = marker {
-                self.answers.insert((self.free_at + self.rtt, n));
+                self.answers.insert((self.free_at + self.rtt + self.back, n));
+            }
+        }
+        /// What the peer's traffic brought by `t`.
+        fn arrive(&mut self, rec: &mut Rec, t: u64) {
+            let mut left = self.rx * t.saturating_sub(self.rx_at);
+            self.rx_at = self.rx_at.max(t);
+            while self.probe_every > 0 && self.unprobed + left >= self.probe_every {
+                let piece = self.probe_every - self.unprobed;
+                rec.pace.received(piece as usize);
+                rec.say(format!("rx {piece}"));
+                rec.pace.peer_probe();
+                rec.say("probe".to_string());
+                self.unprobed = 0;
+                left -= piece;
+            }
+            if left > 0 {
+                rec.pace.received(left as usize);
+                rec.say(format!("rx {left}"));
+                self.unprobed += left;
             }
         }
     }
@@ -488,14 +682,17 @@ pub(crate) fn pace_scenario() -> Vec<String> {
     };
     let mut nonce = 0u64;
     let mut send = |rec: &mut Rec, link: &mut Link, t: u64, more: bool| {
+        let mut mark = |rec: &mut Rec, link: &mut Link| {
+            nonce += 1;
+            rec.pace.marker_sent(nonce, t * 1000);
+            rec.say(format!("mark {nonce} {t}"));
+            link.push(t, 0, Some(nonce));
+        };
         if !more {
-            let tail = rec.pace.stopped(false);
-            rec.say(format!("stop 0 = {}", u8::from(tail)));
+            let tail = rec.pace.stopped(false, true);
+            rec.say(format!("stop 0 1 = {}", u8::from(tail)));
             if tail {
-                nonce += 1;
-                rec.pace.marker_sent(nonce, t * 1000);
-                rec.say(format!("mark {nonce} {t}"));
-                link.push(t, 0, Some(nonce));
+                mark(rec, link);
             }
             return;
         }
@@ -503,22 +700,16 @@ pub(crate) fn pace_scenario() -> Vec<String> {
             match rec.pace.next(t * 1000) {
                 Next::Marker => {
                     rec.say(format!("next {t} = M"));
-                    nonce += 1;
-                    rec.pace.marker_sent(nonce, t * 1000);
-                    rec.say(format!("mark {nonce} {t}"));
-                    link.push(t, 0, Some(nonce));
+                    mark(rec, link);
                 }
                 Next::Data(b) => {
                     rec.say(format!("next {t} = D {} {}", b.interactive, b.bulk));
                     let len = (b.bulk as u64).min(CHUNK);
                     if len < CHUNK && len < crate::mux::MIN_CUT as u64 {
-                        let tail = rec.pace.stopped(true);
-                        rec.say(format!("stop 1 = {}", u8::from(tail)));
+                        let tail = rec.pace.stopped(true, false);
+                        rec.say(format!("stop 1 0 = {}", u8::from(tail)));
                         if tail {
-                            nonce += 1;
-                            rec.pace.marker_sent(nonce, t * 1000);
-                            rec.say(format!("mark {nonce} {t}"));
-                            link.push(t, 0, Some(nonce));
+                            mark(rec, link);
                         }
                         return;
                     }
@@ -532,38 +723,43 @@ pub(crate) fn pace_scenario() -> Vec<String> {
     let mut run = |rec: &mut Rec, link: &mut Link, from: u64, until: u64| {
         send(rec, link, from, true);
         while let Some((t, n)) = link.answers.pop_first() {
+            link.arrive(rec, t);
             let ours = rec.pace.answered(n, t * 1000);
             rec.say(format!("ans {n} {t} = {}", u8::from(ours)));
             send(rec, link, t, t < until);
         }
     };
-    let mut slow = Link {
-        rate: 125,
-        rtt: 70,
-        free_at: 0,
-        answers: BTreeSet::new(),
-    };
+    let mut slow = Link::new(125, 70, 0);
     run(&mut rec, &mut slow, 0, 11_000);
     let quiet = slow.free_at + 6_000;
-    let mut fast = Link {
-        rate: 6_250,
-        rtt: 20,
-        free_at: quiet,
-        answers: BTreeSet::new(),
-    };
+    let mut fast = Link::new(6_250, 20, quiet);
     run(&mut rec, &mut fast, quiet, quiet + 120);
     // A keystroke's echo, too small to mark; a quiet round trip later it counts as delivered.
     let t = fast.free_at + 1_000;
     rec.pace.data_sent(60, t * 1000);
     rec.say(format!("data 60 {t}"));
-    let tail = rec.pace.stopped(false);
-    rec.say(format!("stop 0 = {}", u8::from(tail)));
+    let tail = rec.pace.stopped(false, true);
+    rec.say(format!("stop 0 1 = {}", u8::from(tail)));
     let t = t + 100;
     let next = match rec.pace.next(t * 1000) {
         Next::Marker => "M".to_string(),
         Next::Data(b) => format!("D {} {}", b.interactive, b.bulk),
     };
     rec.say(format!("next {t} = {next}"));
+    // Both ways at once at 1 Mbps: a pacing peer, then an older one, then quiet.
+    let mut paced = Link::new(125, 70, t + 1_000);
+    paced.back = 400;
+    paced.rx = 125;
+    paced.probe_every = 16 * 1024;
+    run(&mut rec, &mut paced, t + 1_000, t + 4_000);
+    let at = paced.free_at + 2_000;
+    let mut old = Link::new(125, 70, at);
+    old.back = 3_700;
+    old.rx = 125;
+    run(&mut rec, &mut old, at, at + 12_000);
+    let at = old.free_at + 1_000;
+    let mut alone = Link::new(125, 70, at);
+    run(&mut rec, &mut alone, at, at + 2_000);
     rec.ops
 }
 
@@ -585,9 +781,16 @@ mod tests {
         answers: VecDeque<(u64, u64)>,
         nonce: u64,
         credit: u64,
-        /// Delivered over the last `run`, and whether it drained during it.
+        /// Delivered over the last `run`, and whether it drained or deferred during it.
         delivered: u64,
         drained: bool,
+        deferred: bool,
+        /// The peer's traffic this way: bytes a ms, a probe in every so many
+        /// (0: none), and how long its queue holds the answers back (ms).
+        rx: u64,
+        probe_every: u64,
+        back: u64,
+        unprobed: u64,
     }
 
     impl Sim {
@@ -602,6 +805,11 @@ mod tests {
                 credit: 0,
                 delivered: 0,
                 drained: false,
+                deferred: false,
+                rx: 0,
+                probe_every: 0,
+                back: 0,
+                unprobed: 0,
             }
         }
 
@@ -614,7 +822,16 @@ mod tests {
         fn run(&mut self, pace: &mut Pace, ms: u64) -> &mut Self {
             self.delivered = 0;
             self.drained = false;
+            self.deferred = false;
             for _ in 0..ms {
+                if self.rx > 0 {
+                    pace.received(self.rx as usize);
+                    self.unprobed += self.rx;
+                    if self.probe_every > 0 && self.unprobed >= self.probe_every {
+                        pace.peer_probe();
+                        self.unprobed = 0;
+                    }
+                }
                 while self.answers.front().is_some_and(|&(at, _)| at <= self.now) {
                     let (_, n) = self.answers.pop_front().unwrap();
                     pace.answered(n, self.now * MS);
@@ -628,7 +845,7 @@ mod tests {
                             self.queue.push_back((n, None));
                         }
                         Next::Data(_) => {
-                            if pace.stopped(true) {
+                            if pace.stopped(true, false) {
                                 self.mark(pace);
                             }
                             break;
@@ -636,6 +853,7 @@ mod tests {
                     }
                 }
                 self.drained |= pace.stats().draining;
+                self.deferred |= pace.stats().deferring;
                 self.credit += self.rate;
                 while let Some(&(bytes, marker)) = self.queue.front() {
                     if bytes > self.credit {
@@ -648,7 +866,7 @@ mod tests {
                     self.delivered += bytes;
                     self.queue.pop_front();
                     if let Some(n) = marker {
-                        self.answers.push_back((self.now + self.rtt, n));
+                        self.answers.push_back((self.now + self.rtt + self.back, n));
                     }
                 }
                 if self.queue.is_empty() {
@@ -735,7 +953,7 @@ mod tests {
                 bulk: 0
             })
         );
-        assert!(!pace.stopped(true), "nothing unmarked");
+        assert!(!pace.stopped(true, false), "nothing unmarked");
         // The answers bring the room back.
         assert!(pace.answered(2, 70 * MS));
         assert_eq!(pace.inflight(), 0);
@@ -751,7 +969,7 @@ mod tests {
         pace.answered(1, 50 * MS);
         // A keystroke's echo, then nothing.
         pace.data_sent(60, 60 * MS);
-        assert!(!pace.stopped(false), "too small to mark");
+        assert!(!pace.stopped(false, true), "too small to mark");
         assert_eq!(pace.inflight(), 60);
         // Not yet a round trip later: still out.
         let _ = pace.next(100 * MS);
@@ -761,7 +979,7 @@ mod tests {
         assert_eq!(pace.inflight(), 0);
         // A bigger tail is marked when the sender runs out.
         pace.data_sent(5000, 200 * MS);
-        assert!(pace.stopped(false));
+        assert!(pace.stopped(false, true));
     }
 
     #[test]
@@ -796,7 +1014,7 @@ mod tests {
         // Busy past the window with no clean marker: drained, and the tail marked.
         assert_eq!(pace.next(10_200 * MS), Next::Data(Budget::NONE));
         assert!(pace.stats().draining);
-        assert!(pace.stopped(true));
+        assert!(pace.stopped(true, false));
         pace.marker_sent(3, 10_200 * MS);
         // What came before the tail is delivered: 2000 bytes still out, and the drain is over.
         assert!(pace.answered(2, 10_300 * MS));
@@ -831,17 +1049,79 @@ mod tests {
     }
 
     #[test]
-    fn the_shared_scenario_covers_a_drain_startup_and_a_quiet_tail() {
+    fn the_shared_scenario_covers_a_drain_startup_a_quiet_tail_and_both_ways() {
         let ops = pace_scenario();
-        let flag = |op: &String, back: usize| op.split(' ').nth_back(back) == Some("1");
-        assert!(ops.iter().any(|op| flag(op, 1)), "a drain");
-        let started = ops.iter().position(|op| flag(op, 0)).unwrap();
-        assert!(ops[started..].iter().any(|op| !flag(op, 0)), "startup ends");
+        // The stats: cap inflight rate rtt markers draining startup deferring.
+        let field = |op: &String, back: usize| op.split(' ').nth_back(back).unwrap().to_string();
+        let flag = |op: &String, back: usize| field(op, back) == "1";
+        assert!(ops.iter().any(|op| flag(op, 2)), "a drain");
+        let started = ops.iter().position(|op| flag(op, 1)).unwrap();
+        assert!(ops[started..].iter().any(|op| !flag(op, 1)), "startup ends");
         assert!(ops.iter().any(|op| op.starts_with("next ") && op.contains("= M")), "markers");
-        assert!(ops.iter().any(|op| op.starts_with("stop 1 = 1")), "a tail marked when held");
-        // The keystroke at the end counts as delivered: nothing in flight.
-        let last = ops.last().unwrap();
-        assert!(last.starts_with("next ") && last.split(' ').nth_back(5) == Some("0"), "{last}");
-        assert!(ops.len() < 4_000, "{}", ops.len());
+        assert!(ops.iter().any(|op| op.starts_with("stop 1 0 = 1")), "a tail marked when held");
+        // The keystroke counts as delivered: nothing in flight the next time.
+        let key = ops.iter().position(|op| op.starts_with("data 60 ")).unwrap();
+        assert_eq!(field(&ops[key + 2], 6), "0", "{}", ops[key + 2]);
+        // A pacing peer's bulk this way: no deferring; an older one's: the cap defers, the window's.
+        let probes = ops.iter().position(|op| op.starts_with("probe")).unwrap();
+        let deferred = ops.iter().position(|op| flag(op, 0)).unwrap();
+        assert!(deferred > probes && !ops[probes..deferred].iter().any(|op| op.starts_with("probe ") && flag(op, 0)));
+        assert_eq!(field(&ops[deferred], 7), (512 * 1024).to_string(), "{}", ops[deferred]);
+        assert!(!flag(ops.last().unwrap(), 0), "and not once the peer is quiet");
+        assert!(ops.len() < 6_000, "{}", ops.len());
+    }
+
+    /// Both ways at once, with a pacing peer: its queue holds the answers back
+    /// a little — its share of two floors less a round trip, about 0.2 s at
+    /// 1 Mbps (`link_sim` runs the two ends for real) — which neither refreshes
+    /// the minimum (it would take the peer's queue in and grow the cap from
+    /// it) nor starts a drain; the cap stays this side's own and the link
+    /// stays busy.
+    #[test]
+    fn an_answer_path_loaded_by_a_pacing_peer_changes_nothing_but_drains() {
+        let mut pace = Pace::new(512 * 1024);
+        let mut sim = Sim::new(125, 70);
+        sim.run(&mut pace, 1_000);
+        sim.rx = 125;
+        sim.probe_every = 16 * 1024;
+        sim.back = 220;
+        let run = sim.run(&mut pace, 30_000);
+        assert!(!run.drained && !run.deferred, "{:?}", pace.stats());
+        let delivered = run.delivered;
+        assert!(delivered as f64 >= 0.95 * 125.0 * 30_000.0, "{delivered}");
+        let s = pace.stats();
+        assert_eq!(s.cap, FLOOR + LOADED_SLACK, "its own, and the slack two ends sending share");
+        assert!(s.min_rtt_ms.unwrap() < 110.0, "the path's own round trip, not the peer's queue: {s:?}");
+    }
+
+    /// Both ways at once, with an older peer: its whole window holds the
+    /// answers back seconds, and no cap below the window keeps the link busy.
+    /// Its bulk carries no marker; the cap defers to the window while it
+    /// lasts, and comes back when the peer is quiet.
+    #[test]
+    fn an_older_peers_unmarked_bulk_makes_the_cap_defer_to_the_window() {
+        let mut pace = Pace::new(512 * 1024);
+        let mut sim = Sim::new(125, 70);
+        sim.run(&mut pace, 1_000);
+        sim.rx = 125;
+        sim.back = 3_700;
+        let run = sim.run(&mut pace, 30_000);
+        assert!(run.deferred);
+        let delivered = run.delivered;
+        assert!(delivered as f64 >= 0.85 * 125.0 * 30_000.0, "{delivered} {:?}", pace.stats());
+        assert_eq!(pace.cap(), 512 * 1024);
+        // The same peer probing once a second (an older page's direct path): still unmarked bulk.
+        let mut again = Pace::new(512 * 1024);
+        let mut sim = Sim::new(125, 70);
+        sim.run(&mut again, 1_000);
+        sim.rx = 125;
+        sim.probe_every = 125 * 1000;
+        sim.back = 3_700;
+        assert!(sim.run(&mut again, 20_000).deferred);
+        // Quiet again: back to its own cap.
+        sim.rx = 0;
+        sim.back = 0;
+        sim.run(&mut again, 10_000);
+        assert_eq!(again.cap(), FLOOR, "{:?}", again.stats());
     }
 }

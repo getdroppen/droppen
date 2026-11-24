@@ -406,6 +406,12 @@ impl Mux {
                 .any(|s| (!s.pending.is_empty() && s.send_credit > 0) || (s.pending.is_empty() && s.pending_close.is_some()))
     }
 
+    /// Whether anything is queued at all, sendable now or held back by a
+    /// stream's window ([`Mux::has_pending`] says only what can go).
+    pub fn has_queued(&self) -> bool {
+        !self.control.is_empty() || self.streams.values().any(|s| !s.pending.is_empty() || s.pending_close.is_some())
+    }
+
     /// The next frame to send, by priority, or `None` if everything sendable has gone.
     pub fn poll(&mut self) -> Option<MuxFrame> {
         self.poll_within(Budget::UNLIMITED)

@@ -425,7 +425,7 @@ impl Session {
         let (env, data) = if let Some(frame) = frame {
             let data = data_of(&frame);
             (p.lanes.stamp_at(frame.encode(), via == Via::Direct, now_ms), data)
-        } else if p.pacing && p.pace(via).stopped(pending) {
+        } else if p.pacing && p.pace(via).stopped(pending, !self.mux.has_queued()) {
             // Sending stopped: a marker after what went, so its delivery is heard.
             return Ok(Some((self.marker(via, now_us)?, None)));
         } else if p.lanes.ack_due_ms().is_some_and(|due| due <= now_ms) {
@@ -492,6 +492,9 @@ impl Session {
             return Ok(self.mux.receive(frame)?.into_iter().collect());
         }
         self.heard_relay(now_us);
+        if let Some(p) = self.paths.as_mut().filter(|p| p.pacing) {
+            p.relay_pace.received(payload.len());
+        }
         let env = Envelope::decode(&plaintext).map_err(PathError::from)?;
         self.on_envelope(env, Via::Relay, now_us)
     }
@@ -529,6 +532,11 @@ impl Session {
             Some(Ok(env)) => env,
         };
         p.last_direct_rx_us = now_us;
+        if p.pacing {
+            if let Some(pace) = p.direct_pace.as_mut() {
+                pace.received(message.len());
+            }
+        }
         self.on_envelope(env, Via::Direct, now_us)
     }
 
@@ -550,6 +558,10 @@ impl Session {
             }
             Envelope::Ack { ack } => p.acked(ack, now_us)?,
             Envelope::Probe { nonce } => {
+                if p.pacing {
+                    // How often the peer marks what it sends tells a pacing peer from an older one.
+                    p.pace(via).peer_probe();
+                }
                 // Answered at once, with any acknowledgement owed: a side whose
                 // timers are held back (a page in a background tab) still
                 // acknowledges once per probe, which comes from the other side.

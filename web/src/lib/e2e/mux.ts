@@ -235,6 +235,11 @@ export class Mux {
     return this.control.length > 0 || [...this.streams.values()].some(Mux.ready);
   }
 
+  /** Whether anything is queued at all, sendable now or held back by a stream's window (`hasPending` says only what can go). */
+  hasQueued(): boolean {
+    return this.control.length > 0 || [...this.streams.values()].some((s) => s.pending.length > 0 || s.pendingClose !== null);
+  }
+
   poll(): MuxFrame | null {
     return this.pollWithin(BUDGET_UNLIMITED);
   }

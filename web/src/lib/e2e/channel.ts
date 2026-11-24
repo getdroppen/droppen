@@ -493,7 +493,7 @@ export class Session {
     if (frame) {
       data = dataOf(frame);
       env = p.lanes.stampAt(encodeMuxFrame(frame), direct !== null, nowMs);
-    } else if (p.pacing && p.pace(via).stopped(pending)) {
+    } else if (p.pacing && p.pace(via).stopped(pending, !this.mux.hasQueued())) {
       // Sending stopped: a marker after what went, so its delivery is heard.
       return { wire: await this.marker(via, nowMs, wallMs), data: null };
     } else {
@@ -544,6 +544,7 @@ export class Session {
       return event ? [event] : [];
     }
     this.heardRelay(nowMs);
+    if (this.paths.pacing) this.paths.relayPace.received(payload.length);
     return this.onEnvelope(decodeEnvelope(plain), "relay", nowMs);
   }
 
@@ -576,6 +577,7 @@ export class Session {
       return [];
     }
     p.lastDirectRxMs = nowMs;
+    if (p.pacing) p.directPace?.received(message.length);
     return this.onEnvelope(env, "direct", nowMs);
   }
 
@@ -595,6 +597,8 @@ export class Session {
         p.acked(env.ack, nowMs);
         break;
       case "probe": {
+        // How often the peer marks what it sends tells a pacing peer from an older one.
+        if (p.pacing) p.pace(via).peerProbe();
         // Answered at once, with any acknowledgement owed: a side whose timers
         // are held back (this page in a background tab) still acknowledges
         // once per probe, which comes from the other side.

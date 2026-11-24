@@ -112,6 +112,8 @@ export interface DriverDiagnostics {
   capInflight: number | null;
   rate: number | null;
   minRttMs: number | null;
+  /** The cap defers to the window: the peer's bulk this way is an older peer's, unmarked (`null`: not paced). */
+  capDefers: boolean | null;
   /** Received and not credited back to the sender yet (bytes). */
   recvUnacked: number;
   /** How long since anything came in on either path (ms; `null`: nothing yet). */
@@ -265,6 +267,7 @@ export class ChannelDriver {
       capInflight: pace?.inflight ?? null,
       rate: pace?.rate != null ? Math.round(pace.rate) : null,
       minRttMs: pace?.minRttMs ?? null,
+      capDefers: pace ? pace.deferring : null,
       recvUnacked: this.recvWindow.pending,
       lastRxAgoMs: this.lastRxAt === null ? null : Math.max(0, now - this.lastRxAt),
       queued: pending.bytes,

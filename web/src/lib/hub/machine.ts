@@ -376,6 +376,7 @@ function channelSampler(driver: ChannelDriver, pipes: () => number) {
         capInflight: d.capInflight,
         rate: d.rate,
         minRttMs: d.minRttMs,
+        capDefers: d.capDefers,
         heldTx: d.heldTx,
         queued: d.queued,
         dcBuf: d.dcBuffered,

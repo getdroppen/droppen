@@ -29,6 +29,7 @@ import {
   Pace,
   PACE_FLOOR,
   PACE_HEADROOM,
+  PACE_LOADED_SLACK,
   PACE_OVERHEAD,
   PACE_STARTUP_GAIN,
   Responder,
@@ -58,7 +59,13 @@ test("the pace says what droppen-proto's says, call for call (rust.json pace)", 
         pace.dataSent(Number(a[0]), Number(a[1]));
         break;
       case "stop":
-        assert.equal(pace.stopped(a[0] === "1") ? "1" : "0", a[2], line);
+        assert.equal(pace.stopped(a[0] === "1", a[1] === "1") ? "1" : "0", a[3], line);
+        break;
+      case "rx":
+        pace.received(Number(a[0]));
+        break;
+      case "probe":
+        pace.peerProbe();
         break;
       case "ans":
         assert.equal(pace.answered(Number(a[0]), Number(a[1])) ? "1" : "0", a[3], line);
@@ -67,7 +74,7 @@ test("the pace says what droppen-proto's says, call for call (rust.json pace)", 
         assert.fail(`unknown op in ${line}`);
     }
     const s = pace.stats();
-    const got = `${s.cap} ${s.inflight} ${s.rate === null ? "-" : Math.floor(s.rate)} ${s.minRttMs ?? "-"} ${s.markers} ${s.draining ? 1 : 0} ${s.startup ? 1 : 0}`;
+    const got = `${s.cap} ${s.inflight} ${s.rate === null ? "-" : Math.floor(s.rate)} ${s.minRttMs ?? "-"} ${s.markers} ${s.draining ? 1 : 0} ${s.startup ? 1 : 0} ${s.deferring ? 1 : 0}`;
     assert.equal(got, want, line);
   }
 });
@@ -81,6 +88,12 @@ class Sim {
   private credit = 0;
   delivered = 0;
   drained = false;
+  deferred = false;
+  /** The peer's traffic this way: bytes a ms, a probe in every so many (0: none), and how long its queue holds the answers back (ms). */
+  rx = 0;
+  probeEvery = 0;
+  back = 0;
+  private unprobed = 0;
 
   constructor(
     public rate: number,
@@ -96,7 +109,16 @@ class Sim {
   run(pace: Pace, ms: number): this {
     this.delivered = 0;
     this.drained = false;
+    this.deferred = false;
     for (let i = 0; i < ms; i++) {
+      if (this.rx > 0) {
+        pace.received(this.rx);
+        this.unprobed += this.rx;
+        if (this.probeEvery > 0 && this.unprobed >= this.probeEvery) {
+          pace.peerProbe();
+          this.unprobed = 0;
+        }
+      }
       while (this.answers.length > 0 && this.answers[0]![0] <= this.now) pace.answered(this.answers.shift()![1], this.now);
       for (;;) {
         const n = pace.next(this.now);
@@ -107,11 +129,12 @@ class Sim {
           pace.dataSent(len, this.now);
           this.queue.push([len, null]);
         } else {
-          if (pace.stopped(true)) this.mark(pace);
+          if (pace.stopped(true, false)) this.mark(pace);
           break;
         }
       }
       this.drained ||= pace.stats().draining;
+      this.deferred ||= pace.stats().deferring;
       this.credit += this.rate;
       while (this.queue.length > 0) {
         const front = this.queue[0]!;
@@ -124,7 +147,7 @@ class Sim {
         this.credit -= front[0];
         this.delivered += front[0];
         this.queue.shift();
-        if (front[1] !== null) this.answers.push([this.now + this.rtt, front[1]]);
+        if (front[1] !== null) this.answers.push([this.now + this.rtt + this.back, front[1]]);
       }
       if (this.queue.length === 0) this.credit = 0;
       this.now += 1;
@@ -174,13 +197,13 @@ test("a path busy past the window is drained once for a clean round trip; a smal
   quiet.markerSent(1, 0);
   quiet.answered(1, 50);
   quiet.dataSent(60, 60);
-  assert.equal(quiet.stopped(false), false, "a keystroke's echo is too small to mark");
+  assert.equal(quiet.stopped(false, true), false, "a keystroke's echo is too small to mark");
   quiet.next(100);
   assert.equal(quiet.inflight, 60);
   quiet.next(200);
   assert.equal(quiet.inflight, 0, "a quiet round trip later it counts as delivered");
   quiet.dataSent(5000, 200);
-  assert.equal(quiet.stopped(false), true, "a bigger tail is marked");
+  assert.equal(quiet.stopped(false, true), true, "a bigger tail is marked");
 });
 
 test("a drain ends with a small tail still out, not only with nothing out", () => {
@@ -193,7 +216,7 @@ test("a drain ends with a small tail still out, not only with nothing out", () =
   pace.dataSent(2_000, 150);
   assert.deepEqual(pace.next(10_200), { type: "data", budget: { interactive: 0, bulk: 0 } });
   assert.equal(pace.stats().draining, true);
-  assert.equal(pace.stopped(true), true, "the tail is marked");
+  assert.equal(pace.stopped(true, false), true, "the tail is marked");
   pace.markerSent(3, 10_200);
   assert.equal(pace.answered(2, 10_300), true);
   assert.equal(pace.inflight, 2_000);
@@ -221,6 +244,42 @@ test("interactive data has headroom past the cap, bulk has none; a seeded path m
   lan.markerSent(1, 0);
   lan.answered(1, 10);
   assert.equal(lan.cap(), Math.trunc(PACE_STARTUP_GAIN * 500_000));
+});
+
+test("both ways at once: a pacing peer's loaded answers change nothing but drains; an older peer's unmarked bulk makes the cap defer to the window", () => {
+  const paced = new Pace(INITIAL_CREDIT);
+  const s1 = new Sim(125, 70);
+  s1.run(paced, 1_000);
+  s1.rx = 125;
+  s1.probeEvery = 16 * 1024;
+  s1.back = 220;
+  const r1 = s1.run(paced, 30_000);
+  assert.equal(r1.drained || r1.deferred, false, JSON.stringify(paced.stats()));
+  assert.ok(r1.delivered >= 0.95 * 125 * 30_000, `${r1.delivered}`);
+  assert.equal(paced.cap(), PACE_FLOOR + PACE_LOADED_SLACK, "its own, and the slack two ends sending share");
+  assert.ok(paced.stats().minRttMs! < 110, "the path's own round trip, not the peer's queue");
+
+  const old = new Pace(INITIAL_CREDIT);
+  const s2 = new Sim(125, 70);
+  s2.run(old, 1_000);
+  s2.rx = 125;
+  s2.back = 3_700;
+  const r2 = s2.run(old, 30_000);
+  assert.equal(r2.deferred, true);
+  assert.ok(r2.delivered >= 0.85 * 125 * 30_000, `${r2.delivered} ${JSON.stringify(old.stats())}`);
+  assert.equal(old.cap(), INITIAL_CREDIT);
+  // An older page's direct path probes once a second: still unmarked bulk; and quiet again, back to its own cap.
+  const again = new Pace(INITIAL_CREDIT);
+  const s3 = new Sim(125, 70);
+  s3.run(again, 1_000);
+  s3.rx = 125;
+  s3.probeEvery = 125 * 1000;
+  s3.back = 3_700;
+  assert.equal(s3.run(again, 20_000).deferred, true);
+  s3.rx = 0;
+  s3.back = 0;
+  s3.run(again, 10_000);
+  assert.equal(again.cap(), PACE_FLOOR, JSON.stringify(again.stats()));
 });
 
 function kinds(frames: MuxFrame[]): string[] {
@@ -443,22 +502,32 @@ async function quiet(): Promise<void> {
 interface Report {
   rpcMs: number[];
   mbps: number;
+  upMbps: number | null;
 }
 
 const pct = (sorted: number[], p: number) => sorted[Math.min(sorted.length, Math.max(1, Math.ceil(sorted.length * p))) - 1]!;
 
 /**
- * A 1 Mbps link, 70 ms round trip, deep queue, each way; the agent (a
- * responder driver) sends `bulk` on a blob stream and a 2 KB answer on each
- * rpc stream the page opens, one a second.
+ * A link (1 Mbps, 70 ms round trip by default), deep queue, each way; the
+ * agent (a responder driver) sends `bulk` on a blob stream and a 2 KB answer
+ * on each rpc stream the page opens, one a second; with `upload`, the page
+ * sends that much on a blob stream of its own at the same time, which the
+ * agent reads whole.
  */
-async function slowLink(t: TestContext, bulk: number, agentPaces: boolean, devicePaces: boolean): Promise<Report> {
+async function slowLink(
+  t: TestContext,
+  bulk: number,
+  agentPaces: boolean,
+  devicePaces: boolean,
+  link: { mbps: number; rttMs: number; upload: number } = { mbps: 1, rttMs: 70, upload: 0 },
+): Promise<Report> {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let now = 0;
   const clock = () => now;
   const wall = () => 1_700_000_000_000 + now;
-  const bitsPerMs = 1000;
-  const oneWay = 35;
+  const bitsPerMs = link.mbps * 1000;
+  const oneWay = link.rttMs / 2;
+  let upDoneAt: number | null = null;
   const free = { toAgent: 0, toDevice: 0 };
   let agent: ChannelDriver;
   let device: ChannelDriver;
@@ -472,6 +541,18 @@ async function slowLink(t: TestContext, bulk: number, agentPaces: boolean, devic
   device = new ChannelDriver(7, it, "initiator", (f) => carry("toAgent", f), wall, { paths: { probeRelay: true }, pace: devicePaces, clock });
   agent = new ChannelDriver(7, rt, "responder", (f) => carry("toDevice", f), wall, { paths: { probeRelay: false }, pace: agentPaces, clock });
   agent.onincoming = (stream: ChannelStream) => {
+    if (stream.cls === "blob" && new TextDecoder().decode(stream.meta).startsWith("POST")) {
+      let read = 0;
+      stream.ondata = (d) => {
+        read += d.length;
+        if (read >= link.upload && upDoneAt === null) {
+          upDoneAt = now;
+          stream.send(utf8("ok"));
+          stream.close(0);
+        }
+      };
+      return;
+    }
     const len = stream.cls === "blob" ? bulk : 2048;
     for (let at = 0; at < len; at += 64 * 1024) stream.send(new Uint8Array(Math.min(64 * 1024, len - at)));
     stream.close(0);
@@ -490,11 +571,15 @@ async function slowLink(t: TestContext, bulk: number, agentPaces: boolean, devic
     got += d.length;
     if (got >= bulk && doneAt === null) doneAt = now;
   };
+  if (link.upload > 0) {
+    const up = device.open("blob", utf8("POST /api/fs/upload?path=%2Ftmp%2Fbig"));
+    for (let at = 0; at < link.upload; at += 64 * 1024) up.send(new Uint8Array(Math.min(64 * 1024, link.upload - at)));
+  }
   const rpcMs: number[] = [];
   let asked = 0;
   await quiet();
   await tick(500);
-  while (doneAt === null) {
+  while (doneAt === null || (link.upload > 0 && upDoneAt === null)) {
     const at = now;
     asked += 1;
     const s = device.open("rpc", utf8("GET /api/screens"));
@@ -505,18 +590,22 @@ async function slowLink(t: TestContext, bulk: number, agentPaces: boolean, devic
       rpcMs.push(now - at);
     };
     await tick(1000);
-    assert.ok(now < 120_000, "the download ends");
+    assert.ok(now < 120_000, "the transfers end");
   }
   while (rpcMs.length < asked) await tick(100);
   device.close();
   agent.close();
   await tick(10);
   t.mock.timers.reset();
-  return { rpcMs: rpcMs.sort((a, b) => a - b), mbps: (bulk * 8) / doneAt! / 1000 };
+  return {
+    rpcMs: rpcMs.sort((a, b) => a - b),
+    mbps: (bulk * 8) / doneAt! / 1000,
+    upMbps: link.upload > 0 ? (link.upload * 8) / upDoneAt! / 1000 : null,
+  };
 }
 
 const line = (name: string, r: Report) =>
-  `${name.padEnd(26)} rpc n=${r.rpcMs.length} p50=${pct(r.rpcMs, 0.5)} ms p95=${pct(r.rpcMs, 0.95)} ms max=${r.rpcMs.at(-1)} ms  bulk ${r.mbps.toFixed(2)} Mbps`;
+  `${name.padEnd(26)} rpc n=${r.rpcMs.length} p50=${pct(r.rpcMs, 0.5)} ms p95=${pct(r.rpcMs, 0.95)} ms max=${r.rpcMs.at(-1)} ms  bulk ${r.mbps.toFixed(2)} Mbps${r.upMbps === null ? "" : `  up ${r.upMbps.toFixed(2)} Mbps`}`;
 
 test("two drivers on a 1 Mbps link: a question waits behind a fraction of a second of download, paced on either end or both", async (t) => {
   const bulk = 1536 * 1024;
@@ -533,4 +622,26 @@ test("two drivers on a 1 Mbps link: a question waits behind a fraction of a seco
   assert.ok(pct(agentOnly.rpcMs, 0.95) < 1000, line("agent only", agentOnly));
   assert.ok(after.mbps >= 0.85 * before.mbps, `${after.mbps} against ${before.mbps}`);
   assert.ok(pageOnly.mbps > 0.85 && agentOnly.mbps > 0.85, "both mixed pairs carry the download");
+});
+
+test("two drivers, bulk both ways at once: in every pairing of a pacing end and an older one, each direction keeps within a tenth of its speed unpaced", async (t) => {
+  for (const [mbps, rttMs, size] of [
+    [1, 70, 768 * 1024],
+    [4, 50, 2048 * 1024],
+  ] as const) {
+    const link = { mbps, rttMs, upload: size };
+    const unpaced = await slowLink(t, size, false, false, link);
+    t.diagnostic(`${mbps} Mbps, ${rttMs} ms, ${size >> 10} KiB each way:`);
+    t.diagnostic(line("neither paces", unpaced));
+    for (const [agentPaces, devicePaces, name] of [
+      [true, true, "both pace"],
+      [true, false, "pacing agent, old page"],
+      [false, true, "old agent, pacing page"],
+    ] as const) {
+      const r = await slowLink(t, size, agentPaces, devicePaces, link);
+      t.diagnostic(line(name, r));
+      assert.ok(r.mbps >= 0.9 * unpaced.mbps, `${name}, down: ${r.mbps} against ${unpaced.mbps}`);
+      assert.ok(r.upMbps! >= 0.9 * unpaced.upMbps!, `${name}, up: ${r.upMbps} against ${unpaced.upMbps}`);
+    }
+  }
 });

@@ -160,6 +160,8 @@ struct Run {
     downloads: usize,
     /// Each question's body, which the agent reads whole before it answers.
     body: usize,
+    /// What the page uploads at the same time (a blob stream the agent reads whole; 0: nothing).
+    upload: usize,
     /// Which ends pace (an old agent or page does not).
     agent_paces: bool,
     device_paces: bool,
@@ -171,8 +173,9 @@ struct Run {
 struct Report {
     /// Each question's time to its whole answer, sorted.
     rpc_ms: Vec<f64>,
-    /// The download's rate, and the link's.
+    /// The download's rate, the upload's (if any), and the link's.
     mbps: f64,
+    up_mbps: Option<f64>,
     link_mbps: f64,
     /// The agent's pace as the download ended.
     cap: Option<u64>,
@@ -191,13 +194,14 @@ impl Report {
 
     fn line(&self, name: &str) -> String {
         format!(
-            "{name:<28} rpc n={:<3} p50={:>6.0} ms  p95={:>6.0} ms  max={:>6.0} ms   bulk {:>6.2} Mbps ({:>5.1}% of the link)   cap at the end {}{}",
+            "{name:<28} rpc n={:<3} p50={:>6.0} ms  p95={:>6.0} ms  max={:>6.0} ms   bulk {:>6.2} Mbps ({:>5.1}% of the link){}   cap at the end {}{}",
             self.rpc_ms.len(),
             self.pct(0.5),
             self.pct(0.95),
             self.rpc_ms.last().copied().unwrap_or(0.0),
             self.mbps,
             100.0 * self.mbps / self.link_mbps,
+            self.up_mbps.map_or(String::new(), |u| format!("   up {u:>6.2} Mbps ({:>5.1}%)", 100.0 * u / self.link_mbps)),
             self.cap.map_or("-".into(), |c| format!("{} KiB", c / 1024)),
             self.dc_peak.map_or(String::new(), |p| format!("   DataChannel backlog at most {} KiB", p / 1024)),
         )
@@ -237,11 +241,34 @@ async fn run(r: Run) -> Report {
     }
 
     // The agent: a download for a blob stream, a small answer for an rpc one.
-    let bulk = r.bulk / r.downloads;
+    let bulk = r.bulk / r.downloads.max(1);
     let body = r.body;
+    let upload = r.upload;
+    let uploaded: Arc<std::sync::Mutex<Option<Instant>>> = Arc::default();
+    let up_done = uploaded.clone();
     tokio::spawn(async move {
-        while let Some(Incoming { class, mut stream, .. }) = a_acc.recv().await {
+        while let Some(Incoming { class, meta, mut stream }) = a_acc.recv().await {
+            let up_done = up_done.clone();
             tokio::spawn(async move {
+                if class == StreamClass::Blob && meta.starts_with(b"POST") {
+                    // An upload: read it whole, then answer.
+                    let mut read = 0;
+                    while read < upload {
+                        match stream.recv().await {
+                            Some(StreamEvent::Data(d)) => read += d.len(),
+                            _ => return,
+                        }
+                    }
+                    *up_done.lock().unwrap() = Some(Instant::now());
+                    let _ = stream.send(b"ok").await;
+                    stream.close(0);
+                    while let Some(event) = stream.recv().await {
+                        if matches!(event, StreamEvent::Closed(_)) {
+                            break;
+                        }
+                    }
+                    return;
+                }
                 if class == StreamClass::Rpc {
                     let mut read = 0;
                     while read < body {
@@ -273,8 +300,24 @@ async fn run(r: Run) -> Report {
     // The page: the download, and a question every second while it lasts.
     let start = Instant::now();
     let mut blobs = Vec::new();
-    for _ in 0..r.downloads {
+    for _ in 0..if r.bulk > 0 { r.downloads } else { 0 } {
         blobs.push(device.open(StreamClass::Blob, b"GET /api/fs/download?path=%2Ftmp%2Fbig").await.unwrap());
+    }
+    if upload > 0 {
+        let up = device.open(StreamClass::Blob, b"POST /api/fs/upload?path=%2Ftmp%2Fbig").await.unwrap();
+        tokio::spawn(async move {
+            let mut up = up;
+            let chunk = vec![0xa5; 64 * 1024];
+            let mut left = upload;
+            while left > 0 {
+                let n = left.min(chunk.len());
+                if up.send(&chunk[..n]).await.is_err() {
+                    return;
+                }
+                left -= n;
+            }
+            while up.recv().await.is_some() {}
+        });
     }
     let download = tokio::spawn(async move {
         for mut blob in blobs {
@@ -290,9 +333,10 @@ async fn run(r: Run) -> Report {
     });
     let mut asks = Vec::new();
     let mut every = tokio::time::interval_at(start + Duration::from_millis(500), Duration::from_secs(1));
-    while !download.is_finished() {
+    let busy = |download: &tokio::task::JoinHandle<Instant>| !download.is_finished() || (upload > 0 && uploaded.lock().unwrap().is_none());
+    while busy(&download) {
         every.tick().await;
-        if download.is_finished() {
+        if !busy(&download) {
             break;
         }
         let device = device.clone();
@@ -318,9 +362,11 @@ async fn run(r: Run) -> Report {
     }
     rpc_ms.sort_by(f64::total_cmp);
     let secs = (done - start).as_secs_f64();
+    let up_secs = uploaded.lock().unwrap().map(|at| (at - start).as_secs_f64());
     Report {
         rpc_ms,
         mbps: r.bulk as f64 * 8.0 / secs / 1e6,
+        up_mbps: up_secs.map(|secs| r.upload as f64 * 8.0 / secs / 1e6),
         link_mbps: r.link.bits_per_s as f64 / 1e6,
         cap,
         dc_peak: dc_peak.map(|p| p.load(Ordering::Relaxed)),
@@ -341,6 +387,7 @@ async fn on_a_slow_link_a_question_waits_behind_a_fraction_of_a_second_of_downlo
         bulk: 3 * MIB,
         downloads: 1,
         body: 0,
+        upload: 0,
         agent_paces: false,
         device_paces: false,
         direct: false,
@@ -375,6 +422,7 @@ async fn a_slow_direct_path_is_paced_too() {
         bulk: 3 * MIB,
         downloads: 4,
         body: 0,
+        upload: 0,
         agent_paces: false,
         device_paces: false,
         direct: true,
@@ -407,6 +455,7 @@ async fn on_a_fast_link_the_download_keeps_its_speed() {
         bulk: 16 * MIB,
         downloads: 1,
         body: 0,
+        upload: 0,
         agent_paces: false,
         device_paces: false,
         direct: false,
@@ -450,6 +499,7 @@ async fn an_end_that_paces_and_one_that_does_not_work_together() {
         bulk: 2 * MIB,
         downloads: 1,
         body: 0,
+        upload: 0,
         agent_paces: true,
         device_paces: false,
         direct: false,
@@ -489,6 +539,7 @@ async fn a_page_reading_a_long_download_still_sends_its_small_requests_at_once()
         bulk: 18 * MIB,
         downloads: 1,
         body: 100,
+        upload: 0,
         agent_paces: false,
         device_paces: true,
         direct: false,
@@ -502,4 +553,39 @@ async fn a_page_reading_a_long_download_still_sends_its_small_requests_at_once()
     // Behind an old agent's whole window (0.2 s of it at 20 Mbps), never behind the page's own drain.
     assert!(old_agent.rpc_ms.last().copied().unwrap() < 1_500.0, "{old_agent:?}");
     assert!(paced.rpc_ms.last().copied().unwrap() < 1_000.0, "{paced:?}");
+}
+
+/// Bulk both ways at once — a download and an upload of the same size — in
+/// every pairing of an end that paces and one that does not, at 1 Mbps / 70 ms
+/// and 4 Mbps / 50 ms: each direction keeps within a tenth of its speed with
+/// neither end pacing.
+#[tokio::test(start_paused = true)]
+async fn both_ways_at_once_every_pairing_keeps_both_directions_busy() {
+    for (mbps, rtt, size) in [(1.0, 70, 3 * MIB / 2), (4.0, 50, 4 * MIB)] {
+        let base = Run {
+            link: Link::mbps(mbps, rtt),
+            bulk: size,
+            downloads: 1,
+            body: 0,
+            upload: size,
+            agent_paces: false,
+            device_paces: false,
+            direct: false,
+        };
+        println!("{mbps} Mbps, {rtt} ms, a deep queue, a {} KiB download and upload at once, an rpc every second:", size / 1024);
+        let unpaced = run(base).await;
+        println!("{}", unpaced.line("neither paces"));
+        for (agent_paces, device_paces, name) in [(true, true, "both pace"), (true, false, "pacing agent, old page"), (false, true, "old agent, pacing page")] {
+            let r = run(Run {
+                agent_paces,
+                device_paces,
+                ..base
+            })
+            .await;
+            println!("{}", r.line(name));
+            assert!(r.mbps >= 0.9 * unpaced.mbps, "{name}, down: {} against {}", r.mbps, unpaced.mbps);
+            let (up, was) = (r.up_mbps.unwrap(), unpaced.up_mbps.unwrap());
+            assert!(up >= 0.9 * was, "{name}, up: {up} against {was}");
+        }
+    }
 }
