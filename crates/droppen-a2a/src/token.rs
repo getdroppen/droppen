@@ -48,18 +48,18 @@ pub fn proves(row: &TokenRow, secret: &str) -> bool {
     matches && row.revoked_ms.is_none()
 }
 
-/// Whether `name` may name a token: what follows `a2a:token:` in a caller.
+/// Whether `name` (trimmed) may name a token: a label for a person, at most
+/// 100 characters and none of them a control character. Two tokens may share
+/// one; it identifies nothing ([`caller_of`]).
 pub fn valid_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 64
-        && bytes[0].is_ascii_alphanumeric()
-        && bytes.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    !name.is_empty() && name.chars().count() <= 100 && !name.chars().any(char::is_control)
 }
 
-/// The caller a token speaks as.
-pub fn caller_of(name: &str) -> String {
-    format!("a2a:token:{name}")
+/// The caller a token speaks as: `a2a:token:<id>`. By its id, never its
+/// name, so a token made later under the name of a revoked one is another
+/// caller and sees none of its tasks (§6).
+pub fn caller_of(token_id: &str) -> String {
+    format!("a2a:token:{token_id}")
 }
 
 #[cfg(test)]

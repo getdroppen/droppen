@@ -143,19 +143,24 @@ impl RemoteHandApp {
         // two feeds that would otherwise only notice on their next poll.
         let refresh = droppen_http::refresh::Refresh::new(global.clone());
         drive.injections.host.attach_listeners(feeds.clone(), refresh.clone());
-        drive.injections.host.attach_alerts(Arc::new(PushAlerts {
+        // The sessions behind the A2A server (`docs/a2a.md` §5) hear of every
+        // turn's end and question first; the push alerts go on as before.
+        let cloud = droppen_cloud::Cloud::new(paths.as_ref().clone());
+        let a2a_sessions = crate::a2a_backend::A2aSessions::new(&drive, &global, &refresh, &cloud);
+        drive.injections.host.attach_alerts(Arc::new(a2a_sessions.alerts(PushAlerts {
             transcripts: drive.transcripts.clone(),
-        }));
+        })));
         // Found once, here: an entry that registers no ACP provider fails
         // to start rather than on the first request for an agent.
         let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(drive.providers.clone())
             .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
         let cancel = CancellationToken::new();
-        let a2a = a2a_server(&paths, config, cancel.clone());
+        let a2a = a2a_server(&paths, config, &a2a_sessions, cancel.clone())?;
         Ok(AppState {
             a2a,
             acp_agents,
-            cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
+            cloud,
+            a2a_sessions,
             // Touches nothing yet: the installed packages are read by the
             // first status, the instance database by the first switch or
             // store, and `boot` below.
@@ -181,21 +186,25 @@ impl RemoteHandApp {
     }
 }
 
-/// The A2A server over this instance's database (`docs/a2a.md`).
-///
-/// Its session backend is [`droppen_a2a::backend::Unwired`] until a real one
-/// is wired in here: entries and tokens can be set up, and every task an entry
-/// is handed is rejected.
-fn a2a_server(paths: &Paths, config: &ConfigWrapper<AppConfig>, cancel: CancellationToken) -> Arc<droppen_a2a::A2a> {
-    let (_events, inbox) = droppen_a2a::backend::event_channel();
+/// The A2A server over this instance's database (`docs/a2a.md`), its tasks
+/// run by `sessions` and reported through its inbox.
+fn a2a_server(
+    paths: &Paths,
+    config: &ConfigWrapper<AppConfig>,
+    sessions: &Arc<crate::a2a_backend::A2aSessions>,
+    cancel: CancellationToken,
+) -> GotchaResult<Arc<droppen_a2a::A2a>> {
+    let inbox = sessions
+        .take_inbox()
+        .ok_or_else(|| GotchaError::message("the A2A sessions' inbox was taken already"))?;
     let store = droppen_a2a::store::Store::new(droppen_instance::db::at(paths.instance_db()));
     let settings = droppen_a2a::Settings::from_env(droppen_http::SERVER_VERSION, config.app.a2a.public_base());
-    let a2a = droppen_a2a::A2a::new(store, droppen_a2a::backend::Unwired::shared(), inbox, settings, cancel);
+    let a2a = droppen_a2a::A2a::new(store, sessions.clone(), inbox, settings, cancel);
     // Every status change and artifact goes to the callers' webhooks from
     // here on; what an earlier run left undelivered goes at `A2a::resume`,
     // which only the instance's owner calls.
     droppen_a2a::push::Pusher::attach(&a2a);
-    a2a
+    Ok(a2a)
 }
 
 /// The instance claims [`Prepared::claim_for_process`] keeps. A static is never
@@ -371,6 +380,9 @@ impl RemoteHandApp {
         // would attach to that server's live shims, advance their cursors and
         // sweep the sidecars of any it could not reach. Adoption without
         // ownership is exactly the thing this whole module exists to prevent.
+        // Whether this server owns its instance, so resumes its A2A tasks once
+        // the adoption below is done.
+        let mut resume_a2a = false;
         if let Some(held) = &lock {
             // The flock is on the inode; a deleted or replaced lock file means
             // the claim no longer keeps anyone else out. Adopting under a lost
@@ -451,19 +463,26 @@ impl RemoteHandApp {
                 // exactly the thing this block exists to prevent.
                 droppen_drive::schedule::runner::spawn(&droppen_drive::schedule::ScheduleState::from_ref(&state));
                 // The A2A tasks that were running when the server stopped are
-                // picked up again where their sessions stand, and the waiting
-                // ones handed out: that starts sessions too, so only the
-                // instance's owner does it.
-                tokio::spawn({
-                    let a2a = state.a2a.clone();
-                    async move { a2a.resume().await }
-                });
+                // picked up again, below, once the runs are adopted: that
+                // starts sessions too, so only the instance's owner does it.
+                resume_a2a = true;
                 // The quota fallback probe starts CLIs as well — against the
                 // usage logins every instance on this machine shares — so it
                 // sits behind the same gate. It only probes a login nothing has
                 // read for a while, and never one another process is probing.
                 droppen_accounts::quota::spawn_fallback_ticker(state.drive.quota.clone(), state.drive.accounts.clone(), state.cancel.clone());
             }
+        }
+        // The boot has adopted the runs it could (one without the lock adopts
+        // none): an A2A task resumed from now on is read against them.
+        state.a2a_sessions.adopted();
+        // Where each unfinished A2A task's session stands is read against
+        // what was just adopted, and the waiting tasks are handed out.
+        if resume_a2a {
+            tokio::spawn({
+                let a2a = state.a2a.clone();
+                async move { a2a.resume().await }
+            });
         }
         let cancel = state.cancel.clone();
         let desktop_app = state.desktop_app;

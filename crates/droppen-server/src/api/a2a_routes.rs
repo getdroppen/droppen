@@ -47,7 +47,11 @@ async fn send(
 async fn server() -> (tempfile::TempDir, crate::api::AppState, gotcha::axum::Router, String, String) {
     let home = tempfile::tempdir().expect("tempdir");
     let (state, router) = crate::api::test_support::guarded_router(home.path(), Some(true)).await;
-    let entry = json!({"id": "main", "name": "Main", "source": "claude", "cwd": "/work", "enabled": true});
+    // A directory the real backend accepts: in the home, and no repository,
+    // so no worktree.
+    let work = home.path().join("work");
+    std::fs::create_dir_all(&work).expect("the entry's directory");
+    let entry = json!({"id": "main", "name": "Main", "source": "claude", "cwd": work, "enabled": true, "isolation": "none"});
     state.a2a.create_entry(serde_json::from_value(entry).unwrap()).await.expect("an entry");
     let token = state
         .a2a

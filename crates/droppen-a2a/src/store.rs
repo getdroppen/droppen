@@ -29,7 +29,7 @@ static PRUNE: PruneGate = PruneGate::new(60 * 60 * 1000);
 pub struct TokenRow {
     /// The id in `dpa_<id>_<secret>`.
     pub id: String,
-    /// Its name; the caller is `a2a:token:<name>`.
+    /// Its name, for a person; the caller is `a2a:token:<id>`.
     pub name: String,
     /// The entries it reaches.
     pub entries: Vec<String>,

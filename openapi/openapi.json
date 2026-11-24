@@ -323,7 +323,12 @@
             "type": "string"
           },
           "caller": {
-            "description": "Who sent it.",
+            "description": "Who sent it: `a2a:token:<token id>`.",
+            "type": "string"
+          },
+          "callerName": {
+            "description": "The name of the token it came with, while that token is on file.",
+            "nullable": true,
             "type": "string"
           },
           "contextId": {
@@ -374,6 +379,7 @@
           "contextId",
           "entry",
           "caller",
+          "callerName",
           "state",
           "statusText",
           "source",
@@ -400,7 +406,7 @@
             "type": "array"
           },
           "id": {
-            "description": "Its id: the `<id>` of `dpa_<id>_<secret>`.",
+            "description": "Its id: the `<id>` of `dpa_<id>_<secret>`. Its tasks' caller is\n`a2a:token:<id>`.",
             "type": "string"
           },
           "lastUsedAt": {
@@ -409,7 +415,7 @@
             "type": "string"
           },
           "name": {
-            "description": "Its name; its tasks' caller is `a2a:token:<name>`.",
+            "description": "Its name, for a person: two tokens may share one.",
             "type": "string"
           },
           "revokedAt": {
@@ -439,7 +445,7 @@
             "type": "array"
           },
           "name": {
-            "description": "Its name: letters, digits, `.`, `_` and `-`, at most 64, and no other\nunrevoked token's.",
+            "description": "Its name, for a person: 1 to 100 characters.",
             "type": "string"
           }
         },

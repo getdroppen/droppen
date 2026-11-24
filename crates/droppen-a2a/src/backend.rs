@@ -141,7 +141,7 @@ pub struct TaskRef {
     pub context_id: String,
     /// The entry it came in through.
     pub entry_id: String,
-    /// Who sent it: `a2a:token:<name>`.
+    /// Who sent it: `a2a:token:<token id>` (§7: `a2a:device:<id>`).
     pub caller: String,
     /// The context's session.
     pub session: SessionRef,

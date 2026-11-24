@@ -11,6 +11,8 @@
 //! * [`api`] — the router: each subsystem's routes on a state of its own,
 //!   made from [`api::AppState`], and the session list, detail, socket and
 //!   settings, which read several subsystems' state at once;
+//! * [`a2a_backend`] — the sessions behind the A2A server, its
+//!   `SessionBackend` over the providers;
 //! * [`stream_source`] — what the link copies of this machine's sessions, the
 //!   agent's [`droppen_agent::streams::source::StreamSource`] over the
 //!   sessions and the drive's live state;
@@ -47,6 +49,7 @@
 
 pub use gotcha::{GotchaError, GotchaResult};
 
+pub mod a2a_backend;
 #[cfg(test)]
 mod accounts_tests;
 pub mod api;
