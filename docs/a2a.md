@@ -102,7 +102,7 @@
 - `data`：`{"answers": {"<问题原文>": "<label>" 或 ["<label>", …]}, "notes": {"<问题原文>": "…"}, "requestId": "…"}`（`notes`、`requestId` 可省）；
 - `text`：自由回答。
 
-对应 `AnswerQuestion{answers, notes, response}`：`data.answers` → `answers`，`data.notes` → `notes`，文本 → `response`。入口关了 `allowRemoteAnswers` 时回错误 `droppen.remote_answers_disabled`。
+对应 `AnswerQuestion{answers, notes, response}`：`data.answers` → `answers`，`data.notes` → `notes`；只有文本时，文本 → `response`；文本和 `data.answers` 一起来时，文本接在最后一个已答问题的备注后面，不作 `response`（Claude 收到 `response` 会不看选项；与在 Droppen 界面里答题的规则相同）。入口关了 `allowRemoteAnswers` 时回错误 `droppen.remote_answers_disabled`。
 
 ### 3.5 错误码
 
