@@ -152,6 +152,13 @@ export class Mux {
     return (sid % 2 === 1) === (this.role === "initiator");
   }
 
+  /** Bytes the streams have queued and not sent yet, and how many streams are open (diagnostics: the connection log's samples). */
+  pending(): { bytes: number; streams: number } {
+    let bytes = 0;
+    for (const s of this.streams.values()) for (const chunk of s.pending) bytes += chunk.length;
+    return { bytes, streams: this.streams.size };
+  }
+
   private sorted(): [number, Stream][] {
     return [...this.streams.entries()].sort((a, b) => a[0] - b[0]);
   }

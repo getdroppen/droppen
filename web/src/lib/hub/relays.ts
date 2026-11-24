@@ -43,6 +43,7 @@
  * back, forgives them all, fetches the list again if it is old, and checks
  * the connections (a dead idle one is let go).
  */
+import { connLog, errorFields } from "@/lib/connection-log";
 import type { HubApi } from "./api";
 import { RelayLink } from "./relay-link";
 
@@ -281,11 +282,25 @@ export class RelayPool {
   /** The Hub's list (`GET /v1/relays`). */
   refresh(): Promise<void> {
     this.loading ??= (async () => {
+      const asked = this.now();
       try {
         this.directory = await this.opts.api.relays(this.opts.account.session.token);
         this.loadedAt = this.now();
+        const dir = this.directory;
+        connLog.emit("relay.list", {
+          ms: this.loadedAt - asked,
+          relays: dir.relays.map((r) => (r.state === "up" ? r.id : `${r.id}(${r.state})`)).join(" ") || null,
+          set: dir.accountSet.map((m) => m.id).join(",") || null,
+          limit: dir.limit,
+          emergency: dir.emergency.join(",") || null,
+          throttled: dir.throttled,
+          manual: this.manual,
+        });
         this.checkManual();
         this.changed();
+      } catch (error) {
+        connLog.emit("relay.list", { ms: this.now() - asked, ...errorFields(error) }, "warn");
+        throw error;
       } finally {
         this.loading = null;
       }
@@ -345,6 +360,12 @@ export class RelayPool {
     this.measuring ??= (async () => {
       try {
         await Promise.all(dir.relays.map(async (r) => this.rtts.set(r.id, await this.ping(r.origin))));
+        // Each relay's `GET /v1/ping` median (ms; `-`: it did not answer).
+        const rtt = (id: string) => {
+          const ms = this.rtts.get(id);
+          return ms == null ? "-" : String(Math.round(ms));
+        };
+        connLog.emit("relay.measure", { rtts: dir.relays.map((r) => `${r.id}=${rtt(r.id)}`).join(" ") || null });
         this.changed();
       } finally {
         this.measuring = null;
@@ -416,6 +437,7 @@ export class RelayPool {
   }
 
   private giveUpManual(relay: string, city: string | null, why: RelayNotice["why"]): void {
+    connLog.emit("relay.failure", { relay, why: `the manual choice gave way to automatic: ${why}` });
     this.notice = { relay, city, why };
     try {
       this.storage()?.removeItem(MANUAL_KEY);
@@ -455,6 +477,7 @@ export class RelayPool {
     f.why = why;
     f.atMs = this.now();
     this.failures.set(id, f);
+    connLog.emit("relay.failure", { relay: id, why, count: f.count, benched: f.count >= FAILURES_TO_GIVE_UP });
     this.checkManual();
     this.changed();
   }
@@ -503,11 +526,23 @@ export class RelayPool {
   async ticket(id: string): Promise<Ticket> {
     const held = this.tickets.get(id);
     if (held && held.expiresMs - TICKET_MARGIN_MS > this.now()) return held;
-    const got = await this.opts.api.relayTickets(this.opts.account.session.token, [id]);
+    const asked = this.now();
+    let got: Awaited<ReturnType<HubApi["relayTickets"]>>;
+    try {
+      got = await this.opts.api.relayTickets(this.opts.account.session.token, [id]);
+    } catch (error) {
+      connLog.emit("relay.ticket", { relay: id, ms: this.now() - asked, ...errorFields(error) }, "warn");
+      throw error;
+    }
     for (const t of got.tickets) {
       this.tickets.set(t.relay, { ticket: t.ticket, origin: t.origin, expiresMs: t.expiresMs, emergency: t.emergency, throttled: t.throttled });
     }
     const mine = this.tickets.get(id);
+    connLog.emit(
+      "relay.ticket",
+      { relay: id, ms: this.now() - asked, emergency: mine?.emergency, throttled: mine?.throttled, refused: mine ? undefined : (got.errors.find((e) => e.relay === id)?.error ?? "unknown") },
+      mine ? "info" : "warn",
+    );
     if (mine) {
       // The set may have changed (this relay joined it): the list says so.
       void this.refresh().catch(() => undefined);

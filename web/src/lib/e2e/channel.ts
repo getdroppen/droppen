@@ -52,11 +52,45 @@ export interface PathOptions {
   probeRelay: boolean;
 }
 
-/** Something about the paths the owner may want to know. */
+/**
+ * Something about the paths the owner may want to know: a direct path
+ * attached or let go (a timeout says which deadline, and how long the path
+ * had gone without), a probe sent and the round trip of its answer, a hub
+ * probe that has gone a whole probe interval unanswered (`late`, once per
+ * probe: no answer, so no round trip — the path's `relayProbeAgeMs` and
+ * `relayQuietMs` say how old and how quiet), and a pause of this page's
+ * timers that made the probes before it forgotten.
+ */
 export type PathEvent =
   | { type: "directUp" }
-  | { type: "directDown"; reason: DownReason; remote: boolean }
-  | { type: "rtt"; via: Via; ms: number };
+  | {
+      type: "directDown";
+      reason: DownReason;
+      remote: boolean;
+      /** For a timeout on this side: which deadline (`DIRECT_TIMEOUT_MS` of silence, or `UNACKED_TIMEOUT_MS` with frames unacknowledged), and how long since the path last showed it was there (ms). */
+      timer?: "DIRECT_TIMEOUT_MS" | "UNACKED_TIMEOUT_MS";
+      elapsedMs?: number;
+      unackedBytes?: number;
+    }
+  | { type: "probe"; via: Via; nonce: number }
+  | { type: "rtt"; via: Via; ms: number; nonce?: number }
+  /** A hub probe out a whole probe interval (`unsent`: still waiting for credit to leave), said once: its age, and how long nothing had come over the hub then. */
+  | { type: "late"; via: Via; nonce: number; ageMs: number; quietMs: number; unsent: boolean }
+  | { type: "paused"; gapMs: number; forgotten: number };
+
+/** What waits on a session's paths now, for logs. */
+export interface SessionPathDiagnostics {
+  /** Sent on the direct path, not acknowledged yet. */
+  unackedBytes: number;
+  unackedFrames: number;
+  /** Received ahead of a gap, held. */
+  heldRxBytes: number;
+  /** Envelopes queued for the hub path outside the multiplexer's order (resends, probes, their answers). */
+  outRelay: number;
+  /** Probes unanswered, and the age of the oldest (ms). */
+  probesOut: number;
+  oldestProbeMs: number | null;
+}
 
 /** The paths' state, for logs and the path indicator. */
 export interface SessionPathStats {
@@ -188,6 +222,28 @@ class Paths {
     for (const at of this.unsentRelayProbes.values()) if (oldest === null || at < oldest) oldest = at;
     this.counts.relayProbeAgeMs = oldest === null ? null : Math.round(nowMs - oldest);
     this.counts.relayQuietMs = oldest === null ? null : Math.round(Math.max(0, nowMs - this.lastRelayRxMs));
+    this.noteLateRelayProbes(nowMs);
+  }
+
+  /** Hub probes already said to be late (`late` events), so each is said once. */
+  private readonly lateRelayProbes = new Set<number>();
+
+  /**
+   * Each hub probe out (sent, or waiting for credit to leave) that has just
+   * gone a whole probe interval unanswered is said once, as a `late` event,
+   * for logs: what the path's age and quiet are made of, probe by probe.
+   * Reads only; the path's state is untouched.
+   */
+  private noteLateRelayProbes(nowMs: number): void {
+    const quietMs = Math.round(Math.max(0, nowMs - this.lastRelayRxMs));
+    const look = (nonce: number, at: number, unsent: boolean) => {
+      if (this.lateRelayProbes.has(nonce) || nowMs - at < RELAY_PROBE_MS) return;
+      this.lateRelayProbes.add(nonce);
+      if (this.lateRelayProbes.size > 2 * MAX_PROBES) this.lateRelayProbes.delete(this.lateRelayProbes.values().next().value as number);
+      this.events.push({ type: "late", via: "relay", nonce, ageMs: Math.round(nowMs - at), quietMs, unsent });
+    };
+    for (const [nonce, [via, at]] of this.probes) if (via === "relay") look(nonce, at, false);
+    for (const [nonce, at] of this.unsentRelayProbes) look(nonce, at, true);
   }
 
   /**
@@ -196,11 +252,18 @@ class Paths {
    * not because the path died. Forget them; the tick that noticed sends a
    * fresh one, which the watchdog can judge on its own.
    */
-  forgetProbesAfterPause(nowMs: number): void {
-    for (const [nonce, [via]] of this.probes) if (via === "relay") this.probes.delete(nonce);
+  forgetProbesAfterPause(nowMs: number): number {
+    let forgotten = 0;
+    for (const [nonce, [via]] of this.probes) {
+      if (via !== "relay") continue;
+      this.probes.delete(nonce);
+      forgotten++;
+    }
     // Still queued, they are timed afresh from when they leave.
     this.unsentRelayProbes.clear();
+    this.lateRelayProbes.clear();
     this.ageRelayProbe(nowMs);
+    return forgotten;
   }
 
   /** Remember when a probe left (and on which path). */
@@ -209,6 +272,7 @@ class Paths {
     if (via === "relay") this.unsentRelayProbes.delete(env.nonce);
     if (this.probes.size >= MAX_PROBES) this.probes.delete(Math.min(...this.probes.keys()));
     this.probes.set(env.nonce, [via, nowMs]);
+    this.events.push({ type: "probe", via, nonce: env.nonce });
   }
 
   detach(reason: DownReason, tellPeer: boolean): void {
@@ -255,6 +319,22 @@ export class Session {
     const p = this.paths;
     if (!p) return { direct: false, relayRttMs: null, directRttMs: null, relayProbeAgeMs: null, relayQuietMs: null, ups: 0, downs: 0, lanes: new Lanes().stats() };
     return { ...p.counts, direct: p.direct !== null, lanes: p.lanes.stats() };
+  }
+
+  /** What waits on the paths now (`null` on a channel without paths). Reads only. */
+  diagnostics(nowMs: number): SessionPathDiagnostics | null {
+    const p = this.paths;
+    if (!p) return null;
+    let oldest: number | null = null;
+    for (const [, at] of p.probes.values()) if (oldest === null || at < oldest) oldest = at;
+    return {
+      unackedBytes: p.lanes.unackedBytes,
+      unackedFrames: p.lanes.unackedFrames,
+      heldRxBytes: p.lanes.heldRxBytes,
+      outRelay: p.outRelay.length,
+      probesOut: p.probes.size,
+      oldestProbeMs: oldest === null ? null : Math.max(0, nowMs - oldest),
+    };
   }
 
   /** What happened to the paths since the last call. */
@@ -446,7 +526,7 @@ export class Session {
             const ms = Math.max(0, nowMs - sent[1]);
             if (via === "relay") p.counts.relayRttMs = ms;
             else p.counts.directRttMs = ms;
-            p.events.push({ type: "rtt", via, ms });
+            p.events.push({ type: "rtt", via, ms, nonce: env.nonce });
           }
           // What is still out is younger: say how old now.
           if (sent[0] === "relay") p.ageRelayProbe(nowMs);
@@ -469,16 +549,19 @@ export class Session {
     if (!p) return;
     // A gap of several probe intervals means this page was away, not that the
     // peer went quiet: do not age the probes nobody was there to read.
-    const paused = nowMs - p.lastTickMs > 3 * RELAY_PROBE_MS;
+    const gapMs = nowMs - p.lastTickMs;
+    const paused = gapMs > 3 * RELAY_PROBE_MS;
     p.lastTickMs = nowMs;
-    if (paused) p.forgetProbesAfterPause(nowMs);
+    if (paused) p.events.push({ type: "paused", gapMs, forgotten: p.forgetProbesAfterPause(nowMs) });
     if (p.direct) {
       const silent = nowMs - p.lastDirectRxMs > DIRECT_TIMEOUT_MS;
       const unackedAt = p.unackedDeadlineMs();
       const stuck = unackedAt !== null && nowMs > unackedAt;
       if (silent || stuck) {
+        const unackedBytes = p.lanes.unackedBytes;
+        const elapsedMs = silent ? nowMs - p.lastDirectRxMs : nowMs - Math.max(p.lanes.oldestUnackedMs() ?? nowMs, p.lastDirectProgressMs);
         p.detach("timeout", true);
-        p.events.push({ type: "directDown", reason: "timeout", remote: false });
+        p.events.push({ type: "directDown", reason: "timeout", remote: false, timer: silent ? "DIRECT_TIMEOUT_MS" : "UNACKED_TIMEOUT_MS", elapsedMs, unackedBytes });
       } else if (nowMs >= p.nextDirectProbeMs) {
         p.nextDirectProbeMs = nowMs + DIRECT_PROBE_MS;
         p.outDirect.push({ type: "probe", nonce: p.nonce() });

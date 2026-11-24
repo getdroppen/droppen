@@ -15,6 +15,7 @@
  * the new side recognises is resumed rather than re-sent. The caller re-runs
  * the app's queries (`invalidateQueries`).
  */
+import { connLog, maskId } from "@/lib/connection-log";
 import type { LinkState, PresenceState } from "@/lib/hub/link";
 import type { MachineStatus } from "@/lib/hub/machine";
 import { onPageResume } from "@/lib/page-resume";
@@ -224,6 +225,8 @@ export class ModeController {
   private offs: (() => void)[] = [];
   private stopped = false;
   private readonly retryListeners = new Set<(at: number | null) => void>();
+  /** Since when the live channel has been down (`performance.now`), for the connection log's `mode.switch`. */
+  private downSince: number | null = null;
 
   constructor(private readonly opts: ModeControllerOptions) {}
 
@@ -303,12 +306,18 @@ export class ModeController {
     if (!down) {
       clearTimeout(this.downTimer);
       this.downTimer = undefined;
+      this.downSince = null;
       return;
     }
+    this.downSince ??= performance.now();
     this.downTimer ??= setTimeout(() => {
       this.downTimer = undefined;
       const stillDown = this.opts.channel.status !== "open" || this.presence() === "offline";
-      if (stillDown && !this.stopped) this.switchTo("offline");
+      if (stillDown && !this.stopped) {
+        const limitMs = this.opts.downMs ?? DOWN_MS;
+        connLog.emit("timeout", { device: maskId(this.opts.machine), timer: "DOWN_MS", limitMs, on: "live", channel: this.opts.channel.status, presence: this.presence() }, "warn");
+        this.switchTo("offline");
+      }
       this.evaluate();
     }, this.opts.downMs ?? DOWN_MS);
   }
@@ -317,6 +326,12 @@ export class ModeController {
     clearTimeout(this.downTimer);
     this.downTimer = undefined;
     if (this.opts.transport.current === mode) return;
+    connLog.emit("mode.switch", {
+      device: maskId(this.opts.machine),
+      to: mode === "live" ? "live" : "copy",
+      downForMs: mode === "offline" && this.downSince !== null ? performance.now() - this.downSince : null,
+    });
+    if (mode === "live") this.downSince = null;
     this.opts.transport.setMode(mode);
     this.opts.onSwitch?.(mode);
   }
@@ -334,6 +349,7 @@ export class ModeController {
         this.trying = false;
         if (this.stopped) return;
         const wait = (this.opts.retryMs ?? channelRetryMs)(this.attempts++);
+        connLog.emit("channel.retry", { device: maskId(this.opts.machine), waitMs: wait, attempt: this.attempts, status: this.opts.channel.status });
         this.retryTimer = setTimeout(() => {
           this.retryTimer = undefined;
           this.setRetryAt(null);

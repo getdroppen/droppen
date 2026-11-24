@@ -16,6 +16,7 @@ import {
 } from "./session-feed-state.js";
 import { createDraftStore, thinkingOf, type DraftStore } from "./stream-draft.js";
 import { isSessionSource } from "./new-session-flow";
+import { connLog } from "../../lib/connection-log.js";
 
 /*
  * The session websockets, owned by the page rather than by the view that shows
@@ -648,6 +649,12 @@ export class SessionFeed {
     // A shared-socket channel can be open by the time it is handed over; an
     // open this feed never hears of is a retry streak it never resets.
     if (ws.readyState === SOCKET_OPEN) ws.onopen({});
+    // The connection log hears how this attach was answered — resumed with a
+    // delta, or re-sent as a snapshot (or reset) — once, and how big that was;
+    // never which session.
+    const attachedAt = performance.now();
+    const held = this.view.data !== null;
+    let answered = false;
     ws.onmessage = (e) => {
       if (run.stopped) return;
       let m: Record<string, unknown> & Partial<FeedState>;
@@ -657,6 +664,16 @@ export class SessionFeed {
         return;
       }
       if (typeof m !== "object" || m === null) return;
+      if (!answered && (m.type === "snapshot" || m.type === "delta" || m.type === "reset")) {
+        answered = true;
+        connLog.emit("reconnect.replay", {
+          feedResume: m.type,
+          held,
+          resumeBytes: typeof e.data === "string" ? e.data.length : null,
+          ms: performance.now() - attachedAt,
+          retry: run.retry,
+        });
+      }
       this.frame(run, m);
     };
     ws.onclose = () => {

@@ -783,4 +783,18 @@ export const cloudDevicesJa: Record<string, string> = {
   "plan and usage": "プランと使用量",
   "{{plan}} · {{devices}} of {{deviceMax}} devices · {{hosts}} of {{hostMax}} can run AI": "{{plan}} · デバイス {{devices}} / {{deviceMax}} · AI を実行できるデバイス {{hosts}} / {{hostMax}}",
   "no devices yet": "デバイスはまだありません",
+  // The connection log (`connection-log.tsx`, the bar's path card, 「这台设备」).
+  "Connection log": "接続ログ",
+  "connection log": "接続ログ",
+  "Connection log…": "接続ログ…",
+  "events": "イベント",
+  "problems": "問題",
+  "which events": "表示するイベント",
+  "{{shown}} of {{total}} events": "{{total}} 件中 {{shown}} 件",
+  "show {{n}} earlier": "さらに前の {{n}} 件を表示",
+  "Nothing logged yet.": "まだ記録はありません。",
+  "this page": "このページ",
+  "the page before a reload": "再読み込み前のページ",
+  "What this browser's connections to your devices did, kept in this tab for the last 30 minutes. Device ids are hashed, and text that is not Droppen's own is withheld: no tokens, keys, messages, names, paths or addresses are kept. Copy the newest (up to 60,000 characters) or download all of it to send for analysis.": "このブラウザーとあなたのデバイスとの接続で何が起きたかを、このタブに直近 30 分間保存します。デバイス ID はハッシュ化され、Droppen 自身の言葉でないテキストは記録しません。トークン・鍵・メッセージの内容・名前・パス・アドレスは保存しません。最新の部分（最大 60,000 文字）をコピーするか、すべてをダウンロードして分析に送れます。",
+  "What this browser's connections to your devices did, for troubleshooting: copy it or download it to send.": "このブラウザーとあなたのデバイスとの接続の記録です。問題の調査に使えます。コピーまたはダウンロードして送れます。",
 };

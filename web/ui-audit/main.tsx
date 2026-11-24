@@ -12,7 +12,8 @@
  * diagram), `?fixture=images` (the pictures messages draw; `&cloud=1` as a
  * page a hub serves), `?fixture=cloud-bar` (the cloud bar in each state of
  * its connection; `&states=catch-up`, the offline copy catching up from the
- * hub), `?fixture=session-opening` (a session opening with nothing to show
+ * hub), `?fixture=connection-log` (the connection log open over 「这台设备」's
+ * rows; `&view=setting`, the rows alone), `?fixture=session-opening` (a session opening with nothing to show
  * yet, in each stage of its wait), `?fixture=no-copy` (the foot of a session
  * with no copy on this device yet, read-only) or `?fixture=session-from-copy`
  * (the real session view on droppen.app, drawn from the device's copy of the
@@ -73,6 +74,10 @@ import type { FeedCopy } from "@/lib/hub/streams";
 import type { AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
 import { ComposerBox, type ComposerAttachments } from "@/features/sessions/composer-box";
 import { useTranslation } from "react-i18next";
+import { useState } from "react";
+import { ConnectionLog, maskId } from "@/lib/connection-log";
+import { ConnectionLogButton, ConnectionLogDialog } from "@/features/cloud/connection-log";
+import { ConnectionLogSetting, DirectConnectionSetting } from "@/features/cloud/this-device";
 import { AcpDetailsBody, AcpTabView } from "@/features/settings/agents/acp-tab";
 import { AgentsTabStrip } from "@/features/settings/agents/agents-section";
 import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/agents-tabs";
@@ -567,6 +572,7 @@ function CatchUpFixture() {
               <ConnectionLabel label={view.label} step={view.step} retryAt={view.retryAt} link={{ wake: noop }} controller={{ poke: noop }} />
               {!view.notice && <BarCatchUp source={still(view.catchUp)} />}
               <span className="flex-1" />
+              <ConnectionLogButton />
               <DevicesButton />
               <AccountButton />
               <SignOutButton onClick={noop} />
@@ -607,9 +613,11 @@ function CloudBarFixture() {
                 }}
                 route={{ kind: "relay", relay: TOKYO, mode: "auto" }}
                 onChangeRelay={noop}
+                onConnectionLog={noop}
               />
             )}
             <span className="flex-1" />
+            <ConnectionLogButton />
             <DevicesButton />
             <AccountButton />
             <SignOutButton onClick={noop} />
@@ -620,6 +628,93 @@ function CloudBarFixture() {
       ))}
     </div>
   );
+}
+
+/**
+ * The connection log (`features/cloud/connection-log.tsx`), open over
+ * 「这台设备」's rows (`this-device.tsx`) as on 「我的设备」: a weak network's
+ * few minutes, with the page before a reload first — a channel through a
+ * relay, a probe that went unanswered, the relay path given up, the hub's
+ * socket dropped, the way back — on a fixed clock, so every run draws the
+ * same lines. `&view=setting`: the rows alone, the dialog closed.
+ */
+const LOG_AT = Date.UTC(2026, 10, 24, 9, 30, 0);
+function incidentLog(): ConnectionLog {
+  const clock = { t: 0, wall: LOG_AT - 4 * 60_000 };
+  const storage = new Map<string, string>();
+  const keep = { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => void storage.set(k, v), removeItem: (k: string) => void storage.delete(k) };
+  const step = (ms: number) => {
+    clock.t += ms;
+    clock.wall += ms;
+  };
+  const device = maskId("studio-mac");
+  // The page before a reload: a reconnect loop.
+  const before = new ConnectionLog({ now: () => clock.t, wall: () => clock.wall });
+  before.emit("hub.close", { code: 1006, reason: "", by: "socket", clean: false, openMs: 182_004, heardMs: 4_210, attempt: 3 });
+  step(250);
+  before.emit("hub.retry", { waitMs: 250, backoffMs: 500, attempt: 3 });
+  before.persist(keep);
+  // The reload: a minute later, and a new page's clock.
+  step(60_000);
+  clock.t = 0;
+  const log = new ConnectionLog({ now: () => clock.t, wall: () => clock.wall });
+  log.restore(keep);
+  log.emit("page.start", { build: "index-DV4Z0_d1", visibility: "visible", online: true, type: "3g", downlinkMbps: 1.1, rttMs: 350 });
+  step(180);
+  log.emit("hub.open", { attempt: 1, ms: 180 });
+  log.emit("relay.measure", { rtts: "nrt-1=38 sfo-1=161 fra-1=-" });
+  step(40);
+  log.emit("relay.choose", { device, pass: "first", relay: "nrt-1", mode: "auto", score: 50, deviceOn: "nrt-1", candidates: "nrt-1=38/12(on) sfo-1=161/140 fra-1=-/-" });
+  step(412);
+  log.emit("channel.open", { device, on: "ch:nrt-1/3", via: "relay:nrt-1", mode: "auto", handshakeMs: 412, attempt: 1, sinceLastCloseMs: 61_200 });
+  step(1000);
+  log.emit("req.start", { device, kind: "rpc", method: "GET", route: "/api/sessions/{source}/{id}/history?before=1200&fp&from=800" });
+  step(1000);
+  log.emit("sample", { lagMs: 3, "hub.tx": 120, "hub.rx": 96, "hub.buf": 0, "ch:nrt-1/3.rx": 131_072, "ch:nrt-1/3.inflight": 524_288, "ch:nrt-1/3.queued": 0, "ch:nrt-1/3.probes": 1, "ch:nrt-1/3.relayProbeAgeMs": 1_000, "ch:nrt-1/3.relayQuietMs": 12, "ch:nrt-1/3.relayRttMs": 38 });
+  step(4001);
+  // Slow, not dead: the probe's answer waits behind the data, which keeps coming.
+  log.emit("probe.late", { on: "ch:nrt-1/3", path: "relay", nonce: 2, ageMs: 5_001, quietMs: 12, unsent: false });
+  step(5000);
+  log.emit("path.slow", { device, on: "ch:nrt-1/3", rule: "relayPathGone", decision: "kept", limitMs: 10_000, relayProbeAgeMs: 10_001, relayQuietMs: 40, relayRttMs: 38 });
+  step(4000);
+  // Then the link dies: nothing more comes over it.
+  log.emit("probe.late", { on: "ch:nrt-1/3", path: "relay", nonce: 4, ageMs: 5_002, quietMs: 5_004, unsent: false });
+  step(5000);
+  log.emit("timeout", { device, timer: "RELAY_SILENT_MS", rule: "relayPathGone", decision: "gone", limitMs: 10_000, relayProbeAgeMs: 10_002, relayQuietMs: 10_004, elapsedMs: 10_004, on: "ch:nrt-1/3", lastRxAgoMs: 10_004, inflight: 524_288, queued: 0 });
+  log.emit("channel.close", { device, on: "ch:nrt-1/3", via: "relay:nrt-1", code: 4000, reason: "the relay path stopped answering", by: "local", rule: "relay_silent", relayProbeAgeMs: 10_002, relayQuietMs: 10_004, decision: "gone", uptimeMs: 20_413, rxBytes: 4_194_304 });
+  log.emit("req", { device, kind: "rpc", method: "GET", route: "/api/sessions/{source}/{id}/history?before=1200&fp&from=800", status: 200, ms: 10_002, ttfbMs: 640, rx: 1_310_720, tx: 0, stage: "body", error: "tunnel: the pipe closed before the answer ended (4000)" });
+  step(2000);
+  log.emit("channel.retry", { device, waitMs: 2000, attempt: 1, status: "idle" });
+  step(1500);
+  log.emit("mode.switch", { device, to: "copy", downForMs: 3_000 });
+  log.emit("bar", { device, label: "deviceRetry", retryInMs: 500, notice: true, cover: false });
+  step(600);
+  log.emit("channel.open", { device, on: "ch:nrt-1/4", via: "relay:nrt-1", mode: "auto", handshakeMs: 655, attempt: 1, sinceLastCloseMs: 4_100 });
+  log.emit("reconnect.replay", { feedResume: "delta", held: true, resumeBytes: 2_310, ms: 702, retry: 0 });
+  return log;
+}
+
+function ConnectionLogFixture({ dialog }: { dialog: boolean }) {
+  const [log] = useState(incidentLog);
+  return (
+    <div data-fixture-root="" className="mx-auto max-w-[1200px] py-4">
+      <section data-audit-row="this-device" className="flex flex-col gap-1">
+        <DirectConnectionSetting allowed onChange={noop} />
+        <ConnectionLogSetting onOpen={noop} />
+      </section>
+      <ConnectionLogDialog
+        open={dialog}
+        onOpenChange={noop}
+        log={log}
+        connection={() => ({ hub: "open", device: maskId("studio-mac"), channel: "open", via: "relay:nrt-1", relayRttMs: 38 })}
+      />
+    </div>
+  );
+}
+
+async function mountConnectionLog(): Promise<void> {
+  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+  createRoot(document.getElementById("root")!).render(<ConnectionLogFixture dialog={query.get("view") !== "setting"} />);
 }
 
 /** The cloud bar's states, under a router (the switcher navigates) and with the shell it reads in the registry's slot. */
@@ -1147,6 +1242,8 @@ if (fixture === "new-chat") {
   await mountNewChat();
 } else if (fixture === "cloud-bar") {
   await mountCloudBar();
+} else if (fixture === "connection-log") {
+  await mountConnectionLog();
 } else if (fixture === "no-copy") {
   await mountNoCopy();
 } else if (fixture === "session-from-copy") {

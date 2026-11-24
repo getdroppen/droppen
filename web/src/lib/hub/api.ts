@@ -20,6 +20,7 @@
 import { createHubClient, type HubClient } from "@/api/hub";
 import type { components } from "@/api/hub-schema";
 import { type Bytes, fromHex, hex, MAX_PAGE_LEN, RecordError, sha256, utf8 } from "@/lib/e2e";
+import { connLog, errorFields, routeTemplate } from "@/lib/connection-log";
 import { hubHttpOrigin } from "./config";
 import type { AuthenticationResponseJSON, CreationOptionsJSON, PasskeyChallenge, RegistrationResponseJSON, RequestOptionsJSON } from "./passkey";
 import type { RelayDirectory } from "./relays";
@@ -263,6 +264,35 @@ export function clearSession(storage: Storage | undefined = globalThis.localStor
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
+ * `fetch`, each request said in the connection log (`hub.req`): its method,
+ * its route as a template (`/v1/streams/{stream}/pages/{page}`: no ids, no
+ * query values, no origin), the status, how long until the answer's head,
+ * and its size when it says one. Never a header or a body.
+ */
+function loggedFetch(fetchImpl: Fetch): Fetch {
+  return async (input, init) => {
+    const startedAt = performance.now();
+    const method = init?.method ?? "GET";
+    const route = routeTemplate(input);
+    let res: Response;
+    try {
+      res = await fetchImpl(input, init);
+    } catch (error) {
+      connLog.emit("hub.req", { method, route, ms: performance.now() - startedAt, ...errorFields(error) }, "warn");
+      throw error;
+    }
+    let size: number | null = null;
+    try {
+      size = Number(res.headers?.get?.("content-length") ?? "") || null;
+    } catch {
+      size = null;
+    }
+    connLog.emit("hub.req", { method, route, status: res.status, ms: performance.now() - startedAt, size }, res.status >= 400 ? "warn" : undefined);
+    return res;
+  };
+}
+
+/**
  * Whether this page says "Macintosh" yet has a touch screen: an iPad asking
  * for desktop sites (iPadOS Safari's default), since no Mac has one. Never
  * throws: no, when in doubt.
@@ -296,6 +326,7 @@ export class HubApi {
     private readonly fetchImpl: Fetch = (input, init) => globalThis.fetch(input, init),
     private readonly storage: KnownClientStorage | undefined = pageStorage(),
   ) {
+    this.fetchImpl = loggedFetch(fetchImpl);
     this.migrated = migrateKnownClients(storage);
     this.client = createHubClient(this.base, this.fetchImpl);
   }

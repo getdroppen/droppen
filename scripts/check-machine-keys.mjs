@@ -91,6 +91,10 @@ export const DEVICE_KEYS = [
   "rh.cloud.pairing-resume",
   // This tab's account was just deleted from its settings, for the sign-in screen to say once (sessionStorage).
   "rh.cloud.account-deleted",
+  // This tab's connection log, kept for the next page of the tab after a reload (sessionStorage, `lib/connection-log.ts`).
+  "rh.cloud.connection-log",
+  // The random salt this browser's connection log hashes device ids with (`lib/connection-log.ts` `maskId`).
+  "rh.cloud.connection-log-salt",
   "rh.panel.",
   "rh.sessions.backgroundPanelOpen",
   "rh.files.showHidden",

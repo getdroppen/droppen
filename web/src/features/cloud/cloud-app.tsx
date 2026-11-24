@@ -19,6 +19,7 @@ import {
 } from "@/lib/hub/passkey";
 import { hubOrigin } from "@/lib/hub/config";
 import { HubLink } from "@/lib/hub/link";
+import { startConnectionLog } from "@/lib/connection-log";
 import { ChainFollower } from "@/lib/hub/follow";
 import { RelayPool } from "@/lib/hub/relays";
 import { meStore } from "@/lib/hub/me";
@@ -46,6 +47,7 @@ import { FrontPageView } from "@/features/landing/front-pages";
 import { provideCloudParts } from "@/app/cloud-parts";
 import { prefetchViews } from "@/app/view-prefetch";
 import { CloudBar } from "./cloud-bar";
+import { ConnectionLogHost } from "./connection-log";
 import { AddDeviceHint, SideBySideTip } from "./onboarding-hints";
 import { CopyWindowNotice } from "./plan";
 
@@ -110,6 +112,8 @@ type Phase =
   | { kind: "error"; message: string; held?: HeldSession };
 
 function startLink(account: CloudAccount, origin: string): HubLink {
+  // The connection log (`lib/connection-log.ts`) from the first connection on: the page before's read back, the network and the page's state followed.
+  startConnectionLog();
   const link = new HubLink({
     url: `${origin}/v1/client`,
     origin,
@@ -479,9 +483,13 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
     case "shell":
       if (onLink) return <LinkFlow account={phase.account} link={phase.link} />;
       return (
-        <ShellView shell={phase.shell}>
-          {children}
-        </ShellView>
+        <>
+          <ShellView shell={phase.shell}>
+            {children}
+          </ShellView>
+          {/* The page's one connection log, whichever of the shell's views is shown. */}
+          <ConnectionLogHost />
+        </>
       );
     case "fork":
       return <ForkScreen message={phase.message} held={phase.held} />;

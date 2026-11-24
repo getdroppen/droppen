@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | connection-log | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -69,6 +69,7 @@ const runDevices = which === "both" || which === "devices";
 const runAgents = which === "both" || which === "agents";
 const runNewChat = which === "both" || which === "new-chat";
 const runCloudBar = which === "both" || which === "cloud-bar";
+const runConnectionLog = which === "both" || which === "connection-log";
 const runSessionOpening = which === "both" || which === "session-opening";
 const runNoCopy = which === "both" || which === "no-copy";
 const runSessionFromCopy = which === "both" || which === "session-from-copy";
@@ -1111,6 +1112,144 @@ async function auditCatchUp(theme, view) {
   await page.close();
 }
 
+/** The connection log's views, word for word, in every language the app ships. */
+const CONNECTION_LOG_FILTERS = {
+  en: ["all", "events", "problems"],
+  "zh-CN": ["全部", "事件", "问题"],
+  "zh-TW": ["全部", "事件", "問題"],
+  ja: ["すべて", "イベント", "問題"],
+};
+
+/**
+ * The connection log (`?fixture=connection-log`, `features/cloud/connection-log.tsx`)
+ * open over 「这台设备」's rows: a shared dialog (§3) widened for a log, inside
+ * the viewport with its 16px margin at either width; the segmented views at
+ * 32px with their words whole, word for word; the dialog's actions at 28px
+ * (§2), their words whole and inside the dialog (the toolbar wraps on a
+ * phone); every line mono at 11px, wrapping inside the list (no sideways
+ * scroll); square corners and no drop shadow (V1, V2); colour only on a
+ * level that is a signal (V4); and, closed (`&view=setting`), the row under
+ * 「这台设备」 with its 28px action (36px on touch). Captured:
+ * `connection-log[-<lang>]-<theme>-<viewport>.png` and
+ * `connection-log-setting-<theme>-<viewport>.png`.
+ */
+async function auditConnectionLog(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "connection-log", id, actual, expected });
+  for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
+    await page.goto(`${base}ui-audit/index.html?fixture=connection-log&lang=${lang}&theme=${theme}`);
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForSelector("[data-testid='connection-log-list'] li[data-event]");
+    // The list scrolls itself to the newest line after it is drawn.
+    await page.waitForTimeout(50);
+    const seen = await page.evaluate(() => {
+      const rect = (e) => {
+        if (!e) return null;
+        const r = e.getBoundingClientRect();
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1), right: +r.right.toFixed(1), bottom: +r.bottom.toFixed(1) };
+      };
+      const whole = (e) => !!e && e.scrollWidth <= e.clientWidth + 1;
+      const dialog = document.querySelector("[role='dialog']");
+      const list = document.querySelector("[data-testid='connection-log-list']");
+      const rows = [...document.querySelectorAll("[data-testid='connection-log-list'] li[data-event]")];
+      // The neutral tokens as this theme computes them (`index.css`: the ink is a near-black, not a pure grey):
+      // a colour is neutral when it is grey or one of them, at any opacity.
+      const probe = document.body.appendChild(document.createElement("span"));
+      const tokens = new Set(
+        ["bg", "panel", "raised", "hover", "border", "border-strong", "fg", "muted", "faint", "mark"].map((name) => {
+          probe.style.color = `var(--color-${name})`;
+          return /rgba?\(([\d.]+), ([\d.]+), ([\d.]+)/.exec(getComputedStyle(probe).color)?.slice(1, 4).join(",") ?? "";
+        }),
+      );
+      probe.remove();
+      const gray = (c) => {
+        const m = /rgba?\(([\d.]+), ([\d.]+), ([\d.]+)(?:, ([\d.]+))?\)/.exec(c);
+        if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return true;
+        const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+        return Math.max(r, g, b) - Math.min(r, g, b) < 3 || tokens.has(`${m[1]},${m[2]},${m[3]}`);
+      };
+      const all = dialog ? [dialog, ...dialog.querySelectorAll("*")] : [];
+      return {
+        dialog: rect(dialog),
+        win: { w: window.innerWidth, h: window.innerHeight },
+        tabs: rect(document.querySelector("[data-testid='connection-log'] [role='tablist']")),
+        tabWords: [...document.querySelectorAll("[data-testid^='connection-log-filter-']")].map((e) => ({ text: (e.textContent ?? "").trim(), whole: whole(e) })),
+        buttons: ["copy", "download", "clear"].map((name) => {
+          const e = document.querySelector(`[data-testid='connection-log-${name}']`);
+          return { name, rect: rect(e), whole: whole(e), text: (e?.textContent ?? "").trim() };
+        }),
+        list: list ? { rect: rect(list), sideways: list.scrollWidth > list.clientWidth + 1, scrolled: list.scrollTop > 0 || list.scrollHeight <= list.clientHeight } : null,
+        rows: rows.length,
+        rowStyle: rows.slice(0, 3).map((e) => ({ size: getComputedStyle(e).fontSize, mono: /mono|Menlo|Monaco|Consolas/i.test(getComputedStyle(e).fontFamily) })),
+        pages: document.querySelectorAll("[data-testid='connection-log-page']").length,
+        invalid: all
+          .filter((e) => e.getBoundingClientRect().width > 0 && !e.closest("[data-shape]"))
+          .map((e) => ({ tag: e.tagName, id: e.getAttribute("data-testid") ?? e.getAttribute("data-event"), radius: getComputedStyle(e).borderRadius, shadow: getComputedStyle(e).boxShadow }))
+          .filter((x) => parseFloat(x.radius) > 0 || (x.shadow !== "none" && !/inset/.test(x.shadow) && !/0px 0px 0px 0px/.test(x.shadow))),
+        colour: all
+          .filter((e) => e.getBoundingClientRect().width > 0 && !e.closest("[data-signal]"))
+          .filter((e) => {
+            const s = getComputedStyle(e);
+            return !gray(s.color) || !gray(s.backgroundColor) || !gray(s.borderTopColor);
+          })
+          .map((e) => ({ tag: e.tagName, text: (e.textContent ?? "").slice(0, 40), color: getComputedStyle(e).color })),
+        signals: [...document.querySelectorAll("[data-testid='connection-log-list'] [data-signal]")].map((e) => e.getAttribute("data-signal")),
+      };
+    });
+    const tag = lang === "en" ? "" : `-${lang}`;
+    await page.screenshot({ path: `${out}/connection-log${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+    results.push({ mode: "connection-log", lang, theme, viewport: view.name, ...seen });
+    const where = { lang };
+    const d = seen.dialog;
+    if (!d) {
+      fail("connection-log.dialog", where, "the dialog open");
+      continue;
+    }
+    if (d.x < 15 || d.right > seen.win.w - 15 || d.y < 15 || d.bottom > seen.win.h - 15) fail("connection-log.inside", { ...where, dialog: d, win: seen.win }, "the dialog inside the viewport, 16px from its edges");
+    if (view.name === "desktop" && d.w < 800) fail("connection-log.wide", { ...where, w: d.w }, "a dialog wide enough for a log (56rem at desktop width)");
+    if (Math.round(seen.tabs?.h ?? 0) !== 32) fail("connection-log.tabs", { ...where, tabs: seen.tabs }, "the segmented views at 32px");
+    const words = seen.tabWords.map((w) => w.text);
+    if (JSON.stringify(words) !== JSON.stringify(CONNECTION_LOG_FILTERS[lang])) fail("connection-log.tab-words", { ...where, words }, CONNECTION_LOG_FILTERS[lang].join(" · "));
+    if (seen.tabWords.some((w) => !w.whole)) fail("connection-log.tab-whole", { ...where, words: seen.tabWords }, "every view's word whole");
+    for (const b of seen.buttons) {
+      if (Math.round(b.rect?.h ?? 0) !== 28) fail("connection-log.button", { ...where, button: b }, "a 28px dialog action");
+      if (!b.whole || !b.rect || b.rect.x < d.x || b.rect.right > d.right) fail("connection-log.button-whole", { ...where, button: b, dialog: d }, "the action's words whole, inside the dialog");
+    }
+    if (!seen.list || seen.list.sideways) fail("connection-log.wrap", { ...where, list: seen.list }, "lines wrap inside the list, no sideways scroll");
+    if (seen.list && !seen.list.scrolled) fail("connection-log.newest", { ...where, list: seen.list }, "the list at its newest line");
+    if (seen.rows < 10) fail("connection-log.rows", { ...where, rows: seen.rows }, "the fixture's lines drawn");
+    if (seen.rowStyle.some((s) => s.size !== "11px" || !s.mono)) fail("connection-log.type", { ...where, rows: seen.rowStyle }, "every line mono at 11px");
+    if (seen.pages !== 2) fail("connection-log.pages", { ...where, pages: seen.pages }, "the page before a reload and this page, each under a line of its own");
+    if (seen.invalid.length) fail("connection-log.radius-shadow", { ...where, invalid: seen.invalid.slice(0, 5) }, "no radius, no drop shadow");
+    if (seen.colour.length) fail("connection-log.colour", { ...where, colour: seen.colour.slice(0, 5) }, "colour only on a level that is a signal");
+    if (!seen.signals.includes("failed") || !seen.signals.includes("warn")) fail("connection-log.signals", { ...where, signals: seen.signals }, "errors and warnings marked as signals");
+  }
+  // Closed: the row under 「这台设备」 that opens it.
+  await page.goto(`${base}ui-audit/index.html?fixture=connection-log&view=setting&theme=${theme}`);
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForSelector("[data-testid='connection-log-setting']");
+  const row = await page.evaluate(() => {
+    const r = (e) => {
+      const b = e?.getBoundingClientRect();
+      return b ? { x: +b.x.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1), right: +b.right.toFixed(1) } : null;
+    };
+    const button = document.querySelector("[data-testid='connection-log-setting-open']");
+    return { row: r(document.querySelector("[data-testid='connection-log-setting']")), direct: r(document.querySelector("[data-testid='direct-connections']")), button: r(button), radius: button ? getComputedStyle(button).borderRadius : null };
+  });
+  await page.screenshot({ path: `${out}/connection-log-setting-${theme}-${view.name}.png`, animations: "disabled" });
+  results.push({ mode: "connection-log-setting", theme, viewport: view.name, ...row });
+  const want = view.name === "mobile" ? 36 : 28;
+  if (Math.round(row.button?.h ?? 0) !== want) fail("connection-log.setting-button", row, `a ${want}px action (§2: 28px, 36px on touch)`);
+  if (!row.row || !row.direct || row.row.x !== row.direct.x || row.row.w !== row.direct.w) fail("connection-log.setting-row", row, "the same edges as the direct-connection row above it");
+  if (parseFloat(row.radius ?? "0") > 0) fail("connection-log.setting-radius", row, "a square action");
+  await page.close();
+}
+
 /** The line under the spinner for each stage of the session-opening fixture, in every language the app ships. */
 const SESSION_OPENING_WORDS = {
   en: { connecting: "connecting…", loading: "loading session…", "copy-pages": "from hub · 128/256", copy: "from hub…", retrying: "cannot open · retrying" },
@@ -1792,6 +1931,7 @@ try {
         if (runNewChat) await auditNewChat(theme, view);
         if (runCloudBar) await auditCloudBar(theme, view);
         if (runCloudBar) await auditCatchUp(theme, view);
+        if (runConnectionLog) await auditConnectionLog(theme, view);
         if (runSessionOpening) await auditSessionOpening(theme, view);
         if (runNoCopy) await auditNoCopy(theme, view);
         if (runSessionFromCopy) await auditSessionFromCopy(theme, view);

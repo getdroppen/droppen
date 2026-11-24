@@ -59,6 +59,8 @@ import { type RelayDirectory, type RelayEntry, RelayPool } from "../src/lib/hub/
 import { RelayLink } from "../src/lib/hub/relay-link.js";
 import { tunnelTransport } from "../src/lib/transport/tunnel.js";
 import { ModeController, SwitchingTransport } from "../src/lib/transport/switching.js";
+import { connLog } from "../src/lib/connection-log.js";
+import { logText } from "../src/features/cloud/connection-log-format.js";
 
 const ORIGIN = "wss://hub.test";
 /** The relay channels go through when one can carry them (relay-and-plans §2.15). */
@@ -1298,6 +1300,84 @@ test("a relay given up on while the phone was offline is tried again once it ans
   assert.equal(channel.blocked, null);
   assert.ok(pool.usable("r-1"), "and it is counted as working again");
   assert.ok(blocked.length > 0, "('no relay available' was true while the relay could not be reached)");
+});
+
+// The connection log (`lib/connection-log.ts`) follows the same: what a pasted
+// export must show of a disconnect is which link closed, who closed it, what
+// it took down, and the way back — and never which device it was by name.
+test("the connection log follows a channel through a relay: its open, a request's route and size, and on a lost relay what closed, by whom, and the way back", async (t) => {
+  const { hub, relay, channel, transport } = await liveThroughRelay(t);
+  const events = () => connLog.events();
+  const after = (seq: number) => events().filter((e) => e.seq > seq);
+  const opened = events().filter((e) => e.name === "channel.open").at(-1);
+  assert.ok(opened, "the channel's open is logged");
+  assert.equal(opened.fields.via, "relay:r-1");
+  assert.equal(typeof opened.fields.handshakeMs, "number");
+  assert.match(String(opened.fields.device), /^#[0-9a-f]{6}$/, "the device as a hash");
+  assert.ok(
+    events().some((e) => e.name === "relay.choose" && e.fields.relay === "r-1" && typeof e.fields.candidates === "string"),
+    "the relay chosen, with every candidate",
+  );
+
+  const beforeEcho = events().at(-1)!.seq;
+  await echo(channel, "hello");
+  const req = after(beforeEcho).find((e) => e.name === "req");
+  assert.ok(req, "the request is logged when it ends");
+  assert.deepEqual({ method: req.fields.method, route: req.fields.route, status: req.fields.status, tx: req.fields.tx }, { method: "POST", route: "/api/sessions", status: 200, tx: 5 });
+  assert.ok((req.fields.rx as number) > 0 && typeof req.fields.ttfbMs === "number");
+
+  const beforeLoss = events().at(-1)!.seq;
+  hub.agent.dropChannels();
+  relay.live.close(1006);
+  await until(() => after(beforeLoss).some((e) => e.name === "channel.open") && transport.current === "live" && channel.status === "open", 10_000);
+  const lost = after(beforeLoss);
+  const relayClose = lost.find((e) => e.name === "relay.close");
+  assert.deepEqual({ relay: relayClose?.fields.relay, code: relayClose?.fields.code, by: relayClose?.fields.by }, { relay: "r-1", code: 1006, by: "socket" });
+  const channelClose = lost.find((e) => e.name === "channel.close");
+  assert.deepEqual(
+    { by: channelClose?.fields.by, rule: channelClose?.fields.rule, code: channelClose?.fields.code },
+    { by: "link", rule: "link_lost", code: LINK_LOST },
+    "the channel went with the relay's connection under it",
+  );
+  assert.equal(typeof channelClose!.fields.uptimeMs, "number");
+  assert.ok((channelClose!.fields.rxBytes as number) > 0, "what it had moved");
+  assert.ok(lost.some((e) => e.name === "channel.try"), "the way back");
+  const reopened = lost.find((e) => e.name === "channel.open");
+  assert.equal(typeof reopened!.fields.sinceLastCloseMs, "number", "and how long it was down");
+  for (const e of events()) assert.ok(!JSON.stringify(e.fields).includes('"m-1"'), `${e.name} does not name the device`);
+});
+
+// What the hub or an agent says in a refusal or a close is theirs, and may
+// name anything (a person's device, a path, an address): the log keeps its
+// length, the codes, and Droppen's own words around it — never the words.
+test("the connection log keeps nothing of what the hub or the agent says in a refusal or a close", async (t) => {
+  const { hub, link, account } = await linked(t);
+  const token = ["tok", "3", "nAb9"].join("");
+  const hostile = `Ada's MacBook Pro /Users/ada/My Project/x.txt 192.168.1.23 ada@example.com ${token}`;
+  const leaks = ["Ada's MacBook", "/Users/ada", "My Project", "192.168.1.23", "ada@example.com", token];
+  const since = connLog.events().at(-1)?.seq ?? 0;
+  const after = () => connLog.events().filter((e) => e.seq > since);
+  const channel = new MachineChannel(link, account, "m-1");
+  t.after(() => channel.close());
+  hub.refuseOpens = hostile;
+  await assert.rejects(channel.ensure());
+  hub.refuseOpens = null;
+  await channel.ensure();
+  const opened = after().filter((e) => e.name === "channel.open").at(-1)!;
+  const ch = Number(String(opened.fields.on).split("/").pop());
+  // The hub ends the channel, in its own words.
+  hub.live.frame({ type: "close", ch, code: 4000, reason: hostile });
+  await until(() => after().some((e) => e.name === "channel.close"));
+  const text = logText(after(), { build: "b", userAgent: "", loadedAt: 0, exportedAt: 0, network: {}, filter: "all", total: 0 });
+  for (const leak of leaks) assert.ok(!text.includes(leak), `${leak} in:\n${text}`);
+  const refused = after().find((e) => e.name === "channel.refused")!;
+  assert.deepEqual({ by: refused.fields.by, why: refused.fields.why, whyLen: refused.fields.whyLen }, { by: "hub", why: "<withheld>", whyLen: hostile.length });
+  const failed = after().find((e) => e.name === "handshake.fail")!;
+  assert.deepEqual({ code: failed.fields.code, reason: failed.fields.reason }, { code: 4403, reason: "<withheld>" });
+  const status = after().find((e) => e.name === "channel.status" && e.fields.status === "error")!;
+  assert.equal(status.fields.error, "the hub refused the channel: <withheld>", "Droppen's own words, the hub's withheld");
+  const closed = after().find((e) => e.name === "channel.close")!;
+  assert.deepEqual({ code: closed.fields.code, reason: closed.fields.reason, by: closed.fields.by }, { code: 4000, reason: "<withheld>", by: "peer" });
 });
 
 test("a page that comes back forgives its relays' failures and fetches an old list again", async (t) => {

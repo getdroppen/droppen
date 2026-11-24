@@ -63,6 +63,7 @@ import {
   SHORT_LIVED_LIMIT,
   STUN_SERVERS,
 } from "../src/lib/transport/p2p.js";
+import { connLog } from "../src/lib/connection-log.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const binding = { account: "a-1", device: "d-1", machine: "m-1" };
@@ -158,7 +159,11 @@ class FakePeer implements PeerLike {
     }, 0);
   }
 
+  /** Set: every answer is refused with this error, as a browser words it (Chrome quotes the SDP line it failed on). */
+  static remoteError: string | null = null;
+
   async setRemoteDescription(d: { type: "answer"; sdp: string }): Promise<void> {
+    if (FakePeer.remoteError) throw new Error(FakePeer.remoteError);
     this.remoteSdp = d.sdp;
     queueMicrotask(() => this.onremote?.());
   }
@@ -437,6 +442,24 @@ test("an answer whose SDP names another certificate is refused with badFingerpri
   assert.ok(s.peers[0]!.closed);
   assert.equal(s.device.paths!.direct, false);
   await until(() => s.agent.signals.some((x) => x.type === "offer" && x.id === 2), "the next attempt");
+});
+
+test("an answer the browser will not take is logged as Droppen's words alone: the SDP line it quotes, and its address, never are", async (t) => {
+  const quoted = "Failed to execute 'setRemoteDescription': Failed to parse SessionDescription. a=candidate:1 1 udp 2122260223 192.0.2.77 50000 typ host c=IN IP4 198.51.100.4";
+  FakePeer.remoteError = quoted;
+  t.after(() => {
+    FakePeer.remoteError = null;
+  });
+  const since = connLog.events().at(-1)?.seq ?? 0;
+  const s = await setUp(t);
+  s.paths.start();
+  await until(() => connLog.events().some((e) => e.seq > since && e.name === "direct.fail"), "the failed attempt in the log");
+  const failed = connLog.events().find((e) => e.seq > since && e.name === "direct.fail")!;
+  assert.equal(failed.fields.why, "the answer was not taken: <withheld>");
+  for (const e of connLog.events().filter((x) => x.seq > since)) {
+    const said = JSON.stringify(e.fields);
+    for (const leak of ["192.0.2.77", "198.51.100.4", "candidate:1", "setRemoteDescription"]) assert.ok(!said.includes(leak), `${e.name}: ${said}`);
+  }
 });
 
 test("hub only: no signaling and no peer connection; on, a direct path; hub only again lets it go at once", async (t) => {

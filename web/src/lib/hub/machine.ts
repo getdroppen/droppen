@@ -76,13 +76,15 @@ import {
   STREAMS_FEATURE,
   utf8,
 } from "@/lib/e2e";
-import { relayPathGone } from "@/lib/e2e/path";
+import { DIRECT_TIMEOUT_MS, RELAY_SILENT_MS, relayPathGone, UNACKED_TIMEOUT_MS } from "@/lib/e2e/path";
+import type { PathEvent } from "@/lib/e2e/channel";
+import { type ConnFields, connLog, deltaOf, errorFields, maskId } from "@/lib/connection-log";
 import { type DirectEnv, DirectHistory, DirectPaths } from "@/lib/transport/p2p";
 import type { Pipe, PipeKind, PipeMessage, PipeMeta, PipeOpener } from "@/lib/transport/tunnel";
 import { HUB_NO_CHANNELS, LINK_LOST } from "./link";
 import type { CloudAccount } from "./account";
 import type { HubLink } from "./link";
-import { type RelayEntry, type RelayPool, RelayRefused } from "./relays";
+import { type RelayChoice, type RelayEntry, type RelayPool, RelayRefused } from "./relays";
 import type { RelayLink } from "./relay-link";
 
 export type MachineStatus = "idle" | "connecting" | "open" | "offline" | "error";
@@ -139,11 +141,17 @@ export const RELAY_PATH_GONE = 4000;
  * let the agent send first — and replacing that channel only had the page
  * ask for the same data again, over and over.
  */
-export function watchRelayPath(driver: ChannelDriver, carrier: { wake(): void } | null): (stats: PathStats) => void {
+export function watchRelayPath(driver: ChannelDriver, carrier: { wake(): void } | null, onGone?: (stats: PathStats) => void): (stats: PathStats) => void {
   let fired = false;
   return (stats) => {
     if (fired || driver.isClosed || !relayPathGone(stats.relayProbeAgeMs, stats.relayQuietMs)) return;
     fired = true;
+    // Told first (the connection log), and never in the way of what follows.
+    try {
+      onGone?.(stats);
+    } catch {
+      // the close goes on all the same
+    }
     carrier?.wake();
     driver.close(RELAY_PATH_GONE, "the relay path stopped answering");
   };
@@ -252,6 +260,11 @@ export type ChannelRoute =
   /** The hub's own connection: no relay could carry it. */
   | { kind: "hub" };
 
+/** A route as the connection log says it: `relay:nrt-1`, or `hub`. */
+export function routeName(route: ChannelRoute): string {
+  return route.kind === "relay" ? `relay:${route.relay.id}` : "hub";
+}
+
 /** A carrier for a new channel, and the relay connection when it is one. */
 interface Carried {
   carrier: Carrier;
@@ -298,6 +311,62 @@ interface OpenedChannel {
   off: () => void;
   /** The machine's DH key the handshake went to. */
   responder: Bytes;
+  /** The channel as the connection log names it (`ch:<relay or hub>/<ch>`), and the try of its opening that made it. */
+  logOn: string;
+  attempt: number;
+}
+
+/**
+ * Why this page closed a channel itself, for the connection log's
+ * `channel.close` (`rule`): set just before the close. A channel the peer or
+ * the carrier ended has none (its close code says).
+ */
+const closeRules = new WeakMap<ChannelDriver, "relay_silent" | "moved" | "key" | "done">();
+
+/** The numbers the relay rule closed a channel on (`relayPathGone`), for its `channel.close`. */
+const relayGoneStats = new WeakMap<ChannelDriver, { relayProbeAgeMs: number | null; relayQuietMs: number | null }>();
+
+/** What the connection log samples of a running channel once a second (`pipes`: those open on it). */
+function channelSampler(driver: ChannelDriver, pipes: () => number) {
+  const deltas = { relayTx: deltaOf(), relayRx: deltaOf(), directTx: deltaOf(), directRx: deltaOf() };
+  return () => {
+    if (driver.isClosed) return null;
+    const d = driver.diagnostics();
+    const moved = {
+      tx: deltas.relayTx(d.relayTx),
+      rx: deltas.relayRx(d.relayRx),
+      dtx: deltas.directTx(d.directTx),
+      drx: deltas.directRx(d.directRx),
+    };
+    const paths = driver.paths;
+    const open = pipes();
+    const waiting = d.heldTx + d.queued + (d.dcBuffered ?? 0) + (d.unackedBytes ?? 0) + (d.heldRxBytes ?? 0);
+    return {
+      fields: {
+        ...moved,
+        // Bytes sent and not yet credited back by the carrier (`INITIAL_CREDIT` less what is left), and a sealed frame waiting for credit.
+        inflight: d.inflight,
+        heldTx: d.heldTx,
+        queued: d.queued,
+        dcBuf: d.dcBuffered,
+        unacked: d.unackedBytes,
+        unackedN: d.unackedFrames,
+        heldRx: d.heldRxBytes,
+        probes: d.probesOut,
+        oldestProbeMs: d.oldestProbeMs,
+        relayRttMs: paths?.relayRttMs ?? null,
+        // What the relay rule judges by: the oldest hub probe's age (sent or waiting for credit), and how long nothing has come over the hub.
+        relayProbeAgeMs: paths?.relayProbeAgeMs ?? null,
+        relayQuietMs: paths?.relayQuietMs ?? null,
+        directRttMs: paths?.direct ? paths.directRttMs : null,
+        path: paths?.direct ? "direct" : "carrier",
+        streams: d.streams,
+        pipes: open,
+      },
+      // Traffic decides it: bytes that moved, or bytes waiting to. An open socket that says nothing (a feed) is not busy.
+      busy: moved.tx + moved.rx + moved.dtx + moved.drx > 0 || waiting > 0,
+    };
+  };
 }
 
 /** Frames for one `ch`, awaited one at a time until a driver takes over. */
@@ -345,6 +414,8 @@ class BridgePipe implements Pipe {
   constructor(
     readonly kind: PipeKind,
     readonly meta: PipeMeta,
+    /** Told once when the pipe is over, either way (the channel counts its open pipes for the connection log). */
+    private readonly done: () => void = () => undefined,
   ) {}
 
   attach(stream: ChannelStream): void {
@@ -375,6 +446,7 @@ class BridgePipe implements Pipe {
   fail(code: number): void {
     if (this.closed) return;
     this.closed = true;
+    this.done();
     this.onclose?.(code);
   }
 
@@ -402,6 +474,7 @@ class BridgePipe implements Pipe {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.done();
     this.stream?.close(0);
   }
 }
@@ -467,13 +540,185 @@ export class MachineChannel implements PipeOpener {
   private readonly pathListeners = new Set<(paths: PathStats | null) => void>();
   private readonly openListeners = new Set<() => void>();
   private readonly stepListeners = new Set<(step: ConnectStep | null) => void>();
+  /** The machine as the connection log names it: a hash of its id (`maskId`), never the id. */
+  private readonly logDevice: string | null;
+  /** Pipes open on this channel (requests, sockets), for the connection log's samples. */
+  private pipesOpen = 0;
+  /** When a channel to the machine last ended (`performance.now`), for the connection log's `sinceLastCloseMs`. */
+  private lastCloseAt: number | null = null;
 
   constructor(
     readonly link: HubLink,
     readonly account: CloudAccount,
     readonly machine: string,
     private readonly options: MachineChannelOptions = {},
-  ) {}
+  ) {
+    this.logDevice = maskId(machine);
+    // Whatever names the machine in a reason or an error (`ChannelIsolated`, say) names its hash in the log.
+    connLog.hide(machine);
+  }
+
+  /** Log `name` about this machine's channel (its masked id added). Never throws: logging has no say in the channel. */
+  private log(name: Parameters<typeof connLog.emit>[0], fields: ConnFields = {}, level?: Parameters<typeof connLog.emit>[2]): void {
+    try {
+      connLog.emit(name, { device: this.logDevice, ...fields }, level);
+    } catch {
+      // nothing logged, nothing else changed
+    }
+  }
+
+  /**
+   * The carrier path is gone by the rule (`relayPathGone`: its oldest probe
+   * out at least `RELAY_SILENT_MS`, and nothing at all come over it for as
+   * long): this page closes the channel. Said with both numbers and the
+   * decision, from `watchRelayPath`'s hook, before the close.
+   */
+  private logRelaySilent(on: string, driver: ChannelDriver, stats: PathStats): void {
+    closeRules.set(driver, "relay_silent");
+    relayGoneStats.set(driver, { relayProbeAgeMs: stats.relayProbeAgeMs, relayQuietMs: stats.relayQuietMs });
+    try {
+      const d = driver.diagnostics();
+      this.log("timeout", {
+        timer: "RELAY_SILENT_MS",
+        rule: "relayPathGone",
+        decision: "gone",
+        limitMs: RELAY_SILENT_MS,
+        relayProbeAgeMs: stats.relayProbeAgeMs,
+        relayQuietMs: stats.relayQuietMs,
+        elapsedMs: stats.relayQuietMs,
+        on,
+        lastRxAgoMs: d.lastRxAgoMs,
+        inflight: d.inflight,
+        queued: d.queued + d.heldTx,
+      });
+    } catch {
+      // the close goes on all the same
+    }
+  }
+
+  /**
+   * The rule's other decision, for the log: a carrier path whose oldest probe
+   * is `RELAY_SILENT_MS` old while things still arrive is slow, and kept
+   * (`path.slow`, `decision=kept`). Said once each time the path turns slow,
+   * not on every change of its numbers; reads only.
+   */
+  private relaySlowLogger(on: string): (stats: PathStats) => void {
+    let said = false;
+    return (stats) => {
+      try {
+        const old = stats.relayProbeAgeMs !== null && stats.relayProbeAgeMs >= RELAY_SILENT_MS;
+        if (!old) {
+          said = false;
+          return;
+        }
+        if (said || relayPathGone(stats.relayProbeAgeMs, stats.relayQuietMs)) return;
+        said = true;
+        this.log("path.slow", {
+          on,
+          rule: "relayPathGone",
+          decision: "kept",
+          limitMs: RELAY_SILENT_MS,
+          relayProbeAgeMs: stats.relayProbeAgeMs,
+          relayQuietMs: stats.relayQuietMs,
+          relayRttMs: stats.relayRttMs,
+        });
+      } catch {
+        // nothing logged
+      }
+    };
+  }
+
+  /**
+   * A channel ended: who ended it (`by`: this page, the peer, or the carrier
+   * under it going away) and why (`rule`, when this page did), how long it
+   * lived, what it moved, and what was still waiting on it then. Called once
+   * the channel is cleaned up, and never throws: logging cannot skip cleanup.
+   */
+  private logClose(on: string, driver: ChannelDriver, end: { code: number; reason: string; local: boolean; openedAt: number; route: ChannelRoute }): void {
+    try {
+      this.logCloseNow(on, driver, end);
+    } catch {
+      // nothing logged
+    }
+  }
+
+  private logCloseNow(on: string, driver: ChannelDriver, end: { code: number; reason: string; local: boolean; openedAt: number; route: ChannelRoute }): void {
+    const now = performance.now();
+    this.lastCloseAt = now;
+    const d = driver.diagnostics();
+    const rule = closeRules.get(driver) ?? (end.local ? "error" : end.code === LINK_LOST ? "link_lost" : "peer");
+    // The relay rule's numbers as it judged them (a close by it), else the path's as they stand.
+    const judged = relayGoneStats.get(driver);
+    this.log("channel.close", {
+      on,
+      via: routeName(end.route),
+      code: end.code,
+      reason: end.reason,
+      by: end.local ? "local" : end.code === LINK_LOST ? "link" : "peer",
+      rule,
+      uptimeMs: now - end.openedAt,
+      rxBytes: d.relayRx + d.directRx,
+      txBytes: d.relayTx + d.directTx,
+      lastRxAgoMs: d.lastRxAgoMs,
+      oldestProbeAgeMs: d.oldestProbeMs,
+      probesOut: d.probesOut,
+      relayRttMs: driver.paths?.relayRttMs ?? null,
+      relayProbeAgeMs: judged ? judged.relayProbeAgeMs : (driver.paths?.relayProbeAgeMs ?? null),
+      relayQuietMs: judged ? judged.relayQuietMs : (driver.paths?.relayQuietMs ?? null),
+      decision: rule === "relay_silent" ? "gone" : undefined,
+      sendCreditLeft: d.credit,
+      inflight: d.inflight,
+      recvUnacked: d.recvUnacked,
+      queued: d.queued + d.heldTx,
+      unacked: d.unackedBytes,
+      openStreams: d.streams,
+      pipes: this.pipesOpen,
+    }, rule === "done" || rule === "moved" ? "info" : "warn");
+  }
+
+  /** What the channel's paths said (`PathEvent`), in the connection log: probes and their answers kept apart from a round trip raised to an unanswered probe's age. */
+  private logPathEvent(on: string, driver: ChannelDriver, event: PathEvent): void {
+    try {
+      this.logPathEventNow(on, driver, event);
+    } catch {
+      // nothing logged
+    }
+  }
+
+  private logPathEventNow(on: string, driver: ChannelDriver, event: PathEvent): void {
+    switch (event.type) {
+      case "probe":
+        connLog.emit("probe.sent", { on, path: event.via, nonce: event.nonce });
+        return;
+      case "rtt":
+        connLog.emit("probe.answer", { on, path: event.via, nonce: event.nonce ?? null, rttMs: event.ms });
+        return;
+      case "late":
+        connLog.emit("probe.late", { on, path: event.via, nonce: event.nonce, ageMs: event.ageMs, quietMs: event.quietMs, unsent: event.unsent });
+        return;
+      case "paused":
+        this.log("page.pause", { on, gapMs: event.gapMs, forgotten: event.forgotten });
+        return;
+      case "directUp":
+        this.log("path.switch", { on, to: "direct" });
+        return;
+      case "directDown": {
+        const stats = driver.paths;
+        if (event.timer) this.log("timeout", { timer: event.timer, limitMs: event.timer === "DIRECT_TIMEOUT_MS" ? DIRECT_TIMEOUT_MS : UNACKED_TIMEOUT_MS, elapsedMs: event.elapsedMs, on: `${on}.direct` });
+        this.log("path.switch", {
+          on,
+          to: "carrier",
+          cause: event.reason,
+          remote: event.remote,
+          timer: event.timer,
+          unackedBytes: event.unackedBytes,
+          directRttMs: stats?.directRttMs ?? null,
+          resent: stats?.resent ?? null,
+        }, event.reason === "closed" ? "info" : "warn");
+        return;
+      }
+    }
+  }
 
   onStatus(fn: (status: MachineStatus) => void): () => void {
     this.listeners.add(fn);
@@ -504,6 +749,7 @@ export class MachineChannel implements PipeOpener {
   private setStep(step: ConnectStep | null): void {
     if (this.step === step) return;
     this.step = step;
+    if (step) this.log("channel.step", { step: step.kind, city: step.kind === "relay" ? step.city : undefined });
     for (const fn of [...this.stepListeners]) fn(step);
   }
 
@@ -533,13 +779,17 @@ export class MachineChannel implements PipeOpener {
   }
 
   private setStatus(status: MachineStatus, error: string | null = null): void {
+    if (status !== this.status || error !== this.error) this.log("channel.status", { status, error: error ?? undefined }, status === "error" ? "warn" : undefined);
     this.status = status;
     this.error = error;
     for (const fn of this.listeners) fn(status);
   }
 
   open(kind: PipeKind, meta: PipeMeta): Pipe {
-    const pipe = new BridgePipe(kind, meta);
+    const pipe = new BridgePipe(kind, meta, () => {
+      this.pipesOpen = Math.max(0, this.pipesOpen - 1);
+    });
+    this.pipesOpen += 1;
     const head = encodeRequestHead({ method: meta.method ?? "GET", path: meta.path, headers: (meta.headers ?? []).slice(0, 48) });
     this.ensure().then(
       (driver) => pipe.attach(driver.open(kind, head)),
@@ -578,6 +828,7 @@ export class MachineChannel implements PipeOpener {
   close(): void {
     this.direct?.close();
     this.direct = null;
+    if (this.driver) closeRules.set(this.driver, "done");
     this.driver?.close(1000, "done");
     this.driver = null;
     this.responder = null;
@@ -605,18 +856,23 @@ export class MachineChannel implements PipeOpener {
         const old = this.driver;
         const oldDirect = this.direct;
         const oldOff = this.carrierOff;
+        const from = this.route;
+        this.log("path.switch", { why: "move", from: from ? routeName(from) : null, avoid: [...exclude].join(",") || undefined });
         const next = await this.openChannel(exclude);
+        this.log("path.switch", { why: "moved", from: from ? routeName(from) : null, to: routeName(next.route) });
         this.install(next);
         this.checkKey();
         // The old channel lives on a moment for what is in flight on it, then goes.
         setTimeout(() => {
           oldDirect?.close();
+          if (old) closeRules.set(old, "moved");
           old?.close(1000, "moved");
           oldOff?.();
         }, MOVE_GRACE_MS);
         return true;
       } catch (error) {
         console.warn("cloud: moving the channel:", error);
+        this.log("path.switch", { why: "move failed", ...errorFields(error) }, "warn");
         return false;
       } finally {
         this.moving = null;
@@ -664,7 +920,10 @@ export class MachineChannel implements PipeOpener {
     const presence = () => this.link.presence.get(this.machine);
     if (pool && !this.link.presenceFresh) {
       report({ kind: "presence" });
-      await this.link.waitPresence(PRESENCE_WAIT_MS);
+      const waitedAt = performance.now();
+      if (!(await this.link.waitPresence(PRESENCE_WAIT_MS))) {
+        this.log("timeout", { timer: "PRESENCE_WAIT_MS", limitMs: PRESENCE_WAIT_MS, elapsedMs: performance.now() - waitedAt, on: "hub", link: this.link.state }, "warn");
+      }
     }
     const hub = async (): Promise<Carried> => {
       if (this.link.carriesChannels) return { carrier: this.link, route: { kind: "hub" }, link: null };
@@ -680,6 +939,7 @@ export class MachineChannel implements PipeOpener {
     const via = () => presence()?.via.map((v) => v.relay) ?? [];
     const benched = again;
     let choice = pool.choose(this.machine, skip, new Set(via()), { benched });
+    this.logChoice(pool, choice, via(), skip, again ? "again" : "first");
     if (!choice) return hub();
     report({ kind: "relay", city: choice.relay.city });
     if (!via().includes(choice.relay.id)) {
@@ -697,12 +957,21 @@ export class MachineChannel implements PipeOpener {
       // (Not twice in one try: a second look does not wait again for a relay the first waited for.)
       const wait = waited.has(chosen) ? 0 : alone ? ATTACH_WAIT_ALONE_MS : ATTACH_WAIT_MS;
       waited.add(chosen);
+      const waitedAt = performance.now();
       if (!ticketed || !(await this.waitVia(chosen, wait))) {
+        if (ticketed && wait > 0) {
+          this.log(
+            "timeout",
+            { timer: alone ? "ATTACH_WAIT_ALONE_MS" : "ATTACH_WAIT_MS", limitMs: wait, elapsedMs: performance.now() - waitedAt, on: `relay:${chosen}` },
+            "warn",
+          );
+        }
         // A manual choice the machine is not on counts against it (three, and it gives way).
         if (choice.mode === "manual") pool.noteFailure(choice.relay.id, "the device is not on this relay");
         // The best relay the machine is already on.
         const on = new Set(via());
         const fallback = pool.choose(this.machine, new Set([...skip, ...dir.relays.filter((r) => !on.has(r.id)).map((r) => r.id)]), undefined, { benched });
+        this.logChoice(pool, fallback, via(), skip, "fallback");
         if (!fallback) return hub();
         choice = fallback;
         report({ kind: "relay", city: choice.relay.city });
@@ -722,6 +991,42 @@ export class MachineChannel implements PipeOpener {
       link,
       route: { kind: "relay", relay: choice.relay, mode: choice.mode, emergency: choice.emergency || pool.emergency(choice.relay.id) },
     };
+  }
+
+  /**
+   * The connection log's word on a relay choice (`pass`: the first look, the
+   * second, or the fallback to a relay the machine is on): what was chosen,
+   * and every listed relay with this device's round trip to it, the
+   * machine's, and whether the machine is on it, it is skipped or benched.
+   */
+  private logChoice(pool: RelayPool, choice: RelayChoice | null, on: readonly string[], skip: ReadonlySet<string>, pass: string): void {
+    try {
+      this.logChoiceNow(pool, choice, on, skip, pass);
+    } catch {
+      // the choice stands, logged or not
+    }
+  }
+
+  private logChoiceNow(pool: RelayPool, choice: RelayChoice | null, on: readonly string[], skip: ReadonlySet<string>, pass: string): void {
+    const dir = pool.directory;
+    const agent = dir?.agents[this.machine];
+    const candidates = (dir?.relays ?? [])
+      .map((r) => {
+        const mine = pool.rtt(r.id);
+        const theirs = agent?.[r.id];
+        const marks = [on.includes(r.id) ? "on" : "", skip.has(r.id) ? "skip" : "", pool.usable(r.id) ? "" : "benched", r.state === "up" ? "" : r.state].filter(Boolean).join("+");
+        return `${r.id}=${mine === null ? "-" : Math.round(mine)}/${theirs === undefined ? "-" : Math.round(theirs)}${marks ? `(${marks})` : ""}`;
+      })
+      .join(" ");
+    this.log("relay.choose", {
+      pass,
+      relay: choice?.relay.id ?? null,
+      mode: choice?.mode,
+      emergency: choice?.emergency,
+      score: choice?.score,
+      deviceOn: on.join(",") || null,
+      candidates: candidates || null,
+    });
   }
 
   /** Why no channel can open while the hub carries none: the agent is too old for relays, or no relay can carry it. */
@@ -772,6 +1077,17 @@ export class MachineChannel implements PipeOpener {
   /** Make `opened` the page's channel. */
   private install(opened: OpenedChannel): void {
     const { driver } = opened;
+    const route = opened.route;
+    this.log("channel.open", {
+      on: opened.logOn,
+      via: routeName(route),
+      mode: route.kind === "relay" ? route.mode : undefined,
+      emergency: route.kind === "relay" ? route.emergency === true : undefined,
+      handshakeMs: this.handshakeMs,
+      attempt: opened.attempt,
+      sinceLastCloseMs: this.lastCloseAt === null ? null : performance.now() - this.lastCloseAt,
+      paths: driver.hasPaths,
+    });
     this.driver = driver;
     this.direct = opened.direct;
     this.carrierOff = opened.off;
@@ -783,6 +1099,8 @@ export class MachineChannel implements PipeOpener {
     // After this turn: a listener asking at once opens its pipe on this channel, not inside `install`.
     queueMicrotask(() => {
       if (this.driver !== driver) return;
+      // Who asks again what was in flight on the channel before (the transport's `onReconnect`).
+      this.log("reconnect.replay", { on: opened.logOn, why: "channel open", listeners: this.openListeners.size });
       for (const fn of [...this.openListeners]) fn();
     });
   }
@@ -811,12 +1129,17 @@ export class MachineChannel implements PipeOpener {
       const queue = new FrameQueue();
       let routeTo = (f: Frame) => queue.push(f);
       const ch = carrier.reserve((f) => routeTo(f));
+      // The channel as the connection log names it: its carrier and its `ch` there.
+      const on = `ch:${relay ?? "hub"}/${ch}`;
+      this.log("channel.try", { attempt: attempt + 1, via: routeName(route), on });
       const started = performance.now();
       carrier.send({ type: "open", ch, peer: this.machine });
       const { initiator, message } = await startHandshake(chain, this.account.noiseKeys, this.account.deviceId, this.machine, Date.now(), utf8(CLIENT_INFO));
       carrier.send({ type: "data", ch, payload: message });
+      this.log("handshake.start", { on });
       const first = await queue.next(REPLY_TIMEOUT_MS);
       if (!first) {
+        this.log("timeout", { timer: "REPLY_TIMEOUT_MS", limitMs: REPLY_TIMEOUT_MS, elapsedMs: performance.now() - started, on });
         carrier.release(ch);
         if (!relay) throw new Error("the device did not answer");
         this.options.relays?.noteFailure(relay, "the device did not answer");
@@ -824,6 +1147,7 @@ export class MachineChannel implements PipeOpener {
         continue;
       }
       if (first.type === "close") {
+        this.log("handshake.fail", { on, code: first.code, reason: first.reason, ms: performance.now() - started });
         carrier.release(ch);
         if (first.code === AGENT_UNSAVED) {
           this.refuse({ kind: "unsaved" });
@@ -890,7 +1214,11 @@ export class MachineChannel implements PipeOpener {
         this.refusal = null;
         const features = serverFeatures(reply.server);
         const paths = features.includes(CLIENT_FEATURE);
+        this.log("handshake.done", { on, ms: this.handshakeMs, paths, direct: features.includes(DIRECT_FEATURE) });
         const driver = new ChannelDriver(ch, transport, "initiator", (f) => void carrier.send(f), Date.now, paths ? { paths: { probeRelay: true } } : {});
+        const openedAt = performance.now();
+        const offSample = connLog.addSampler(on, channelSampler(driver, () => this.pipesOpen));
+        driver.onpathevent = (event) => this.logPathEvent(on, driver, event);
         const take = (f: Frame) => {
           if (f.type === "close") this.ending.add(driver);
           driver.receive(f);
@@ -898,20 +1226,26 @@ export class MachineChannel implements PipeOpener {
         for (const f of queue.drain()) take(f);
         routeTo = take;
         let direct: DirectPaths | null = null;
-        const watchRelay = watchRelayPath(driver, relayLink);
+        // The connection log hears the rule's decisions: gone (the channel is closed), and slow but kept.
+        const watchRelay = watchRelayPath(driver, relayLink, (stats) => this.logRelaySilent(on, driver, stats));
+        const slowLog = this.relaySlowLogger(on);
         driver.onpaths = (stats) => {
           if (this.driver === driver) this.setPaths(stats);
+          slowLog(stats);
           watchRelay(stats);
         };
         const offGoaway = relayLink?.onGoaway(({ retryMs }) => {
           // The relay is draining: move before it closes.
           if (this.driver === driver && relay) void this.moveOff(driver, relay, retryMs);
         });
-        driver.onclose = () => {
+        driver.onclose = (code, reason, local) => {
           carrier.release(ch);
           offGoaway?.();
           direct?.close();
           if (this.direct === direct) this.direct = null;
+          // Logged once what the close must do is done (and it never throws), before the status it leads to.
+          offSample();
+          this.logClose(on, driver, { code, reason, local: local === true, openedAt, route });
           if (this.driver === driver) {
             this.driver = null;
             this.responder = null;
@@ -927,8 +1261,9 @@ export class MachineChannel implements PipeOpener {
           direct = this.directPathsFor(driver, { account: chain.account, device: this.account.deviceId, machine: this.machine });
         }
         if (relay) this.options.relays?.noteSuccess(relay);
-        return { driver, direct, route, off: () => offGoaway?.(), responder };
+        return { driver, direct, route, off: () => offGoaway?.(), responder, logOn: on, attempt: attempt + 1 };
       } catch (error) {
+        this.log("handshake.fail", { on, ...errorFields(error, "why"), refused: error instanceof HandshakeError && error.kind === "refused" });
         carrier.release(ch);
         if (error instanceof HandshakeError && error.kind === "refused") {
           this.lastRefusal = error.reply?.status === "stale" ? "stale" : "needEntries";
@@ -998,6 +1333,7 @@ export class MachineChannel implements PipeOpener {
     this.unwatchKey();
     this.carrierOff?.();
     this.carrierOff = null;
+    closeRules.set(driver, "key");
     driver.close(1000, "the device renewed its key");
     this.setPaths(null);
     this.setRoute(null);
@@ -1006,6 +1342,7 @@ export class MachineChannel implements PipeOpener {
 
   /** Note how this try was refused; a refusal by the hub or a relay is not the agent's `stale` any more. */
   private refuse(refusal: ChannelRefusal): void {
+    this.log("channel.refused", { kind: refusal.kind, by: refusal.kind === "notAccepted" ? refusal.by : "agent", why: refusal.kind === "notAccepted" ? refusal.why : null });
     this.refusal = refusal;
     this.refusedThisTry = true;
     if (refusal.kind !== "unconfirmed") this.lastRefusal = null;

@@ -21,6 +21,8 @@ import {
   ChannelDriver,
   DEFAULT_REKEY,
   type Frame,
+  type PathEvent,
+  type PathStats,
   generateDeviceKeys,
   Initiator,
   type NoiseKeyPair,
@@ -116,7 +118,7 @@ async function settle(drivers: ChannelDriver[]): Promise<void> {
  * A device's channel to an agent, as `MachineChannel` runs it (probing the hub
  * path, watched by `watchRelayPath`), over `down` (agent → device) and `up`.
  */
-async function slowChannel(t: TestContext, downBytesPerSec: number, upBytesPerSec: number) {
+async function slowChannel(t: TestContext, downBytesPerSec: number, upBytesPerSec: number, onGone?: (stats: PathStats) => void) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const clock = { now: 0 };
   const down = new Lane(downBytesPerSec);
@@ -132,7 +134,7 @@ async function slowChannel(t: TestContext, downBytesPerSec: number, upBytesPerSe
     /** Runs on every paths change, after the watch. */
     onpaths: null as (() => void) | null,
   };
-  const watch = watchRelayPath(device, { wake: () => void state.wakes++ });
+  const watch = watchRelayPath(device, { wake: () => void state.wakes++ }, onGone);
   device.onpaths = (stats) => {
     state.maxProbeAgeMs = Math.max(state.maxProbeAgeMs, stats.relayProbeAgeMs ?? 0);
     watch(stats);
@@ -227,6 +229,44 @@ test("a slow download whose relay dies is replaced within 15 s of the last thing
   assert.equal(c.state.wakes, 1, "and its relay link woken, once");
   const after = closed.atMs - c.down.lastArrivalMs;
   assert.ok(after >= RELAY_SILENT_MS && after <= GONE_WITHIN_MS, `replaced ${after} ms after the last frame`);
+});
+
+// The connection log hears the rule through the watch's hook: once, with the
+// numbers it judged by, before the close — and a hook that fails changes
+// nothing about the close. Each late probe is said once, however often the
+// paths are aged.
+test("the watch's hook hears the rule's decision once, with its numbers, before the close; a failing hook changes nothing", async (t) => {
+  for (const failing of [false, true]) {
+    const heard: { atMs: number; stats: PathStats }[] = [];
+    let clockNow = () => 0;
+    const c = await slowChannel(t, 30_000, 30_000, (stats) => {
+      heard.push({ atMs: clockNow(), stats });
+      if (failing) throw new Error("a log that fails");
+    });
+    clockNow = () => c.clock.now;
+    const late: Extract<PathEvent, { type: "late" }>[] = [];
+    c.device.onpathevent = (e) => {
+      if (e.type === "late") late.push(e);
+    };
+    download(c, 2, 640 * 1024);
+    await c.advance(20_000);
+    assert.deepEqual(heard, [], "slow is not gone: the hook is not told");
+    c.up.cut = c.down.cut = true;
+    c.up.lose();
+    c.down.lose();
+    await c.advance(60_000);
+    const closed = c.state.closed;
+    assert.ok(closed, "replaced");
+    assert.equal(closed.code, RELAY_PATH_GONE);
+    assert.equal(c.state.wakes, 1);
+    assert.equal(heard.length, 1, "told once");
+    assert.ok(heard[0]!.atMs <= closed.atMs, "before the close");
+    assert.ok(heard[0]!.stats.relayProbeAgeMs! >= RELAY_SILENT_MS && heard[0]!.stats.relayQuietMs! >= RELAY_SILENT_MS, "with the numbers the rule judged by");
+    assert.ok(late.length > 0, "late probes were said");
+    assert.equal(new Set(late.map((e) => e.nonce)).size, late.length, "each late probe once");
+    assert.ok(late.every((e) => e.ageMs >= 5_000), "and only once a whole probe interval old");
+    t.mock.timers.reset();
+  }
 });
 
 test("a download whose agent goes away while the relay drains a backlog is replaced within 15 s of the backlog's end", async (t) => {

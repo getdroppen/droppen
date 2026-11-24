@@ -21,6 +21,7 @@
  * Plain JSON over a WebSocket: nothing here needs a secure context, so a
  * phone at the computer's LAN address works the same.
  */
+import { connLog, errorFields } from "@/lib/connection-log";
 import { createStore, type Store, type WritableStore } from "@/lib/machines/store";
 import type { SocketLike } from "@/lib/transport/types";
 
@@ -222,17 +223,23 @@ export class GatewayLink {
   }
 
   private async connect(): Promise<void> {
+    const dialledAt = performance.now();
+    connLog.emit("gateway.connecting", { failures: this.failures });
     let url: string;
     try {
       url = await this.opts.socketUrl();
-    } catch {
+    } catch (error) {
+      connLog.emit("gateway.close", { stage: "ticket", ...errorFields(error) });
       return this.retry();
     }
     if (this.stopped) return;
     const socket = this.opts.openSocket(url);
     this.socket = socket;
+    let openedAt: number | null = null;
     socket.onopen = () => {
       if (this.socket !== socket) return;
+      openedAt = performance.now();
+      connLog.emit("gateway.open", { ms: openedAt - dialledAt, subs: this.subs.size });
       this.failures = 0;
       this.openStore.set(true);
       for (const [s, sub] of this.subs) {
@@ -253,8 +260,10 @@ export class GatewayLink {
       }
       this.take(message);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.socket !== socket) return;
+      const ev = (event ?? {}) as { code?: number; reason?: string; wasClean?: boolean };
+      connLog.emit("gateway.close", { code: ev.code ?? null, reason: ev.reason ?? "", clean: ev.wasClean ?? null, openMs: openedAt === null ? null : performance.now() - openedAt });
       this.drop();
       if (!this.stopped) this.retry();
     };
@@ -265,6 +274,7 @@ export class GatewayLink {
     const steps = this.opts.backoffMs ?? BACKOFF_MS;
     const wait = steps[Math.min(this.failures, steps.length - 1)] ?? 1000;
     this.failures += 1;
+    connLog.emit("gateway.retry", { waitMs: wait, failures: this.failures });
     if (this.failures % 3 === 0) this.opts.onTrouble?.();
     this.timer = setTimeout(() => {
       this.timer = undefined;

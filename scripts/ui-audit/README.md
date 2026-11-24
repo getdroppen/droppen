@@ -23,7 +23,7 @@ pnpm ui-audit --fixture devices   # only the devices page
 Options:
 
 - `--out <dir>` (default `/tmp/droppen-ui-audit-<date>`)
-- `--fixture settings|devices|agents|new-chat|cloud-bar|session-opening|no-copy|session-from-copy|welcome|desktop-app|updates|both` (default `both`)
+- `--fixture settings|devices|agents|new-chat|cloud-bar|connection-log|session-opening|no-copy|session-from-copy|welcome|desktop-app|updates|both` (default `both`)
 - `--theme light|dark|both`, `--viewport desktop|mobile|both`
 - `--channel chrome` — use a system Chrome instead of the bundled Chromium
 - `--url <url>` — measure a running page instead of the fixture (no target
@@ -85,6 +85,22 @@ countdown beside them whole. Outputs `cloud-bar-catch-up-<theme>-<viewport>.png`
 and `cloud-bar-catch-up-<lang>-…` for each other language, and, in English and
 zh-CN, one `cloud-bar-catch-up-<state>[-zh-CN]-…` per state with what is under
 the strip; each state's free space after the words is in `measurements.json`.
+
+The `connection-log` fixture (the connection log, `features/cloud/connection-log.tsx`,
+open over 「这台设备」's rows with a weak network's few minutes in it, the page
+before a reload first, on a fixed clock) adds, in English, zh-CN, zh-TW and
+ja: the shared dialog widened for a log and inside the viewport with its 16px
+margin at either width; the segmented views at 32px, their words whole and
+word for word; the three actions at 28px, whole and inside the dialog (the
+toolbar wraps on a phone); every line mono at 11px, wrapping inside the list
+with no sideways scroll, scrolled to the newest line; each page of the log
+under a line of its own; square corners and no drop shadow; colour only on a
+level marked as a signal (the neutral tokens, the ink included, are not
+colour); and, closed (`&view=setting`), the row under 「这台设备」 on the
+direct-connection row's edges with its 28px action (36px on touch). Outputs
+`connection-log[-<lang>]-<theme>-<viewport>.png` and
+`connection-log-setting-<theme>-<viewport>.png`. The cloud-bar fixture draws
+the strip's connection-log icon (from 640 px up) and the path card's link.
 
 The `session-opening` fixture (a session being opened with nothing to show
 yet, `features/sessions/session-opening.tsx`: connecting, waiting for the
