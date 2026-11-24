@@ -65,6 +65,9 @@ import { NO_PROGRESS, type StreamProgress } from "@/lib/hub/streams";
 import { setCurrentShell } from "@/lib/machines/registry";
 import type { AppShell, MachineInfo } from "@/lib/machines/runtime";
 import { DeviceRow, type DeviceRowView } from "@/features/cloud/device-row";
+import { A2aStepView } from "@/features/cloud/add-a2a-proxy";
+import { AddChooser } from "@/features/cloud/devices";
+import { generateA2aEnrollCode } from "@/lib/e2e";
 import LandingPage from "@/features/landing/landing";
 import { SectionHead } from "@/features/cloud/ui";
 import type { AcpAgentInfo } from "@/features/sessions/acp-agent";
@@ -191,13 +194,21 @@ const device = (over: Partial<DeviceRowView>): DeviceRowView => ({
   accept: null,
   ...over,
 });
-// Two cards carry two badges each: this device and a host, and a host that is the main device.
+// Two cards carry two badges each: this device and a host, and a host that is the main device. An A2A proxy carries its own.
 const devicesFixture: DeviceRowView[] = [
   device({ id: "m-1", name: "kilerd's Mac mini", self: true, kind: "computer", host: true, presence: "online", path: { relay: "sin-1", rttMs: 32 } }),
-  device({ id: "m-2", name: "MacBook Pro", kind: "computer", host: true, main: true, presence: "online", path: { relay: "sin-2", rttMs: 74 } }),
+  device({ id: "m-2", name: "MacBook Pro", kind: "computer", host: true, main: true, presence: "online", path: { relay: "sin-2", rttMs: 74 }, a2aProxies: ["d-a2a1"] }),
   device({ id: "m-3", name: "macbook-air", kind: "computer", host: true, presence: "offline", copyAsOf: Date.now() - 3_600_000 }),
   device({ id: "d-1", name: "iPhone · Safari", presence: "online" }),
+  device({ id: "d-a2a1", name: "A2A proxy a2a1", kind: "a2a", a2aHosts: ["m-2"] }),
   device({ id: "d-2", status: "pending" }),
+];
+
+// 「添加 A2A 代理」: the chooser's row across, the code step and the step that picks the devices (docs/a2a.md §7.2).
+const a2aCode = generateA2aEnrollCode(new Uint8Array(16).fill(7));
+const a2aHostChoices = [
+  { id: "m-1", name: "kilerd's Mac mini" },
+  { id: "m-2", name: "MacBook Pro" },
 ];
 
 function DevicesFixture() {
@@ -213,11 +224,23 @@ function DevicesFixture() {
         className="mt-4 grid grid-cols-1 gap-2.5 px-4 @min-[44rem]/devices:grid-cols-[repeat(auto-fill,minmax(20rem,1fr))] @min-[44rem]/devices:gap-3"
       >
         {devicesFixture.map((view) => (
-          <DeviceRow key={view.id} view={view} viewerAdmin upgraded writable onOpen={noop} onRemove={noop} onHost={noop} onControl={noop} onRename={noop} onTerminal={noop} onResend={noop} onOpenSession={noop} onReEnroll={noop} onDismissReEnroll={noop} onWarnAgain={noop} onRenew={noop} onRenewCode={noop} onEndPause={noop} onRenewRetry={noop} onAddComputer={noop}>
+          <DeviceRow key={view.id} view={view} viewerAdmin upgraded writable onOpen={noop} onRemove={noop} onHost={noop} onControl={noop} onRename={noop} onTerminal={noop} onResend={noop} onOpenSession={noop} onReEnroll={noop} onDismissReEnroll={noop} onWarnAgain={noop} onRenew={noop} onRenewCode={noop} onEndPause={noop} onRenewRetry={noop} onAddComputer={noop} onA2aAccept={noop}>
             {view.id === "m-1" ? <div className="border-t border-border px-4 py-3 text-xs text-muted">The renewal panel lives here; it makes this card taller than its neighbours.</div> : null}
           </DeviceRow>
         ))}
       </ul>
+      <section data-testid="audit-a2a" className="mt-8 flex flex-col gap-6">
+        <AddChooser onPick={noop} onCancel={noop} />
+        <A2aStepView state={{ kind: "waiting", code: a2aCode, deadline: 1_000_000 + 9 * 60_000 }} now={1_000_000} hosts={a2aHostChoices} onCheck={noop} onAdd={noop} onNewCode={noop} onDone={noop} />
+        <A2aStepView
+          state={{ kind: "choose", claim: { code: a2aCode, device: "d-a2a1", signKey: new Uint8Array(32), dhKey: new Uint8Array(32) }, pasted: "" }}
+          hosts={a2aHostChoices}
+          onCheck={noop}
+          onAdd={noop}
+          onNewCode={noop}
+          onDone={noop}
+        />
+      </section>
     </div>
   );
 }

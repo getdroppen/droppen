@@ -1,12 +1,12 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeftIcon, ArrowRightIcon, CaretRightIcon, CircleNotchIcon, DevicesIcon, HardDrivesIcon, KeyIcon, PlusIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, ArrowRightIcon, CaretRightIcon, CircleNotchIcon, DevicesIcon, HardDrivesIcon, KeyIcon, PlugsConnectedIcon, PlusIcon } from "@phosphor-icons/react";
 import { osLabel, versionLabel } from "@/features/machines/device-facts";
 import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { needsYou, recentSessions } from "@/features/machines/needs-you";
 import { NeedsYouLedger } from "@/features/machines/needs-you-ledger";
 import { type DeviceRecord, hex } from "@/lib/e2e";
-import { type CloudAccount, deviceFingerprint, hasRunAi, hostsExposedBy, limitedDevice, type ReEnrollLine, type RotationReport } from "@/lib/hub/account";
+import { a2aHostsOf, type CloudAccount, deviceFingerprint, hasRunAi, hostsExposedBy, limitedDevice, type ReEnrollLine, type RotationReport } from "@/lib/hub/account";
 import { chainV3Writable } from "@/lib/hub/api";
 import { hubOrigin } from "@/lib/hub/config";
 import type { MachineKeyCourier } from "@/lib/hub/deliver";
@@ -19,6 +19,7 @@ import type { MachineInfo } from "@/lib/machines/runtime";
 import { useStore } from "@/lib/machines/store";
 import { cn } from "@/lib/cn";
 import { copyWarning, offlineSince, retentionOf } from "@/lib/hub/plan";
+import { A2aAcceptPanel, AddA2aProxy, type HostChoice } from "./add-a2a-proxy";
 import { AddComputer, NewDeviceReady } from "./add-computer";
 import { useAgentKeyState, usePresenceVersion, useShellCopies } from "./context";
 import { DeviceRow, type DeviceRowView, shortDeviceId } from "./device-row";
@@ -104,6 +105,10 @@ export type Section =
   | { kind: "addBrowser" }
   /** The 「添加可运行 AI 的设备」 guide; `code`: opened on its one-time code (a device with no browser). */
   | { kind: "addComputer"; code?: boolean }
+  /** 「添加 A2A 代理」 (docs/a2a.md §7.2). */
+  | { kind: "addA2a" }
+  /** Which devices take A2A proxy `proxy`'s calls, changed from its row. */
+  | { kind: "a2aAccept"; proxy: string }
   | { kind: "remove"; device: string }
   /** Making a limited device a full device: confirmed first (§3.7). */
   | { kind: "grant"; device: string }
@@ -243,7 +248,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   }, [asked, account]);
   // Just signed up — the chain read, this a full device, no device that runs AI in it: the first-run card, and 「更多设置」 folded.
   const noHostYet = chain != null && viewerAdmin && hostIds.length === 0;
-  const adding = section.kind === "add" || section.kind === "addBrowser" || section.kind === "addComputer";
+  const adding = section.kind === "add" || section.kind === "addBrowser" || section.kind === "addComputer" || section.kind === "addA2a";
   const cardNow = noHostYet && !adding;
   // The card goes once a device that runs AI joins: said, once, as the guide says it (the guide, open, says it itself).
   const [cardUp, setCardUp] = useState(cardNow);
@@ -311,9 +316,16 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
       fingerprint: prints.get(id) ?? "",
       // A device that runs AI goes by its own name; a browser or phone by what the hub made of its User-Agent (only its words: `uaLabelOf`).
       // One waiting for approval gets none: a device coming back with the recovery words chose its own User-Agent (`deviceName`).
-      name: d.host ? shownName(id, statuses.get(id) ?? null) : d.status.type === "pending" ? null : (uaLabelOf(seenDevice?.uaLabel) ?? (self ? ownLabel() : null)),
+      // An A2A proxy goes by what it is (it has no browser): "A2A proxy aaaa…".
+      name: d.host
+        ? shownName(id, statuses.get(id) ?? null)
+        : d.status.type === "pending"
+          ? null
+          : d.a2a
+            ? t("A2A proxy {{id}}", { id: shortDeviceId(id) })
+            : (uaLabelOf(seenDevice?.uaLabel) ?? (self ? ownLabel() : null)),
       self,
-      kind: d.host || ranAi ? "computer" : self ? (phone ? "phone" : "browser") : "browserOrPhone",
+      kind: d.a2a ? "a2a" : d.host || ranAi ? "computer" : self ? (phone ? "phone" : "browser") : "browserOrPhone",
       status: d.status.type,
       host,
       stoppedHost: !d.host && d.status.type === "active" && ranAi,
@@ -325,6 +337,9 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
       lastSeenMs: lastSeen.length ? Math.max(...lastSeen) : null,
       limited,
       accept: d.host && chain ? chain.acceptPolicy(id) : null,
+      // A2A (docs/a2a.md §7): whom a host takes A2A calls from, and who takes an A2A proxy's.
+      a2aProxies: d.host && chain ? (chain.a2aAccept?.(id) ?? []) : undefined,
+      a2aHosts: d.a2a && chain ? a2aHostsOf(chain, id).sort() : undefined,
       reEnroll: d.host ? reEnroll.get(id) : undefined,
       a2aExposed: d.host ? [...(a2aExposed.get(id)?.keys() ?? [])].sort() : undefined,
       renewal: d.host && renewals ? renewals.status(id) : undefined,
@@ -374,6 +389,8 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
     : null;
   const selfRecord = devices.find((d) => d.info.id === account.deviceId);
   const selfName = selfRecord ? view(selfRecord).name : ownLabel();
+  // The devices that run AI an A2A proxy's calls may go to, by the names the list shows.
+  const hostChoices: HostChoice[] = hostIds.map((h) => ({ id: h, name: shownName(h, statuses.get(h) ?? null) ?? null }));
 
   const row = (d: DeviceRecord) => {
     const v = view(d);
@@ -405,6 +422,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
         onRenewCode={renewals ? () => setSection({ kind: "renew", device: id, fixed: true }) : undefined}
         onRenewRetry={renewals ? () => void run(() => renewals.renew(id, { assurance: 0 })) : undefined}
         onAddComputer={() => setSection({ kind: "addComputer" })}
+        onA2aAccept={d.a2a ? () => setSection(section.kind === "a2aAccept" && section.proxy === id ? { kind: "list" } : { kind: "a2aAccept", proxy: id }) : undefined}
         onEndPause={(op) => setSection({ kind: "endPause", device: id, op })}
         onOpen={v.host ? () => open(id) : undefined}
         onOpenSession={v.host ? (s) => openAt(id, sessionPath(s.source, s.id)) : undefined}
@@ -483,7 +501,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
             paused={chain.pausedEdges?.(id) ?? []}
             declaresPolicy={me?.view?.machines.find((m) => m.id === id)?.readsV3}
             candidates={devices
-              .filter((x) => x.status.type === "active" && !x.admin && x.info.id !== id)
+              .filter((x) => x.status.type === "active" && !x.admin && !x.a2a && x.info.id !== id)
               .map((x) => ({ id: x.info.id, host: x.host, limited: limitedDevice({ viewer: account.deviceId, viewerAdmin, device: x, upgraded, ranAi: hasRunAi(chain, x) }) !== null }))}
             upgraded={upgraded}
             mustRenew={mustRenew}
@@ -508,6 +526,37 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
                       recovery: uk?.recovery ?? false,
                       machines: [{ machine: id, mkEpoch: change.mkEpoch, result: change.result }],
                       hostKeysTo: change.hostKeysTo ?? [],
+                    },
+                  });
+                }
+                setSection({ kind: "list" });
+              })
+            }
+          />
+        )}
+        {section.kind === "a2aAccept" && section.proxy === id && chain && (
+          <A2aAcceptPanel
+            proxy={id}
+            hosts={hostChoices}
+            accepted={a2aHostsOf(chain, id).sort()}
+            busy={busy}
+            onCancel={() => setSection({ kind: "list" })}
+            onSave={(picked) =>
+              void run(async () => {
+                // A device taken off gets its next content key in the same change (the courier hands it over).
+                const change = await account.setA2aHosts(id, picked, courier());
+                if (change.narrowed.length) {
+                  const uk = change.narrowed.find((n) => n.userKey)?.userKey;
+                  setDone({
+                    title: t("{{ids}} have a new content key", { ids: change.narrowed.map((n) => n.host).join(", ") }),
+                    report: {
+                      ukEpoch: uk?.epoch ?? null,
+                      sealedTo: uk?.sealedTo ?? [],
+                      failedTo: uk?.failedTo ?? [],
+                      failedWhy: uk?.failedWhy ?? {},
+                      recovery: uk?.recovery ?? false,
+                      machines: change.narrowed.map((n) => ({ machine: n.host, mkEpoch: n.mkEpoch, result: n.result })),
+                      hostKeysTo: [...new Set(change.narrowed.flatMap((n) => n.hostKeysTo ?? []))],
                     },
                   });
                 }
@@ -604,6 +653,12 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
             pairWith={pairWith}
             initialMode={section.code ? "code" : "guide"}
           />
+        </section>
+      )}
+      {section.kind === "addA2a" && (
+        <section data-testid="add-a2a-section">
+          <AddHead title={t("add an A2A proxy")} onBack={() => setSection({ kind: "add" })} />
+          <AddA2aProxy account={account} link={link} hosts={hostChoices} onDone={() => setSection({ kind: "list" })} />
         </section>
       )}
       {firstRun && <FirstHostCard onGuide={() => setSection({ kind: "addComputer" })} onCode={() => setSection({ kind: "addComputer", code: true })} pairWith={pairWith} />}
@@ -716,12 +771,23 @@ function AddHead({ title, onBack }: { title: string; onBack: () => void }) {
   );
 }
 
-/** 「添加设备」: a browser or phone (paired from here), or a device that runs AI (its guide). */
-export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" | "addComputer") => void; onCancel: () => void }) {
+/**
+ * 「添加设备」: a browser or phone (paired from here), or a device that runs AI
+ * (its guide) — the two cells — and below them, across, an A2A proxy (docs/a2a.md
+ * §7.2), which few accounts need.
+ */
+export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" | "addComputer" | "addA2a") => void; onCancel: () => void }) {
   const { t } = useTranslation();
   const choices = [
     { kind: "addBrowser" as const, testId: "add-browser", Icon: DevicesIcon, title: t("a browser or phone"), body: t("Sign in to this account on it, then scan its QR code, paste its text or type the code it shows.") },
     { kind: "addComputer" as const, testId: "add-computer", Icon: HardDrivesIcon, title: t("a device that runs AI"), body: t("The device your AI CLIs run on, with Droppen installed: your sessions run there, and you open it from here.") },
+    {
+      kind: "addA2a" as const,
+      testId: "add-a2a",
+      Icon: PlugsConnectedIcon,
+      title: t("an A2A proxy"),
+      body: t("For an A2A client that cannot reach your devices, such as a service in the cloud: it starts sessions on the devices that take its calls, and controls nothing else."),
+    },
   ];
   return (
     <section data-testid="add-chooser">
@@ -738,7 +804,10 @@ export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" |
             type="button"
             data-testid={testId}
             onClick={() => onPick(kind)}
-            className="group flex items-start gap-3 border-border px-6 py-4 text-left first:border-r hover:bg-hover max-md:px-4 max-md:first:border-r-0 max-md:first:border-b"
+            className={cn(
+              "group flex items-start gap-3 border-border px-6 py-4 text-left first:border-r hover:bg-hover max-md:px-4 max-md:first:border-r-0 max-md:first:border-b",
+              kind === "addA2a" && "col-span-2 border-t max-md:col-span-1",
+            )}
           >
             <Icon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted group-hover:text-fg" />
             <span className="flex min-w-0 flex-1 flex-col gap-1">
