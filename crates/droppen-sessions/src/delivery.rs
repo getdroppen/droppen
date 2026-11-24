@@ -7,7 +7,7 @@
 //! `provider::questions`) build on sessions, so the shapes live here and
 //! the stores fill them in.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use gotcha::Schematic;
 use serde::{Deserialize, Serialize};
@@ -132,8 +132,10 @@ pub struct SessionQuestion {
     /// Where it is in its life.
     pub state: QuestionState,
     /// What was chosen, keyed by the exact question text; multi-select answers
-    /// are joined with `", "`. `null` until answered.
-    pub answers: Nullable<HashMap<String, String>>,
+    /// are joined with `", "`. `null` until answered. Ordered, so that the same
+    /// answers always serialise to the same bytes: a session's feed resends its
+    /// state whenever those bytes change.
+    pub answers: Nullable<BTreeMap<String, String>>,
     /// Free text sent with the answer, or instead of one.
     pub response: Nullable<String>,
     /// Who answered or dismissed it, when the server knows; `null` with
