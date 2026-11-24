@@ -52,6 +52,18 @@
       "pattern": "^[0-9a-f]{32}$",
       "description": "16 bytes"
     },
+    "enrollmentKind": {
+      "enum": [
+        "machine",
+        "a2a"
+      ],
+      "description": "What claims an enrollment code: machine, a computer that runs AI (an RH1- code); a2a, an A2A proxy (a DA1- code, docs/a2a.md §7.2). POST /v1/enrollments takes it as machine when absent; any other value is 400 bad_request"
+    },
+    "enrollmentClaims": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many times a socket claimed the code (enroll naming its token) while it was live, refused claims included (one of the wrong kind, or after another took it). More than 1: someone else holds the code too, and the page that adds an A2A proxy aborts. Absent from hubs before A2A proxies"
+    },
     "hex32": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
@@ -2665,8 +2677,8 @@
                 "string",
                 "null"
               ],
-              "pattern": "^[a-z][a-z0-9-]{0,31}$",
-              "description": "What the device is, e.g. \"aggregator\" (a computer's limited device). Metadata only."
+              "pattern": "^(?!a2a$)[a-z][a-z0-9-]{0,31}$",
+              "description": "What the device is, e.g. \"aggregator\" (a computer's limited device). Metadata only. Never \"a2a\" (400 bad_request): only an A2A proxy's enrollment makes such a row."
             },
             "host": {
               "type": [
@@ -2764,10 +2776,7 @@
               "$ref": "#/$defs/hex16"
             },
             "kind": {
-              "enum": [
-                "a2a"
-              ],
-              "description": "An A2A proxy's `DA1-` code (docs/a2a.md §7.2): counted against `devices.max`, claimed only as `kind: \"a2a\"`, its claimer a `devices` row of that kind. Absent: a code for a device that runs AI."
+              "$ref": "#/$defs/enrollmentKind"
             }
           }
         },
@@ -2779,6 +2788,10 @@
           "properties": {
             "expires_ms": {
               "$ref": "#/$defs/ms"
+            },
+            "kind": {
+              "$ref": "#/$defs/enrollmentKind",
+              "description": "What the hub took the code as. Absent from hubs before A2A proxies, which take every code as a computer's: a page that adds an A2A proxy goes no further there"
             }
           }
         }
@@ -2803,11 +2816,19 @@
                 },
                 "expires_ms": {
                   "$ref": "#/$defs/ms"
+                },
+                "kind": {
+                  "$ref": "#/$defs/enrollmentKind",
+                  "description": "As registered. Absent from hubs before A2A proxies"
+                },
+                "claims": {
+                  "$ref": "#/$defs/enrollmentClaims"
                 }
               }
             },
             {
               "type": "object",
+              "description": "A computer's code, proved: what its agent claimed it with",
               "required": [
                 "state",
                 "machine",
@@ -2820,11 +2841,23 @@
                 "state": {
                   "const": "proved"
                 },
+                "expires_ms": {
+                  "$ref": "#/$defs/ms",
+                  "description": "Absent from hubs before A2A proxies"
+                },
+                "kind": {
+                  "const": "machine",
+                  "description": "Absent from hubs before A2A proxies"
+                },
+                "claims": {
+                  "$ref": "#/$defs/enrollmentClaims"
+                },
                 "machine": {
                   "$ref": "#/$defs/id"
                 },
                 "device": {
-                  "$ref": "#/$defs/id"
+                  "$ref": "#/$defs/id",
+                  "description": "The device that registered the code"
                 },
                 "sign_key": {
                   "$ref": "#/$defs/hex32"
@@ -2839,26 +2872,38 @@
             },
             {
               "type": "object",
-              "description": "An A2A proxy's code, proved (docs/a2a.md §7.2).",
+              "description": "An A2A proxy's code, proved: the device its claim was given and the keys of the device row the claim made. No machine. The page checks proof against the code itself (the A2A label rh/v1 enroll-proof a2a, A2aEnrollCode::verify_proof): the hub never holds the code's secret",
               "required": [
                 "state",
+                "expires_ms",
                 "kind",
+                "claims",
+                "a2a_device",
                 "device",
                 "sign_key",
                 "dh_key",
-                "proof",
-                "claims"
+                "proof"
               ],
               "properties": {
                 "state": {
                   "const": "proved"
                 },
+                "expires_ms": {
+                  "$ref": "#/$defs/ms"
+                },
                 "kind": {
                   "const": "a2a"
                 },
+                "claims": {
+                  "$ref": "#/$defs/enrollmentClaims"
+                },
+                "a2a_device": {
+                  "$ref": "#/$defs/id",
+                  "description": "The device id the claim was given: the A2A proxy"
+                },
                 "device": {
                   "$ref": "#/$defs/id",
-                  "description": "The id the hub assigned the A2A proxy (`enroll_assigned`)."
+                  "description": "The device that registered the code"
                 },
                 "sign_key": {
                   "$ref": "#/$defs/hex32"
@@ -2868,14 +2913,6 @@
                 },
                 "proof": {
                   "$ref": "#/$defs/hex32"
-                },
-                "claims": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "description": "How many `enroll` messages named this token while it was waiting or proved, assigned or refused, the one that proved it included. The page adds nothing unless it is 1."
-                },
-                "expires_ms": {
-                  "$ref": "#/$defs/ms"
                 }
               }
             }
