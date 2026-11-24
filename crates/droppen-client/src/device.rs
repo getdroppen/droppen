@@ -35,7 +35,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use droppen_proto::chain::{ChainClock, ChainError, ChainState};
+use droppen_proto::chain::{ChainClock, ChainError, ChainState, Entry};
 use droppen_proto::mux::StreamClass;
 
 use crate::channel::{attempt, Attempt, Hello, HostChannel};
@@ -152,31 +152,101 @@ impl StandaloneDevice {
             if entries.is_empty() {
                 return Ok(moved);
             }
-            let advanced = self.chain.lock().expect("chain").advance(&entries).map_err(Failure::Other)?;
-            moved |= advanced.applied > 0;
-            match advanced.error {
-                // Another branch: an entry where this view has another, the
-                // next one linked to an entry this view does not have, or
-                // another account or genesis than the pins.
-                Some(
-                    e @ (ChainError::Fork { .. }
-                    | ChainError::BrokenLink { .. }
-                    | ChainError::Rollback { .. }
-                    | ChainError::GenesisMismatch
-                    | ChainError::PinMismatch
-                    | ChainError::WrongAccount { .. }),
-                ) => {
-                    tracing::error!(error = %e, "the hub served a device chain that conflicts with this device's view");
-                    return Err(Failure::Chain(format!("the hub served a chain that conflicts with this device's: {e}")));
-                }
-                Some(e) => {
-                    tracing::warn!(error = %e, "refused chain entries from the hub");
-                    return Ok(moved);
-                }
-                None => {}
-            }
-            if advanced.applied == 0 || head.is_none_or(|h| self.chain_seq().is_some_and(|s| s >= h)) {
+            let (applied, complete) = self.take_from_hub(&entries)?;
+            moved |= applied > 0;
+            if !complete || applied == 0 || head.is_none_or(|h| self.chain_seq().is_some_and(|s| s >= h)) {
                 return Ok(moved);
+            }
+        }
+    }
+
+    /// Verify `entries` the hub served into the view (kept): how many took,
+    /// and whether all of them did. A conflict with the view is
+    /// [`Failure::Chain`]; an entry the rules refuse stops the batch there.
+    fn take_from_hub(&self, entries: &[Entry]) -> Result<(usize, bool), Failure> {
+        let advanced = self.chain.lock().expect("chain").advance(entries).map_err(Failure::Other)?;
+        match advanced.error {
+            // Another branch: an entry where this view has another, the
+            // next one linked to an entry this view does not have, or
+            // another account or genesis than the pins.
+            Some(
+                e @ (ChainError::Fork { .. }
+                | ChainError::BrokenLink { .. }
+                | ChainError::Rollback { .. }
+                | ChainError::GenesisMismatch
+                | ChainError::PinMismatch
+                | ChainError::WrongAccount { .. }),
+            ) => {
+                tracing::error!(error = %e, "the hub served a device chain that conflicts with this device's view");
+                Err(Failure::Chain(format!("the hub served a chain that conflicts with this device's: {e}")))
+            }
+            Some(e) => {
+                tracing::warn!(error = %e, "refused chain entries from the hub");
+                Ok((advanced.applied, false))
+            }
+            None => Ok((advanced.applied, true)),
+        }
+    }
+
+    /// Follow the account's chain until `until`, asked of the view as it
+    /// stands, says (first before anything is fetched): on the hub's
+    /// `/v1/client` — a `chain_sub` from past the view, each `CHAIN` frame
+    /// verified into it as it comes — and, whenever that socket cannot be
+    /// had or goes, `GET /v1/chain`, then again after `poll`. What a device
+    /// that has just joined waits on: the chain naming it. A conflicting
+    /// chain, or the hub saying the device is removed, ends the watch.
+    pub async fn watch_chain<R>(&self, poll: Duration, mut until: impl FnMut(Option<&ChainState>) -> Option<R>) -> Result<R, Failure> {
+        loop {
+            if let Some(done) = self.with_chain(&mut until) {
+                return Ok(done);
+            }
+            match self.follow_on_client(&mut until).await {
+                Ok(Some(done)) => return Ok(done),
+                Ok(None) => {}
+                Err(failure @ (Failure::Chain(_) | Failure::Removed(_))) => return Err(failure),
+                Err(failure) => tracing::info!(%failure, "cannot follow the device chain on the hub's socket now; asking over HTTP"),
+            }
+            match self.sync_chain().await {
+                Ok(_) => {}
+                Err(failure @ (Failure::Chain(_) | Failure::Removed(_))) => return Err(failure),
+                Err(failure) => tracing::warn!(%failure, "could not sync the device chain"),
+            }
+            if let Some(done) = self.with_chain(&mut until) {
+                return Ok(done);
+            }
+            tokio::time::sleep(poll).await;
+        }
+    }
+
+    /// [`StandaloneDevice::watch_chain`] on one `/v1/client` connection:
+    /// `None` once it closed.
+    async fn follow_on_client<R>(&self, until: &mut impl FnMut(Option<&ChainState>) -> Option<R>) -> Result<Option<R>, Failure> {
+        let token = self.hub.session_token().await?;
+        let identity = &self.identity;
+        let link = crate::link::connect_device(self.hub.hub(), &identity.account, &identity.device, identity.sign_key(), &token)
+            .await
+            .map_err(|e| match e {
+                crate::link::ConnectError::Refused { code, answer } if code == "removed" || code == "device_removed" => Failure::Removed(answer),
+                other => Failure::Offline(format!("the hub's /v1/client: {other}")),
+            })?;
+        let from = self.chain_seq().map_or(0, |s| s + 1);
+        link.send_json(&serde_json::json!({"t": "chain_sub", "from": from}))
+            .map_err(Failure::Offline)?;
+        loop {
+            match link.next_chain(Duration::from_secs(30)).await {
+                Some(batch) => {
+                    let entries = batch
+                        .iter()
+                        .map(|e| Entry::decode(e))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| Failure::Chain(format!("the hub sent an entry that does not decode: {e}")))?;
+                    self.take_from_hub(&entries)?;
+                    if let Some(done) = self.with_chain(&mut *until) {
+                        return Ok(Some(done));
+                    }
+                }
+                None if link.is_closed() => return Ok(None),
+                None => {}
             }
         }
     }
@@ -228,7 +298,7 @@ impl StandaloneDevice {
     }
 
     /// Keep what a handshake reply taught the view.
-    fn learn(&self, entries: &[droppen_proto::chain::Entry]) {
+    fn learn(&self, entries: &[Entry]) {
         if entries.is_empty() {
             return;
         }

@@ -1,6 +1,8 @@
 //! The proxy's HTTP side (`docs/a2a.md` §7.4).
 //!
-//! Every request but `GET /healthz` must carry the proxy's token
+//! `GET /healthz` answers anyone `{"status": "up", "enrolled": …}`: up, and
+//! whether the proxy has joined its account (until it has, every A2A request
+//! is answered 503, "not ready"). Every other request must carry the proxy's token
 //! (`Authorization: Bearer <DROPPEN_A2A_PROXY_TOKEN>`), compared in constant
 //! time through a SHA-256 of each side; without it, the same 401 for every
 //! path. A route ([`crate::route`]) goes to its device as an `rpc` pipe: the
@@ -27,7 +29,7 @@
 //! the failure). Never a body, a header's value or the token.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -44,7 +46,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::card;
-use crate::errors::{jsonrpc_id, not_found, unauthenticated, Code, ProxyError};
+use crate::errors::{json_response, jsonrpc_id, not_found, unauthenticated, Code, ProxyError};
 use crate::route::{Binding, Route};
 use crate::upstream::Upstream;
 
@@ -82,7 +84,9 @@ const DROPPED: [&str; 9] = [
 
 /// The proxy: where requests go, and what it checks.
 pub struct Proxy {
-    upstream: Arc<dyn Upstream>,
+    /// Set once the proxy's device is in its account; until then every A2A
+    /// request is answered "not ready" (503).
+    upstream: OnceLock<Arc<dyn Upstream>>,
     /// SHA-256 of the token.
     token: [u8; 32],
     public_base: Option<String>,
@@ -91,12 +95,30 @@ pub struct Proxy {
 
 impl Proxy {
     pub fn new(upstream: Arc<dyn Upstream>, token: &str, public_base: Option<String>, aliases: BTreeMap<String, String>) -> Proxy {
+        let proxy = Proxy::waiting(token, public_base, aliases);
+        proxy.ready(upstream);
+        proxy
+    }
+
+    /// A proxy whose device is not in its account yet: it answers its
+    /// health, and every A2A request with "not ready", until [`Proxy::ready`].
+    pub fn waiting(token: &str, public_base: Option<String>, aliases: BTreeMap<String, String>) -> Proxy {
         Proxy {
-            upstream,
+            upstream: OnceLock::new(),
             token: Sha256::digest(token.as_bytes()).into(),
             public_base,
             aliases,
         }
+    }
+
+    /// Requests go to `upstream` from now on.
+    pub fn ready(&self, upstream: Arc<dyn Upstream>) {
+        let _ = self.upstream.set(upstream);
+    }
+
+    /// Whether its device is in its account (and requests go through).
+    pub fn is_ready(&self) -> bool {
+        self.upstream.get().is_some()
     }
 
     /// Whether `headers` carry the token (`Bearer`, any case).
@@ -129,7 +151,17 @@ impl Proxy {
 
 /// The proxy's routes.
 pub fn router(proxy: Arc<Proxy>) -> Router {
-    Router::new().route("/healthz", get(|| async { "ok" })).fallback(handle).with_state(proxy)
+    Router::new().route("/healthz", get(health)).fallback(handle).with_state(proxy)
+}
+
+/// `GET /healthz`, with no token: that the proxy is up, and whether it has
+/// joined its account (`enrolled`) — nothing else.
+async fn health(State(proxy): State<Arc<Proxy>>) -> Response {
+    json_response(
+        StatusCode::OK,
+        &serde_json::json!({"status": "up", "enrolled": proxy.is_ready()}),
+        "application/json",
+    )
 }
 
 async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
@@ -139,6 +171,10 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
     let uri = request.uri().clone();
     let Some(route) = Route::parse(uri.path(), uri.query()) else {
         return not_found();
+    };
+    let Some(upstream) = proxy.upstream.get().cloned() else {
+        tracing::info!(device = %route.device, entry = %route.entry, "an A2A request before the proxy joined its account");
+        return ProxyError::not_ready().response(route.binding, &Value::Null);
     };
     let host = proxy.aliases.get(&route.device).cloned().unwrap_or_else(|| route.device.clone());
     let method = request.method().clone();
@@ -164,7 +200,7 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
     } else {
         Value::Null
     };
-    if let Err(code) = proxy.upstream.admits(&host).await {
+    if let Err(code) = upstream.admits(&host).await {
         log(&code.as_str());
         return ProxyError::new(code).response(route.binding, &id);
     }
@@ -174,19 +210,19 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
         headers,
         body: body.to_vec(),
     };
-    let answer = match proxy.upstream.call(&host, call).await {
+    let answer = match upstream.call(&host, call).await {
         Ok(answer) => answer,
-        Err(failure) => return failed(&proxy, &host, &route, &failure, &id, &log).await,
+        Err(failure) => return failed(upstream.as_ref(), &host, &route, &failure, &id, &log).await,
     };
     let status = answer.status;
     let mut body = answer.body;
     if status == 412 {
         let buffered = match collect(&mut body, MAX_REFUSAL).await {
             Ok(buffered) => buffered,
-            Err(failure) => return failed(&proxy, &host, &route, &failure, &id, &log).await,
+            Err(failure) => return failed(upstream.as_ref(), &host, &route, &failure, &id, &log).await,
         };
         if let Some(failure) = refusal_of(status, &buffered) {
-            return failed(&proxy, &host, &route, &failure, &id, &log).await;
+            return failed(upstream.as_ref(), &host, &route, &failure, &id, &log).await;
         }
         log(&status);
         return respond(status, &answer.headers, false, Body::from(buffered));
@@ -194,7 +230,7 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
     if route.binding == Binding::Card && status == 200 {
         let buffered = match collect(&mut body, MAX_CARD).await {
             Ok(buffered) => buffered,
-            Err(failure) => return failed(&proxy, &host, &route, &failure, &id, &log).await,
+            Err(failure) => return failed(upstream.as_ref(), &host, &route, &failure, &id, &log).await,
         };
         let Ok(mut card) = serde_json::from_slice::<Value>(&buffered) else {
             log(&"the device's card is not JSON");
@@ -215,8 +251,15 @@ async fn handle(State(proxy): State<Arc<Proxy>>, request: Request) -> Response {
 }
 
 /// The proxy's own answer to a failed call: the code judged by its chain.
-async fn failed(proxy: &Proxy, host: &str, route: &Route, failure: &Failure, id: &Value, log: &impl Fn(&dyn std::fmt::Display)) -> Response {
-    let error = match proxy.upstream.judge(host, failure).await {
+async fn failed(
+    upstream: &dyn Upstream,
+    host: &str,
+    route: &Route,
+    failure: &Failure,
+    id: &Value,
+    log: &impl Fn(&dyn std::fmt::Display),
+) -> Response {
+    let error = match upstream.judge(host, failure).await {
         Some(code) => ProxyError::new(code),
         None => ProxyError::internal(format!("the proxy could not reach the device: {failure}")),
     };

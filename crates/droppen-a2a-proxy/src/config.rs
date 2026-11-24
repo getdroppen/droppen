@@ -6,7 +6,7 @@
 //! | `DROPPEN_HUB` | the hub (default `https://api.droppen.app`, Droppen's); a bare host means `https://` |
 //! | `DROPPEN_A2A_PROXY_TOKEN` | required: the Bearer token A2A clients present (at least 32 characters; `openssl rand -hex 32`) |
 //! | `PORT` | where to listen (default 8080, on every address) |
-//! | `DROPPEN_ENROLL_CODE` | the first start only: the code that joins the proxy to an account (`RH1`, `kind: "a2a"`) — not in this version yet |
+//! | `DROPPEN_ENROLL_CODE` | the first start only: the `DA1-` code from my.droppen.app that joins the proxy to an account ([`crate::enroll`]); on this service alone, and removed once it has joined |
 //! | `DROPPEN_A2A_PROXY_BASE` | optional: the proxy's own base as clients reach it (`https://a2a.example`), for the Agent Card's addresses; unset, the request's `Host` over `http` |
 //! | `DROPPEN_A2A_PROXY_ALIASES` | optional: `name=device,…`, names to reach devices by in `/a2a/<device>/…` besides their ids |
 //! | `RUST_LOG` | the log filter (default `info`) |
@@ -74,10 +74,7 @@ impl Config {
                 "DROPPEN_A2A_PROXY_TOKEN must be at least {MIN_TOKEN} printable characters with no spaces (e.g. `openssl rand -hex 32`)"
             ));
         }
-        let port = match var("PORT") {
-            Some(p) => p.parse::<u16>().map_err(|_| format!("PORT is not a port: {p}"))?,
-            None => DEFAULT_PORT,
-        };
+        let port = port(var("PORT"))?;
         let public_base = var("DROPPEN_A2A_PROXY_BASE").map(|b| base_url(&b)).transpose()?;
         let aliases = var("DROPPEN_A2A_PROXY_ALIASES").map(|a| aliases(&a)).transpose()?.unwrap_or_default();
         Ok(Config {
@@ -91,6 +88,19 @@ impl Config {
                 .map(|c| Zeroizing::new(c.trim().to_string()))
                 .filter(|c| !c.is_empty()),
         })
+    }
+}
+
+/// The port the proxy listens on, from this process' `PORT` (default 8080):
+/// what its health check dials.
+pub fn port_from_env() -> Result<u16, String> {
+    port(std::env::var("PORT").ok().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()))
+}
+
+fn port(value: Option<String>) -> Result<u16, String> {
+    match value {
+        Some(p) => p.parse::<u16>().map_err(|_| format!("PORT is not a port: {p}")),
+        None => Ok(DEFAULT_PORT),
     }
 }
 

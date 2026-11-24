@@ -498,3 +498,27 @@ async fn a_host_that_stopped_accepting_the_device_is_a_refusal_for_its_chain_to_
     let refusals = stand.agent.outcomes().iter().filter(|o| o.starts_with("refused")).count();
     assert_eq!(refusals, 2, "{:?}", stand.agent.outcomes());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wss_relay_is_dialled_at_its_checked_address_and_its_certificate_verified() {
+    let mut config = StandConfig::new(echo());
+    config.tls = true;
+    let stand = Stand::with(config).await;
+    assert!(stand.relay.origin.starts_with("wss://127.0.0.1:"), "{}", stand.relay.origin);
+    let response = stand.device.rpc(HOST, Stand::get("/a2a/over-tls")).await.unwrap();
+    assert_eq!(response.status, 200);
+    let body: Value = serde_json::from_slice(&response.body.read_to_end(1 << 20).await.unwrap()).unwrap();
+    assert_eq!(body["path"], "/a2a/over-tls");
+    // A device that does not trust the test CA (the web PKI roots only)
+    // does not take the relay's certificate: no connection, nothing sent.
+    let mut options = device_options();
+    options.relays.tls = None;
+    let stranger = device_in(&scratch("tls-stranger"), &stand.hub, &stand.account, options);
+    stranger.sync_chain().await.unwrap();
+    let failure = stranger.rpc(HOST, Stand::get("/a2a/x")).await.unwrap_err();
+    assert!(
+        matches!(&failure, Failure::Offline(why) if why.contains("certificate") || why.contains("UnknownIssuer")),
+        "{failure:?}"
+    );
+    assert_eq!(stand.agent.outcomes(), ["open"]);
+}

@@ -30,10 +30,13 @@
 //! - [`channel`]: one end-to-end channel to a host, opened through a relay;
 //! - [`rpc`]: HTTP requests over a channel's pipes, answers streamed;
 //! - [`failure`]: why a request did not get through, sorted;
-//! - [`device`]: all of it together ([`device::StandaloneDevice`]).
+//! - [`device`]: all of it together ([`device::StandaloneDevice`]);
+//! - [`enroll`]: claiming an enrollment code at the hub, as an A2A proxy
+//!   joins its account.
 
 pub mod channel;
 pub mod device;
+pub mod enroll;
 pub mod failure;
 pub mod files;
 pub mod follow;

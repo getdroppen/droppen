@@ -63,10 +63,15 @@ pub enum Command {
     SessionShim(droppen_provider::shim::SessionShimArgs),
 }
 
-/// `a2a-proxy` takes no arguments: its configuration is the environment
+/// `a2a-proxy`'s one flag: its configuration is the environment
 /// (`droppen_a2a_proxy::config`), as a container's is.
 #[derive(Debug, Default, PartialEq, Eq, Args)]
-pub struct A2aProxyArgs {}
+pub struct A2aProxyArgs {
+    /// Check the running proxy's health on this computer (`GET /healthz` on
+    /// `PORT`) and exit 0 when it answers: the container's health check.
+    #[arg(long)]
+    pub health: bool,
+}
 
 /// Arguments a command takes and ignores.
 #[derive(Debug, Default, PartialEq, Eq, Args)]
@@ -184,6 +189,10 @@ impl Command {
             Command::Agent(args) => args.run().await.map_err(GotchaError::message),
             // The A2A proxy: a device of its own, not an instance — it reads
             // its environment and serves until stopped.
+            Command::A2aProxy(args) if args.health => {
+                let port = droppen_a2a_proxy::config::port_from_env().map_err(GotchaError::message)?;
+                droppen_a2a_proxy::check_health(port).map_err(GotchaError::message)
+            }
             Command::A2aProxy(_) => {
                 let config = droppen_a2a_proxy::Config::from_env().map_err(GotchaError::message)?;
                 droppen_a2a_proxy::run(config, droppen_http::SERVER_VERSION)
@@ -234,7 +243,7 @@ USAGE:
     remote-hand-server open [--print] [--instance <name>]
     remote-hand-server setup-code [--instance <name>]
     remote-hand-server agent enroll <code>|- --hub <url> | run | status [--instance <name>]
-    remote-hand-server a2a-proxy
+    remote-hand-server a2a-proxy [--health]
     remote-hand-server plugin list | enable <id> | disable <id> | verify <id>
                               | export <id> [--out <file>]
                               | import <id> [<file>] [--replace]
@@ -306,6 +315,7 @@ e.g. APP_SERVER__PORT=9000, APP_HOME_DIR=/tmp/fake-home.";
 const A2A_PROXY_USAGE: &str = "\
 USAGE:
     remote-hand-server a2a-proxy
+    remote-hand-server a2a-proxy --health
 
 The A2A proxy (docs/a2a.md section 7): an a2a device of your Droppen account,
 for A2A clients that cannot reach your devices themselves (a service in the
@@ -315,6 +325,11 @@ carries each over an end-to-end channel, through a relay that sees only
 ciphertext, to that device's own A2A server. The device decides what it
 serves: its A2A entries, and which a2a devices they let in.
 
+On its first start the proxy claims the code, keeps its new identity in
+DROPPEN_DATA_DIR and logs its fingerprint: paste it into the page, which adds
+the proxy to the account only if it matches. The proxy waits until its own
+verified device chain names it, then carries requests.
+
 Configuration, from the environment:
     DROPPEN_DATA_DIR          required: a persistent volume (the proxy's keys
                               and its verified device chain, mode 0600)
@@ -322,13 +337,19 @@ Configuration, from the environment:
                               least 32 characters (openssl rand -hex 32)
     DROPPEN_HUB               the hub (default https://api.droppen.app)
     PORT                      where to listen (default 8080)
-    DROPPEN_ENROLL_CODE       the first start only: the code that joins the
-                              proxy to your account (not in this version yet);
-                              remove it once the proxy has joined
+    DROPPEN_ENROLL_CODE       the first start only: the DA1- code from
+                              my.droppen.app (Add an A2A proxy) that joins the
+                              proxy to your account; set it on this service
+                              alone, and remove it once the proxy has joined
     DROPPEN_A2A_PROXY_BASE    optional: the proxy's own address for the Agent
                               Card (default: the request's Host, over http)
     DROPPEN_A2A_PROXY_ALIASES optional: name=device,... names for devices
-    RUST_LOG                  the log filter (default info)";
+    RUST_LOG                  the log filter (default info)
+
+GET /healthz answers without a token: the proxy is up, and whether it has
+joined its account. `--health` asks it on this computer and exits 0 when it
+answers (the container image's HEALTHCHECK). docs/a2a-proxy.md says how to
+deploy it.";
 
 
 #[cfg(test)]
