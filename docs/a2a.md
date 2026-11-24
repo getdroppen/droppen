@@ -24,7 +24,7 @@
 
 | 路由 | 用途 |
 |---|---|
-| `GET /a2a/agents/{entry}/.well-known/agent-card.json` | Agent Card（要鉴权：不让未授权的人知道有哪些入口；无权和不存在都回 404） |
+| `GET /a2a/agents/{entry}/.well-known/agent-card.json` | Agent Card（要鉴权，不让未授权的人知道有哪些入口：没有 token 或 token 无效一律 401，与入口是否存在无关；token 有效但入口不存在或不在它的作用域里，一律 404） |
 | `POST /a2a/agents/{entry}/jsonrpc`（也接受结尾 `/`） | JSON-RPC 绑定 |
 | `/a2a/agents/{entry}/rest/…` | HTTP+JSON 绑定：`message:send`、`message:stream`、`tasks`、`tasks/{id}`、`tasks/{id}:cancel`、`tasks/{id}:subscribe`（GET 与 POST 都接受）、`tasks/{id}/pushNotificationConfigs[/{configId}]` |
 
@@ -130,6 +130,7 @@
 | `droppen.quota_exceeded` | 超过 §5 的每调用方限额（排队数、每天新 context 数、push 配置数、请求体大小） |
 | `droppen.revoked` | 调用方的 token 被吊销、被移出入口的 `allowedDevices`，或入口停用（task 被取消时状态消息里也带它） |
 | `droppen.context_closed` | 入口的 source、目录、账号、权限模式或隔离方式改了，旧 context 已关闭；追问要开新 context |
+| `droppen.context_not_found` | `contextId` 不存在或不属于这个调用方（两者回同样的错误；JSON-RPC 是 -32602） |
 | `droppen.push_origin_not_allowed` | 请求里的 push 配置不在入口的 `pushOrigins` 里（整个请求被拒，客户端可以去掉 push 配置重发） |
 
 ## 4. 存储
