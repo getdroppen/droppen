@@ -29,8 +29,8 @@ use droppen_client::verified::VerifiedChain;
 use droppen_client::{hex, now_ms};
 use droppen_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead};
 use droppen_proto::chain::{
-    genesis3_draft, machine_key_commit, user_key_commit, Accept, Action, Attestation, ChainClock, ChainState, DeviceV3, Entry, Flags, KeyCommit,
-    KeyCommits, Signer,
+    genesis3_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainState, DeviceV3, Entry, Flags, KeyCommit, KeyCommits,
+    Signer,
 };
 use droppen_proto::channel::Session;
 use droppen_proto::driver::{Channel, Incoming, StreamEvent, StreamWriter};
@@ -85,8 +85,8 @@ impl Account {
     }
 
     /// Genesis (the admin), user key epoch 0, the host with its first
-    /// machine key epoch, the device under test (no flags), and the host
-    /// accepting it.
+    /// machine key epoch, the device under test (an A2A proxy: the a2a flag
+    /// alone), and the host taking A2A calls from it (`SetA2aAccept`).
     pub fn new() -> Account {
         let ak = SigningKey::from_bytes(&[9; 32]);
         let (admin, admin_dh) = keys(1);
@@ -148,11 +148,11 @@ impl Account {
             id: PROXY.into(),
             sign_key: proxy.verifying_key().to_bytes(),
             dh_key: proxy_dh.public(),
-            flags: Flags::NONE,
+            flags: Flags::A2A_DEVICE,
         })]);
-        account.append(vec![Action::SetAccept {
+        account.append(vec![Action::SetA2aAccept {
             host: HOST.into(),
-            from: Accept::Devices(vec![PROXY.into()]),
+            devices: vec![PROXY.into()],
         }]);
         account
     }
@@ -398,10 +398,12 @@ async fn tickets(State(state): State<Arc<Mutex<HubState>>>, Json(body): Json<Val
     }
     let mut clock = ChainClock::history();
     let chain = ChainState::verify(&st.entries, None, &mut clock).unwrap();
-    let peers = st
-        .peers
-        .clone()
-        .unwrap_or_else(|| chain.hosts_admitting(PROXY).map(|d| d.info.id.clone()).collect());
+    // The hosts the chain lets the device reach: an A2A proxy's by
+    // `may_call_a2a`, any other device's by `may_control`.
+    let peers = st.peers.clone().unwrap_or_else(|| match chain.a2a_device(PROXY) {
+        Some(_) => chain.hosts_accepting_a2a(PROXY).map(|d| d.info.id.clone()).collect(),
+        None => chain.hosts_admitting(PROXY).map(|d| d.info.id.clone()).collect(),
+    });
     let mut out = Vec::new();
     for relay in body["relays"].as_array().into_iter().flatten().filter_map(Value::as_str) {
         let Some((_, origin)) = st.relays.iter().find(|(id, _)| id == relay).cloned() else {
@@ -680,7 +682,9 @@ impl TestAgent {
                 reason: reason.into(),
             });
         };
-        match handshake::accept(side, device, hello, now_ms()) {
+        // An agent that serves A2A proxies: one it takes A2A calls from gets
+        // in as `A2aOnly`, any other device by `may_control`.
+        match handshake::accept_with_a2a(side, device, hello, now_ms()) {
             Ok(Accepted::Open { reply, transport, .. }) => {
                 st.outcomes.push("open".into());
                 let _ = out.send(Frame::Data { ch, payload: reply });

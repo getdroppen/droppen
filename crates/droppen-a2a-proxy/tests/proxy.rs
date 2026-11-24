@@ -17,7 +17,7 @@ use droppen_a2a_proxy::server::Proxy;
 use droppen_a2a_proxy::upstream::{classify, Answer, DeviceUpstream, Upstream};
 use droppen_client::failure::{Failure, Refuser};
 use droppen_client::rpc::RpcRequest;
-use droppen_proto::chain::{Accept, Action};
+use droppen_proto::chain::Action;
 use futures_util::future::BoxFuture;
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -507,9 +507,9 @@ async fn end_to_end_each_failure_is_judged_by_the_proxys_own_chain() {
     assert_eq!(ok.status(), 200);
     stand.append(
         vec![
-            Action::SetAccept {
+            Action::SetA2aAccept {
                 host: support::HOST.into(),
-                from: Accept::Admins,
+                devices: Vec::new(),
             },
             support::Account::host_key(1),
         ],

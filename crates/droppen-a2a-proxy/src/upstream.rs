@@ -38,24 +38,22 @@ pub trait Upstream: Send + Sync + 'static {
     fn judge<'a>(&'a self, host: &'a str, failure: &'a Failure) -> BoxFuture<'a, Option<Code>>;
 }
 
-/// Whether device `me` may call `host`'s A2A server, by `chain`.
-///
-/// Chain v3's a2a devices and `SetA2aAccept` are another lane's (M2a:
-/// `ChainState::may_call_a2a`); until they land this asks `may_control` —
-/// what admits a device that is no admin to a host today, through the host's
-/// `SetAccept`. Switch here, and only here, once `may_call_a2a` exists: an
-/// a2a device is never one `may_control` admits.
+/// Whether device `me` may call `host`'s A2A server, by `chain`: `me` is a
+/// current A2A proxy (the a2a flag) and `host` a current host that takes A2A
+/// calls from it (`SetA2aAccept`, [`ChainState::may_call_a2a`]).
 pub fn may_call(chain: &ChainState, me: &str, host: &str) -> bool {
-    chain.may_control(me, host).is_ok()
+    chain.may_call_a2a(me, host).is_ok()
 }
 
 /// Where device `me` stands for `host` on `chain`: removed (no current
-/// device of the account), not accepted, or fine.
+/// device of the account), not an A2A proxy or not accepted by the host
+/// (`not_accepted` either way: nothing this device sends is an A2A call),
+/// or fine.
 pub fn standing(chain: &ChainState, me: &str, host: &str) -> Result<(), Code> {
     if chain.device(me).is_none() {
         return Err(Code::DeviceRemoved);
     }
-    if !may_call(chain, me, host) {
+    if chain.a2a_device(me).is_none() || !may_call(chain, me, host) {
         return Err(Code::NotAccepted);
     }
     Ok(())
