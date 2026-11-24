@@ -21,11 +21,14 @@ import test, { type TestContext } from "node:test";
 import {
   ChannelDriver,
   DEFAULT_REKEY,
+  DIRECT_TIMEOUT_MAX_MS,
   DIRECT_TIMEOUT_MS,
   type DirectLink,
   type Frame,
   generateDeviceKeys,
   Initiator,
+  LOAD_FACTOR,
+  MAX_PAYLOAD_LEN,
   type NoiseKeyPair,
   RELAY_SILENT_MS,
   Responder,
@@ -272,15 +275,23 @@ test("once the direct path goes, a hub path that has been silent all along is go
   c.kill("relay");
   await c.advance(35_000);
   assert.equal(c.state.closed, null, "kept while the direct path carries");
-  // Then the direct path goes dark: let go after DIRECT_TIMEOUT_MS of silence, and the channel with it.
+  // Then the direct path goes dark: let go after DIRECT_TIMEOUT_MS of silence —
+  // stretched by the message the download may have had on its way, at the
+  // link's rate (`directDeadline`) — and the channel with it.
   c.kill("direct");
   await c.advance(60_000);
   const released = c.state.directReleasedAtMs;
   const closed = c.state.closed;
   assert.ok(released !== null, "the direct path was let go");
-  assert.ok(released - c.down.lastArrivalMs <= DIRECT_TIMEOUT_MS + 2 * STEP_MS, `after ${released - c.down.lastArrivalMs} ms of silence`);
+  const silentMs = released - c.down.lastArrivalMs;
+  const oneMessageMs = (LOAD_FACTOR * MAX_PAYLOAD_LEN) / (80_000 / 1000);
+  assert.ok(silentMs > DIRECT_TIMEOUT_MS, `the download in flight stretched the deadline: after ${silentMs} ms of silence`);
+  assert.ok(silentMs <= DIRECT_TIMEOUT_MS + 1.25 * oneMessageMs + 2 * STEP_MS, `by about one message at the link's rate (${oneMessageMs} ms): after ${silentMs} ms of silence`);
+  assert.ok(silentMs <= DIRECT_TIMEOUT_MAX_MS + 2 * STEP_MS);
   assert.ok(closed, "replaced");
   assert.equal(closed.code, RELAY_PATH_GONE);
+  // At once: the direct path's probes, seconds late behind the download, keep
+  // to their own share (`MAX_PROBES` a path) and leave the hub's oldest be.
   assert.ok(closed.atMs - released <= STEP_MS, `replaced ${closed.atMs - released} ms after the direct path went`);
 });
 

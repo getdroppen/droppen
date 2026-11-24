@@ -182,6 +182,37 @@ function channelQuietMs(driver: ChannelDriver): number {
   return driver.diagnostics().lastRxAgoMs ?? Number.POSITIVE_INFINITY;
 }
 
+/**
+ * The connection log's `timeout` for a direct path given up on a deadline
+ * (`null` for any other way it went): which, after how long, and what the
+ * deadline was made of — the limit it came to, its floor and what the load
+ * added, the bytes that stood ahead and the rate they were timed at (whole
+ * bytes a second; `rateMeasured`: false while the path had shown none and
+ * `ASSUMED_BYTES_PER_MS` stood in), the round trip, and which bulk was
+ * reckoned with. Numbers and flags only.
+ */
+export function directTimeoutFields(on: string, event: Extract<PathEvent, { type: "directDown" }>): ConnFields | null {
+  if (!event.timer) return null;
+  const d = event.deadline;
+  const load = event.load;
+  return {
+    timer: event.timer,
+    limitMs: d?.limitMs ?? (event.timer === "DIRECT_TIMEOUT_MS" ? DIRECT_TIMEOUT_MS : UNACKED_TIMEOUT_MS),
+    elapsedMs: event.elapsedMs,
+    floorMs: d?.floorMs,
+    loadMs: d?.loadMs,
+    aheadBytes: d?.aheadBytes,
+    rateBytesPerSec: d ? Math.round(d.bytesPerMs * 1000) : undefined,
+    rateMeasured: load ? load.bytesPerMs !== null : undefined,
+    unackedBytes: load?.unackedBytes ?? event.unackedBytes,
+    rttMs: load?.rttMs,
+    relayBulkSent: load?.relayBulkSent,
+    relayBulkReceived: load?.relayBulkReceived,
+    directBulkReceived: load?.directBulkReceived,
+    on: `${on}.direct`,
+  };
+}
+
 /** A relay's close for a refused `OPEN`: not a machine this ticket names (`droppen-relay-core/src/route.rs`). */
 const RELAY_FORBIDDEN = 4403;
 /** The hub's closes for a refused `OPEN` (`droppen-relay-core/src/route.rs`, as the hub runs it). */
@@ -736,7 +767,8 @@ export class MachineChannel implements PipeOpener {
         return;
       case "directDown": {
         const stats = driver.paths;
-        if (event.timer) this.log("timeout", { timer: event.timer, limitMs: event.timer === "DIRECT_TIMEOUT_MS" ? DIRECT_TIMEOUT_MS : UNACKED_TIMEOUT_MS, elapsedMs: event.elapsedMs, on: `${on}.direct` });
+        const timeout = directTimeoutFields(on, event);
+        if (timeout) this.log("timeout", timeout);
         this.log("path.switch", {
           on,
           to: "carrier",
@@ -749,6 +781,12 @@ export class MachineChannel implements PipeOpener {
         }, event.reason === "closed" ? "info" : "warn");
         return;
       }
+      case "peerDown":
+        // The agent let the direct path go after this page had: its
+        // DataChannel's closing came first (`direct.down … why="the data
+        // channel closed"`), and this is the agent's reason for it.
+        this.log("path.peerDown", { on, cause: event.reason }, event.reason === "closed" ? "info" : "warn");
+        return;
     }
   }
 

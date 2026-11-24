@@ -6345,6 +6345,522 @@
     }
   },
   "path": {
+    "deadlines": {
+      "constants": {
+        "unackedTimeoutMs": 1500,
+        "directTimeoutMs": 3500,
+        "directTimeoutMaxMs": 8000,
+        "rateSampleBytes": 16384,
+        "assumedBytesPerMs": 64.0,
+        "bulkRecentMs": 2000,
+        "loadFactor": 2.0,
+        "rateDecayMs": 30000,
+        "relayBulkAheadMaxMs": 10000
+      },
+      "cases": [
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 0,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 0,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 1500.0,
+            "floorMs": 1500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": 47.7,
+            "unackedBytes": 0,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": 47.7,
+            "unackedBytes": 0,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 1500.0,
+            "floorMs": 1500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": 485.8,
+            "unackedBytes": 9,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": 485.8,
+            "unackedBytes": 9,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 4858.28125,
+            "floorMs": 4858.0,
+            "loadMs": 0.28125,
+            "aheadBytes": 9,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": 81.8,
+            "unackedBytes": 48,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": 81.8,
+            "unackedBytes": 48,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 1501.5,
+            "floorMs": 1500.0,
+            "loadMs": 1.5,
+            "aheadBytes": 48,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 300000,
+            "bytesPerMs": 125.0,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 125.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 300000,
+            "bytesPerMs": 125.0,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 6300.0,
+            "floorMs": 1500.0,
+            "loadMs": 4800.0,
+            "aheadBytes": 300000,
+            "bytesPerMs": 125.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 614400,
+            "bytesPerMs": 41.666666666666664,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 41.666666666666664
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 614400,
+            "bytesPerMs": 41.666666666666664,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 8000.0,
+            "floorMs": 1500.0,
+            "loadMs": 29491.2,
+            "aheadBytes": 614400,
+            "bytesPerMs": 41.666666666666664
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 200000,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 200000,
+            "bytesPerMs": null,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 7750.0,
+            "floorMs": 1500.0,
+            "loadMs": 6250.0,
+            "aheadBytes": 200000,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": 47.7,
+            "unackedBytes": 132,
+            "bytesPerMs": 77.09411764705882,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": true
+          },
+          "deadline": {
+            "limitMs": 5199.974057683504,
+            "floorMs": 3500.0,
+            "loadMs": 1699.9740576835038,
+            "aheadBytes": 65529,
+            "bytesPerMs": 77.09411764705882
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": 47.7,
+            "unackedBytes": 132,
+            "bytesPerMs": 77.09411764705882,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": true
+          },
+          "deadline": {
+            "limitMs": 5203.39844346101,
+            "floorMs": 3500.0,
+            "loadMs": 1703.3984434610102,
+            "aheadBytes": 65661,
+            "bytesPerMs": 77.09411764705882
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 48,
+            "bytesPerMs": 1250.0,
+            "relayBulkSent": false,
+            "relayBulkReceived": true,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 4338.8608,
+            "floorMs": 3500.0,
+            "loadMs": 838.8608,
+            "aheadBytes": 524288,
+            "bytesPerMs": 1250.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 48,
+            "bytesPerMs": 1250.0,
+            "relayBulkSent": false,
+            "relayBulkReceived": true,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 4338.9376,
+            "floorMs": 3500.0,
+            "loadMs": 838.9376,
+            "aheadBytes": 524336,
+            "bytesPerMs": 1250.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 65536,
+            "bytesPerMs": 12500.0,
+            "relayBulkSent": true,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 12500.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 65536,
+            "bytesPerMs": 12500.0,
+            "relayBulkSent": true,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 1594.37184,
+            "floorMs": 1500.0,
+            "loadMs": 94.37184,
+            "aheadBytes": 589824,
+            "bytesPerMs": 12500.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 4194304,
+            "bytesPerMs": 12500.0,
+            "relayBulkSent": true,
+            "relayBulkReceived": true,
+            "directBulkReceived": true
+          },
+          "deadline": {
+            "limitMs": 3594.37072,
+            "floorMs": 3500.0,
+            "loadMs": 94.37072,
+            "aheadBytes": 589817,
+            "bytesPerMs": 12500.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": null,
+            "unackedBytes": 4194304,
+            "bytesPerMs": 12500.0,
+            "relayBulkSent": true,
+            "relayBulkReceived": true,
+            "directBulkReceived": true
+          },
+          "deadline": {
+            "limitMs": 4265.45936,
+            "floorMs": 3500.0,
+            "loadMs": 765.45936,
+            "aheadBytes": 4784121,
+            "bytesPerMs": 12500.0
+          }
+        },
+        {
+          "timer": "DIRECT_TIMEOUT_MS",
+          "load": {
+            "rttMs": 1208.4,
+            "unackedBytes": 25,
+            "bytesPerMs": 0.0,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 3500.0,
+            "floorMs": 3500.0,
+            "loadMs": 0.0,
+            "aheadBytes": 0,
+            "bytesPerMs": 64.0
+          }
+        },
+        {
+          "timer": "UNACKED_TIMEOUT_MS",
+          "load": {
+            "rttMs": 1208.4,
+            "unackedBytes": 25,
+            "bytesPerMs": 0.0,
+            "relayBulkSent": false,
+            "relayBulkReceived": false,
+            "directBulkReceived": false
+          },
+          "deadline": {
+            "limitMs": 8000.0,
+            "floorMs": 12084.0,
+            "loadMs": 0.78125,
+            "aheadBytes": 25,
+            "bytesPerMs": 64.0
+          }
+        }
+      ],
+      "rates": [
+        {
+          "rate": null,
+          "sample": 100.0,
+          "next": 100.0
+        },
+        {
+          "rate": 100.0,
+          "sample": 40.0,
+          "next": 70.0
+        },
+        {
+          "rate": 70.0,
+          "sample": 120.0,
+          "next": 82.5
+        },
+        {
+          "rate": 82.5,
+          "sample": 61.0,
+          "next": 71.75
+        },
+        {
+          "rate": 71.75,
+          "sample": 33.333333333333336,
+          "next": 52.54166666666667
+        },
+        {
+          "rate": 52.54166666666667,
+          "sample": 1000.0,
+          "next": 289.40625
+        },
+        {
+          "rate": 289.40625,
+          "sample": 999.9,
+          "next": 467.0296875
+        }
+      ],
+      "decays": [
+        {
+          "rate": 1064.0,
+          "ageMs": 0.0,
+          "decayed": 1064.0
+        },
+        {
+          "rate": 1064.0,
+          "ageMs": 30000.0,
+          "decayed": 564.0
+        },
+        {
+          "rate": 4.0,
+          "ageMs": 30000.0,
+          "decayed": 34.0
+        },
+        {
+          "rate": 12500.0,
+          "ageMs": 7777.7,
+          "decayed": 9939.667391079924
+        },
+        {
+          "rate": 33.3,
+          "ageMs": 600000.0,
+          "decayed": 62.53809523809524
+        },
+        {
+          "rate": 90.0,
+          "ageMs": -1.0,
+          "decayed": 90.0
+        }
+      ]
+    },
     "feature": "paths/1",
     "signalPath": "/rh/direct",
     "envelopeHeader": 17,
