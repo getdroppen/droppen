@@ -108,8 +108,11 @@ pub struct PathStats {
     /// `relayProbeAgeMs` / `relayQuietMs` (`web/src/lib/e2e/channel.ts`), so
     /// the two halves of the protocol keep the same stats the same way and
     /// the ported tests pin both. Only the page acts on them (it replaces a
-    /// channel whose hub path is gone, `relayPathGone`); the agent never
-    /// probes the hub path, and a headless device only reports them.
+    /// channel whose hub path is gone, `relayPathGone`, and not while a direct
+    /// path carries the channel: that judgment also reads how long since
+    /// anything came in either way, which only the page's driver keeps); the
+    /// agent never probes the hub path, and a headless device only reports
+    /// them, so nothing here mirrors the judgment.
     pub relay_probe_age_ms: Option<f64>,
     /// How long nothing had arrived on the hub path at that same moment
     /// (`None` with no probe out): a slow path keeps delivering, a gone one
