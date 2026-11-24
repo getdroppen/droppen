@@ -18,8 +18,10 @@
 // hub and is retried; paths that keep dying young are retried only on the
 // backoff — not on a network change, and not afresh on the next channel —
 // until one lives, and one given up under load (a deadline ran out, or the
-// agent closed its DataChannel with the peer connection up) waits no longer
-// than the congestion ceiling; closing the channel closes everything.
+// agent closed its DataChannel with the peer connection up, while it carried
+// bulk) waits no longer than the congestion ceiling, for a few in a row —
+// one that died idle backs off as ever; closing the channel closes
+// everything.
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import {
@@ -52,7 +54,9 @@ import {
   utf8,
 } from "../src/lib/e2e/index.js";
 import {
+  CONGESTED_RUN_LIMIT,
   type DataChannelLike,
+  DIRECT_TIMING,
   type DirectEnv,
   type DirectHandshake,
   DirectHistory,
@@ -61,8 +65,10 @@ import {
   hubOnly,
   onHubOnly,
   type PeerLike,
+  RETRY_FIRST_MS,
   setHubOnly,
   SHORT_LIVED_LIMIT,
+  STABLE_MS,
   STUN_SERVERS,
 } from "../src/lib/transport/p2p.js";
 import { connLog } from "../src/lib/connection-log.js";
@@ -632,37 +638,114 @@ test("direct paths that keep dying young are not retried at once on every networ
   assert.equal(s.peers.length, count + 3, "at once, when the user turns them back on");
 });
 
-test("a path given up under load waits at most the congestion ceiling, however long the backoff had grown, and still counts towards the streak", async (t) => {
+test("a DataChannel the agent closes with the peer connection up is a drop under load only if the path carried bulk: then the ceiling, else the backoff doubles", async (t) => {
   // retryFirstMs 40: after four young deaths the backoff is 640 ms; the
   // ceiling for a path given up under load is 120 ms.
   const s = await setUp(t, { timing: { retryFirstMs: 40, retryMaxMs: 5_000, stableMs: 60_000, congestedRetryMaxMs: 120 } });
   s.paths.start();
   await dieYoung(s, 4);
   assert.equal(s.paths.history.backoffMs, 640);
-  assert.equal(s.paths.history.shortLived, 4);
-  // The agent closes its DataChannel while the peer connection stays up: its
-  // own deadline ran out (as an agent's does under load), not the network.
+  // Idle (probes only): the agent letting it go with the peer connection up is no sign of load.
   await until(() => s.paths.state === "direct" && s.agent.dcs.at(-1)?.state === "open", "a direct path carrying the channel");
   s.peers.at(-1)!.connectionState = "connected";
+  s.agent.dcs.at(-1)!.close();
+  await until(() => s.paths.state === "waiting", "let go");
+  assert.deepEqual([s.paths.history.backoffMs, s.paths.history.congested, s.paths.history.shortLived], [1_280, 0, 5], "doubled, as for any failure");
+  // Under load: the agent's echo of 192 KiB is coming back when it lets go.
+  await until(() => s.paths.state === "direct" && s.agent.dcs.at(-1)?.state === "open", "carrying again", 15_000);
+  s.peers.at(-1)!.connectionState = "connected";
+  const { term, echoed } = terminal(s);
+  term.send(new Uint8Array(192 * 1024).fill(1));
+  await until(() => echoed.length === 192 * 1024, "the echo, over the direct path");
+  assert.ok(s.device.directLoad()?.directBulkReceived, "the device saw the agent's bulk");
   const count = s.peers.length;
   s.agent.dcs.at(-1)!.close();
   await until(() => s.paths.state === "waiting", "let go");
   const endedAt = performance.now();
-  assert.equal(s.paths.history.backoffMs, 120, "the next wait is the ceiling too, not twice the 640 ms");
-  assert.equal(s.paths.history.shortLived, 5, "it still counts: a network change does not start it again at once");
+  assert.deepEqual([s.paths.history.backoffMs, s.paths.history.congested, s.paths.history.shortLived], [2_560, 1, 6], "the backoff grows on, and the streak too");
   s.networkChanged();
   assert.equal(s.peers.length, count, "no attempt at once");
   await until(() => s.peers.length === count + 1, "the next attempt");
   const waited = s.peerTimes.at(-1)! - endedAt;
-  assert.ok(waited < 400, `within the ceiling (120 ms), not the backoff (640 ms): ${waited}`);
-  // A deadline here that runs out while the path carries (it went dark mid-typing) is the same.
-  await until(() => s.device.paths?.direct === true && s.agent.dcs.at(-1)?.state === "open", "carrying again");
+  assert.ok(waited < 600, `within the ceiling (120 ms), not the backoff (1280 ms): ${waited}`);
+  // Past CONGESTED_RUN_LIMIT of them, the wait is the backoff again.
+  s.paths.history.congested = CONGESTED_RUN_LIMIT;
+  await until(() => s.paths.state === "direct" && s.agent.dcs.at(-1)?.state === "open", "carrying again", 15_000);
+  s.peers.at(-1)!.connectionState = "connected";
+  term.send(new Uint8Array(192 * 1024).fill(2));
+  await until(() => echoed.length === 2 * 192 * 1024, "the second echo");
+  s.agent.dcs.at(-1)!.close();
+  await until(() => s.paths.state === "waiting", "let go");
+  const pastRunAt = performance.now();
+  const before = s.peers.length;
+  await sleep(1_000);
+  assert.equal(s.peers.length, before, "no attempt within a second: the 2560 ms backoff, uncut");
+  assert.ok(performance.now() - pastRunAt >= 1_000);
+});
+
+test("a path that dies idle on its deadline backs off as ever, a keystroke on it or not", async (t) => {
+  const s = await setUp(t, { timing: { retryFirstMs: 40, retryMaxMs: 5_000, stableMs: 60_000, congestedRetryMaxMs: 120 } });
+  s.paths.start();
+  await dieYoung(s, 3);
+  assert.equal(s.paths.history.backoffMs, 320);
+  await until(() => s.device.paths?.direct === true && s.agent.dcs.at(-1)?.state === "open", "carrying");
+  s.peers.at(-1)!.connectionState = "connected";
   s.peers.at(-1)!.dc.blackhole = true;
   s.agent.dcs.at(-1)!.blackhole = true;
   const { term } = terminal(s);
   for (let k = 0; k < 3; k++) term.send(Uint8Array.of(k));
   await until(() => s.paths.state === "waiting", "given up on its deadline", 15_000);
-  assert.equal(s.paths.history.backoffMs, 120);
+  assert.deepEqual([s.paths.history.backoffMs, s.paths.history.congested], [640, 0], "a network that kills direct paths is not taken for a full one");
+});
+
+test("the ceiling holds for CONGESTED_RUN_LIMIT drops under load in a row, then the backoff doubles; a path that lives STABLE_MS starts it afresh", () => {
+  const timing = { ...DIRECT_TIMING };
+  const h = new DirectHistory();
+  h.backoffMs = 128_000;
+  const waits: number[] = [];
+  for (let k = 0; k < CONGESTED_RUN_LIMIT + 3; k++) {
+    h.ended(1_500, true, true, timing);
+    waits.push(h.nextWait(timing, true, true, 0.5).waitMs);
+  }
+  // 128 s, then 256 and 300 underneath: cut to 30 s three times, then the backoff as it stands.
+  assert.deepEqual(waits, [30_000, 30_000, 30_000, 300_000, 300_000, 300_000]);
+  h.ended(STABLE_MS, true, true, timing);
+  assert.deepEqual([h.backoffMs, h.congested, h.shortLived], [timing.retryFirstMs, 0, 0]);
+  h.backoffMs = 128_000;
+  h.ended(1_500, true, true, timing);
+  assert.equal(h.nextWait(timing, true, true, 0.5).waitMs, 30_000, "a new run after a path lived");
+  // Not under load: the backoff as it stands.
+  const g = new DirectHistory();
+  g.backoffMs = 128_000;
+  g.ended(1_500, true, false, timing);
+  assert.deepEqual(g.nextWait(timing, true, false, 0.5), { waitMs: 128_000, backoffMs: 128_000, capped: false });
+  // From a short backoff the ceiling cuts nothing.
+  const f = new DirectHistory();
+  f.backoffMs = RETRY_FIRST_MS;
+  f.ended(1_500, true, true, timing);
+  assert.deepEqual(f.nextWait(timing, true, true, 0.5), { waitMs: RETRY_FIRST_MS, backoffMs: RETRY_FIRST_MS, capped: false });
+});
+
+test("an old agent that gives every loaded path up at 1.5 s gets no more tries in ten minutes than before, and from a grown backoff at most CONGESTED_RUN_LIMIT more", () => {
+  /** Tries in ten minutes: each comes up in 2 s and is given up 1.5 s later, under load (`congested`) or as before. */
+  const tries = (congested: boolean, backoffMs: number): number => {
+    const h = new DirectHistory();
+    h.backoffMs = backoffMs;
+    let at = 0;
+    let n = 0;
+    for (;;) {
+      at += 2_000 + 1_500;
+      h.ended(1_500, true, congested, DIRECT_TIMING);
+      at += h.nextWait(DIRECT_TIMING, true, congested, 0.5).waitMs;
+      if (at >= 600_000) return n;
+      n++;
+    }
+  };
+  const fresh = [tries(true, RETRY_FIRST_MS), tries(false, RETRY_FIRST_MS)] as const;
+  assert.ok(fresh[0] <= fresh[1], `from 2 s: ${fresh[0]} tries, before ${fresh[1]}`);
+  assert.equal(fresh[1], 8, "the backoff alone: 2, 4, 8 … 256 s");
+  const grown = [tries(true, 128_000), tries(false, 128_000)] as const;
+  assert.ok(grown[0] <= grown[1] + CONGESTED_RUN_LIMIT, `from 128 s: ${grown[0]} tries, before ${grown[1]}`);
 });
 
 test("a direct path that lives past STABLE_MS ends the streak: the next network change retries at once again", async (t) => {

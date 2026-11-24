@@ -6353,7 +6353,9 @@
         "rateSampleBytes": 16384,
         "assumedBytesPerMs": 64.0,
         "bulkRecentMs": 2000,
-        "loadFactor": 2.0
+        "loadFactor": 2.0,
+        "rateDecayMs": 30000,
+        "relayBulkAheadMaxMs": 10000
       },
       "cases": [
         {
@@ -6798,32 +6800,64 @@
         {
           "rate": 100.0,
           "sample": 40.0,
-          "next": 40.0
+          "next": 70.0
         },
         {
-          "rate": 40.0,
+          "rate": 70.0,
           "sample": 120.0,
-          "next": 60.0
+          "next": 82.5
         },
         {
-          "rate": 60.0,
+          "rate": 82.5,
           "sample": 61.0,
-          "next": 60.25
+          "next": 71.75
         },
         {
-          "rate": 60.25,
+          "rate": 71.75,
           "sample": 33.333333333333336,
-          "next": 33.333333333333336
+          "next": 52.54166666666667
         },
         {
-          "rate": 33.333333333333336,
+          "rate": 52.54166666666667,
           "sample": 1000.0,
-          "next": 275.0
+          "next": 289.40625
         },
         {
-          "rate": 275.0,
+          "rate": 289.40625,
           "sample": 999.9,
-          "next": 456.225
+          "next": 467.0296875
+        }
+      ],
+      "decays": [
+        {
+          "rate": 1064.0,
+          "ageMs": 0.0,
+          "decayed": 1064.0
+        },
+        {
+          "rate": 1064.0,
+          "ageMs": 30000.0,
+          "decayed": 564.0
+        },
+        {
+          "rate": 4.0,
+          "ageMs": 30000.0,
+          "decayed": 34.0
+        },
+        {
+          "rate": 12500.0,
+          "ageMs": 7777.7,
+          "decayed": 9939.667391079924
+        },
+        {
+          "rate": 33.3,
+          "ageMs": 600000.0,
+          "decayed": 62.53809523809524
+        },
+        {
+          "rate": 90.0,
+          "ageMs": -1.0,
+          "decayed": 90.0
         }
       ]
     },

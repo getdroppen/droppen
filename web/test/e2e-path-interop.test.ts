@@ -17,6 +17,7 @@ import {
   ASSUMED_BYTES_PER_MS,
   BULK_RECENT_MS,
   ChainClock,
+  decayedRate,
   ChainState,
   checkFingerprint,
   CLIENT_FEATURE,
@@ -54,7 +55,9 @@ import {
   parseFingerprintHex,
   PathError,
   prologue,
+  RATE_DECAY_MS,
   RATE_SAMPLE_BYTES,
+  RELAY_BULK_AHEAD_MAX_MS,
   Responder,
   sdpFingerprint,
   serverFeatures,
@@ -110,7 +113,7 @@ test("the path constants are Rust's", () => {
   assert.equal(P.maxChunk, MAX_CHUNK, "a mux chunk leaves room for the envelope");
 });
 
-test("the direct path's deadlines are Rust's, to the last bit: the constants, every case, and the rate's steps", () => {
+test("the direct path's deadlines are Rust's, to the last bit: the constants, every case, the rate's steps and its fading", () => {
   const D = P.deadlines;
   assert.ok(D, "rust.json has the deadlines: regenerate it with DROPPEN_PROTO_WRITE_VECTORS=1");
   assert.deepEqual(D.constants, {
@@ -121,10 +124,14 @@ test("the direct path's deadlines are Rust's, to the last bit: the constants, ev
     assumedBytesPerMs: ASSUMED_BYTES_PER_MS,
     bulkRecentMs: BULK_RECENT_MS,
     loadFactor: LOAD_FACTOR,
+    rateDecayMs: RATE_DECAY_MS,
+    relayBulkAheadMaxMs: RELAY_BULK_AHEAD_MAX_MS,
   });
   assert.ok(D.cases.length >= 24);
   for (const { timer, load, deadline } of D.cases) assert.deepEqual(directDeadline(timer, load), deadline, `${timer} ${JSON.stringify(load)}`);
   for (const { rate, sample, next } of D.rates) assert.equal(nextRate(rate, sample), next, `${rate} then ${sample}`);
+  assert.ok(D.decays.length >= 6);
+  for (const { rate, ageMs, decayed } of D.decays) assert.equal(decayedRate(rate, ageMs), decayed, `${rate} after ${ageMs} ms`);
 });
 
 test("envelopes encode to Rust's bytes and decode back; junk is refused", () => {

@@ -74,15 +74,24 @@ export const UNACKED_TIMEOUT_MS = 1_500;
  */
 export const DIRECT_TIMEOUT_MAX_MS = 8_000;
 /**
- * A delivery-rate sample is taken over at least this many bytes: fewer, and
- * the round trip rather than the link sets how long they took. It is also
- * what a frame must weigh to count as bulk.
+ * A delivery-rate sample is taken over at least this many bytes (and two
+ * round trips, `DeadlineRate`): fewer, and the round trip rather than the
+ * link sets how long they took. It is also what a message must weigh to count
+ * as bulk, and what must still wait behind an acknowledgement for the sender
+ * to count as backlogged.
  */
 export const RATE_SAMPLE_BYTES = 16 * 1024;
 /** Until the path has shown how fast it carries, it is taken to carry 64 bytes a millisecond (512 kbit/s). */
 export const ASSUMED_BYTES_PER_MS = 64;
 /** Bulk counts as recent while it came (or left) within this long of the latest thing that came: two probe intervals. */
 export const BULK_RECENT_MS = 2 * DIRECT_PROBE_MS;
+/**
+ * A measured rate fades towards `ASSUMED_BYTES_PER_MS` as the channel goes on
+ * without a new sample: halfway after this long (`decayedRate`).
+ */
+export const RATE_DECAY_MS = 30_000;
+/** This side's hub-path bulk counts as still ahead of its direct frames for at most this long (however slow the link reads). */
+export const RELAY_BULK_AHEAD_MAX_MS = 10_000;
 /** The deadlines allow this many times the time the bytes standing ahead of the next sign of life take at the measured rate. */
 export const LOAD_FACTOR = 2;
 
@@ -173,12 +182,126 @@ export function directDeadline(timer: DirectTimer, load: DirectLoad): DirectDead
 
 /**
  * The next estimate of how fast the path carries, after `sample` (bytes/ms):
- * at once down to a slower sample, a quarter of the way up to a faster one —
- * the deadlines believe the slowest recent evidence, so a link that just got
- * busier is not judged by how fast it was.
+ * half the way down to a slower sample, a quarter of the way up to a faster
+ * one — the deadlines lean to the slower evidence, so a link that just got
+ * busier is not judged by how fast it was, without one sample deciding.
  */
 export function nextRate(rate: number | null, sample: number): number {
-  return rate === null || sample < rate ? sample : rate + (sample - rate) / 4;
+  if (rate === null) return sample;
+  return sample < rate ? rate + (sample - rate) / 2 : rate + (sample - rate) / 4;
+}
+
+/** `rate` (bytes/ms) after `ageMs` without a new sample: faded towards `ASSUMED_BYTES_PER_MS`, halfway at `RATE_DECAY_MS`. */
+export function decayedRate(rate: number, ageMs: number): number {
+  return ASSUMED_BYTES_PER_MS + ((rate - ASSUMED_BYTES_PER_MS) * RATE_DECAY_MS) / (RATE_DECAY_MS + Math.max(0, ageMs));
+}
+
+/**
+ * The rate the direct path's deadlines time the bytes ahead at
+ * (`DirectLoad.bytesPerMs`): how fast the channel's link has lately
+ * carried, on either path and either way. Its own estimate, for the
+ * deadlines alone, and only from evidence that the link — not the
+ * application, a round trip or a page's held timers — set the pace:
+ *
+ * - acknowledgements of what this side sent on the direct path, gathered
+ *   while at least `RATE_SAMPLE_BYTES` still waited behind each of them (the
+ *   sender stayed backlogged), into a sample once it holds that many bytes
+ *   and spans two round trips; a drained pipe, or a pause of the timers,
+ *   drops what was gathered;
+ * - the peer's bulk arriving back to back over one path (each message of
+ *   `RATE_SAMPLE_BYTES` or more, within `BULK_RECENT_MS` of the one before):
+ *   the bytes after the first over the time since it came, under the same
+ *   two thresholds.
+ *
+ * Samples move it with `nextRate`; read, it fades towards the assumed rate
+ * with the time since the last one (`decayedRate`, counted to the latest
+ * arrival, so a silent path's deadlines do not move). A new direct path
+ * starts it afresh. The Rust `DeadlineRate` (`path.rs`) is the same, pinned
+ * by the vectors.
+ */
+export class DeadlineRate {
+  private rate: number | null = null;
+  private sampledAtMs = 0;
+  private ackedBytes = 0;
+  private ackedFromMs: number | null = null;
+  private lastAckedMs: number | null = null;
+  private readonly runs: Record<Via, { fromMs: number; lastMs: number; bytes: number } | null> = { relay: null, direct: null };
+
+  /** The estimate as of `heardMs` (the latest arrival), faded with the time since its last sample; `null` before one. */
+  value(heardMs: number): number | null {
+    return this.rate === null ? null : decayedRate(this.rate, heardMs - this.sampledAtMs);
+  }
+
+  private sample(bytes: number, spanMs: number, rttMs: number | null, nowMs: number): boolean {
+    if (bytes < RATE_SAMPLE_BYTES || spanMs <= 0 || spanMs < 2 * (rttMs ?? 0)) return false;
+    this.rate = nextRate(this.rate === null ? null : decayedRate(this.rate, nowMs - this.sampledAtMs), bytes / spanMs);
+    this.sampledAtMs = nowMs;
+    return true;
+  }
+
+  /**
+   * An acknowledgement freed `freedBytes` sent on the direct path at `nowMs`,
+   * the oldest of them sent at `oldestSentMs`, with `leftBytes` still
+   * unacknowledged after it.
+   */
+  acked(freedBytes: number, oldestSentMs: number, leftBytes: number, nowMs: number, rttMs: number | null): void {
+    // From the previous acknowledgement, or from when the oldest left if the pipe had been empty.
+    this.ackedFromMs ??= Math.max(this.lastAckedMs ?? Number.NEGATIVE_INFINITY, oldestSentMs);
+    this.lastAckedMs = nowMs;
+    this.ackedBytes += freedBytes;
+    if (leftBytes < RATE_SAMPLE_BYTES) {
+      // Not backlogged (any more): the application, not the link, set this pace.
+      this.ackedBytes = 0;
+      this.ackedFromMs = null;
+      return;
+    }
+    if (this.sample(this.ackedBytes, nowMs - this.ackedFromMs, rttMs, nowMs)) {
+      this.ackedBytes = 0;
+      this.ackedFromMs = nowMs;
+    }
+  }
+
+  /** A message of `len` bytes came over `via` at `nowMs`. */
+  heard(via: Via, len: number, nowMs: number, rttMs: number | null): void {
+    if (len < RATE_SAMPLE_BYTES) return;
+    const run = this.runs[via];
+    if (run === null || nowMs - run.lastMs > BULK_RECENT_MS) {
+      this.runs[via] = { fromMs: nowMs, lastMs: nowMs, bytes: 0 };
+      return;
+    }
+    run.lastMs = nowMs;
+    run.bytes += len;
+    if (this.sample(run.bytes, nowMs - run.fromMs, rttMs, nowMs)) {
+      run.fromMs = nowMs;
+      run.bytes = 0;
+    }
+  }
+
+  /** Drop what is being gathered (this page's timers were held: the times are not the link's). */
+  restart(): void {
+    this.ackedBytes = 0;
+    this.ackedFromMs = null;
+    this.lastAckedMs = null;
+    this.runs.relay = null;
+    this.runs.direct = null;
+  }
+
+  /** A new direct path: start afresh. */
+  reset(): void {
+    this.restart();
+    this.rate = null;
+    this.sampledAtMs = 0;
+  }
+}
+
+/**
+ * Whether what the direct path carried says it was given up under load —
+ * bulk on its way either way, on either path, or at least
+ * `RATE_SAMPLE_BYTES` of this side's own waiting for an acknowledgement — and
+ * not on a path that carried a keystroke or nothing.
+ */
+export function underLoad(load: DirectLoad): boolean {
+  return load.unackedBytes >= RATE_SAMPLE_BYTES || load.relayBulkSent || load.relayBulkReceived || load.directBulkReceived;
 }
 /** The hub path is probed this often for its round-trip time (for display). */
 export const RELAY_PROBE_MS = 5_000;

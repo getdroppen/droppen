@@ -39,8 +39,8 @@ use crate::frame::Frame;
 use crate::mux::{Mux, MuxError, MuxEvent, MuxFrame, Role};
 use crate::noise::{ChannelError, Transport};
 use crate::path::{
-    direct_deadline, next_rate, DcMessage, DirectDeadline, DirectLoad, DirectTimer, DownReason, Envelope, LaneStats, Lanes, PathError, Via,
-    ASSUMED_BYTES_PER_MS, BULK_RECENT_MS, DIRECT_PROBE_MS, RATE_SAMPLE_BYTES, RELAY_PROBE_MS, UNACKED_LIMIT,
+    direct_deadline, DcMessage, DeadlineRate, DirectDeadline, DirectLoad, DirectTimer, DownReason, Envelope, LaneStats, Lanes, PathError, Via,
+    ASSUMED_BYTES_PER_MS, BULK_RECENT_MS, DIRECT_PROBE_MS, RATE_SAMPLE_BYTES, RELAY_BULK_AHEAD_MAX_MS, RELAY_PROBE_MS, UNACKED_LIMIT,
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -125,7 +125,9 @@ pub struct PathStats {
     pub lanes: LaneStats,
 }
 
-/// The most probes outstanding at once (older ones are forgotten).
+/// The most probes outstanding at once on each path (the oldest of that
+/// path's is forgotten): a direct path's probes, seconds late behind its own
+/// traffic, never push out the hub path's, whose age judges the channel.
 const MAX_PROBES: usize = 16;
 
 /// A direct path given up on a deadline: which, after how long, and what the
@@ -170,19 +172,9 @@ struct Paths {
     /// When anything last arrived for this channel over the hub: a `DATA`
     /// frame (data, an acknowledgement, a probe or its answer) or a `CREDIT`.
     last_relay_rx_us: u64,
-    /// The slowest the channel's link has lately carried, on either path and
-    /// either way (bytes/ms, [`next_rate`]): from acknowledgements freeing
-    /// what this side sent on the direct path, and from the peer's bulk
-    /// arriving back to back. What the direct path's deadlines time the bytes
-    /// ahead at.
-    bytes_per_ms: Option<f64>,
-    /// Acknowledged bytes, and the time they took (µs), gathered toward the
-    /// next sample while the direct path stays backlogged.
-    acked_bytes: usize,
-    acked_us: u64,
-    /// When an acknowledgement last freed frames sent on the direct path
-    /// (`None`: none since it was attached).
-    last_acked_us: Option<u64>,
+    /// The rate the direct path's deadlines time the bytes ahead at
+    /// ([`DeadlineRate`]).
+    deadline_rate: DeadlineRate,
     /// When bulk (a message of [`RATE_SAMPLE_BYTES`] or more) last came over
     /// the hub path, and over the direct path.
     bulk_in_relay_us: Option<u64>,
@@ -233,10 +225,7 @@ impl Session {
                 // The first hub probe goes out at once, so the indicator has a number.
                 next_relay_probe_us: now_us,
                 last_relay_rx_us: now_us,
-                bytes_per_ms: None,
-                acked_bytes: 0,
-                acked_us: 0,
-                last_acked_us: None,
+                deadline_rate: DeadlineRate::default(),
                 bulk_in_relay_us: None,
                 bulk_in_direct_us: None,
                 relay_bulk_out_us: None,
@@ -661,14 +650,18 @@ impl Paths {
     fn load(&self) -> DirectLoad {
         let heard = self.last_direct_rx_us.max(self.last_relay_rx_us);
         let recent = |at: Option<u64>| at.is_some_and(|at| heard.saturating_sub(at) <= BULK_RECENT_MS * 1000);
+        let bytes_per_ms = self.deadline_rate.value(heard as f64 / 1000.0);
         // A whole hub window this side sent may still be on its way for as
-        // long as the link takes to carry one.
-        let window_ms = (BULK_RECENT_MS as f64).max(f64::from(crate::flow::INITIAL_CREDIT) / self.bytes_per_ms.unwrap_or(ASSUMED_BYTES_PER_MS));
+        // long as the link takes to carry one — and no longer than
+        // RELAY_BULK_AHEAD_MAX_MS.
+        let window_ms = (BULK_RECENT_MS as f64)
+            .max(f64::from(crate::flow::INITIAL_CREDIT) / bytes_per_ms.unwrap_or(ASSUMED_BYTES_PER_MS))
+            .min(RELAY_BULK_AHEAD_MAX_MS as f64);
         let oldest_us = self.lanes.oldest_unacked_ms().map(|ms| ms * 1000);
         DirectLoad {
             rtt_ms: self.stats.direct_rtt_ms,
             unacked_bytes: self.lanes.unacked_bytes(),
-            bytes_per_ms: self.bytes_per_ms,
+            bytes_per_ms,
             relay_bulk_sent: matches!((oldest_us, self.relay_bulk_out_us), (Some(o), Some(b)) if o.saturating_sub(b) as f64 <= window_ms * 1000.0),
             relay_bulk_received: recent(self.bulk_in_relay_us),
             direct_bulk_received: recent(self.bulk_in_direct_us),
@@ -695,50 +688,32 @@ impl Paths {
     }
 
     /// An acknowledgement came (on either path): progress on the direct path
-    /// when it freed frames sent there — and, gathered while the path stays
-    /// backlogged, a sample of how fast it carries what this side sends: the
-    /// bytes freed over the time since the previous acknowledgement, or since
-    /// the oldest of them left when the path had nothing waiting before.
+    /// when it freed frames sent there, and a step of the deadlines' rate.
     fn acked(&mut self, ack: u64, now_us: u64) -> Result<(), PathError> {
         let before = self.lanes.unacked_bytes();
-        let oldest_us = self.lanes.oldest_unacked_ms().map(|ms| ms * 1000);
+        let oldest_ms = self.lanes.oldest_unacked_ms();
         if self.lanes.on_ack(ack)? == 0 {
             return Ok(());
         }
         self.last_direct_progress_us = now_us;
-        let since = oldest_us.unwrap_or(now_us).max(self.last_acked_us.unwrap_or(0));
-        self.last_acked_us = Some(now_us);
-        self.acked_bytes += before - self.lanes.unacked_bytes();
-        self.acked_us += now_us.saturating_sub(since);
-        if self.acked_bytes >= RATE_SAMPLE_BYTES && self.acked_us > 0 {
-            self.bytes_per_ms = Some(next_rate(self.bytes_per_ms, self.acked_bytes as f64 / (self.acked_us as f64 / 1000.0)));
-            self.acked_bytes = 0;
-            self.acked_us = 0;
-        } else if self.lanes.unacked_bytes() == 0 {
-            // Nothing waits any more: what comes next is not timed from this.
-            self.acked_bytes = 0;
-            self.acked_us = 0;
-        }
+        let now_ms = now_us as f64 / 1000.0;
+        let left = self.lanes.unacked_bytes();
+        self.deadline_rate.acked(
+            before - left,
+            oldest_ms.map_or(now_ms, |ms| ms as f64),
+            left,
+            now_ms,
+            self.stats.direct_rtt_ms,
+        );
         Ok(())
     }
 
     /// A message of `len` bytes came over `via`: bulk when it weighs
-    /// [`RATE_SAMPLE_BYTES`] or more, and two bulk messages in a row on one
-    /// path, within [`BULK_RECENT_MS`], time the link — the second took the
-    /// time between them to come.
+    /// [`RATE_SAMPLE_BYTES`] or more.
     fn heard_bulk(&mut self, via: Via, len: usize, now_us: u64) {
+        self.deadline_rate.heard(via, len, now_us as f64 / 1000.0, self.stats.direct_rtt_ms);
         if len < RATE_SAMPLE_BYTES {
             return;
-        }
-        let prev = match via {
-            Via::Relay => self.bulk_in_relay_us,
-            Via::Direct => self.bulk_in_direct_us,
-        };
-        if let Some(prev) = prev {
-            let gap_us = now_us.saturating_sub(prev);
-            if gap_us > 0 && gap_us <= BULK_RECENT_MS * 1000 {
-                self.bytes_per_ms = Some(next_rate(self.bytes_per_ms, len as f64 / (gap_us as f64 / 1000.0)));
-            }
         }
         match via {
             Via::Relay => self.bulk_in_relay_us = Some(now_us),
@@ -753,12 +728,10 @@ impl Paths {
         }
     }
 
-    /// A new direct path: what was timed on the one before about its
-    /// acknowledgements and its bulk is not this one's.
+    /// A new direct path: what was measured on the one before is not this
+    /// one's.
     fn attached(&mut self) {
-        self.acked_bytes = 0;
-        self.acked_us = 0;
-        self.last_acked_us = None;
+        self.deadline_rate.reset();
         self.bulk_in_direct_us = None;
     }
 
@@ -789,8 +762,9 @@ impl Paths {
             if via == Via::Relay {
                 self.unsent_relay_probes.remove(nonce);
             }
-            if self.probes.len() >= MAX_PROBES {
-                if let Some(oldest) = self.probes.keys().min().copied() {
+            let same = self.probes.iter().filter(|(_, (on, _))| *on == via).map(|(nonce, _)| *nonce);
+            if same.clone().count() >= MAX_PROBES {
+                if let Some(oldest) = same.min() {
                     self.probes.remove(&oldest);
                 }
             }
@@ -1301,6 +1275,31 @@ mod tests {
         assert!(p.b.poll(p.now, full).unwrap().is_none());
         let (wire, _) = p.b.poll(p.now, Room { relay: true, direct: true }).unwrap().expect("the ack");
         assert!(matches!(wire, Wire::Direct(_)));
+    }
+
+    /// A direct path's probes, unanswered for long (seconds late behind its
+    /// own traffic), push out only its own: the hub path's oldest probe stays,
+    /// and the hub path's age with it.
+    #[test]
+    fn a_direct_paths_probes_unanswered_for_long_push_out_only_its_own() {
+        let (it, _) = transports(1);
+        let (direct, mut peer) = transports(10);
+        let mut a = Session::with_paths(1, it, Role::Initiator, PathOptions { probe_relay: true }, 0);
+        a.attach_direct(direct, 0).unwrap();
+        let room = Room { relay: true, direct: true };
+        // The peer's probes keep the direct path up; nothing a sends is ever answered, on either path.
+        for k in 0..=24u64 {
+            let at = k * 1_000_000;
+            a.tick(at);
+            while a.poll(at, room).unwrap().is_some() {}
+            let sealed = peer.seal(1, &Envelope::Probe { nonce: 1_000 + k }.encode()).unwrap();
+            a.receive_direct(&DcMessage::Sealed(sealed).encode(), at).unwrap();
+        }
+        assert!(a.direct_active(), "the peer's probes kept it up");
+        let out = a.paths.as_ref().unwrap().probes.len();
+        assert!(out > MAX_PROBES, "more than MAX_PROBES out, all told: {out}");
+        // The hub probe sent first (at 0) is still the one its age is measured from (as of the tick at 20 s).
+        assert_eq!(a.stats().relay_probe_age_ms, Some(20_000.0));
     }
 
     #[test]

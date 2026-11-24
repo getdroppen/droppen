@@ -92,9 +92,11 @@ pub const UNACKED_TIMEOUT_MS: u64 = 1_500;
 /// `RELAY_SILENT_MS` (10 s), so a dead direct path is let go before its
 /// silence could count against the channel.
 pub const DIRECT_TIMEOUT_MAX_MS: u64 = 8_000;
-/// A delivery-rate sample is taken over at least this many bytes: fewer, and
-/// the round trip rather than the link sets how long they took. It is also
-/// what a message must weigh to count as bulk.
+/// A delivery-rate sample is taken over at least this many bytes (and two
+/// round trips, [`DeadlineRate`]): fewer, and the round trip rather than the
+/// link sets how long they took. It is also what a message must weigh to
+/// count as bulk, and what must still wait behind an acknowledgement for the
+/// sender to count as backlogged.
 pub const RATE_SAMPLE_BYTES: usize = 16 * 1024;
 /// Until the path has shown how fast it carries, it is taken to carry 64
 /// bytes a millisecond (512 kbit/s).
@@ -105,6 +107,12 @@ pub const BULK_RECENT_MS: u64 = 2 * DIRECT_PROBE_MS;
 /// The deadlines allow this many times the time the bytes standing ahead of
 /// the next sign of life take at the measured rate.
 pub const LOAD_FACTOR: f64 = 2.0;
+/// A measured rate fades towards [`ASSUMED_BYTES_PER_MS`] as the channel goes
+/// on without a new sample: halfway after this long ([`decayed_rate`]).
+pub const RATE_DECAY_MS: u64 = 30_000;
+/// This side's hub-path bulk counts as still ahead of its direct frames for
+/// at most this long (however slow the link reads).
+pub const RELAY_BULK_AHEAD_MAX_MS: u64 = 10_000;
 /// The hub path is probed this often for its round-trip time (for display).
 pub const RELAY_PROBE_MS: u64 = 5_000;
 
@@ -308,13 +316,141 @@ pub fn direct_deadline(timer: DirectTimer, load: &DirectLoad) -> DirectDeadline 
 }
 
 /// The next estimate of how fast the link carries, after `sample`
-/// (bytes/ms): at once down to a slower sample, a quarter of the way up to a
-/// faster one — the deadlines believe the slowest recent evidence, so a link
-/// that just got busier is not judged by how fast it was.
+/// (bytes/ms): half the way down to a slower sample, a quarter of the way up
+/// to a faster one — the deadlines lean to the slower evidence, so a link
+/// that just got busier is not judged by how fast it was, without one
+/// sample deciding.
 pub fn next_rate(rate: Option<f64>, sample: f64) -> f64 {
     match rate {
-        Some(r) if sample >= r => r + (sample - r) / 4.0,
-        _ => sample,
+        None => sample,
+        Some(r) if sample < r => r + (sample - r) / 2.0,
+        Some(r) => r + (sample - r) / 4.0,
+    }
+}
+
+/// `rate` (bytes/ms) after `age_ms` without a new sample: faded towards
+/// [`ASSUMED_BYTES_PER_MS`], halfway at [`RATE_DECAY_MS`].
+pub fn decayed_rate(rate: f64, age_ms: f64) -> f64 {
+    let decay = RATE_DECAY_MS as f64;
+    ASSUMED_BYTES_PER_MS + ((rate - ASSUMED_BYTES_PER_MS) * decay) / (decay + age_ms.max(0.0))
+}
+
+/// A run of the peer's bulk arriving back to back over one path.
+#[derive(Debug, Clone, Copy)]
+struct BulkRun {
+    from_ms: f64,
+    last_ms: f64,
+    bytes: usize,
+}
+
+/// The rate the direct path's deadlines time the bytes ahead at
+/// ([`DirectLoad::bytes_per_ms`]): how fast the channel's link has lately
+/// carried, on either path and either way. Its own estimate, for the
+/// deadlines alone, and only from evidence that the link — not the
+/// application or a round trip — set the pace:
+///
+/// - acknowledgements of what this side sent on the direct path, gathered
+///   while at least [`RATE_SAMPLE_BYTES`] still waited behind each of them
+///   (the sender stayed backlogged), into a sample once it holds that many
+///   bytes and spans two round trips; a drained pipe drops what was
+///   gathered;
+/// - the peer's bulk arriving back to back over one path (each message of
+///   [`RATE_SAMPLE_BYTES`] or more, within [`BULK_RECENT_MS`] of the one
+///   before): the bytes after the first over the time since it came, under
+///   the same two thresholds.
+///
+/// Samples move it with [`next_rate`]; read, it fades towards the assumed
+/// rate with the time since the last one ([`decayed_rate`], counted to the
+/// latest arrival, so a silent path's deadlines do not move). A new direct
+/// path starts it afresh. Times are milliseconds. The page's `DeadlineRate`
+/// (`web/src/lib/e2e/path.ts`) is the same, pinned by the vectors.
+#[derive(Debug, Clone, Default)]
+pub struct DeadlineRate {
+    rate: Option<f64>,
+    sampled_at_ms: f64,
+    acked_bytes: usize,
+    acked_from_ms: Option<f64>,
+    last_acked_ms: Option<f64>,
+    /// The hub path's run, and the direct path's.
+    runs: [Option<BulkRun>; 2],
+}
+
+impl DeadlineRate {
+    /// The estimate as of `heard_ms` (the latest arrival), faded with the
+    /// time since its last sample; `None` before one.
+    pub fn value(&self, heard_ms: f64) -> Option<f64> {
+        self.rate.map(|r| decayed_rate(r, heard_ms - self.sampled_at_ms))
+    }
+
+    fn sample(&mut self, bytes: usize, span_ms: f64, rtt_ms: Option<f64>, now_ms: f64) -> bool {
+        if bytes < RATE_SAMPLE_BYTES || span_ms <= 0.0 || span_ms < 2.0 * rtt_ms.unwrap_or(0.0) {
+            return false;
+        }
+        let faded = self.rate.map(|r| decayed_rate(r, now_ms - self.sampled_at_ms));
+        self.rate = Some(next_rate(faded, bytes as f64 / span_ms));
+        self.sampled_at_ms = now_ms;
+        true
+    }
+
+    /// An acknowledgement freed `freed_bytes` sent on the direct path at
+    /// `now_ms`, the oldest of them sent at `oldest_sent_ms`, with
+    /// `left_bytes` still unacknowledged after it.
+    pub fn acked(&mut self, freed_bytes: usize, oldest_sent_ms: f64, left_bytes: usize, now_ms: f64, rtt_ms: Option<f64>) {
+        // From the previous acknowledgement, or from when the oldest left if the pipe had been empty.
+        let from = *self
+            .acked_from_ms
+            .get_or_insert(self.last_acked_ms.map_or(oldest_sent_ms, |last| last.max(oldest_sent_ms)));
+        self.last_acked_ms = Some(now_ms);
+        self.acked_bytes += freed_bytes;
+        if left_bytes < RATE_SAMPLE_BYTES {
+            // Not backlogged (any more): the application, not the link, set this pace.
+            self.acked_bytes = 0;
+            self.acked_from_ms = None;
+            return;
+        }
+        if self.sample(self.acked_bytes, now_ms - from, rtt_ms, now_ms) {
+            self.acked_bytes = 0;
+            self.acked_from_ms = Some(now_ms);
+        }
+    }
+
+    /// A message of `len` bytes came over `via` at `now_ms`.
+    pub fn heard(&mut self, via: Via, len: usize, now_ms: f64, rtt_ms: Option<f64>) {
+        if len < RATE_SAMPLE_BYTES {
+            return;
+        }
+        let i = match via {
+            Via::Relay => 0,
+            Via::Direct => 1,
+        };
+        let Some(mut run) = self.runs[i].filter(|run| now_ms - run.last_ms <= BULK_RECENT_MS as f64) else {
+            self.runs[i] = Some(BulkRun {
+                from_ms: now_ms,
+                last_ms: now_ms,
+                bytes: 0,
+            });
+            return;
+        };
+        run.last_ms = now_ms;
+        run.bytes += len;
+        if self.sample(run.bytes, now_ms - run.from_ms, rtt_ms, now_ms) {
+            run.from_ms = now_ms;
+            run.bytes = 0;
+        }
+        self.runs[i] = Some(run);
+    }
+
+    /// Drop what is being gathered (the times are not the link's).
+    pub fn restart(&mut self) {
+        self.acked_bytes = 0;
+        self.acked_from_ms = None;
+        self.last_acked_ms = None;
+        self.runs = [None, None];
+    }
+
+    /// A new direct path: start afresh.
+    pub fn reset(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -1232,11 +1368,37 @@ mod tests {
     }
 
     #[test]
-    fn the_rate_falls_at_once_and_rises_a_quarter_of_the_way() {
+    fn the_rate_falls_half_the_way_rises_a_quarter_and_fades_to_the_assumed_one() {
         assert_eq!(next_rate(None, 100.0), 100.0);
-        assert_eq!(next_rate(Some(100.0), 40.0), 40.0);
+        assert_eq!(next_rate(Some(100.0), 40.0), 70.0);
         assert_eq!(next_rate(Some(40.0), 120.0), 60.0);
         assert_eq!(next_rate(Some(60.0), 60.0), 60.0);
+        assert_eq!(decayed_rate(1_064.0, 0.0), 1_064.0);
+        assert_eq!(decayed_rate(1_064.0, RATE_DECAY_MS as f64), 564.0, "halfway at RATE_DECAY_MS");
+        assert_eq!(decayed_rate(4.0, RATE_DECAY_MS as f64), 34.0, "a slow one rises towards it too");
+        assert_eq!(decayed_rate(1_064.0, -5.0), 1_064.0);
+    }
+
+    #[test]
+    fn the_deadline_rate_takes_only_backlogged_samples_over_two_round_trips_and_starts_afresh() {
+        let mut r = DeadlineRate::default();
+        // One 20 KiB upload, acknowledged a round trip later with nothing behind it: no sample.
+        r.acked(20 * 1024, 0.0, 0, 220.0, Some(220.0));
+        assert_eq!(r.value(220.0), None);
+        // A backlog: 64 KiB freed a second, 500 KB still waiting, over 50 ms round trips.
+        for k in 1..=3u32 {
+            r.acked(65_536, 1_000.0, 500_000, 1_000.0 + 1_000.0 * f64::from(k), Some(50.0));
+        }
+        let rate = r.value(4_000.0).unwrap();
+        assert!((60.0..70.0).contains(&rate), "about 65.5 B/ms: {rate}");
+        // Bulk back to back over the direct path, too quick for two round trips: no sample yet.
+        r.heard(Via::Direct, 65_536, 5_000.0, Some(500.0));
+        r.heard(Via::Direct, 65_536, 5_100.0, Some(500.0));
+        assert_eq!(r.value(5_100.0), Some(decayed_rate(rate, 5_100.0 - 4_000.0)));
+        // Fades with the time to the latest arrival; a new path starts afresh.
+        assert!(r.value(64_000.0).unwrap() < rate);
+        r.reset();
+        assert_eq!(r.value(64_000.0), None);
     }
 
     /// Two paths, a sender that switches between them, a direct path that

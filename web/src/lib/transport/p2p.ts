@@ -33,13 +33,16 @@
  *    mobile data) is left on the hub for longer and longer. A `DirectHistory`
  *    keeps the backoff and the streak for one machine across its channels, so
  *    a new channel (the hub connection came back) does not start from 2 s.
- *    A path given up under load — a deadline on this side (`timeout`), or the
- *    agent closing the DataChannel while the peer connection stays up (the
- *    agent's own deadline: an agent says why only later, over the hub) — is
- *    a full link, not one that kills direct paths: the wait after it grows
- *    to `CONGESTED_RETRY_MAX_MS` at most, so one congestion episode does not
- *    keep the direct path away for minutes. It still counts towards the
- *    streak, so the page coming and going cannot make it churn.
+ *    A path given up under load — a deadline of either side's (`timeout`), or
+ *    the agent closing the DataChannel while the peer connection stays up
+ *    (the agent's own deadline: it says why only later, over the hub), while
+ *    the path carried bulk (`underLoad`) — is a full link, not one that kills
+ *    direct paths: the first `CONGESTED_RUN_LIMIT` of those since a path
+ *    lived a minute wait `CONGESTED_RETRY_MAX_MS` at most, so one congestion
+ *    episode does not keep the direct path away for minutes; after them the
+ *    wait is the backoff again, which doubled all along. A path that died
+ *    idle, or with a keystroke on it, backs off as ever. They all count
+ *    towards the streak, so the page coming and going cannot make them churn.
  *
  * "Hub only" (`hubOnly`, a setting of this device kept in `localStorage`)
  * stops all of it: direct connections show this device's IP address to the
@@ -74,6 +77,7 @@ import {
   SIGNAL_PATH,
   stripCandidates,
   type Transport,
+  underLoad,
 } from "@/lib/e2e";
 import { type ConnEventName, type ConnFields, connLog, maskId } from "@/lib/connection-log";
 
@@ -97,14 +101,21 @@ export const SHORT_LIVED_LIMIT = 3;
 export const SIGNAL_HEAD_TIMEOUT_MS = 15_000;
 /**
  * The longest wait after a direct path that was given up under load (a
- * deadline of either side's ran out while it carried the channel): the link
- * works — the hub path carries the channel over it, and the peer connection
- * was up — it was full. Half a minute: the direct path is back within about
- * that of a congestion episode's end, and while one lasts a path is tried at
- * most about twice a minute (each try a few kilobytes of signaling; each
- * flap a stall of at most `DIRECT_TIMEOUT_MAX_MS` and a resend over the hub).
+ * deadline of either side's ran out while it carried bulk, `underLoad`): the
+ * link works — the hub path carries the channel over it, and the peer
+ * connection was up — it was full. Half a minute: the direct path is back
+ * within about that of a congestion episode's end.
  */
 export const CONGESTED_RETRY_MAX_MS = 30_000;
+/**
+ * How many paths given up under load in a row, since the last that lived
+ * `STABLE_MS`, wait no longer than `CONGESTED_RETRY_MAX_MS`; after them the
+ * wait is the backoff, which doubled all along as for any failure. An agent
+ * that gives every loaded path up (a 0.2.141 agent does at 1.5 s) is not
+ * answered with a try, a flap and a resend of up to `DIRECT_BUDGET` over the
+ * hub every half minute for good.
+ */
+export const CONGESTED_RUN_LIMIT = 3;
 
 export interface DirectTiming {
   attemptTimeoutMs: number;
@@ -275,10 +286,47 @@ export class DirectHistory {
   backoffMs: number | null = null;
   /** Direct paths in a row that carried the channel and died before `STABLE_MS`. */
   shortLived = 0;
+  /** Paths given up under load since the last one that lived `STABLE_MS`. */
+  congested = 0;
 
   /** Whether direct paths have been dying young: only the backoff starts the next attempt. */
   get flapping(): boolean {
     return this.shortLived >= SHORT_LIVED_LIMIT;
+  }
+
+  /**
+   * A path that carried the channel ended after `livedMs`: one that lived
+   * `stableMs` starts everything afresh; else `failed` (it did not hold)
+   * counts towards the streak, and `congested` (it was given up under load)
+   * towards the run of those.
+   */
+  ended(livedMs: number, failed: boolean, congested: boolean, timing: DirectTiming): void {
+    if (livedMs >= timing.stableMs) {
+      this.shortLived = 0;
+      this.congested = 0;
+      this.backoffMs = timing.retryFirstMs;
+      return;
+    }
+    if (failed) this.shortLived += 1;
+    if (congested) this.congested += 1;
+  }
+
+  /**
+   * The wait before the next attempt: the backoff (`random`, in [0, 1),
+   * jitters it by ±20 %), which `grow` doubles for the one after, up to
+   * `retryMaxMs`. After a path given up under load (`congested`) that is one
+   * of the first `CONGESTED_RUN_LIMIT` since a path lived `stableMs`, this
+   * wait is at most `congestedRetryMaxMs` (`capped`, when that cut it) — the
+   * backoff itself grows as ever, so past the run it is where it would have
+   * been, and from a short one (2, 4, 8 s) the ceiling changes nothing.
+   */
+  nextWait(timing: DirectTiming, grow: boolean, congested: boolean, random: number): { waitMs: number; backoffMs: number; capped: boolean } {
+    const backoff = this.backoffMs ?? timing.retryFirstMs;
+    const jittered = Math.min(timing.retryMaxMs, Math.round(backoff * (0.8 + 0.4 * random)));
+    const inRun = congested && this.congested > 0 && this.congested <= CONGESTED_RUN_LIMIT;
+    const waitMs = inRun ? Math.min(timing.congestedRetryMaxMs, jittered) : jittered;
+    if (grow) this.backoffMs = Math.min(backoff * 2, timing.retryMaxMs);
+    return { waitMs, backoffMs: backoff, capped: waitMs < jittered };
   }
 }
 
@@ -534,8 +582,9 @@ export class DirectPaths {
     dc.onmessage = (ev) => this.dcMessage(a, ev.data);
     // Closed under a path that carries the channel, with the peer connection
     // still up: the agent let it go (its deadline ran out: it says so only
-    // later, over the hub path, `path.peerDown`).
-    dc.onclose = () => this.fail(a, "failed", "the data channel closed", a.link !== null && peerState(pc) === "connected");
+    // later, over the hub path, `path.peerDown`) — under load if the path
+    // carried bulk then.
+    dc.onclose = () => this.fail(a, "failed", "the data channel closed", a.link !== null && peerState(pc) === "connected" && this.carriedBulk());
     dc.onerror = () => this.fail(a, "failed", "the data channel failed");
     void this.offer(a);
   }
@@ -765,15 +814,28 @@ export class DirectPaths {
     this.setState("direct");
   }
 
+  /**
+   * Whether the direct path carries bulk (`underLoad`) — or, let go already,
+   * carried it as it was: what tells a path given up under load from one
+   * that died idle or with a keystroke on it.
+   */
+  private carriedBulk(): boolean {
+    const load = this.driver.directLoad();
+    return load !== null && underLoad(load);
+  }
+
   /** The driver stopped using the path (it timed out, the peer gave it up, a message did not open, the channel ended). */
   private released(a: Attempt, reason: DownReason): void {
     if (a.done) return;
+    // "timeout": a deadline ran out, this side's or the peer's (its `down`) —
+    // under load only if the path carried bulk as it went; an idle path that
+    // dies on a hostile network times out too, and backs off as ever.
+    const congested = reason === "timeout" && this.carriedBulk();
     this.env.log(`attempt ${a.id} let go: ${reason}`);
-    this.log("direct.down", { attempt: a.id, cause: reason, livedMs: a.attachedAt === null ? null : this.env.now() - a.attachedAt, channelClosed: this.driver.isClosed });
+    this.log("direct.down", { attempt: a.id, cause: reason, livedMs: a.attachedAt === null ? null : this.env.now() - a.attachedAt, channelClosed: this.driver.isClosed, underLoad: congested || undefined });
     // "closed": the channel ended, or another path replaced this one — not a failure of the path.
-    this.end(a, this.driver.isClosed ? null : reason === "closed" ? "done" : "failed", `the direct path ${reason === "timeout" ? "timed out" : reason}`, null, reason !== "closed");
-    // "timeout": a deadline ran out while it carried the channel — under load.
-    this.afterEnd(reason === "timeout");
+    this.end(a, this.driver.isClosed ? null : reason === "closed" ? "done" : "failed", `the direct path ${reason === "timeout" ? "timed out" : reason}`, null, reason !== "closed", congested);
+    this.afterEnd(congested);
   }
 
   /** `congested`: the path was given up under load (`CONGESTED_RETRY_MAX_MS`). */
@@ -787,8 +849,9 @@ export class DirectPaths {
       ms: this.env.now() - a.startedAt,
       livedMs: a.attachedAt === null ? undefined : this.env.now() - a.attachedAt,
       pc: peerState(a.pc),
+      underLoad: congested || undefined,
     });
-    this.end(a, bye, detail, "failed");
+    this.end(a, bye, detail, "failed", true, congested);
     this.afterEnd(congested);
   }
 
@@ -796,9 +859,10 @@ export class DirectPaths {
    * Tear an attempt down: tell the agent (`bye`), let the driver drop its path
    * (`detach`), close the peer connection. `failed`: it ended because the path
    * did not hold, not because this side was done with it — which, for a path
-   * that carried the channel and died young, counts towards the streak.
+   * that carried the channel and died young, counts towards the streak;
+   * `congested`, given up under load, towards the run of those.
    */
-  private end(a: Attempt, bye: ByeReason | null, detail: string, detach: DownReason | null, failed = true): void {
+  private end(a: Attempt, bye: ByeReason | null, detail: string, detach: DownReason | null, failed = true, congested = false): void {
     if (a.done) return;
     a.done = true;
     if (a.timer) clearTimeout(a.timer);
@@ -830,12 +894,7 @@ export class DirectPaths {
     }
     if (this.attempt === a) this.attempt = null;
     if (a.attachedAt === null) return;
-    if (this.env.now() - a.attachedAt >= this.timing.stableMs) {
-      this.history.shortLived = 0;
-      this.history.backoffMs = this.timing.retryFirstMs;
-    } else if (failed) {
-      this.history.shortLived += 1;
-    }
+    this.history.ended(this.env.now() - a.attachedAt, failed, congested, this.timing);
   }
 
   /** After an attempt ended: wait, then try again (unless trying is over). `congested`: it was given up under load. */
@@ -849,16 +908,13 @@ export class DirectPaths {
 
   /**
    * The next attempt after the backoff (jittered); `grow`: the one after that
-   * waits twice as long. `congested`: after a path given up under load, the
-   * wait and the next one are at most `congestedRetryMaxMs`.
+   * waits twice as long. `congested`: after a path given up under load
+   * (`DirectHistory.nextWait`).
    */
   private scheduleRetry(grow: boolean, congested = false): void {
     this.cancelRetry();
-    const most = congested ? Math.min(this.timing.congestedRetryMaxMs, this.timing.retryMaxMs) : this.timing.retryMaxMs;
-    const backoff = Math.min(this.history.backoffMs ?? this.timing.retryFirstMs, most);
-    const delay = Math.min(most, Math.round(backoff * (0.8 + 0.4 * this.env.random())));
-    if (grow) this.history.backoffMs = Math.min(backoff * 2, most);
-    this.log("direct.retry", { waitMs: delay, backoffMs: backoff, shortLived: this.history.shortLived, flapping: this.history.flapping, congested: congested || undefined });
+    const { waitMs: delay, backoffMs: backoff, capped } = this.history.nextWait(this.timing, grow, congested, this.env.random());
+    this.log("direct.retry", { waitMs: delay, backoffMs: backoff, shortLived: this.history.shortLived, flapping: this.history.flapping, congested: capped || undefined });
     this.retry = setTimeout(() => {
       this.retry = null;
       this.attemptNow();

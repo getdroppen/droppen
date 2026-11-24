@@ -17,6 +17,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DeadlineRate,
+  decayedRate,
   DEFAULT_REKEY,
   DIRECT_BUDGET,
   DIRECT_TIMEOUT_MAX_MS,
@@ -29,6 +31,8 @@ import {
   type MuxEvent,
   type NoiseKeyPair,
   type PathEvent,
+  RATE_DECAY_MS,
+  RELAY_BULK_AHEAD_MAX_MS,
   Responder,
   Session,
   type Transport,
@@ -428,3 +432,38 @@ test("the deadlines: the floors when nothing is carried, stretched by the bytes 
   // Never past the cap, whatever the round trip.
   assert.equal(directDeadline("UNACKED_TIMEOUT_MS", { ...none, rttMs: 5_000 }).limitMs, DIRECT_TIMEOUT_MAX_MS);
 });
+
+test("the deadlines' rate takes only backlogged samples over two round trips, fades towards the assumed rate, and starts afresh on a new path", () => {
+  const r = new DeadlineRate();
+  // One 20 KiB upload acknowledged a round trip later, nothing behind it: no sample (it read 146 times too slow before).
+  r.acked(20 * 1024, 0, 0, 220, 220);
+  assert.equal(r.value(220), null);
+  // A backlog: 64 KiB freed a second, 500 KB still waiting, over 50 ms round trips.
+  for (let k = 1; k <= 3; k++) r.acked(65_536, 1_000, 500_000, 1_000 + 1_000 * k, 50);
+  const rate = r.value(4_000)!;
+  assert.ok(rate > 60 && rate < 70, `about 65.5 B/ms: ${rate}`);
+  // Bulk back to back over the direct path, too quick for two round trips: no sample yet.
+  r.heard("direct", 65_536, 5_000, 500);
+  r.heard("direct", 65_536, 5_100, 500);
+  assert.equal(r.value(5_100), decayedRate(rate, 1_100));
+  // Fades with the time to the latest arrival, halfway at RATE_DECAY_MS; a new path starts afresh.
+  assert.equal(decayedRate(1_064, RATE_DECAY_MS), 564);
+  assert.ok(r.value(64_000)! < rate);
+  r.reset();
+  assert.equal(r.value(64_000), null);
+});
+
+test("a new direct path starts its deadlines' rate afresh, and this side's hub bulk counts as ahead for RELAY_BULK_AHEAD_MAX_MS at most", async () => {
+  const s = await idleDirect();
+  const bytes = 600 * 1024;
+  const typing = await transfer(s, bytes);
+  await s.run(s.now + 6_000, typing.type);
+  assert.notEqual(s.a.directLoad()!.bytesPerMs, null, "measured on the first path");
+  await s.attach();
+  assert.equal(s.a.directLoad()!.bytesPerMs, null, "not carried over to the next");
+  // However slow the link reads, a hub window this side sent long ago is not still ahead.
+  const far = directDeadline("UNACKED_TIMEOUT_MS", { ...s.a.directLoad()!, bytesPerMs: 1 });
+  assert.ok(far.limitMs <= DIRECT_TIMEOUT_MAX_MS);
+  assert.ok(RELAY_BULK_AHEAD_MAX_MS <= 10_000);
+});
+

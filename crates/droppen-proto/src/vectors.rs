@@ -199,9 +199,10 @@ fn noise_vectors() -> Value {
 /// the constants, and what each deadline comes to for a spread of loads —
 /// unloaded, a keystroke, a backlog at a measured rate and before one is,
 /// the peer's bulk over either path, this side's over the hub, a round trip
-/// that alone reaches the cap — to the last bit of the floating point.
+/// that alone reaches the cap — to the last bit of the floating point; the
+/// rate's steps, and how it fades without samples.
 fn deadline_vectors() -> Value {
-    use crate::path::{direct_deadline, next_rate, DirectLoad, DirectTimer};
+    use crate::path::{decayed_rate, direct_deadline, next_rate, DirectLoad, DirectTimer};
     let base = DirectLoad::default();
     let loads = [
         base,
@@ -295,6 +296,17 @@ fn deadline_vectors() -> Value {
             json!({"rate": opt(before), "sample": sample, "next": next})
         })
         .collect();
+    let decays: Vec<Value> = [
+        (1_064.0, 0.0),
+        (1_064.0, 30_000.0),
+        (4.0, 30_000.0),
+        (12_500.0, 7_777.7),
+        (33.3, 600_000.0),
+        (90.0, -1.0),
+    ]
+    .iter()
+    .map(|&(rate, age_ms)| json!({"rate": rate, "ageMs": age_ms, "decayed": decayed_rate(rate, age_ms)}))
+    .collect();
     json!({
         "constants": {
             "unackedTimeoutMs": crate::path::UNACKED_TIMEOUT_MS,
@@ -304,9 +316,12 @@ fn deadline_vectors() -> Value {
             "assumedBytesPerMs": crate::path::ASSUMED_BYTES_PER_MS,
             "bulkRecentMs": crate::path::BULK_RECENT_MS,
             "loadFactor": crate::path::LOAD_FACTOR,
+            "rateDecayMs": crate::path::RATE_DECAY_MS,
+            "relayBulkAheadMaxMs": crate::path::RELAY_BULK_AHEAD_MAX_MS,
         },
         "cases": cases,
         "rates": rates,
+        "decays": decays,
     })
 }
 

@@ -26,6 +26,7 @@ import type { Transport } from "./noise";
 import {
   ASSUMED_BYTES_PER_MS,
   BULK_RECENT_MS,
+  DeadlineRate,
   decodeDcMessage,
   decodeEnvelope,
   DIRECT_PROBE_MS,
@@ -39,9 +40,9 @@ import {
   type Envelope,
   type LaneStats,
   Lanes,
-  nextRate,
   PathError,
   RATE_SAMPLE_BYTES,
+  RELAY_BULK_AHEAD_MAX_MS,
   RELAY_PROBE_MS,
   UNACKED_LIMIT,
   type Via,
@@ -134,7 +135,11 @@ export interface Polled {
   data: { sid: number; len: number } | null;
 }
 
-/** The most probes outstanding at once (older ones are forgotten). */
+/**
+ * The most probes outstanding at once on each path (the oldest of that
+ * path's is forgotten): a direct path's probes, seconds late behind its own
+ * traffic, never push out the hub path's, whose age judges the channel.
+ */
 const MAX_PROBES = 16;
 
 function dataOf(frame: MuxFrame): { sid: number; len: number } | null {
@@ -175,22 +180,14 @@ class Paths {
   lastRelayRxMs: number;
   /** When `tick` last ran: a long gap means this page's timers were held, not that the peer went silent. */
   lastTickMs: number;
-  /**
-   * The slowest the channel's link has lately carried, on either path and
-   * either way (bytes/ms, `nextRate`): from acknowledgements freeing what this
-   * side sent on the direct path, and from the peer's bulk arriving back to
-   * back. What the direct path's deadlines time the bytes ahead at.
-   */
-  bytesPerMs: number | null = null;
-  /** Acknowledged bytes, and the time they took, gathered toward the next sample while the direct path stays backlogged. */
-  private ackedBytes = 0;
-  private ackedMs = 0;
-  /** When an acknowledgement last freed frames sent on the direct path (`null`: none since it was attached). */
-  private lastAckedMs: number | null = null;
+  /** The rate the direct path's deadlines time the bytes ahead at (`DeadlineRate`). */
+  readonly deadlineRate = new DeadlineRate();
   /** When bulk (a message of `RATE_SAMPLE_BYTES` or more) last came over each path. */
   private readonly bulkIn: Record<Via, number | null> = { relay: null, direct: null };
   /** When this side last sealed bulk for the hub path. */
   private relayBulkOutMs: number | null = null;
+  /** What the direct path carried as it was last let go (`directLoad`). */
+  lastLoad: DirectLoad | null = null;
   events: PathEvent[] = [];
   readonly counts = {
     relayRttMs: null as number | null,
@@ -223,12 +220,14 @@ class Paths {
     const heard = Math.max(this.lastDirectRxMs, this.lastRelayRxMs);
     const recent = (at: number | null) => at !== null && heard - at <= BULK_RECENT_MS;
     const oldest = this.lanes.oldestUnackedMs();
-    // A whole hub window this side sent may still be on its way for as long as the link takes to carry one.
-    const windowMs = Math.max(BULK_RECENT_MS, INITIAL_CREDIT / (this.bytesPerMs ?? ASSUMED_BYTES_PER_MS));
+    const bytesPerMs = this.deadlineRate.value(heard);
+    // A whole hub window this side sent may still be on its way for as long
+    // as the link takes to carry one — and no longer than RELAY_BULK_AHEAD_MAX_MS.
+    const windowMs = Math.min(RELAY_BULK_AHEAD_MAX_MS, Math.max(BULK_RECENT_MS, INITIAL_CREDIT / (bytesPerMs ?? ASSUMED_BYTES_PER_MS)));
     return {
       rttMs: this.counts.directRttMs,
       unackedBytes: this.lanes.unackedBytes,
-      bytesPerMs: this.bytesPerMs,
+      bytesPerMs,
       relayBulkSent: oldest !== null && this.relayBulkOutMs !== null && oldest - this.relayBulkOutMs <= windowMs,
       relayBulkReceived: recent(this.bulkIn.relay),
       directBulkReceived: recent(this.bulkIn.direct),
@@ -255,42 +254,20 @@ class Paths {
 
   /**
    * An acknowledgement came (on either path): progress on the direct one when
-   * it freed frames sent there — and, gathered while the path stays
-   * backlogged, a sample of how fast it carries what this side sends: the
-   * bytes freed over the time since the previous acknowledgement, or since
-   * the oldest of them left when the path had nothing waiting before.
+   * it freed frames sent there, and a step of the deadlines' rate.
    */
   acked(ack: number, nowMs: number): void {
     const before = this.lanes.unackedBytes;
     const oldest = this.lanes.oldestUnackedMs();
     if (this.lanes.onAck(ack) === 0) return;
     this.lastDirectProgressMs = nowMs;
-    const since = Math.max(this.lastAckedMs ?? Number.NEGATIVE_INFINITY, oldest ?? nowMs);
-    this.lastAckedMs = nowMs;
-    this.ackedBytes += before - this.lanes.unackedBytes;
-    this.ackedMs += Math.max(0, nowMs - since);
-    if (this.ackedBytes >= RATE_SAMPLE_BYTES && this.ackedMs > 0) {
-      this.bytesPerMs = nextRate(this.bytesPerMs, this.ackedBytes / this.ackedMs);
-      this.ackedBytes = 0;
-      this.ackedMs = 0;
-    } else if (this.lanes.unackedBytes === 0) {
-      // Nothing waits any more: what comes next is not timed from this.
-      this.ackedBytes = 0;
-      this.ackedMs = 0;
-    }
+    this.deadlineRate.acked(before - this.lanes.unackedBytes, oldest ?? nowMs, this.lanes.unackedBytes, nowMs, this.counts.directRttMs);
   }
 
-  /**
-   * A message of `len` bytes came over `via`: bulk when it weighs
-   * `RATE_SAMPLE_BYTES` or more, and two bulk messages in a row on one path,
-   * within `BULK_RECENT_MS`, time the link — the second took the time between
-   * them to come.
-   */
+  /** A message of `len` bytes came over `via`: bulk when it weighs `RATE_SAMPLE_BYTES` or more. */
   heardBulk(via: Via, len: number, nowMs: number): void {
-    if (len < RATE_SAMPLE_BYTES) return;
-    const prev = this.bulkIn[via];
-    if (prev !== null && nowMs > prev && nowMs - prev <= BULK_RECENT_MS) this.bytesPerMs = nextRate(this.bytesPerMs, len / (nowMs - prev));
-    this.bulkIn[via] = nowMs;
+    this.deadlineRate.heard(via, len, nowMs, this.counts.directRttMs);
+    if (len >= RATE_SAMPLE_BYTES) this.bulkIn[via] = nowMs;
   }
 
   /** This side sealed `len` bytes for the hub path. */
@@ -298,11 +275,9 @@ class Paths {
     if (len >= RATE_SAMPLE_BYTES) this.relayBulkOutMs = nowMs;
   }
 
-  /** A new direct path: what was timed on the one before about its acknowledgements and its bulk is not this one's. */
+  /** A new direct path: what was measured on the one before is not this one's. */
   attached(): void {
-    this.ackedBytes = 0;
-    this.ackedMs = 0;
-    this.lastAckedMs = null;
+    this.deadlineRate.reset();
     this.bulkIn.direct = null;
   }
 
@@ -361,6 +336,8 @@ class Paths {
     // Still queued, they are timed afresh from when they leave.
     this.unsentRelayProbes.clear();
     this.lateRelayProbes.clear();
+    // Nor is what was being timed for the deadlines' rate the link's.
+    this.deadlineRate.restart();
     this.ageRelayProbe(nowMs);
     return forgotten;
   }
@@ -369,12 +346,20 @@ class Paths {
   noteProbe(env: Envelope, via: Via, nowMs: number): void {
     if (env.type !== "probe") return;
     if (via === "relay") this.unsentRelayProbes.delete(env.nonce);
-    if (this.probes.size >= MAX_PROBES) this.probes.delete(Math.min(...this.probes.keys()));
+    let count = 0;
+    let oldest: number | null = null;
+    for (const [nonce, [on]] of this.probes) {
+      if (on !== via) continue;
+      count++;
+      if (oldest === null || nonce < oldest) oldest = nonce;
+    }
+    if (count >= MAX_PROBES && oldest !== null) this.probes.delete(oldest);
     this.probes.set(env.nonce, [via, nowMs]);
     this.events.push({ type: "probe", via, nonce: env.nonce });
   }
 
   detach(reason: DownReason, tellPeer: boolean): void {
+    this.lastLoad = this.load();
     this.direct = null;
     this.outDirect = [];
     for (const [nonce, [via]] of this.probes) if (via !== "relay") this.probes.delete(nonce);
@@ -434,6 +419,16 @@ export class Session {
       probesOut: p.probes.size,
       oldestProbeMs: oldest === null ? null : Math.max(0, nowMs - oldest),
     };
+  }
+
+  /**
+   * What the direct path carries now — or, with none attached, carried as it
+   * was last let go (`null` before any was): whether it went under load.
+   */
+  directLoad(): DirectLoad | null {
+    const p = this.paths;
+    if (!p) return null;
+    return p.direct ? p.load() : p.lastLoad;
   }
 
   /** What happened to the paths since the last call. */
