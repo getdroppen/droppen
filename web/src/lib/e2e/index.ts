@@ -20,6 +20,7 @@ export * from "./link-return";
 export * from "./mnemonic";
 export * from "./mux";
 export * from "./noise";
+export * from "./pace";
 export * from "./pairing";
 export * from "./pake";
 export * from "./passkey-unlock";

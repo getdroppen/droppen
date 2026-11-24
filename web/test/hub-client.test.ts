@@ -42,6 +42,7 @@ import {
   MessageReader,
   type NoiseKeyPair,
   openFrom,
+  PACE_FLOOR,
   type ReplyBody,
   Responder,
   signDraft,
@@ -795,6 +796,16 @@ test("an agent that sequences frames gets them sequenced, the relay path measure
   await until(() => channel.paths?.relayRttMs != null);
   assert.ok(channel.paths?.relayRttMs != null, "the relay path's round trip, measured by a probe");
   assert.ok(heard > 0, "and listeners heard it");
+  // The page's pace on that path, in the connection log's sample: its cap, what it counts as out, the rate and round trip it measured.
+  // (A first look primes what moved; the request after it is what the second one sees.)
+  connLog.sampleNow();
+  await (await transport.fetch(new Request("http://machine/api/sessions", { method: "POST", body: "again" }))).json();
+  connLog.sampleNow();
+  const sample = connLog.events().filter((e) => e.name === "sample").at(-1);
+  const of = (name: string) => Object.entries(sample?.fields ?? {}).find(([k]) => k.startsWith("ch:") && k.endsWith(`.${name}`))?.[1];
+  assert.equal(of("cap"), PACE_FLOOR, "a new path starts at the floor");
+  assert.equal(typeof of("capInflight"), "number");
+  for (const name of ["rate", "minRttMs"]) assert.ok(Object.keys(sample!.fields).some((k) => k.endsWith(`.${name}`)), `${name} (null until measured)`);
   assert.equal(channel.directPaths?.state, "off", "hub only: nothing asked");
   assert.ok(!hub.agent.requests.includes("GET /rh/direct"));
 

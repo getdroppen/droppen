@@ -402,6 +402,12 @@ function channelSampler(driver: ChannelDriver, pipes: () => number) {
         ...moved,
         // Bytes sent and not yet credited back by the carrier (`INITIAL_CREDIT` less what is left), and a sealed frame waiting for credit.
         inflight: d.inflight,
+        // This page's pace on the path carrying its frames (`lib/e2e/pace.ts`): what may be in flight, what it counts as out, the delivery rate (bytes/s) and the minimum round trip it measured.
+        cap: d.cap,
+        capInflight: d.capInflight,
+        rate: d.rate,
+        minRttMs: d.minRttMs,
+        capDefers: d.capDefers,
         heldTx: d.heldTx,
         queued: d.queued,
         dcBuf: d.dcBuffered,
@@ -731,6 +737,9 @@ export class MachineChannel implements PipeOpener {
       decision: rule === "relay_silent" ? "gone" : undefined,
       sendCreditLeft: d.credit,
       inflight: d.inflight,
+      cap: d.cap,
+      rate: d.rate,
+      minRttMs: d.minRttMs,
       recvUnacked: d.recvUnacked,
       queued: d.queued + d.heldTx,
       unacked: d.unackedBytes,

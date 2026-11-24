@@ -8,6 +8,10 @@
  *
  * - Hub credit (`flow.ts`): a new frame is sealed only while the hub window
  *   could take a whole one, and credit is handed back as soon as data is read.
+ * - The pace (`pace.ts`, a channel with paths; `options.pace`, on by
+ *   default): under that credit, what is in flight on the path carrying new
+ *   frames is kept near what the path delivers in a round trip, so on a slow
+ *   link an answer waits behind a fraction of a second of bulk, not the window.
  * - Stream windows (`mux.ts`): data is acknowledged as it is handed to the
  *   stream's `ondata`, so a page that is slow to read slows nobody but the
  *   tab itself; nothing a page reads is held back.
@@ -82,6 +86,8 @@ export interface DirectLink {
 export interface DriverOptions {
   /** Speak `paths/1`: every frame sequenced, a direct path can be attached. */
   paths?: PathOptions;
+  /** With paths, keep what is in flight near what the path delivers in a round trip (`pace.ts`); on unless `false` (then as the windows allow, as before). */
+  pace?: boolean;
   /** The monotonic clock path timers and round trips are measured on (ms); `performance.now` by default. */
   clock?: () => number;
 }
@@ -97,6 +103,17 @@ export interface DriverDiagnostics {
   heldTx: number;
   credit: number;
   inflight: number;
+  /**
+   * The pace of the path carrying new frames (`null`: not paced): what may be
+   * in flight there (bytes), what it counts as out (bytes), the delivery rate
+   * it measured (bytes a second) and the minimum round trip (ms).
+   */
+  cap: number | null;
+  capInflight: number | null;
+  rate: number | null;
+  minRttMs: number | null;
+  /** The cap defers to the window: the peer's bulk this way is an older peer's, unmarked (`null`: not paced). */
+  capDefers: boolean | null;
   /** Received and not credited back to the sender yet (bytes). */
   recvUnacked: number;
   /** How long since anything came in on either path (ms; `null`: nothing yet). */
@@ -201,6 +218,7 @@ export class ChannelDriver {
     this.clock = options.clock ?? (() => performance.now());
     if (options.paths) {
       this.session = Session.withPaths(ch, transport, role, options.paths, this.clock());
+      this.session.setPacing(options.pace ?? true);
       this.stats = this.readStats();
       // Its first timers (the first hub probe) are due at once.
       this.kick();
@@ -244,11 +262,17 @@ export class ChannelDriver {
       dcBuffered = null;
     }
     const now = this.clock();
+    const pace = this.session.paceStats();
     return {
       ...this.moved,
       heldTx: this.held?.type === "data" ? this.held.payload.length : 0,
       credit: this.sendWindow.remaining,
       inflight: INITIAL_CREDIT - this.sendWindow.remaining,
+      cap: pace?.cap ?? null,
+      capInflight: pace?.inflight ?? null,
+      rate: pace?.rate != null ? Math.round(pace.rate) : null,
+      minRttMs: pace?.minRttMs ?? null,
+      capDefers: pace ? pace.deferring : null,
       recvUnacked: this.recvWindow.pending,
       lastRxAgoMs: this.lastRxAt === null ? null : Math.max(0, now - this.lastRxAt),
       queued: pending.bytes,

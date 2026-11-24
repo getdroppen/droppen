@@ -25,6 +25,22 @@ export const MAX_CHUNK = MAX_TRANSPORT_DATA - ENVELOPE_HEADER - DATA_HEADER;
 export const BLOB_CHUNK = 16 * 1024;
 export const MAX_META = 8 * 1024;
 export const MAX_STREAMS = 1024;
+/** A data frame bigger than its `Budget` is cut to fit, but not to less than this: a smaller remainder waits for room. */
+export const MIN_CUT = 4 * 1024;
+
+/**
+ * What new stream data may take now, by priority (`Mux.pollWithin`, the
+ * pace's: `pace.ts`): term, rpc and mux data within `interactive`, blob data
+ * within `bulk`. Control frames, and a close with nothing before it, never wait for it.
+ */
+export interface Budget {
+  interactive: number;
+  bulk: number;
+}
+/** No limit: `Mux.poll`. */
+export const BUDGET_UNLIMITED: Budget = Object.freeze({ interactive: Number.POSITIVE_INFINITY, bulk: Number.POSITIVE_INFINITY });
+/** Control frames only. */
+export const BUDGET_NONE: Budget = Object.freeze({ interactive: 0, bulk: 0 });
 
 export type StreamClass = "rpc" | "mux" | "term" | "blob";
 
@@ -219,12 +235,33 @@ export class Mux {
     return this.control.length > 0 || [...this.streams.values()].some(Mux.ready);
   }
 
+  /** Whether anything is queued at all, sendable now or held back by a stream's window (`hasPending` says only what can go). */
+  hasQueued(): boolean {
+    return this.control.length > 0 || [...this.streams.values()].some((s) => s.pending.length > 0 || s.pendingClose !== null);
+  }
+
   poll(): MuxFrame | null {
+    return this.pollWithin(BUDGET_UNLIMITED);
+  }
+
+  /**
+   * `poll` within `budget`: a stream whose next data does not fit its
+   * priority's budget waits (others of its priority still take their turns),
+   * and data bigger than the budget is cut to it when at least `MIN_CUT` is left.
+   */
+  pollWithin(budget: Budget): MuxFrame | null {
     const ctl = this.control.shift();
     if (ctl) return ctl;
     for (const p of [1, 2, 3]) {
+      const room = p === 3 ? budget.bulk : budget.interactive;
+      const fits = (s: Stream) => {
+        const front = s.pending[0];
+        if (!front) return false;
+        const n = Math.min(front.length, s.sendCredit);
+        return n > 0 && (n <= room || room >= MIN_CUT);
+      };
       const ready = this.sorted()
-        .filter(([, s]) => priority(s.cls) === p && Mux.ready(s))
+        .filter(([, s]) => priority(s.cls) === p && (fits(s) || (s.pending.length === 0 && s.pendingClose !== null)))
         .map(([sid]) => sid);
       if (ready.length === 0) continue;
       const sid = ready.find((x) => x > this.lastServed[p]!) ?? ready[0]!;
@@ -232,7 +269,7 @@ export class Mux {
       const s = this.streams.get(sid)!;
       const front = s.pending[0];
       if (front) {
-        const n = Math.min(front.length, s.sendCredit);
+        const n = Math.min(front.length, s.sendCredit, room);
         let data: Bytes;
         if (n === front.length) {
           data = s.pending.shift()!;

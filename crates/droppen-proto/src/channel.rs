@@ -30,14 +30,28 @@
 //! indicator). Timers are driven by [`Session::tick`] at
 //! [`Session::next_deadline_us`]. Path times are microseconds of the same wall
 //! clock the transports use for rekeying (in milliseconds).
+//!
+//! # Pacing
+//!
+//! A session with paths that is told to ([`Session::set_pacing`]; the
+//! [`crate::driver`] does) keeps what it has in flight on the path carrying
+//! new frames near what that path delivers in a round trip
+//! ([`crate::pace`]), well below the hub window or the direct path's limit on
+//! a slow link: it follows its data with markers (probes whose answers only
+//! the pace hears) and polls the multiplexer within the budget the cap leaves.
+//! Each path has its own pace; a direct path starts from the hub path's rate
+//! and the hub path, back in use, from the direct one's if it has none.
+//! Without pacing a session sends as before.
 
 use std::collections::{HashMap, VecDeque};
 
 use thiserror::Error;
 
+use crate::flow::INITIAL_CREDIT;
 use crate::frame::Frame;
-use crate::mux::{Mux, MuxError, MuxEvent, MuxFrame, Role};
+use crate::mux::{Budget, Mux, MuxError, MuxEvent, MuxFrame, Role};
 use crate::noise::{ChannelError, Transport};
+use crate::pace::{Next, Pace, PaceStats};
 use crate::path::{
     direct_deadline, DcMessage, DeadlineRate, DirectDeadline, DirectLoad, DirectTimer, DownReason, Envelope, LaneStats, Lanes, PathError, Via,
     ASSUMED_BYTES_PER_MS, BULK_RECENT_MS, DIRECT_PROBE_MS, RATE_SAMPLE_BYTES, RELAY_BULK_AHEAD_MAX_MS, RELAY_PROBE_MS, UNACKED_LIMIT,
@@ -151,8 +165,11 @@ struct Paths {
     lanes: Lanes,
     direct: Option<Transport>,
     /// Envelopes for the hub path outside the multiplexer's order: a `DOWN`,
-    /// resends after a fallback (sequenced already), probes and their answers.
+    /// probes and their answers. They go ahead of everything else there.
     out_relay: VecDeque<Envelope>,
+    /// What a direct path that failed did not deliver (sequenced already), to
+    /// send again over the hub ahead of anything new, behind `out_relay`.
+    resend_relay: VecDeque<Envelope>,
     /// Probes and their answers for the direct path.
     out_direct: VecDeque<Envelope>,
     probes: HashMap<u64, (Via, u64)>,
@@ -184,6 +201,12 @@ struct Paths {
     last_timeout: Option<DirectTimeout>,
     events: VecDeque<PathEvent>,
     stats: PathStats,
+    /// Whether new frames go by the paths' paces ([`Session::set_pacing`]).
+    pacing: bool,
+    /// The hub path's pace (for the channel's life), and the direct path's
+    /// while one is attached.
+    relay_pace: Pace,
+    direct_pace: Option<Pace>,
 }
 
 pub struct Session {
@@ -215,6 +238,7 @@ impl Session {
                 lanes: Lanes::new(),
                 direct: None,
                 out_relay: VecDeque::new(),
+                resend_relay: VecDeque::new(),
                 out_direct: VecDeque::new(),
                 probes: HashMap::new(),
                 unsent_relay_probes: HashMap::new(),
@@ -232,8 +256,26 @@ impl Session {
                 last_timeout: None,
                 events: VecDeque::new(),
                 stats: PathStats::default(),
+                pacing: false,
+                relay_pace: Pace::new(INITIAL_CREDIT as usize),
+                direct_pace: None,
             }),
         }
+    }
+
+    /// Keep what is in flight on each path near what it delivers in a round
+    /// trip ([`crate::pace`]), or send as the windows allow (`false`, the
+    /// default). Only a session with paths can: the markers are envelopes.
+    pub fn set_pacing(&mut self, on: bool) {
+        if let Some(p) = self.paths.as_mut() {
+            p.pacing = on;
+        }
+    }
+
+    /// The pace of the path new frames go on, while pacing.
+    pub fn pace_stats(&self) -> Option<PaceStats> {
+        let p = self.paths.as_ref().filter(|p| p.pacing)?;
+        Some(p.direct_pace.as_ref().unwrap_or(&p.relay_pace).stats())
     }
 
     pub fn ch(&self) -> u32 {
@@ -294,6 +336,8 @@ impl Session {
         p.next_direct_probe_us = now_us;
         p.out_direct.clear();
         p.attached();
+        // A new path: its own round trip to measure, the hub path's rate to start from.
+        p.direct_pace = Some(Pace::seeded(UNACKED_LIMIT, p.relay_pace.rate_sample()));
         p.stats.ups += 1;
         p.events.push_back(PathEvent::DirectUp);
         Ok(())
@@ -365,14 +409,36 @@ impl Session {
                 data,
             )));
         };
-        // Queued envelopes for each path first: on the hub path that is what
-        // a fallback resends, which must go before anything newer.
+        // Queued envelopes for each path first: on the hub path its control
+        // (a `DOWN`, probes and their answers: small, and timed by the peer),
+        // then what a fallback resends, which must go before anything newer.
         if room.relay {
             if let Some(env) = p.out_relay.pop_front() {
                 p.note_probe(&env, Via::Relay, now_us);
                 let plain = env.encode();
                 p.sent_relay(plain.len(), now_us);
                 let sealed = self.transport.seal(now_ms, &plain)?;
+                return Ok(Some((
+                    Wire::Relay(Frame::Data {
+                        ch: self.ch,
+                        payload: sealed,
+                    }),
+                    None,
+                )));
+            }
+            if !p.resend_relay.is_empty() && p.pacing && p.direct.is_none() && p.relay_pace.marker_due() {
+                // Resends carry no markers of their own: one in every so much, so a
+                // peer that paces does not take them for an older peer's bulk.
+                return Ok(Some((self.marker(Via::Relay, now_us)?, None)));
+            }
+            if let Some(env) = p.resend_relay.pop_front() {
+                let plain = env.encode();
+                p.sent_relay(plain.len(), now_us);
+                let sealed = self.transport.seal(now_ms, &plain)?;
+                // Paced when the hub path is the one carrying (a new direct path may have taken over since).
+                if p.pacing && p.direct.is_none() {
+                    p.relay_pace.data_sent(sealed.len(), now_us);
+                }
                 return Ok(Some((
                     Wire::Relay(Frame::Data {
                         ch: self.ch,
@@ -396,16 +462,31 @@ impl Session {
         // New frames on the direct path also wait while too much it carries
         // is unacknowledged; an acknowledgement never does (it is not kept).
         let data_room = via == Via::Relay || p.lanes.unacked_bytes() < UNACKED_LIMIT;
-        let frame = if data_room { self.mux.poll() } else { None };
+        // And, pacing, for what the path's cap leaves (a marker first, when one is due).
+        let pending = p.pacing && self.mux.has_pending();
+        let mut budget = Budget::UNLIMITED;
+        if pending && data_room {
+            match p.pace(via).next(now_us) {
+                Next::Marker => return Ok(Some((self.marker(via, now_us)?, None))),
+                Next::Data(b) => budget = b,
+            }
+        }
+        let frame = if data_room { self.mux.poll_within(budget) } else { None };
+        let p = self.paths.as_mut().expect("paths");
         let (env, data) = if let Some(frame) = frame {
             let data = data_of(&frame);
             (p.lanes.stamp_at(frame.encode(), via == Via::Direct, now_ms), data)
+        } else if p.pacing && p.pace(via).stopped(pending, !self.mux.has_queued()) {
+            // Sending stopped: a marker after what went, so its delivery is heard.
+            return Ok(Some((self.marker(via, now_us)?, None)));
         } else if p.lanes.ack_due_ms().is_some_and(|due| due <= now_ms) {
             (Envelope::Ack { ack: p.lanes.take_ack() }, None)
         } else {
             return Ok(None);
         };
-        Ok(Some(match via {
+        // Stream data counts against the cap; the multiplexer's own frames do not.
+        let paced = p.pacing && data.is_some();
+        let wire = match via {
             Via::Relay => {
                 let plain = env.encode();
                 p.sent_relay(plain.len(), now_us);
@@ -422,7 +503,32 @@ impl Session {
                 let sealed = p.direct.as_mut().expect("checked").seal(now_ms, &env.encode())?;
                 (Wire::Direct(DcMessage::Sealed(sealed).encode()), data)
             }
-        }))
+        };
+        if paced {
+            let len = match &wire.0 {
+                Wire::Relay(Frame::Data { payload, .. }) => payload.len(),
+                Wire::Relay(_) => 0,
+                Wire::Direct(message) => message.len(),
+            };
+            p.pace(via).data_sent(len, now_us);
+        }
+        Ok(Some(wire))
+    }
+
+    /// A marker (a probe only the pace hears the answer to) for `via`, sealed.
+    fn marker(&mut self, via: Via, now_us: u64) -> Result<Wire, SessionError> {
+        let now_ms = now_us / 1000;
+        let p = self.paths.as_mut().expect("paths");
+        let nonce = p.nonce();
+        p.pace(via).marker_sent(nonce, now_us);
+        let env = Envelope::Probe { nonce }.encode();
+        Ok(match via {
+            Via::Relay => Wire::Relay(Frame::Data {
+                ch: self.ch,
+                payload: self.transport.seal(now_ms, &env)?,
+            }),
+            Via::Direct => Wire::Direct(DcMessage::Sealed(p.direct.as_mut().expect("a direct pace with a direct path").seal(now_ms, &env)?).encode()),
+        })
     }
 
     /// One `DATA` payload from the hub (milliseconds). Any error is fatal to
@@ -441,6 +547,9 @@ impl Session {
         self.heard_relay(now_us);
         if let Some(p) = self.paths.as_mut() {
             p.heard_bulk(Via::Relay, payload.len(), now_us);
+            if p.pacing {
+                p.relay_pace.received(payload.len());
+            }
         }
         let env = Envelope::decode(&plaintext).map_err(PathError::from)?;
         self.on_envelope(env, Via::Relay, now_us)
@@ -480,6 +589,11 @@ impl Session {
         };
         p.last_direct_rx_us = now_us;
         p.heard_bulk(Via::Direct, message.len(), now_us);
+        if p.pacing {
+            if let Some(pace) = p.direct_pace.as_mut() {
+                pace.received(message.len());
+            }
+        }
         self.on_envelope(env, Via::Direct, now_us)
     }
 
@@ -501,6 +615,10 @@ impl Session {
             }
             Envelope::Ack { ack } => p.acked(ack, now_us)?,
             Envelope::Probe { nonce } => {
+                if p.pacing {
+                    // How often the peer marks what it sends tells a pacing peer from an older one.
+                    p.pace(via).peer_probe();
+                }
                 // Answered at once, with any acknowledgement owed: a side whose
                 // timers are held back (a page in a background tab) still
                 // acknowledges once per probe, which comes from the other side.
@@ -513,7 +631,10 @@ impl Session {
                 out.extend(owed);
             }
             Envelope::ProbeAck { nonce } => {
-                if let Some((sent_via, sent_us)) = p.probes.remove(&nonce) {
+                if p.pacing && !p.probes.contains_key(&nonce) {
+                    // One of the paces' markers, or nothing this side remembers.
+                    p.pace(via).answered(nonce, now_us);
+                } else if let Some((sent_via, sent_us)) = p.probes.remove(&nonce) {
                     if sent_via == via {
                         let ms = now_us.saturating_sub(sent_us) as f64 / 1000.0;
                         match via {
@@ -641,7 +762,15 @@ impl Paths {
         if self.direct.is_some() {
             room.direct
         } else {
-            room.relay && self.out_relay.is_empty()
+            room.relay && self.out_relay.is_empty() && self.resend_relay.is_empty()
+        }
+    }
+
+    /// The pace of `via`: the direct path's while one is attached, else the hub path's.
+    fn pace(&mut self, via: Via) -> &mut Pace {
+        match (via, self.direct_pace.as_mut()) {
+            (Via::Direct, Some(pace)) => pace,
+            _ => &mut self.relay_pace,
         }
     }
 
@@ -777,12 +906,16 @@ impl Paths {
         self.out_direct.clear();
         self.probes.retain(|_, (via, _)| *via == Via::Relay);
         self.stats.downs += 1;
-        // The resends go first, ahead of anything queued for the hub path
-        // since (a probe, a probe's answer), and the `DOWN` ahead of them.
-        let resend = self.lanes.take_unacked();
-        for env in resend.into_iter().rev() {
-            self.out_relay.push_front(env);
+        // The hub path carries on at its own pace; one that never had a rate
+        // starts from the direct path's.
+        if let Some(direct) = self.direct_pace.take() {
+            self.relay_pace.seed_rate(direct.rate_sample());
+            self.relay_pace.resume();
         }
+        // The resends go ahead of anything new (in order, after any from an
+        // earlier fallback still waiting), behind the hub path's control —
+        // the `DOWN` first of all.
+        self.resend_relay.extend(self.lanes.take_unacked());
         if tell_peer {
             self.out_relay.push_front(Envelope::Down { reason });
         }
@@ -1338,6 +1471,180 @@ mod tests {
         }
         assert_eq!(got.len(), 2);
         assert_eq!(a.next_deadline_us(Room { relay: true, direct: true }), None);
+    }
+
+    /// A blob stream from a (the page) that b (the agent) answers with
+    /// `len` bytes, b pacing.
+    fn bulk_from_b(p: &mut Pair, len: usize) -> u32 {
+        p.b.set_pacing(true);
+        let sid = p.a.mux().open(StreamClass::Blob, b"GET /api/fs/download").unwrap();
+        p.send_all();
+        while p.deliver(0, Via::Relay) {}
+        p.b.mux().send(sid, &vec![7; len]).unwrap();
+        sid
+    }
+
+    /// One round trip of everything each way: what each side sends, half a
+    /// round trip on the wire, delivered (and read: stream credit handed back).
+    fn round(p: &mut Pair, sid: u32) {
+        for _ in 0..2 {
+            p.send_all();
+            p.now += 35_000;
+            for from in 0..2 {
+                while p.deliver(from, Via::Relay) || p.deliver(from, Via::Direct) {}
+            }
+            let read = std::mem::take(&mut p.got[0]).len();
+            p.a.mux().consumed(sid, read);
+        }
+    }
+
+    /// Paced, a sender stops at its cap and follows its data with markers; the
+    /// answers bring the room back, and they touch nothing the paths' own
+    /// probes keep (no round trip, no event).
+    #[test]
+    fn a_paced_session_stops_at_its_cap_and_its_markers_bring_the_room_back() {
+        let mut p = Pair::new();
+        let sid = bulk_from_b(&mut p, 1 << 20);
+        p.send_all();
+        let sent: usize = p.relay[1].iter().map(|f| if let Frame::Data { payload, .. } = f { payload.len() } else { 0 }).sum();
+        let pace = p.b.pace_stats().unwrap();
+        assert!(sent <= crate::pace::FLOOR as usize + 1024, "the floor and its markers: {sent}");
+        assert!(sent >= crate::pace::FLOOR as usize - 4096, "{sent}");
+        assert!(pace.markers >= 4, "a lead marker, one every 16 KiB, and the tail: {pace:?}");
+        assert_eq!(pace.inflight, sent as u64 - pace.markers as u64 * 26, "data less the markers' own bytes");
+        // Nothing more until answers come.
+        p.send_all();
+        assert_eq!(p.relay[1].len(), pace.markers + 4);
+        p.b.take_events();
+        round(&mut p, sid);
+        let after = p.b.pace_stats().unwrap();
+        assert!(after.min_rtt_ms.is_some() && after.rate.is_some(), "{after:?}");
+        assert_eq!(p.b.stats().relay_rtt_ms, None, "a marker's answer is not a probe's");
+        assert!(p.b.take_events().is_empty(), "nor an event");
+        for _ in 0..20 {
+            round(&mut p, sid);
+        }
+        assert!(p.b.pace_stats().unwrap().inflight <= crate::pace::FLOOR, "{:?}", p.b.pace_stats());
+        // Unpaced, the same session sends what the windows allow.
+        let mut q = Pair::new();
+        let sid = q.a.mux().open(StreamClass::Blob, b"GET /api/fs/download").unwrap();
+        q.send_all();
+        while q.deliver(0, Via::Relay) {}
+        q.b.mux().send(sid, &vec![7; 1 << 20]).unwrap();
+        q.send_all();
+        let sent: usize = q.relay[1].iter().map(|f| if let Frame::Data { payload, .. } = f { payload.len() } else { 0 }).sum();
+        assert!(sent >= 256 * 1024, "the stream's whole window: {sent}");
+        assert_eq!(q.b.pace_stats(), None);
+    }
+
+    /// A paced side that mostly reads sends the multiplexer's credits for what
+    /// it read: they never wait for the cap, nor count against it — nothing
+    /// is out, no marker follows them.
+    #[test]
+    fn the_multiplexers_own_frames_do_not_count_against_the_cap() {
+        let mut p = Pair::new();
+        p.a.set_pacing(true);
+        let sid = p.a.mux().open(StreamClass::Blob, b"GET /api/fs/download").unwrap();
+        p.send_all();
+        while p.deliver(0, Via::Relay) {}
+        p.b.mux().send(sid, &vec![7; 2 << 20]).unwrap();
+        for _ in 0..30 {
+            round(&mut p, sid);
+            let pace = p.a.pace_stats().unwrap();
+            assert_eq!((pace.inflight, pace.markers), (0, 0), "{pace:?}");
+        }
+    }
+
+    /// After a fallback the hub path's control (the `DOWN`, a probe) goes
+    /// ahead of the resends, and the resends ahead of anything new.
+    #[test]
+    fn after_a_fallback_the_hub_paths_control_goes_ahead_of_the_resends() {
+        let mut p = Pair::new();
+        let sid = open_stream(&mut p);
+        p.attach();
+        p.a.mux().send(sid, b"abc").unwrap();
+        p.send_all();
+        p.direct[0].clear();
+        p.a.detach_direct(DownReason::Failed, true);
+        p.now += 1_000;
+        p.a.tick(p.now);
+        p.a.mux().send(sid, b"d").unwrap();
+        let paths = p.a.paths.as_ref().unwrap();
+        assert!(matches!(paths.out_relay.front(), Some(Envelope::Down { .. })), "{:?}", paths.out_relay);
+        assert!(matches!(paths.out_relay.get(1), Some(Envelope::Probe { .. })), "{:?}", paths.out_relay);
+        assert_eq!(paths.resend_relay.len(), 1);
+        // b reads them in that order: the probe answered before any resend arrived.
+        p.send_all();
+        assert_eq!(p.relay[0].len(), 4);
+        p.deliver(0, Via::Relay);
+        p.deliver(0, Via::Relay);
+        assert!(p.got[1].is_empty() && !p.b.paths.as_ref().unwrap().out_relay.is_empty(), "a probe's answer queued");
+        while p.deliver(0, Via::Relay) {}
+        assert_eq!(p.got[1], b"abcd", "the resend, then what is new");
+    }
+
+    /// What a fallback resends goes ahead of the pace and carries no markers
+    /// of its own: a paced sender puts one in every 16 KiB of it, so a peer
+    /// that paces never sees that much of its data unmarked and takes it for
+    /// an older peer's.
+    #[test]
+    fn resends_after_a_fallback_are_marked_every_sixteen_kib() {
+        let mut p = Pair::new();
+        let sid = bulk_from_b(&mut p, 0);
+        p.attach();
+        p.b.mux().send(sid, &vec![7; 96 * 1024]).unwrap();
+        for _ in 0..20 {
+            p.send_all();
+            p.direct[1].clear();
+            p.now += 1_000;
+        }
+        let unacked = p.b.paths.as_ref().unwrap().lanes.unacked_bytes();
+        assert!(unacked >= 48 * 1024, "the direct path's floor unacknowledged: {unacked}");
+        p.b.detach_direct(DownReason::Failed, true);
+        p.send_all();
+        // Read on the other side, in order: never more than 16 KiB (and a frame) between two probes.
+        let (mut since, mut most, mut probes) = (0usize, 0usize, 0);
+        while let Some(Frame::Data { payload, .. }) = p.relay[1].pop_front() {
+            let before = p.a.paths.as_ref().unwrap().out_relay.len();
+            p.a.receive_relay(&payload, p.now).unwrap();
+            if p.a.paths.as_ref().unwrap().out_relay.len() > before {
+                probes += 1;
+                since = 0;
+            } else {
+                since += payload.len();
+                most = most.max(since);
+            }
+        }
+        assert!(probes >= 3, "{probes}");
+        // A spacing and the (16 KiB blob) frame that crossed it, sealed.
+        assert!(most <= 2 * 16 * 1024 + 1024, "{most}");
+    }
+
+    /// Each path keeps its own pace: a direct path starts from the hub path's
+    /// rate and measures its own round trip; back on the hub, its pace is
+    /// where it was.
+    #[test]
+    fn each_path_has_its_own_pace_and_a_new_one_starts_from_the_others_rate() {
+        let mut p = Pair::new();
+        let sid = bulk_from_b(&mut p, 4 << 20);
+        for _ in 0..10 {
+            round(&mut p, sid);
+        }
+        let relay = p.b.pace_stats().unwrap();
+        assert!(relay.rate.is_some() && relay.min_rtt_ms.is_some(), "{relay:?}");
+        p.attach();
+        let direct = p.b.pace_stats().unwrap();
+        assert_eq!((direct.rate, direct.min_rtt_ms, direct.cap), (relay.rate, None, crate::pace::FLOOR));
+        round(&mut p, sid);
+        let direct = p.b.pace_stats().unwrap();
+        assert!(direct.min_rtt_ms.is_some(), "its own round trip: {direct:?}");
+        p.b.detach_direct(DownReason::Closed, true);
+        let back = p.b.pace_stats().unwrap();
+        assert_eq!(back.min_rtt_ms, relay.min_rtt_ms);
+        for _ in 0..5 {
+            round(&mut p, sid);
+        }
+        assert!(p.b.pace_stats().unwrap().inflight <= crate::pace::FLOOR + crate::pace::HEADROOM);
     }
 
     /// The direct path's deadlines under load, over an access link both paths
