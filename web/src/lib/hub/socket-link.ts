@@ -9,16 +9,19 @@
  * channel), what a lost connection tells its channels, and the close codes.
  */
 import { encodeFrame, type Frame } from "@/lib/e2e";
+import { connLog } from "@/lib/connection-log";
 
 /** The parts of a browser `WebSocket` this uses. */
 export interface SocketLike {
   binaryType: string;
   readyState: number;
+  /** Bytes queued to send and not yet handed to the network (a browser socket's; the connection log samples it). */
+  readonly bufferedAmount?: number;
   send(data: string | ArrayBufferLike | ArrayBufferView): void;
   close(code?: number, reason?: string): void;
   onopen: ((ev: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
-  onclose: ((ev: { code?: number; reason?: string }) => void) | null;
+  onclose: ((ev: { code?: number; reason?: string; wasClean?: boolean }) => void) | null;
   onerror: ((ev: unknown) => void) | null;
 }
 
@@ -37,13 +40,32 @@ export abstract class SocketLink<S extends SocketLinkState = SocketLinkState> {
   /** The wake-up ping sent on coming back, and when nothing has answered it. */
   protected probeTimer: ReturnType<typeof setTimeout> | null = null;
   protected probeAnswered = false;
+  /** Bytes sent and received on this link's connections, for the connection log's samples. */
+  bytesSent = 0;
+  bytesReceived = 0;
   private nextCh = 1;
   /** Where each open channel's frames go. */
   protected readonly routes = new Map<number, (frame: Frame) => void>();
   protected readonly stateListeners = new Set<Listener<S>>();
 
+  /** When the wake-up probe now pending went (the page's clock), for the connection log. */
+  private probeAt = 0;
+
   /** The page's clock (`now` in the options; a test may pass its own). */
   protected abstract now(): number;
+
+  /** What the connection log calls this link (`hub`, `relay:<id>`). */
+  protected abstract get logOn(): string;
+
+  /** The page is back and this link is checked (`link.wake`): its state, and how long since it last brought anything. */
+  protected logWake(): void {
+    connLog.emit("link.wake", {
+      on: this.logOn,
+      state: this.state,
+      heardMs: this.lastHeard > 0 ? Math.round(this.now() - this.lastHeard) : null,
+      channels: this.routes.size,
+    });
+  }
 
   onState(fn: Listener<S>): () => void {
     this.stateListeners.add(fn);
@@ -64,7 +86,9 @@ export abstract class SocketLink<S extends SocketLinkState = SocketLinkState> {
   /** Send a frame now; `false` when not signed in (the frame is dropped). */
   send(frame: Frame): boolean {
     if (this.state !== "open" || !this.socket) return false;
-    this.socket.send(encodeFrame(frame));
+    const bytes = encodeFrame(frame);
+    this.bytesSent += bytes.length;
+    this.socket.send(bytes);
     return true;
   }
 
@@ -84,9 +108,11 @@ export abstract class SocketLink<S extends SocketLinkState = SocketLinkState> {
    * that was replaced). Records the connection as heard, which answers a
    * wake-up probe.
    */
-  protected heard(socket: SocketLike): boolean {
+  protected heard(socket: SocketLike, data?: unknown): boolean {
     if (this.socket !== socket) return false;
+    this.bytesReceived += typeof data === "string" ? data.length : data instanceof ArrayBuffer ? data.byteLength : 0;
     this.lastHeard = this.now();
+    if (this.probeTimer) connLog.emit("link.wake", { on: this.logOn, answered: true, ms: Math.round(this.lastHeard - this.probeAt) });
     this.probeAnswered = true;
     this.answered();
     return true;
@@ -101,6 +127,7 @@ export abstract class SocketLink<S extends SocketLinkState = SocketLinkState> {
   /** Give the wake-up ping `ms` to be answered: unless anything is heard, `dead` runs. */
   protected startProbe(ms: number, dead: () => void): void {
     this.probeAnswered = false;
+    this.probeAt = this.now();
     this.probeTimer = setTimeout(() => {
       this.probeTimer = null;
       if (this.probeAnswered) return;

@@ -29,9 +29,9 @@
  * `onclose`. Trouble with the direct path alone only lets that path go.
  */
 import type { Bytes } from "./bytes";
-import { type PathOptions, type Room, Session } from "./channel";
+import { type PathEvent, type PathOptions, type Room, Session } from "./channel";
 import { RecvWindow, SendWindow } from "./flow";
-import { type Frame, MAX_PAYLOAD_LEN } from "./frame";
+import { type Frame, INITIAL_CREDIT, MAX_PAYLOAD_LEN } from "./frame";
 import type { MuxEvent, Role, StreamClass } from "./mux";
 import type { Transport } from "./noise";
 import type { DownReason } from "./path";
@@ -75,6 +75,34 @@ export interface DriverOptions {
   paths?: PathOptions;
   /** The monotonic clock path timers and round trips are measured on (ms); `performance.now` by default. */
   clock?: () => number;
+}
+
+/** What a running channel has moved and what waits in it now, for logs (`ChannelDriver.diagnostics`). */
+export interface DriverDiagnostics {
+  /** `DATA` payload bytes sent and received over the carrier (the hub or a relay), and DataChannel bytes over the direct path, since the channel opened. */
+  relayTx: number;
+  relayRx: number;
+  directTx: number;
+  directRx: number;
+  /** A sealed frame waiting for the carrier's credit (bytes; 0: none), the credit left, and what is sent and not credited back yet (the window less the credit). */
+  heldTx: number;
+  credit: number;
+  inflight: number;
+  /** Received and not credited back to the sender yet (bytes). */
+  recvUnacked: number;
+  /** How long since anything came in on either path (ms; `null`: nothing yet). */
+  lastRxAgoMs: number | null;
+  /** Bytes the streams have queued and not sealed yet, and the streams open. */
+  queued: number;
+  streams: number;
+  /** What the DataChannel has buffered (`null`: no direct path). */
+  dcBuffered: number | null;
+  /** The paths' own (a channel with paths). */
+  unackedBytes: number | null;
+  unackedFrames: number | null;
+  heldRxBytes: number | null;
+  probesOut: number | null;
+  oldestProbeMs: number | null;
 }
 
 export class ChannelStream {
@@ -129,10 +157,15 @@ function sameStats(a: PathStats | null, b: PathStats): boolean {
 export class ChannelDriver {
   /** A stream the peer opened. */
   onincoming: ((stream: ChannelStream) => void) | null = null;
-  /** The channel ended (`code` from the hub's or the peer's close, or a failure). */
-  onclose: ((code: number, reason: string) => void) | null = null;
+  /** The channel ended (`code` from the hub's or the peer's close, or a failure); `local`: this end closed it (a `close` or a failure here), not the far end or the carrier. */
+  onclose: ((code: number, reason: string, local?: boolean) => void) | null = null;
   /** The paths' state changed (a channel with paths only). */
   onpaths: ((stats: PathStats) => void) | null = null;
+  /** Each thing that happened on the paths (`PathEvent`: a probe and its answer, a direct path up or down), for logs. */
+  onpathevent: ((event: PathEvent) => void) | null = null;
+  /** Bytes moved, and when anything last came in (the path clock), for {@link diagnostics}. */
+  private readonly moved = { relayTx: 0, relayRx: 0, directTx: 0, directRx: 0 };
+  private lastRxAt: number | null = null;
 
   private readonly session: Session;
   private readonly streams = new Map<number, ChannelStream>();
@@ -184,6 +217,35 @@ export class ChannelDriver {
     return this.session.transport.handshakeHash;
   }
 
+  /** What the channel has moved and what waits in it now (reads only; for logs). */
+  diagnostics(): DriverDiagnostics {
+    const paths = this.session.diagnostics(this.clock());
+    const pending = this.session.mux.pending();
+    let dcBuffered: number | null = null;
+    try {
+      dcBuffered = this.direct ? this.direct.bufferedAmount() : null;
+    } catch {
+      dcBuffered = null;
+    }
+    const now = this.clock();
+    return {
+      ...this.moved,
+      heldTx: this.held?.type === "data" ? this.held.payload.length : 0,
+      credit: this.sendWindow.remaining,
+      inflight: INITIAL_CREDIT - this.sendWindow.remaining,
+      recvUnacked: this.recvWindow.pending,
+      lastRxAgoMs: this.lastRxAt === null ? null : Math.max(0, now - this.lastRxAt),
+      queued: pending.bytes,
+      streams: pending.streams,
+      dcBuffered,
+      unackedBytes: paths?.unackedBytes ?? null,
+      unackedFrames: paths?.unackedFrames ?? null,
+      heldRxBytes: paths?.heldRxBytes ?? null,
+      probesOut: paths?.probesOut ?? null,
+      oldestProbeMs: paths?.oldestProbeMs ?? null,
+    };
+  }
+
   open(cls: StreamClass, meta: Uint8Array): ChannelStream {
     if (this.closed) {
       const dead = new ChannelStream(-1, cls, Uint8Array.from(meta), this);
@@ -224,6 +286,8 @@ export class ChannelDriver {
     this.run(async () => {
       switch (frame.type) {
         case "data": {
+          this.moved.relayRx += frame.payload.length;
+          this.lastRxAt = this.clock();
           const grant = this.recvWindow.received(frame.payload.length);
           if (grant !== null) this.send({ type: "credit", ch: this.ch, bytes: grant });
           for (const event of await this.session.receiveRelay(frame.payload, this.clock())) this.dispatch(event);
@@ -275,6 +339,8 @@ export class ChannelDriver {
   receiveDirect(message: Uint8Array, link?: DirectLink): void {
     this.run(async () => {
       if (link && link !== this.direct) return false;
+      this.moved.directRx += message.length;
+      this.lastRxAt = this.clock();
       for (const event of await this.session.receiveDirect(message, this.clock())) this.dispatch(event);
       this.sweep();
       return true;
@@ -376,7 +442,16 @@ export class ChannelDriver {
   private pathsChanged(): void {
     if (!this.session.hasPaths) return;
     let reason: DownReason = "closed";
-    for (const event of this.session.takeEvents()) if (event.type === "directDown") reason = event.reason;
+    for (const event of this.session.takeEvents()) {
+      if (event.type === "directDown") reason = event.reason;
+      if (this.onpathevent) {
+        try {
+          this.onpathevent(event);
+        } catch {
+          // a log's listener has no say in the channel
+        }
+      }
+    }
     if (this.direct && !this.session.directActive) {
       const link = this.direct;
       this.direct = null;
@@ -403,6 +478,7 @@ export class ChannelDriver {
         const len = this.held.type === "data" ? this.held.payload.length : 0;
         if (this.sendWindow.canSend(len)) {
           this.sendWindow.consume(len);
+          this.moved.relayTx += len;
           this.send(this.held);
           this.held = null;
         }
@@ -418,6 +494,7 @@ export class ChannelDriver {
       try {
         if (!this.direct) throw new Error("no direct path");
         this.direct.send(polled.wire.message);
+        this.moved.directTx += polled.wire.message.length;
       } catch {
         // Its DataChannel is gone: what it did not deliver goes over the hub.
         this.session.detachDirect("failed", true);
@@ -459,6 +536,6 @@ export class ChannelDriver {
     link?.released?.("closed");
     for (const stream of this.streams.values()) stream.end(code === 1000 ? CHANNEL_GONE : code);
     this.streams.clear();
-    this.onclose?.(code, reason);
+    this.onclose?.(code, reason, tellHub);
   }
 }

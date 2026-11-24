@@ -436,6 +436,16 @@ export class Lanes {
     return this.unackedLen;
   }
 
+  /** Frames sent on the direct path and not acknowledged yet. */
+  get unackedFrames(): number {
+    return this.unacked.length;
+  }
+
+  /** Bytes received ahead of a gap, held until it fills. */
+  get heldRxBytes(): number {
+    return this.heldBytes;
+  }
+
   /** Number the next outgoing frame; `keep` it until acknowledged when its path can lose it. */
   stamp(frame: Bytes, keep: boolean): Envelope {
     return this.stampAt(frame, keep, 0);

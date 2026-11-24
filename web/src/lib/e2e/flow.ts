@@ -32,6 +32,11 @@ export class SendWindow {
 export class RecvWindow {
   private unacked = 0;
 
+  /** Bytes read and not handed back as credit yet. */
+  get pending(): number {
+    return this.unacked;
+  }
+
   /** `len` bytes were read; the credit to send back now, if any. */
   received(len: number): number | null {
     this.unacked += len;

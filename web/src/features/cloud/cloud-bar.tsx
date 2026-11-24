@@ -35,6 +35,7 @@ import {
 import { useCloudMode } from "@/features/machines/copy-mode";
 import { DeviceDot } from "@/features/machines/device-picker";
 import { AccountAlerts } from "./account-alerts";
+import { ConnectionLogButton, openConnectionLog, useBarLog } from "./connection-log";
 import { AccountButton, DevicesButton, openAccount, openMyDevices, removePasskeyThere } from "./my-devices";
 import { cityName, noticeText } from "./relays";
 import { BarMachineName } from "./machine-name";
@@ -144,6 +145,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
   const step = useChannelStep(machine.channel);
   const refusal = machine.channel.refusal;
   const state = barState({ link, presence, channel, mode, copy, refusal: refusal?.kind ?? null, linkRetryAt, channelRetryAt });
+  useBarLog(machine.key, state, channel === "connecting" ? step : null);
   const catchUp = useCatchUpShown(machine.source, { mode, link });
   // A full cloud storage: the hub took no more of this machine's copy after its last write (§3.8).
   const storage = storageView(me?.plan, me?.view?.machines ?? []);
@@ -166,6 +168,7 @@ function Bar({ shell, machine }: { shell: HubShell; machine: HubMachine }) {
         {state.label === "e2e" && <LivePathIndicator channel={machine.channel} relays={shell.relays} />}
         <span className="flex-1" />
         <CompatBadge compact />
+        <ConnectionLogButton />
         <DevicesButton />
         <AccountButton />
         <SignOutChoice>{(ask) => <SignOutButton onClick={ask} />}</SignOutChoice>
@@ -522,6 +525,8 @@ export interface PathIndicatorProps {
   noDirect?: boolean;
   /** Open the relay picker. */
   onChangeRelay?: () => void;
+  /** Open the connection log. */
+  onConnectionLog?: () => void;
 }
 
 /**
@@ -534,7 +539,7 @@ export interface PathIndicatorProps {
  * encrypted. The bar shows it only while the channel is live; until then it
  * says in words what the page is doing (`ConnectionLabel`).
  */
-export function PathIndicator({ paths, route = null, notice = null, noDirect = false, onChangeRelay }: PathIndicatorProps) {
+export function PathIndicator({ paths, route = null, notice = null, noDirect = false, onChangeRelay, onConnectionLog }: PathIndicatorProps) {
   const { t } = useTranslation();
   const direct = paths?.direct === true;
   const rtt = direct ? paths?.directRttMs : paths?.relayRttMs;
@@ -607,6 +612,19 @@ export function PathIndicator({ paths, route = null, notice = null, noDirect = f
               {t("Change relay…")}
             </button>
           )}
+          {onConnectionLog && (
+            <button
+              type="button"
+              data-testid="path-card-connection-log"
+              className={cn("self-start text-fg underline-offset-2 hover:underline", !onChangeRelay && "mt-1")}
+              onClick={() => {
+                setOpen(false);
+                onConnectionLog();
+              }}
+            >
+              {t("Connection log…")}
+            </button>
+          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -662,6 +680,7 @@ function LivePathIndicator({ channel, relays }: { channel: MachineChannel | null
       notice={noticeText(t, relays?.notice ?? null)}
       noDirect={noDirect}
       onChangeRelay={relays ? openRelayPicker : undefined}
+      onConnectionLog={openConnectionLog}
     />
   );
 }

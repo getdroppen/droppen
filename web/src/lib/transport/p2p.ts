@@ -68,6 +68,7 @@ import {
   stripCandidates,
   type Transport,
 } from "@/lib/e2e";
+import { type ConnEventName, type ConnFields, connLog, maskId } from "@/lib/connection-log";
 
 /** Public STUN only; the hub is the fallback, so there is no TURN. */
 export const STUN_SERVERS: { urls: string }[] = [{ urls: "stun:stun.cloudflare.com:3478" }, { urls: "stun:stun.l.google.com:19302" }];
@@ -307,6 +308,8 @@ interface Attempt {
   attachedAt: number | null;
   timer: ReturnType<typeof setTimeout> | null;
   done: boolean;
+  /** When it started (`env.now`), for the connection log. */
+  startedAt: number;
 }
 
 function messageBytes(data: unknown): Uint8Array | null {
@@ -325,6 +328,15 @@ function remoteCertificate(pc: PeerLike): ArrayBuffer | null {
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** A peer connection's state for the connection log, or `null` when it cannot be read. */
+function peerState(pc: PeerLike): string | null {
+  try {
+    return pc.connectionState ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export class DirectPaths {
   onstate: ((state: DirectState) => void) | null = null;
@@ -356,6 +368,15 @@ export class DirectPaths {
 
   get state(): DirectState {
     return this.current;
+  }
+
+  /** Log `name` about this channel's direct path, the machine masked (`maskId`) and the channel's `ch`. */
+  private log(name: ConnEventName, fields: ConnFields = {}): void {
+    try {
+      connLog.emit(name, { device: maskId(this.opts.binding.machine), ch: this.driver.ch, ...fields });
+    } catch {
+      // logging has no say in the path
+    }
   }
 
   /** Attempts so far on this channel. */
@@ -416,6 +437,7 @@ export class DirectPaths {
 
   private setState(state: DirectState): void {
     if (this.current === state) return;
+    this.log("direct.state", { state, from: this.current });
     this.current = state;
     this.onstate?.(state);
   }
@@ -475,11 +497,16 @@ export class DirectPaths {
       attachedAt: null,
       timer: null,
       done: false,
+      startedAt: this.env.now(),
     };
     this.attempt = a;
+    this.log("direct.try", { attempt: a.id, backoffMs: this.history.backoffMs, shortLived: this.history.shortLived });
     this.setState("connecting");
     const limit = this.timing.attemptTimeoutMs;
-    a.timer = setTimeout(() => this.fail(a, "failed", `no direct path within ${limit / 1000} s`), limit);
+    a.timer = setTimeout(() => {
+      this.log("timeout", { timer: "ATTEMPT_TIMEOUT_MS", limitMs: limit, elapsedMs: this.env.now() - a.startedAt, on: `direct:${a.id}` });
+      this.fail(a, "failed", `no direct path within ${limit / 1000} s`);
+    }, limit);
     pc.onicecandidate = (ev) => this.ownCandidate(a, ev.candidate?.candidate || null);
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed" || pc.connectionState === "closed") this.fail(a, "failed", `the peer connection ${pc.connectionState}`);
@@ -502,7 +529,10 @@ export class DirectPaths {
     stream.onclose = () => this.signalGone(stream, "the signaling stream closed");
     this.headTimer = setTimeout(() => {
       this.headTimer = null;
-      if (!this.signalOpen) this.signalGone(stream, "the agent did not answer the signaling stream");
+      if (!this.signalOpen) {
+        this.log("timeout", { timer: "SIGNAL_HEAD_TIMEOUT_MS", limitMs: this.timing.signalHeadTimeoutMs, on: "direct:signal" });
+        this.signalGone(stream, "the agent did not answer the signaling stream");
+      }
     }, this.timing.signalHeadTimeoutMs);
   }
 
@@ -538,6 +568,7 @@ export class DirectPaths {
   private signalGone(stream: ChannelStream, why: string): void {
     if (stream !== this.signal || this.closed) return;
     this.env.log(why);
+    this.log("direct.fail", { why, signaling: true });
     this.signal = null;
     this.signalOpen = false;
     this.unsupported = true;
@@ -569,6 +600,7 @@ export class DirectPaths {
         break;
       case "bye":
         this.env.log(`the agent ended attempt ${a.id}: ${s.reason}${s.detail ? ` (${s.detail})` : ""}`);
+        this.log("direct.fail", { attempt: a.id, by: "agent", bye: s.reason, why: s.detail || null, ms: this.env.now() - a.startedAt, carried: a.link !== null });
         if (s.reason === "disabled") this.unsupported = true;
         // "done" and "disabled" are the agent's decision, not the path failing:
         // they do not count towards the streak of paths that died young.
@@ -707,6 +739,7 @@ export class DirectPaths {
     this.driver.attachDirect(transport, link);
     for (const m of a.early.splice(0)) this.driver.receiveDirect(m, link);
     this.env.log(`attempt ${a.id} carries the channel`);
+    this.log("direct.up", { attempt: a.id, ms: a.attachedAt - a.startedAt });
     this.setState("direct");
   }
 
@@ -714,6 +747,7 @@ export class DirectPaths {
   private released(a: Attempt, reason: DownReason): void {
     if (a.done) return;
     this.env.log(`attempt ${a.id} let go: ${reason}`);
+    this.log("direct.down", { attempt: a.id, cause: reason, livedMs: a.attachedAt === null ? null : this.env.now() - a.attachedAt, channelClosed: this.driver.isClosed });
     // "closed": the channel ended, or another path replaced this one — not a failure of the path.
     this.end(a, this.driver.isClosed ? null : reason === "closed" ? "done" : "failed", `the direct path ${reason === "timeout" ? "timed out" : reason}`, null, reason !== "closed");
     this.afterEnd();
@@ -722,6 +756,14 @@ export class DirectPaths {
   private fail(a: Attempt, bye: ByeReason, detail: string): void {
     if (a.done) return;
     this.env.log(`attempt ${a.id}: ${detail}`);
+    this.log(a.link ? "direct.down" : "direct.fail", {
+      attempt: a.id,
+      bye,
+      why: detail,
+      ms: this.env.now() - a.startedAt,
+      livedMs: a.attachedAt === null ? undefined : this.env.now() - a.attachedAt,
+      pc: peerState(a.pc),
+    });
     this.end(a, bye, detail, "failed");
     this.afterEnd();
   }
@@ -787,6 +829,7 @@ export class DirectPaths {
     const backoff = this.history.backoffMs ?? this.timing.retryFirstMs;
     const delay = Math.min(this.timing.retryMaxMs, Math.round(backoff * (0.8 + 0.4 * this.env.random())));
     if (grow) this.history.backoffMs = Math.min(backoff * 2, this.timing.retryMaxMs);
+    this.log("direct.retry", { waitMs: delay, backoffMs: backoff, shortLived: this.history.shortLived, flapping: this.history.flapping });
     this.retry = setTimeout(() => {
       this.retry = null;
       this.attemptNow();

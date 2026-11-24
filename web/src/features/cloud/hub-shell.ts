@@ -58,7 +58,8 @@ import { MachineChannel } from "@/lib/hub/machine";
 import { deviceTransact, MachineMirror, mirrorSeal, sweepCopies, type Transact } from "@/lib/hub/mirror";
 import type { RelayPool } from "@/lib/hub/relays";
 import type { MachineKey } from "@/lib/machines/key";
-import { invalidateMachine } from "@/lib/machines/query";
+import { invalidateMachine, machineQueryCount } from "@/lib/machines/query";
+import { connLog, maskId } from "@/lib/connection-log";
 import { closeMachine, homeMachine, isOpen, type MachineDriver, runtimeFor, setHome } from "@/lib/machines/registry";
 import { machinePath, splitMachinePath } from "@/lib/machines/routes";
 import { type AppShell, type MachineInfo, type MachineRuntime, sameMachineInfo } from "@/lib/machines/runtime";
@@ -265,7 +266,7 @@ export class HubMachine implements MachineDriver {
       messages: offlineMessages(() => this.presence()),
       machineOnline: () => this.presence() === "online",
     });
-    this.transport = new SwitchingTransport({ live: tunnelTransport(countingOpener(this.channel, this.pipes)), offline }, "offline", {
+    this.transport = new SwitchingTransport({ live: tunnelTransport(countingOpener(this.channel, this.pipes), { device: maskId(key) }), offline }, "offline", {
       onOpened: (source, id) => this.mirror.touch(source, id),
     });
     this.controller = new ModeController({
@@ -275,10 +276,11 @@ export class HubMachine implements MachineDriver {
       transport: this.transport,
       relayOnline: () => relays.online(key),
       wanted: () => this.wanted,
-      onSwitch: () => {
+      onSwitch: (mode) => {
         // This machine's queries re-ask whichever side it is on now (and no
         // other machine's), and its feed socket, closed by the switch,
         // reconnects at once rather than after a backoff.
+        connLog.emit("reconnect.replay", { device: maskId(key), why: "switch", to: mode === "live" ? "live" : "copy", queriesInvalidated: machineQueryCount(queryClient, key) });
         void invalidateMachine(queryClient, key);
         setTimeout(() => {
           // Not for a machine closed meanwhile: that would make it a feed hub again.
@@ -1013,6 +1015,7 @@ export class HubShell implements AppShell {
   /** Put `key` in view (and the one before out of it), the address left as it is. */
   private show(key: MachineKey | null): void {
     const before = this.focused.get();
+    if (before !== key) connLog.emit("device.select", { device: maskId(key), from: maskId(before), devices: this.held.size });
     if (before !== null && before !== key) this.held.get(before)?.setInView(false);
     if (key !== null) {
       this.shown = key;

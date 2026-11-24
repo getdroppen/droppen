@@ -15,6 +15,8 @@ import { askedPlace } from "./devices-route";
 import { useMe } from "./plan";
 import { ErrorLine, errorText, SectionHead } from "./ui";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { openConnectionLog } from "./connection-log";
 
 /**
  * 「这台设备」: the settings this browser keeps for itself — whether it may
@@ -38,6 +40,7 @@ export function ThisDeviceSection({ name, relays }: { name: string | null; relay
       </div>
       <div className="flex flex-col gap-1 pt-2">
         <DirectConnectionSetting />
+        <ConnectionLogSetting />
         {relays && (
           <details open={relaysOpen} onToggle={(e) => setRelaysOpen(e.currentTarget.open)} className="group/relays">
             <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 px-6 py-2 select-none hover:bg-hover max-md:px-4 [&::-webkit-details-marker]:hidden">
@@ -50,6 +53,26 @@ export function ThisDeviceSection({ name, relays }: { name: string | null; relay
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The way to this browser's connection log (`connection-log.tsx`) at any
+ * width: what its connections to the devices did, to copy or download and
+ * send when something goes wrong.
+ */
+export function ConnectionLogSetting({ onOpen = openConnectionLog }: { onOpen?: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div data-testid="connection-log-setting" className="flex items-start justify-between gap-6 px-6 py-3 max-md:gap-3 max-md:px-4">
+      <div className="flex min-w-0 max-w-[48rem] flex-col gap-0.5">
+        <span className="text-xs font-medium text-fg">{t("Connection log")}</span>
+        <span className="text-xs leading-5 text-muted">{t("What this browser's connections to your devices did, for troubleshooting: copy it or download it to send.")}</span>
+      </div>
+      <Button data-testid="connection-log-setting-open" className="pointer-coarse:h-9" onClick={onOpen}>
+        {t("open")}
+      </Button>
+    </div>
   );
 }
 

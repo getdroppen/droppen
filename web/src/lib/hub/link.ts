@@ -54,7 +54,11 @@
  * of a backoff that grew while it was away, or checks the connection now.
  */
 import { decodeFrame, encodeAttestation, type Attestation, type Frame, fromHex, hex, signHubLogin } from "@/lib/e2e";
+import { connLog, deltaOf, errorFields, type SampleFn } from "@/lib/connection-log";
 import { SocketLink, type SocketLike } from "./socket-link";
+
+/** The monotonic clock round trips are measured on. */
+const perf = () => performance.now();
 
 export type PresenceState = "online" | "offline" | "unknown";
 export type LinkState = "connecting" | "open" | "closed";
@@ -152,6 +156,13 @@ export class HubLink extends SocketLink<LinkState> {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private nonce = 0;
+  /** When each ping still unanswered went (`perf`), for the connection log's round trips. */
+  private readonly pings = new Map<number, number>();
+  /** Connections tried since the page started this link, and when the one now being made started. */
+  private attempt = 0;
+  private dialledAt = 0;
+  /** The connection log's sampler of the open connection. */
+  private offSample: (() => void) | null = null;
   private lastRenewMs = 0;
   /** The hub said where the machines are on this connection. */
   private presenceHeard = false;
@@ -166,6 +177,9 @@ export class HubLink extends SocketLink<LinkState> {
 
   constructor(private readonly opts: LinkOptions) {
     super();
+    // The connection log never writes the account's or this device's id (`connection-log.ts`, PRIVACY).
+    connLog.hide(opts.account);
+    connLog.hide(opts.deviceId);
   }
 
   start(): void {
@@ -179,8 +193,22 @@ export class HubLink extends SocketLink<LinkState> {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.setRetryAt(null);
+    if (this.socket) this.logDrop(1000, "bye");
     this.socket?.close(1000, "bye");
     this.dropConnection();
+  }
+
+  /** The connection log's word for a connection this page let go of itself (`by: page`; one the hub or the network closed is `socket.onclose`'s). */
+  private logDrop(code: number, reason: string): void {
+    const now = this.now();
+    connLog.emit("hub.close", {
+      code,
+      reason,
+      by: "page",
+      openMs: this.openedAt > 0 ? now - this.openedAt : null,
+      heardMs: this.lastHeard > 0 ? now - this.lastHeard : null,
+      attempt: this.attempt,
+    });
   }
 
   /** Hear {@link retryAt} change: a backoff starts, or ends in a try. */
@@ -220,6 +248,7 @@ export class HubLink extends SocketLink<LinkState> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         off();
+        connLog.emit("timeout", { timer: "waitOpen", limitMs: timeoutMs, on: "hub", state: this.state });
         reject(new Error("the hub is not reachable"));
       }, timeoutMs);
       const off = this.onState((s) => {
@@ -270,6 +299,7 @@ export class HubLink extends SocketLink<LinkState> {
    */
   wake(): void {
     if (this.stopped) return;
+    this.logWake();
     if (this.state === "closed") {
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -286,8 +316,11 @@ export class HubLink extends SocketLink<LinkState> {
   /** The beat just sent is the probe: unless anything is heard back in `probeMs`, replace the connection at once. */
   private probe(socket: SocketLike): void {
     if (this.socket !== socket || this.state !== "open" || this.probeTimer) return;
-    this.startProbe(this.opts.probeMs ?? WAKE_PROBE_MS, () => {
+    const limitMs = this.opts.probeMs ?? WAKE_PROBE_MS;
+    this.startProbe(limitMs, () => {
       if (this.socket !== socket || this.state !== "open") return;
+      connLog.emit("timeout", { timer: "WAKE_PROBE_MS", limitMs, elapsedMs: Math.round(this.now() - this.lastHeard), on: "hub" });
+      this.logDrop(4000, "the wake-up ping went unanswered");
       this.lastClose = null;
       this.dropConnection();
       // A dead connection will not finish a closing handshake: let it go in its own time.
@@ -325,18 +358,22 @@ export class HubLink extends SocketLink<LinkState> {
     if (this.stopped) return;
     this.setRetryAt(null);
     this.setState("connecting");
+    this.attempt += 1;
+    this.dialledAt = this.now();
+    connLog.emit("hub.connecting", { attempt: this.attempt });
     const make = this.opts.makeSocket ?? ((url: string) => new WebSocket(url) as unknown as SocketLike);
     let socket: SocketLike;
     try {
       socket = make(this.opts.url);
-    } catch {
+    } catch (error) {
+      connLog.emit("hub.error", { attempt: this.attempt, ...errorFields(error, "why") });
       this.scheduleReconnect();
       return;
     }
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     socket.onmessage = (ev) => {
-      if (!this.heard(socket)) return;
+      if (!this.heard(socket, ev.data)) return;
       if (this.doubted) {
         // It answered after the pause: it lived through it, and told this page every change meanwhile (before this).
         this.doubted = false;
@@ -348,11 +385,22 @@ export class HubLink extends SocketLink<LinkState> {
     socket.onclose = (ev) => {
       if (this.socket !== socket) return;
       this.lastClose = ev.code ?? null;
-      this.dropConnection();
       const now = (this.opts.now ?? Date.now)();
+      connLog.emit("hub.close", {
+        code: ev.code ?? null,
+        reason: ev.reason ?? "",
+        by: "socket",
+        clean: ev.wasClean ?? null,
+        // How long it was signed in (none: it never was), and since it last brought anything.
+        openMs: this.openedAt > 0 ? now - this.openedAt : null,
+        heardMs: this.lastHeard > 0 ? now - this.lastHeard : null,
+        attempt: this.attempt,
+      });
+      this.dropConnection();
       if (ev.code === SIGN_IN_REFUSED && this.opts.renew && now - this.lastRenewMs > RENEW_EVERY_MS) {
         // The session may have expired or been replaced: a fresh one for the next sign-in.
         this.lastRenewMs = now;
+        connLog.emit("hub.renew");
         void this.opts.renew().then(
           () => this.scheduleReconnect(),
           () => this.scheduleReconnect(),
@@ -361,7 +409,22 @@ export class HubLink extends SocketLink<LinkState> {
       }
       this.scheduleReconnect();
     };
-    socket.onerror = () => undefined;
+    socket.onerror = () => {
+      if (this.socket === socket) connLog.emit("hub.error", { state: this.state, attempt: this.attempt });
+    };
+  }
+
+  /** What the connection log samples of `socket` once a second while it is signed in. */
+  private sampler(socket: SocketLike): SampleFn {
+    const tx = deltaOf();
+    const rx = deltaOf();
+    return () => {
+      if (this.socket !== socket) return null;
+      const sent = tx(this.bytesSent);
+      const got = rx(this.bytesReceived);
+      const buf = typeof socket.bufferedAmount === "number" ? socket.bufferedAmount : null;
+      return { fields: { tx: sent, rx: got, buf, heardMs: Math.round(this.now() - this.lastHeard) }, busy: sent > 0 || got > 0 || (buf ?? 0) > 0 };
+    };
   }
 
   private async onText(socket: SocketLike, text: string): Promise<void> {
@@ -394,6 +457,9 @@ export class HubLink extends SocketLink<LinkState> {
         this.openedAt = (this.opts.now ?? Date.now)();
         this.lastHeard = this.lastBeat = this.now();
         this.heartbeat = setInterval(() => this.beat(socket), this.opts.heartbeatMs ?? HEARTBEAT_MS);
+        connLog.emit("hub.open", { attempt: this.attempt, ms: this.openedAt - this.dialledAt });
+        this.offSample?.();
+        this.offSample = connLog.addSampler("hub", this.sampler(socket));
         this.setState("open");
         return;
       case "presence": {
@@ -408,6 +474,7 @@ export class HubLink extends SocketLink<LinkState> {
           this.presence.set(m.id, { state: m.state, sinceMs: m.since_ms, via, relays: typeof m.relays === "boolean" ? m.relays : known });
         }
         this.presenceHeard = true;
+        connLog.emit("hub.presence", { said: machines.length, online: machines.filter((m) => m.state === "online").length });
         for (const fn of this.presenceListeners) fn(this.presence);
         this.freshened();
         return;
@@ -428,9 +495,20 @@ export class HubLink extends SocketLink<LinkState> {
       for (const fn of this.chainListeners) fn(frame.entries);
       return;
     }
+    if (frame.type === "pong") {
+      const sent = this.pings.get(frame.nonce);
+      if (sent !== undefined) {
+        this.pings.delete(frame.nonce);
+        connLog.emit("probe.answer", { on: "hub", nonce: frame.nonce, rttMs: perf() - sent });
+      }
+      return;
+    }
     if (!ROUTED.has(frame.type) || !("ch" in frame)) return;
     // Remembered before the channel hears it, whoever asked.
-    if (frame.type === "close" && frame.code === HUB_NO_CHANNELS) this.carriesChannels = false;
+    if (frame.type === "close" && frame.code === HUB_NO_CHANNELS) {
+      if (this.carriesChannels) connLog.emit("hub.noChannels", { ch: frame.ch });
+      this.carriesChannels = false;
+    }
     this.route(frame);
   }
 
@@ -438,16 +516,24 @@ export class HubLink extends SocketLink<LinkState> {
     return (this.opts.now ?? Date.now)();
   }
 
+  protected get logOn(): string {
+    return "hub";
+  }
+
   /** Ping the hub — unless the connection has gone silent, when it is replaced. */
   private beat(socket: SocketLike): void {
     if (this.socket !== socket || this.state !== "open") return;
     const heartbeat = this.opts.heartbeatMs ?? HEARTBEAT_MS;
     const silence = this.opts.silenceMs ?? SILENCE_MS;
+    const beatBefore = this.lastBeat;
     const { now, late } = this.markBeat(heartbeat, silence);
     if (late) {
       // Until it answers, what it said of the machines may be from before a socket that died in the pause.
       this.doubted = true;
+      connLog.emit("link.late", { lateMs: now - beatBefore - heartbeat, heartbeatMs: heartbeat, on: "hub" });
     } else if (now - this.lastHeard >= silence) {
+      connLog.emit("timeout", { timer: "SILENCE_MS", limitMs: silence, elapsedMs: now - this.lastHeard, on: "hub" });
+      this.logDrop(4000, "the hub went silent");
       this.lastClose = null;
       this.dropConnection();
       // A dead connection will not finish a closing handshake: nobody waits for it.
@@ -459,7 +545,12 @@ export class HubLink extends SocketLink<LinkState> {
       this.scheduleReconnect();
       return;
     }
-    this.send({ type: "ping", nonce: ++this.nonce });
+    const nonce = ++this.nonce;
+    if (this.send({ type: "ping", nonce })) {
+      this.pings.set(nonce, perf());
+      if (this.pings.size > 8) this.pings.delete(this.pings.keys().next().value as number);
+      connLog.emit("probe.sent", { on: "hub", nonce });
+    }
   }
 
   /** Forget the connection: stop the heartbeat and tell every channel it is gone. */
@@ -467,6 +558,9 @@ export class HubLink extends SocketLink<LinkState> {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.answered();
+    this.offSample?.();
+    this.offSample = null;
+    this.pings.clear();
     // Stable means it kept answering that long, not that it was open that
     // long: a hub that signs the page in and then says nothing is dropped for
     // silence after about as long, and must not reset the backoff each time.
@@ -489,6 +583,7 @@ export class HubLink extends SocketLink<LinkState> {
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
     const wait = Math.floor((this.opts.random ?? Math.random)() * this.backoff);
+    connLog.emit("hub.retry", { waitMs: wait, backoffMs: this.backoff, attempt: this.attempt });
     this.backoff = Math.min(this.backoff * 2, BACKOFF_MAX);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

@@ -24,6 +24,15 @@ export function machineQueries(machine: MachineKey): readonly [typeof MACHINE_QU
   return [MACHINE_QUERY, machine];
 }
 
+/** How many of `machine`'s queries something watches now: those {@link invalidateMachine} asks again at once (for the connection log). */
+export function machineQueryCount(client: QueryClient, machine: MachineKey): number {
+  try {
+    return client.getQueryCache().findAll({ queryKey: machineQueries(machine), type: "active" }).length;
+  } catch {
+    return -1;
+  }
+}
+
 /** Ask everything `machine` said again, and nothing any other machine said. */
 export function invalidateMachine(client: QueryClient, machine: MachineKey): Promise<void> {
   return client.invalidateQueries({ queryKey: machineQueries(machine) });

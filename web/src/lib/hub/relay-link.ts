@@ -20,6 +20,7 @@
  * two minutes after its last channel closed.
  */
 import { decodeFrame, type Frame, fromHex, hex, signHubLogin } from "@/lib/e2e";
+import { connLog, deltaOf } from "@/lib/connection-log";
 import { LINK_LOST, type PresenceState } from "./link";
 import { SocketLink, type SocketLike } from "./socket-link";
 
@@ -75,9 +76,15 @@ export class RelayLink extends SocketLink<RelayLinkState> {
   private readonly goawayListeners = new Set<Listener<{ retryMs: number; reason: string }>>();
   /** Resolves once signed in; rejects if the sign-in fails. */
   private opening: Promise<void> | null = null;
+  /** When the connection now was dialled, and signed in (the page's clock), for the connection log. */
+  private dialledAt = 0;
+  private openedAt = 0;
+  private offSample: (() => void) | null = null;
 
   constructor(private readonly opts: RelayLinkOptions) {
     super();
+    connLog.hide(opts.account);
+    connLog.hide(opts.deviceId);
   }
 
   get relay(): string {
@@ -130,6 +137,7 @@ export class RelayLink extends SocketLink<RelayLinkState> {
    */
   wake(): void {
     if (this.state !== "open") return;
+    this.logWake();
     if (this.routes.size === 0 && this.now() - this.lastHeard >= (this.opts.heartbeatMs ?? HEARTBEAT_MS)) {
       this.close();
       return;
@@ -137,8 +145,10 @@ export class RelayLink extends SocketLink<RelayLinkState> {
     if (this.probeTimer) return;
     this.beat();
     if (this.state !== "open") return;
-    this.startProbe(this.opts.probeMs ?? WAKE_PROBE_MS, () => {
+    const limitMs = this.opts.probeMs ?? WAKE_PROBE_MS;
+    this.startProbe(limitMs, () => {
       if (this.state !== "open") return;
+      connLog.emit("timeout", { timer: "WAKE_PROBE_MS", limitMs, elapsedMs: Math.round(this.now() - this.lastHeard), on: this.logOn });
       const socket = this.socket;
       this.drop(4410, "the relay did not answer the wake-up ping");
       try {
@@ -168,11 +178,19 @@ export class RelayLink extends SocketLink<RelayLinkState> {
     return (this.opts.now ?? Date.now)();
   }
 
+  /** What the connection log calls this link (`on`, and its samples' key). */
+  protected get logOn(): string {
+    return `relay:${this.opts.relay}`;
+  }
+
   private connect(timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {
       this.setState("connecting");
       this.goingAway = false;
       this.lastError = null;
+      this.dialledAt = this.now();
+      this.openedAt = 0;
+      connLog.emit("relay.connecting", { relay: this.opts.relay });
       const make = this.opts.makeSocket ?? ((url: string) => new WebSocket(url) as unknown as SocketLike);
       let socket: SocketLike;
       try {
@@ -193,6 +211,7 @@ export class RelayLink extends SocketLink<RelayLinkState> {
         reject(new Error(why));
       };
       const timer = setTimeout(() => {
+        connLog.emit("timeout", { timer: "signIn", limitMs: timeoutMs, elapsedMs: Math.round(this.now() - this.dialledAt), on: this.logOn });
         fail("the relay did not let this device in in time");
         try {
           socket.close(1000, "timeout");
@@ -202,7 +221,7 @@ export class RelayLink extends SocketLink<RelayLinkState> {
         this.drop(4408, "timeout");
       }, timeoutMs);
       socket.onmessage = (ev) => {
-        if (!this.heard(socket)) return;
+        if (!this.heard(socket, ev.data)) return;
         if (typeof ev.data === "string") {
           void this.onText(socket, ev.data, () => {
             if (settled) return;
@@ -216,9 +235,11 @@ export class RelayLink extends SocketLink<RelayLinkState> {
         if (this.socket !== socket) return;
         this.lastClose = ev.code ?? null;
         fail(ev.reason || `the relay closed the connection (${ev.code ?? "?"})`);
-        this.drop(ev.code ?? 1006, ev.reason ?? "");
+        this.drop(ev.code ?? 1006, ev.reason ?? "", { by: "socket", clean: ev.wasClean ?? null });
       };
-      socket.onerror = () => undefined;
+      socket.onerror = () => {
+        if (this.socket === socket) connLog.emit("relay.failure", { relay: this.opts.relay, why: "socket error", state: this.state });
+      };
     });
   }
 
@@ -251,6 +272,10 @@ export class RelayLink extends SocketLink<RelayLinkState> {
       case "welcome":
         this.lastHeard = this.lastBeat = this.now();
         this.heartbeat = setInterval(() => this.beat(), this.opts.heartbeatMs ?? HEARTBEAT_MS);
+        this.openedAt = this.now();
+        connLog.emit("relay.open", { relay: this.opts.relay, ms: this.openedAt - this.dialledAt });
+        this.offSample?.();
+        this.offSample = connLog.addSampler(this.logOn, this.sampler(socket));
         this.setState("open");
         signedIn();
         // A first round trip right away, for the indicator.
@@ -266,6 +291,7 @@ export class RelayLink extends SocketLink<RelayLinkState> {
       }
       case "goaway":
         this.goingAway = true;
+        connLog.emit("relay.goaway", { relay: this.opts.relay, retryMs: Number(message.retry_ms) || 0, reason: String(message.reason ?? ""), channels: this.routes.size });
         for (const fn of [...this.goawayListeners]) fn({ retryMs: Number(message.retry_ms) || 0, reason: String(message.reason ?? "") });
         return;
       case "error":
@@ -283,8 +309,11 @@ export class RelayLink extends SocketLink<RelayLinkState> {
     // As on the hub link: a beat far later than due means this page's timers
     // were held (a background tab, a phone asleep) — what was not heard
     // meanwhile says nothing about the relay, so it gets one more interval.
+    const beatBefore = this.lastBeat;
     const { now, late } = this.markBeat(heartbeat, silence);
+    if (late) connLog.emit("link.late", { lateMs: now - beatBefore - heartbeat, heartbeatMs: heartbeat, on: this.logOn });
     if (!late && this.lastHeard && now - this.lastHeard >= silence) {
+      connLog.emit("timeout", { timer: "SILENCE_MS", limitMs: silence, elapsedMs: now - this.lastHeard, on: this.logOn });
       const socket = this.socket;
       this.drop(4410, "the relay went silent");
       socket?.close(1000, "silent");
@@ -293,7 +322,23 @@ export class RelayLink extends SocketLink<RelayLinkState> {
     const nonce = ++this.nonce;
     this.pings.set(nonce, performance.now());
     if (this.pings.size > 8) this.pings.delete(this.pings.keys().next().value as number);
-    this.send({ type: "ping", nonce });
+    if (this.send({ type: "ping", nonce })) connLog.emit("probe.sent", { on: this.logOn, nonce });
+  }
+
+  /** What the connection log samples of `socket` once a second while it is signed in. */
+  private sampler(socket: SocketLike) {
+    const tx = deltaOf();
+    const rx = deltaOf();
+    return () => {
+      if (this.socket !== socket) return null;
+      const sent = tx(this.bytesSent);
+      const got = rx(this.bytesReceived);
+      const buf = typeof socket.bufferedAmount === "number" ? socket.bufferedAmount : null;
+      return {
+        fields: { tx: sent, rx: got, buf, ch: this.routes.size, rttMs: this.rttMs, heardMs: Math.round(this.now() - this.lastHeard) },
+        busy: sent > 0 || got > 0 || (buf ?? 0) > 0,
+      };
+    };
   }
 
   private onBinary(data: Uint8Array): void {
@@ -308,6 +353,7 @@ export class RelayLink extends SocketLink<RelayLinkState> {
       if (sent !== undefined) {
         this.pings.delete(frame.nonce);
         this.rttMs = performance.now() - sent;
+        connLog.emit("probe.answer", { on: this.logOn, nonce: frame.nonce, rttMs: this.rttMs });
       }
       return;
     }
@@ -315,8 +361,28 @@ export class RelayLink extends SocketLink<RelayLinkState> {
     this.route(frame);
   }
 
-  /** Forget the connection: every channel on it is told it is gone. */
-  private drop(code: number, reason: string): void {
+  /**
+   * Forget the connection: every channel on it is told it is gone. `how`:
+   * whether the relay or the network closed it (`socket`), or this page let
+   * it go (`page`, the default), for the connection log.
+   */
+  private drop(code: number, reason: string, how: { by: "socket" | "page"; clean?: boolean | null } = { by: "page" }): void {
+    if (this.socket) {
+      const now = this.now();
+      connLog.emit("relay.close", {
+        relay: this.opts.relay,
+        code,
+        reason,
+        by: how.by,
+        clean: how.clean ?? null,
+        openMs: this.openedAt > 0 ? now - this.openedAt : null,
+        heardMs: this.lastHeard > 0 ? now - this.lastHeard : null,
+        channels: this.routes.size,
+        error: this.lastError,
+      });
+    }
+    this.offSample?.();
+    this.offSample = null;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.answered();

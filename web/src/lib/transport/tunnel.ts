@@ -1,3 +1,4 @@
+import { type ConnFields, connLog, errorFields, routeTemplate } from "@/lib/connection-log";
 import type { FetchOptions, SocketLike, Transport } from "./types";
 
 /*
@@ -108,10 +109,52 @@ export function socketKind(path: string): "mux" | "term" {
   return path.startsWith("/api/terminals/") ? "term" : "mux";
 }
 
-function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" = "rpc"): Promise<Response> {
+/** What the connection log is told of each request and socket over a tunnel (its device, masked). */
+export interface TunnelLog {
+  device?: string | null;
+}
+
+/**
+ * Whether a request is a big one worth a line when it starts too (not only
+ * when it ends): file bytes (`blob`), a transcript's history, or a range of it.
+ */
+function bigRequest(kind: PipeKind, route: string): boolean {
+  return kind === "blob" || route.includes("/history") || /[?&]from=/.test(route);
+}
+
+function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" = "rpc", log: TunnelLog = {}): Promise<Response> {
   const signal = request.signal;
   if (signal.aborted) return Promise.reject(abortReason(signal));
   const url = new URL(request.url);
+  // The request as the connection log has it: the route's template only, never its ids or query values.
+  const route = routeTemplate(url.pathname + url.search);
+  const startedAt = performance.now();
+  const moved = { rx: 0, tx: 0 };
+  let headAt: number | null = null;
+  let answered: number | null = null;
+  const logged = (fields: ConnFields, level?: "warn") => {
+    try {
+      connLog.emit(
+        "req",
+        {
+          device: log.device,
+          kind,
+          method: request.method,
+          route,
+          status: answered,
+          ms: performance.now() - startedAt,
+          ttfbMs: headAt === null ? null : headAt - startedAt,
+          rx: moved.rx,
+          tx: moved.tx,
+          ...fields,
+        },
+        level,
+      );
+    } catch {
+      // the request goes on as it would
+    }
+  };
+  if (bigRequest(kind, route)) connLog.emit("req.start", { device: log.device, kind, method: request.method, route });
   return new Promise<Response>((resolve, reject) => {
     const pipe = opener.open(kind, {
       path: url.pathname + url.search,
@@ -134,6 +177,8 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
       if (state === "done") return;
       const before = state;
       settle();
+      const aborted = signal.aborted;
+      logged({ stage: before, ...(aborted ? { error: "aborted" } : errorFields(error)) }, aborted ? undefined : "warn");
       if (before === "head") reject(error);
       else body?.error(error);
     };
@@ -147,13 +192,17 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
           return;
         }
         const status = message.status;
+        answered = status;
+        headAt = performance.now();
         const stream = new ReadableStream<Uint8Array>({
           start: (controller) => {
             body = controller;
           },
           // The reader walked away: so does the request.
           cancel: () => {
-            if (state !== "done") settle();
+            if (state === "done") return;
+            settle();
+            logged({ cancelled: true });
           },
         });
         let response: Response;
@@ -167,18 +216,22 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
         resolve(response);
         return;
       }
-      if (state === "body" && message.kind === "binary") body?.enqueue(message.data);
+      if (state === "body" && message.kind === "binary") {
+        moved.rx += message.data.length;
+        body?.enqueue(message.data);
+      }
     };
     pipe.onclose = (code) => {
       if (state === "body" && code === 0) {
         settle();
+        logged({});
         body?.close();
         return;
       }
       fail(new TypeError(`tunnel: the pipe closed before the answer ended (${code})`));
     };
 
-    sendBody(pipe, request, () => state === "done", kind === "blob" ? BLOB_UPLOAD_MAX : null).catch(fail);
+    sendBody(pipe, request, () => state === "done", kind === "blob" ? BLOB_UPLOAD_MAX : null, moved).catch(fail);
   });
 }
 
@@ -187,7 +240,7 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
  * already be coming down: a server is free to answer early, and once the
  * exchange is `finished` the rest is not wanted.
  */
-async function sendBody(pipe: Pipe, request: Request, finished: () => boolean, limit: number | null): Promise<void> {
+async function sendBody(pipe: Pipe, request: Request, finished: () => boolean, limit: number | null, moved: { tx: number }): Promise<void> {
   if (request.body) {
     const reader = request.body.getReader();
     let sent = 0;
@@ -207,6 +260,7 @@ async function sendBody(pipe: Pipe, request: Request, finished: () => boolean, l
         throw new BodyTooLargeError(limit);
       }
       pipe.send({ kind: "binary", data: value });
+      moved.tx = sent;
     }
   }
   if (!finished()) pipe.send({ kind: "end" });
@@ -219,8 +273,16 @@ class PipeSocket implements SocketLike {
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: ((event: unknown) => void) | null = null;
+  /** For the connection log: when it was asked for and opened (`performance.now`), what it moved, who closed it. */
+  private readonly startedAt = performance.now();
+  private openedAt: number | null = null;
+  private readonly moved = { rx: 0, tx: 0 };
+  private by: "page" | "peer" = "peer";
 
-  constructor(private readonly pipe: Pipe) {
+  constructor(
+    private readonly pipe: Pipe,
+    private readonly log: { route: string; kind: PipeKind; device?: string | null } | null = null,
+  ) {
     pipe.onmessage = (message) => this.received(message);
     pipe.onclose = () => this.finish();
   }
@@ -229,12 +291,16 @@ class PipeSocket implements SocketLike {
     // As a browser socket does: an error while still connecting, and silently
     // nothing once it is closing.
     if (this.readyState === CONNECTING) throw new DOMException("Still connecting", "InvalidStateError");
-    if (this.readyState === OPEN) this.pipe.send({ kind: "text", data });
+    if (this.readyState === OPEN) {
+      this.moved.tx += data.length;
+      this.pipe.send({ kind: "text", data });
+    }
   }
 
   close(): void {
     if (this.readyState === CLOSING || this.readyState === CLOSED) return;
     this.readyState = CLOSING;
+    this.by = "page";
     this.pipe.close();
     // Asynchronously, like a browser socket's: a caller reads the close as
     // news, and must not be re-entered from inside the call that caused it.
@@ -245,8 +311,11 @@ class PipeSocket implements SocketLike {
     if (this.readyState === CONNECTING) {
       if (message.kind === "head" && message.status === 101) {
         this.readyState = OPEN;
+        this.openedAt = performance.now();
+        if (this.log) connLog.emit("socket.open", { device: this.log.device, kind: this.log.kind, route: this.log.route, ms: this.openedAt - this.startedAt });
         this.onopen?.({});
       } else {
+        if (this.log) connLog.emit("socket.close", { device: this.log.device, kind: this.log.kind, route: this.log.route, refused: message.kind === "head" ? message.status : message.kind }, "warn");
         // A refused upgrade, or a far end that speaks before saying it
         // upgraded: either way not a socket this can use.
         this.close();
@@ -255,10 +324,12 @@ class PipeSocket implements SocketLike {
     }
     if (this.readyState !== OPEN) return;
     if (message.kind === "text") {
+      this.moved.rx += message.data.length;
       this.onmessage?.({ data: message.data });
       return;
     }
     if (message.kind !== "binary") return;
+    this.moved.rx += message.data.length;
     // A copy, so the frame is an `ArrayBuffer` of exactly its own bytes.
     const bytes = new Uint8Array(message.data).buffer;
     this.onmessage?.({ data: this.binaryType === "arraybuffer" ? bytes : new Blob([bytes]) });
@@ -266,6 +337,17 @@ class PipeSocket implements SocketLike {
 
   private finish(): void {
     if (this.readyState === CLOSED) return;
+    if (this.log && this.openedAt !== null) {
+      connLog.emit("socket.close", {
+        device: this.log.device,
+        kind: this.log.kind,
+        route: this.log.route,
+        by: this.by,
+        openMs: performance.now() - this.openedAt,
+        rx: this.moved.rx,
+        tx: this.moved.tx,
+      });
+    }
     this.readyState = CLOSED;
     this.pipe.onmessage = null;
     this.pipe.onclose = null;
@@ -273,16 +355,19 @@ class PipeSocket implements SocketLike {
   }
 }
 
-/** A transport over pipes from `opener`. */
-export function tunnelTransport(opener: PipeOpener): Transport {
+/** A transport over pipes from `opener`; `log` says which device it reaches, for the connection log. */
+export function tunnelTransport(opener: PipeOpener, log: TunnelLog = {}): Transport {
   return {
     tunneled: true,
-    fetch: (request, options?: FetchOptions) => tunnelFetch(opener, request, options?.class === "blob" ? "blob" : "rpc"),
+    fetch: (request, options?: FetchOptions) => tunnelFetch(opener, request, options?.class === "blob" ? "blob" : "rpc", log),
     // No ticket: a page that can open a pipe has already been through the
     // channel's own authentication, and the bridge authenticates the loopback
     // upgrade with its own credential. The address is the route itself.
     socketUrl: async (path) => path,
-    openSocket: (path) => new PipeSocket(opener.open(socketKind(path), { path })),
+    openSocket: (path) => {
+      const kind = socketKind(path);
+      return new PipeSocket(opener.open(kind, { path }), { route: routeTemplate(path), kind, device: log.device });
+    },
     ...(opener.onOpen ? { onReconnect: (fn: () => void) => opener.onOpen!(fn) } : {}),
   };
 }
