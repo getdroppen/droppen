@@ -30,6 +30,9 @@ import {
   isCurrentA2a,
   machineKeyCommit,
   MAX_ACCEPT_IDS,
+  PAUSE_CANCELLED,
+  PAUSE_COMPLETED,
+  PAUSE_START,
   publicFromSecret,
   RULES,
   type Signer,
@@ -223,14 +226,24 @@ test("setA2aAccept: an admin's, for a current host, naming current A2A proxies, 
   await assert.rejects(tryPush(set(host.id, ["a-nobody"])), kind("unknownId"));
   await assert.rejects(tryPush(set(host.id, [])), kind("notAllowed", RULES.a2aAcceptSame));
   await push(set(host.id, [x.id, y.id]));
-  assert.equal(state.hostKeyDue, null, "an A2A list owes no machine key");
+  assert.equal(state.hostKeyDue, null, "adding proxies owes no machine key");
   assert.deepEqual(state.a2aAccept(host.id), [x.id, y.id]);
   await assert.rejects(tryPush(set(host.id, [x.id, y.id])), kind("notAllowed", RULES.a2aAcceptSame));
-  // Narrowing to one, then none: no new machine key either (a proxy never had one).
+  // Dropping one takes the host's next machine key epoch in the very next entry: a session it started could read the
+  // host's key files (as a setAccept narrowing, D2). Anything else next is refused.
+  const key = async (epoch: number): Promise<Action> => ({
+    type: "keyEpochs",
+    user: null,
+    machines: [{ machine: host.id, epoch, hash: await machineKeyCommit("acct-a2a", host.id, epoch, new Uint8Array(32).fill(epoch + 10)) }],
+  });
   await push(set(host.id, [y.id]));
+  assert.equal(state.hostKeyDue, host.id);
+  await assert.rejects(tryPush(set(host.id, [x.id, y.id])), kind("notAllowed", RULES.hostKeyNext));
+  await push(await key(1));
   assert.equal(state.hostKeyDue, null);
   await push(set(host.id, []));
-  assert.equal(state.hostKeyDue, null);
+  assert.equal(state.hostKeyDue, host.id);
+  await push(await key(2));
   assert.deepEqual(state.a2aAccept(host.id), []);
   assert.deepEqual(state.a2aAccept(plain.id), [], "none by default");
 });
@@ -254,7 +267,7 @@ test("mayCallA2a: only a current A2A proxy, only to a current host whose list na
   assert.deepEqual(state.hostsAcceptingA2a(admin.id), []);
 });
 
-test("an A2A proxy never controls a host, whatever setAccept says: it is never sealed a machine key", async () => {
+test("an A2A proxy never controls a host — every device does not take it in, no list may name it — so it is never sealed a machine key", async () => {
   const { state, host, plain, x, y, push, tryPush } = await fixture();
   const admitting = (id: string) =>
     state
@@ -263,13 +276,15 @@ test("an A2A proxy never controls a host, whatever setAccept says: it is never s
       .map((h) => h.info.id);
   await push({ type: "setA2aAccept", host: host.id, devices: [x.id, y.id] });
   assert.throws(() => state.mayControl(x.id, host.id), kind("notAccepted"), "admins only");
-  // A list that names it does not count; plain is let in by the same list.
-  await push({ type: "setAccept", host: host.id, from: { type: "devices", ids: [x.id, plain.id] } });
-  assert.throws(() => state.mayControl(x.id, host.id), kind("notAccepted"));
-  state.mayControl(plain.id, host.id);
-  // Taking it off the list shuts out nobody who could control the host: no new machine key is owed.
+  // A list never names it (a name written but ignored would mislead), alone or beside a device that does control.
+  for (const ids of [[x.id], [x.id, plain.id], [x.id, y.id, plain.id]]) {
+    await assert.rejects(tryPush({ type: "setAccept", host: host.id, from: { type: "devices", ids } }), kind("notAllowed", RULES.a2aNotController), ids.join(","));
+  }
+  // The older checks, each id in turn: an unknown one, the host itself.
+  await assert.rejects(tryPush({ type: "setAccept", host: host.id, from: { type: "devices", ids: ["a-nobody"] } }), kind("unknownId"));
+  await assert.rejects(tryPush({ type: "setAccept", host: host.id, from: { type: "devices", ids: [host.id] } }), kind("notAllowed", RULES.acceptSelf));
   await push({ type: "setAccept", host: host.id, from: { type: "devices", ids: [plain.id] } });
-  assert.equal(state.hostKeyDue, null);
+  state.mayControl(plain.id, host.id);
   await push({ type: "setAccept", host: host.id, from: { type: "all" } });
   assert.throws(() => state.mayControl(x.id, host.id), kind("notAccepted"), "nor does every device");
   assert.throws(() => state.authorizeControl(x.id, x.dhKey, host.id), kind("notAccepted"));
@@ -286,6 +301,24 @@ test("an A2A proxy never controls a host, whatever setAccept says: it is never s
   await push({ type: "setAccept", host: host.id, from: { type: "admins" } }, undefined, onlyProxies);
   assert.equal(onlyProxies.hostKeyDue, null);
   await tryPush({ type: "setA2aAccept", host: host.id, devices: [x.id] });
+});
+
+test("a renewal pause holds an A2A proxy's calls as it holds control; its end gives them back, the list untouched", async () => {
+  const { state, host, x, y, push } = await fixture();
+  await push({ type: "setA2aAccept", host: host.id, devices: [x.id, y.id] });
+  const op = new Uint8Array(16).fill(0xa2);
+  await push({ type: "renewalPause", op, phase: PAUSE_START, removals: [{ host: host.id, ids: [x.id] }] });
+  assert.deepEqual(state.pausedEdges(host.id), [x.id]);
+  assert.throws(() => state.mayCallA2a(x.id, host.id), kind("notAccepted"));
+  state.mayCallA2a(y.id, host.id);
+  assert.deepEqual(state.a2aAccept(host.id), [x.id, y.id], "the list stays as it was");
+  assert.deepEqual(state.hostsAcceptingA2a(x.id), []);
+  for (const phase of [PAUSE_COMPLETED, PAUSE_CANCELLED] as const) {
+    const ended = state.clone();
+    await push({ type: "renewalPause", op, phase, removals: [] }, undefined, ended);
+    ended.mayCallA2a(x.id, host.id);
+    assert.deepEqual(ended.hostsAcceptingA2a(x.id).map((d) => d.info.id), [host.id]);
+  }
 });
 
 test("a removal drops the proxy from every A2A list; a host that stops running AI drops its own", async () => {

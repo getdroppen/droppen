@@ -2,9 +2,10 @@
 //! a2a flag (bit 2) never goes with host or admin, it is fixed at the join,
 //! an A2A proxy signs and attests nothing, `SetA2aAccept` (kind 23) is an
 //! admin's and names only current A2A proxies of a current host, a removal
-//! drops a proxy from every list — and the rule the lane rests on: an A2A
-//! proxy controls no host, whatever `SetAccept` says, so no machine key is
-//! ever sealed to it ([`ChainState::hosts_admitting`] is empty).
+//! drops a proxy from every list, a renewal pause holds its calls — and the
+//! rule the lane rests on: an A2A proxy controls no host (`All` does not take
+//! it in, no `SetAccept` list may name it), so no machine key is ever sealed
+//! to it ([`ChainState::hosts_admitting`] is empty).
 //!
 //! Fixture: `v3_regressions::with_second_host` (`dev-0` admin, `dev-2` a plain
 //! device, `m-1` and `h-2` hosts, `dev-1` removed) plus two A2A proxies, `a-1`
@@ -283,6 +284,7 @@ fn a4_set_a2a_accept_is_an_admins_for_a_host_naming_current_proxies() {
     assert_eq!(try_push(&state, by0(), k0, accept("dev-2", &[])), rule(seq, rules::A2A_ACCEPT_NOT_HOST));
     let mut none = state.clone();
     push(&mut none, by0(), k0, accept("m-1", &[])).unwrap();
+    push(&mut none, by0(), k0, Action::KeyEpochs(mk_commit("m-1", 0, &[0x41; 32]))).unwrap();
     assert_eq!(
         try_push(&none, by0(), k0, accept("m-1", &[])),
         rule(none.seq() + 1, rules::A2A_ACCEPT_SAME)
@@ -327,13 +329,34 @@ fn a4_set_a2a_accept_is_an_admins_for_a_host_naming_current_proxies() {
     assert!(matches!(Entry::decode(&bytes), Err(ChainError::Decode(_))));
     assert_eq!(accept("m-1", &[]).kind(), 23);
     assert_eq!(accept("m-1", &[]).fixed_version(), Some(VERSION_3));
-    // Narrowing or widening owes no machine key epoch: a proxy never held one.
+    // Dropping a proxy takes the host's next machine key epoch in the very
+    // next entry (`HOST_KEY_NEXT`): a session it started could read the
+    // host's key files. Adding one owes nothing.
     let mut s = state.clone();
     push(&mut s, by0(), k0, accept("h-2", &["a-2"])).unwrap();
+    assert_eq!(s.host_key_due(), Some("h-2"));
+    assert_eq!(
+        try_push(&s, by0(), k0, accept("m-1", &["a-1", "a-2"])),
+        rule(s.seq() + 1, rules::HOST_KEY_NEXT)
+    );
+    assert_eq!(
+        try_push(&s, by0(), k0, Action::KeyEpochs(mk_commit("m-1", 0, &[0x42; 32]))),
+        rule(s.seq() + 1, rules::HOST_KEY_NEXT),
+        "another host's key does not cover it"
+    );
+    push(&mut s, by0(), k0, Action::KeyEpochs(mk_commit("h-2", 1, &[0x43; 32]))).unwrap();
     assert_eq!(s.host_key_due(), None);
+    push(&mut s, by0(), k0, accept("h-2", &["a-1", "a-2"])).unwrap();
+    assert_eq!(s.host_key_due(), None, "widening owes nothing");
     push(&mut s, by0(), k0, accept("h-2", &[])).unwrap();
-    assert_eq!(s.host_key_due(), None);
+    assert_eq!(s.host_key_due(), Some("h-2"));
+    push(&mut s, by0(), k0, Action::KeyEpochs(mk_commit("h-2", 2, &[0x44; 32]))).unwrap();
     assert!(s.a2a_accept("h-2").is_empty());
+    // A removal drops the proxy from the lists without an entry of the
+    // host's: the chain owes nothing then (the web turns the keys over).
+    let mut r = state.clone();
+    push(&mut r, by0(), k0, Action::RemoveDevice3("a-2".into())).unwrap();
+    assert_eq!(r.host_key_due(), None);
     // Every entry of the fixture round-trips.
     for e in &entries {
         assert_eq!(&Entry::decode(&e.encode()).unwrap(), e);
@@ -400,38 +423,36 @@ fn a5_only_a_listed_proxy_may_call_a_hosts_a2a() {
     s.may_call_a2a("a-1", "m-1").unwrap();
 }
 
-/// The rule the lane rests on: an A2A proxy never controls a host, whatever
-/// `SetAccept` says (`All`, or a list that names it), so it is never among
-/// the devices a host's machine keys are sealed to — `hosts_admitting` is
-/// empty — and taking it off a list turns no machine key over. An agent's
-/// admission refuses its handshake (it fails closed until the agent knows
-/// `A2aOnly`).
+/// The rule the lane rests on: an A2A proxy never controls a host — `All`
+/// does not take it in, and no `SetAccept` list may name it
+/// ([`rules::A2A_NOT_CONTROLLER`]: a name written but ignored would mislead) —
+/// so it is never among the devices a host's machine keys are sealed to
+/// (`hosts_admitting` is empty). An agent's admission refuses its handshake
+/// (it fails closed until the agent knows `A2aOnly`).
 #[test]
 fn a6_an_a2a_device_controls_nothing_and_is_sealed_no_machine_key() {
     let f = fixture();
     let (mut state, _) = with_proxies(&f);
     let k0 = &f.devices[0].0;
-    push(
-        &mut state,
-        by0(),
-        k0,
-        Action::SetAccept {
-            host: "m-1".into(),
-            from: Accept::All,
-        },
-    )
-    .unwrap();
-    // A list may name it; it does not count.
-    push(
-        &mut state,
-        by0(),
-        k0,
-        Action::SetAccept {
-            host: "h-2".into(),
-            from: Accept::Devices(vec!["a-1".into(), "a-2".into(), "dev-2".into()]),
-        },
-    )
-    .unwrap();
+    let set = |host: &str, from: Accept| Action::SetAccept { host: host.into(), from };
+    let list = |ids: &[&str]| Accept::Devices(ids.iter().map(|s| s.to_string()).collect());
+    push(&mut state, by0(), k0, set("m-1", Accept::All)).unwrap();
+    // A list never names it, alone or beside a device that does control.
+    let seq = state.seq() + 1;
+    for ids in [&["a-1"][..], &["a-1", "a-2", "dev-2"], &["a-2", "dev-2"]] {
+        assert_eq!(
+            try_push(&state, by0(), k0, set("h-2", list(ids))),
+            rule(seq, rules::A2A_NOT_CONTROLLER),
+            "{ids:?}"
+        );
+    }
+    // Each id in turn; an unknown one, or the host itself, as before.
+    assert!(matches!(
+        try_push(&state, by0(), k0, set("h-2", list(&["a-9"]))),
+        Err(ChainError::UnknownId { .. })
+    ));
+    assert_eq!(try_push(&state, by0(), k0, set("h-2", list(&["h-2"]))), rule(seq, rules::ACCEPT_SELF));
+    push(&mut state, by0(), k0, set("h-2", list(&["dev-2"]))).unwrap();
     assert_eq!(state.host_key_due(), None);
     for host in ["m-1", "h-2"] {
         for d in ["a-1", "a-2"] {
@@ -446,44 +467,13 @@ fn a6_an_a2a_device_controls_nothing_and_is_sealed_no_machine_key() {
     );
     assert_eq!(hosts("dev-2"), ["h-2", "m-1"]);
     assert_eq!(hosts("dev-0"), ["h-2", "m-1"]);
-    // Taking it off the list shuts out nobody who could have read a key.
+    // Narrowing `All` to the others it let in owes no new key (the proxies
+    // were never among them); shutting out one that could control does.
     let mut s = state.clone();
-    push(
-        &mut s,
-        by0(),
-        k0,
-        Action::SetAccept {
-            host: "h-2".into(),
-            from: Accept::Devices(vec!["dev-2".into()]),
-        },
-    )
-    .unwrap();
-    assert_eq!(s.host_key_due(), None, "an A2A proxy held no machine key");
-    // Nor does narrowing `All` to the others it let in: only shutting out a
-    // device that could control the host owes a new key.
-    let mut s = state.clone();
-    push(
-        &mut s,
-        by0(),
-        k0,
-        Action::SetAccept {
-            host: "m-1".into(),
-            from: Accept::Devices(vec!["dev-2".into(), "h-2".into()]),
-        },
-    )
-    .unwrap();
+    push(&mut s, by0(), k0, set("m-1", list(&["dev-2", "h-2"]))).unwrap();
     assert_eq!(s.host_key_due(), None);
-    push(
-        &mut s,
-        by0(),
-        k0,
-        Action::SetAccept {
-            host: "m-1".into(),
-            from: Accept::Devices(vec!["a-1".into()]),
-        },
-    )
-    .unwrap();
-    assert_eq!(s.host_key_due(), Some("m-1"), "dev-2 and h-2 were shut out");
+    push(&mut s, by0(), k0, set("m-1", list(&["dev-2"]))).unwrap();
+    assert_eq!(s.host_key_due(), Some("m-1"), "h-2 was shut out");
     // Removing an A2A proxy owes no machine key either.
     let mut s = state.clone();
     push(&mut s, by0(), k0, Action::RemoveDevice3("a-1".into())).unwrap();
@@ -545,4 +535,40 @@ fn a7_removing_an_a2a_device_drops_it_from_every_list() {
     push(&mut s, by0(), k0, Action::RemoveDevice3("h-2".into())).unwrap();
     assert!(s.a2a_accept("h-2").is_empty());
     assert_eq!(s.a2a_accept("m-1"), ["a-1"]);
+}
+
+/// A renewal pause holds an A2A proxy's calls as it holds control (§3.4 rule
+/// 10): while an open pause names the proxy for a host, `may_call_a2a`
+/// refuses it, whatever the host's list says; the end gives it back. The list
+/// itself is never touched.
+#[test]
+fn a8_a_renewal_pause_holds_a2a_calls_as_it_holds_control() {
+    let f = fixture();
+    let (mut state, _) = with_proxies(&f);
+    let k0 = &f.devices[0].0;
+    let op = [0xa2; 16];
+    push(
+        &mut state,
+        by0(),
+        k0,
+        Action::RenewalPause {
+            op,
+            phase: PausePhase::Start,
+            removals: vec![("m-1".into(), vec!["a-1".into()])],
+        },
+    )
+    .unwrap();
+    assert_eq!(state.paused_edges("m-1"), ["a-1"]);
+    assert!(matches!(state.may_call_a2a("a-1", "m-1"), Err(ChainError::NotAccepted { .. })));
+    assert_eq!(state.a2a_accept("m-1"), ["a-1"], "the list stays as it was");
+    state.may_call_a2a("a-1", "h-2").unwrap();
+    let ids = |st: &ChainState, d: &str| st.hosts_accepting_a2a(d).map(|h| h.info.id.clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&state, "a-1"), ["h-2"]);
+    // Ended (completed or cancelled), the call comes back.
+    for phase in [PausePhase::Completed, PausePhase::Cancelled] {
+        let mut s = state.clone();
+        push(&mut s, by0(), k0, Action::RenewalPause { op, phase, removals: vec![] }).unwrap();
+        s.may_call_a2a("a-1", "m-1").unwrap();
+        assert_eq!(ids(&s, "a-1"), ["h-2", "m-1"]);
+    }
 }

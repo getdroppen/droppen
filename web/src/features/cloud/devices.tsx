@@ -225,6 +225,8 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   // Hosts whose identity a device that could control them may have kept (review D3), each device with what the host's status says of it —
   // those that cannot renew their identity key; the others renew it (docs/host-identity-rotation.md §4).
   const reEnroll = viewerAdmin ? account.reEnrollWarnings((h) => statuses.get(h)?.controllers) : new Map<string, ReEnrollLine[]>();
+  // Hosts an A2A proxy that could call them no longer can (docs/a2a.md §7.1): renewing their identity key is suggested, never done here.
+  const a2aExposed = (viewerAdmin && upgraded ? account.a2aExposures?.() : undefined) ?? new Map<string, Map<string, number>>();
   const renewals = useRenewals();
   // The hosts no other host may be made to accept until they renewed their identity key (§7 decision 8).
   const mustRenew = hostIds.filter((h) => account.mustRenewFirst?.(h) === true);
@@ -324,6 +326,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
       limited,
       accept: d.host && chain ? chain.acceptPolicy(id) : null,
       reEnroll: d.host ? reEnroll.get(id) : undefined,
+      a2aExposed: d.host ? [...(a2aExposed.get(id)?.keys() ?? [])].sort() : undefined,
       renewal: d.host && renewals ? renewals.status(id) : undefined,
       renewable: d.host && upgraded && account.renews?.(id) === true,
       renewalsOn: d.host && renewals?.view?.enabled === true,
@@ -1003,12 +1006,23 @@ function RemoveDevice({
   const [report, setReport] = useState<RotationReport | null>(null);
   const v3 = account.chain?.isV3 === true;
   // What its removal rotates (§3.3): a device that ever held the user key (by the chain's history, review 1) —
-  // everything; one a computer accepts control from — that computer's machine keys, always (review D2);
-  // any other, machine keys only if asked; chain v2's machine held its own key alone.
+  // everything; one a computer accepts control from — that computer's machine keys, always (review D2); an A2A
+  // proxy a computer takes calls from — the machine keys, always (a session it started there could read them off
+  // the disk: docs/a2a.md §7.1); any other, machine keys only if asked; chain v2's machine held its own key alone.
   const heldUserKey = record ? account.heldUserKey(device) : true;
+  // The computers an A2A proxy could call: exposed to it, said by name.
+  const a2aHosts = (v3 && record?.a2a ? account.a2aHostsOf?.(device) : undefined) ?? [];
   // The account's recovery words go with it only when it knows the current ones (v3) — as the chain will rule.
   const voidsWords = account.chain?.voidsRecoveryWords(device, "removal") ?? false;
-  const rotation: "all" | "machine" | "choice" | "none" = heldUserKey ? "all" : !v3 ? "none" : account.controlsAHost(device) ? "machine" : "choice";
+  const rotation: "all" | "machine" | "a2a" | "choice" | "none" = heldUserKey
+    ? "all"
+    : !v3
+      ? "none"
+      : account.controlsAHost(device)
+        ? "machine"
+        : a2aHosts.length
+          ? "a2a"
+          : "choice";
   // The devices that run AI it could control (and those that let them control them) renew their identity key after it (§4.1, §4.4).
   const renewing = v3 && account.chain ? hostsExposedBy(account.chain, device).filter((h) => account.renews?.(h) === true) : [];
   if (report) {
@@ -1038,10 +1052,21 @@ function RemoveDevice({
           ? t("It loses access at once. The keys it held are retired: a new user key goes to the other devices and a new content key to each device that runs AI. What it already copied cannot be taken back.")
           : rotation === "machine"
             ? t("It loses access at once. It never held the user key, but a device that runs AI accepts its control: the content keys are rotated. What it already copied cannot be taken back.")
-            : rotation === "choice"
-              ? t("It loses access at once. It never held the user key, and no device accepts its control now: rotating the content keys covers any it was handed before.")
-              : t("It loses access at once. It held only its own content key, which goes with it.")}
+            : rotation === "a2a"
+              ? t("It loses access at once. It never held a key, but it is an A2A proxy that devices that run AI take calls from: the content keys are rotated. What it already copied cannot be taken back.")
+              : rotation === "choice"
+                ? t("It loses access at once. It never held the user key, and no device accepts its control now: rotating the content keys covers any it was handed before.")
+                : t("It loses access at once. It held only its own content key, which goes with it.")}
       </p>
+      {a2aHosts.length > 0 && (
+        // docs/a2a.md §7.1: an A2A call starts a session on the host as its user, whatever the entry's permission mode.
+        <p className="text-xs leading-5 text-warn-fg" data-signal="warn" data-testid="remove-a2a-exposed">
+          {t(
+            "{{device}} is an A2A proxy that could call the A2A of {{hosts}}. A session it started there could read any file the user can read on that device, its identity key included, so treat {{hosts}} as exposed: their content keys are rotated now, and renewing their identity key (or removing and adding them again) is suggested.",
+            { device, hosts: a2aHosts.join(", ") },
+          )}
+        </p>
+      )}
       {voidsWords && (
         <p className="text-xs text-fg" data-testid="remove-voids-words">
           {t("The account's recovery words stop working with it: it set them, or came back with them. Make new recovery words afterwards.")}
@@ -1060,7 +1085,9 @@ function RemoveDevice({
               ? t("also rotate the content keys (always, for a device that held the user key)")
               : rotation === "machine"
                 ? t("also rotate the content keys (always, for a device another device accepts control from)")
-                : t("also rotate the content keys")
+                : rotation === "a2a"
+                  ? t("also rotate the content keys (always, for an A2A proxy a device took calls from)")
+                  : t("also rotate the content keys")
           }
         />
       )}

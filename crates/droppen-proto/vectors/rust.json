@@ -2591,15 +2591,17 @@
       "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
       "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
       "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
-      "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d320200020003612d3100056465762d32c04c12b0101187c6105f6f88c9b9bf3b02722049147907b4bd220c31cd3994f9aee8223a3d5a10f6fab1a08522411c355324500903c8a26a327acdd301d2e706",
-      "030006616363742d31000000000000000cc917f693c971f73a9a57810f3065684886fbafa4147b38e27a33e3226637c929000000000000ea6b0100056465762d301300036d2d310166a565620430f45e12891da63ad0616b6924bd69e22af652b0a61c5f0af776b2922edb87118ef3de24c917a0ff6726333c9613bb64890bb61984a85e4983e108",
-      "030006616363742d31000000000000000dc3caae1719838c326e6b1dc3d836ba58ea4a54b3ff1bf5cb7c72b8941f894416000000000000ea6c0100056465762d30130003682d3202000100056465762d323eb1454caa7ba6ebd915f2ba0f62e12d60cd0460d1771a3489e9afc0438ed967112415c8fee714fb8d2f65393904fd730002cfd44ccd6110285ec2e288759a04",
-      "030006616363742d31000000000000000e813559aa8eebbf3a76cec49f75f410fb5c7cab89645d95c5c0d2715688ef1154000000000000ea6d0100056465762d301700036d2d3100002a4279f719afe397cc48a785a0b0942c60bae034eb0d6c8038ccdf8ab5630e120d4f99cd282822b0c0d8b25fda60140e30032014f55a709a9871a7f56ea86709",
-      "030006616363742d31000000000000000feaeb4039acf58f71cea8ce9f1301c5ce9e3bd71a5c8493872051d687968246a5000000000000ea6e0100056465762d300f0003612d32c37114bc3a53e38ab65d774e57efc2a1d13e57077b04c31d29ddb67a8ad1d58652bc22be52dffd284fa78b21d8afec097293bd49a17be4a42df95ee83f90ab0b",
-      "030006616363742d310000000000000010d6bfc70373081ee9f933475c78271ecdfa0e001172a85c9c105f22118d9bde8f000000000000ea6f0100056465762d301700036d2d3100010003612d315f1940565229319ddefe3d74026555485377b722dd084f2991f13289f0b5ea2eff38d3ef8d0d4d836c87c0548081b98ebc21cb694a498bbad9dbcc4178fd4007",
-      "030006616363742d3100000000000000115fbb796cefc69c01594d8ab576088a4ed5fc53c3083ae2a0d31f9283f03bb354000000000000ea700100056465762d300e0003682d3200268a704ba0f60c20abc26f1e37d33517407d9022ede3f9abf9c3bdacd60ea5a18b80501941055c0c0f69162bf8382bc0ef6773e00c8e5240b39390554420450e",
-      "030006616363742d310000000000000012445e0c452ab0f231337957fca7c56bba783b8810c1698d38f7fdc145ba12e0ca000000000000ea710100056465762d300e0003682d3201430bf68e0d96590a93372e998eb633fa9fecfd5af3b0fde66ff99f02e0c7906784082d314b8ebaec3b2cd1325f3fb0e896714d68f1b5b8b7f759189c4fa36c04",
-      "030006616363742d3100000000000000134b05cec1a5463dbb38f6676ef13b51feb527f2cd26e073119d4fc3a1fe508dd2000000000000ea720100056465762d300a0000010003682d320000000148983d883ea26e0eeb3a3b732287fc4876f99002c5490f9adaa849ca8a15c18ffc26024a9f6b9d88712df737a1bace7c1c2bb95f08e9d5f1e9cc3231966dde1a87377e97fae180871dbb9105478c4aa14cc06f00d1f5b5f757149f512aa0b500"
+      "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d3202000100056465762d3264aee0dedc0d84f975d15217c5ccdb2e273583f77411d45c20e052ae38c2dcf51af8e01170d21726fe7ca5438feca1bd7aad60f89961855c080dc478e4029500",
+      "030006616363742d31000000000000000c417c21a6619cce050bdc0ea5c4a61c286c84961ffcb5f4fa76be9da52252a168000000000000ea6b0100056465762d301300036d2d3101e2d81012e5f1b0d94490638b1e82ca7053d1fc15e06639f0d38fca935842a3ca209bf5f52b9cc532278c69db911bd0c99e7b6e580421f1fd2fa61a25efbf720c",
+      "030006616363742d31000000000000000d69ae28f53ce2a91b1424f7f07cfae4e2e9f261223e1fb9b5232f4e0598abf4f8000000000000ea6c0100056465762d301700036d2d310000299c81ba871da192bd036130cbc39e5e008ee3fcbf313f51d267550ab73bb93da1ac71c3435fd332012079c18427b6a3bff2c20043a0276384066cd5f20d7109",
+      "030006616363742d31000000000000000e0f7255eb4646ca38c2dfa3355dac63f5a7441d382f4cb938414d6f116350c3d7000000000000ea6d0100056465762d300a00000100036d2d31000000008c4c98b42b303e5000e02f373af6af88aea255a8e59692d6d23ded7dad761fe43af06c92f72cefc1dc57220da25da5e667a468d85fc3ece6ce190b69b89f1a0b96a9c6a1f3a6c729e143773d781e9529701981921bb89b131370ba05b8deb008",
+      "030006616363742d31000000000000000f1597c9d3b2662db9f2f4efcfaf36a28dec9fd78d3abc8e83a3334f467aeef589000000000000ea6e0100056465762d300f0003612d32d7767767055d93991b30e089a96aba30f30f9a1a66cda762ef43c2946b1b27b37dd1fe72525daca2e9f104336245e53473d155e8eceaafd6fe65158cd6119501",
+      "030006616363742d3100000000000000103eebe80042a4a3f39fa0dbb171deb7c225ea3eb8e677824795e4640bb17f73c1000000000000ea6f0100056465762d301700036d2d3100010003612d312042d4eb01cd0e5184a18e85edc72d1aa88390aec5e8f5ab2954494980a21174f02c7089a562bb2938528250ee842f3cc98f17d720d0afa243cc762cf4de2f0b",
+      "030006616363742d310000000000000011fdaad795a20b0bf2baa6b93c95f551b675849f333d7e8227a7f3b86d9982312d000000000000ea700100056465762d3016a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a200000100036d2d3100010003612d3122b625c9434550ab345262168619f85a85abd446f4858be2c6e692a3043641baf45baabc7df2d210e24b410ba7e53f46a8d5c057541cdd874d5d47447e99b502",
+      "030006616363742d31000000000000001243850592e721ccebe9fca2f7a5ffee7f8a36c74399fb3f8133d22860adff8838000000000000ea710100056465762d300e0003682d3200ce6d84f876b72f2806293242ee31d2b47a0c68efd79aa39f6566712751ed1b4c0aa6a70fdd71f7e0380e713704b30301670b25ba4e757e7094cade94f2a2bb04",
+      "030006616363742d310000000000000013aae3c755118be96a2ff763b970aef0a5092ff38e876f2f6880815a3b0e90f930000000000000ea720100056465762d300e0003682d32017ae44bf903e7966d64082818d184368673661c38fc245357efe77b22dcc38ac6c61b533697b7ea4eac38248b51197a572d35e5040d95fcc2a76120bee0d63504",
+      "030006616363742d31000000000000001423fce596925b151288e843e7b3bc094ef3b2a5d44678f204232a2c91599784ae000000000000ea730100056465762d300a0000010003682d320000000148983d883ea26e0eeb3a3b732287fc4876f99002c5490f9adaa849ca8a15c18f14a82887655e1c8c56626bc8ff0d778468db91dbe19f7b6ef33f2966e610210ed7437cb6a31ad2e244be3e6f8735babec03d6421fd313b393332165d15eb960c",
+      "030006616363742d3100000000000000159b42877c37c7b325815773f06b4f6534abc97c2f1b4fcf5b77efe39d6a889378000000000000ea740100056465762d30170003682d3200010003612d31d09d7959c26faf15401549e2265bfa8dca12bcd6daecc99007fcf47ba9a7ce0da767e7545378ac1ff622687f958b4882ea23081c02b322086cac78e7d3f3ba00"
     ],
     "hashes": [
       "161fd71301b04fb9be0a12e4a6e231e1fe19c7cf93796435c453d40ab7e49fb7",
@@ -2613,15 +2615,17 @@
       "cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94",
       "4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71",
       "55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3",
-      "c917f693c971f73a9a57810f3065684886fbafa4147b38e27a33e3226637c929",
-      "c3caae1719838c326e6b1dc3d836ba58ea4a54b3ff1bf5cb7c72b8941f894416",
-      "813559aa8eebbf3a76cec49f75f410fb5c7cab89645d95c5c0d2715688ef1154",
-      "eaeb4039acf58f71cea8ce9f1301c5ce9e3bd71a5c8493872051d687968246a5",
-      "d6bfc70373081ee9f933475c78271ecdfa0e001172a85c9c105f22118d9bde8f",
-      "5fbb796cefc69c01594d8ab576088a4ed5fc53c3083ae2a0d31f9283f03bb354",
-      "445e0c452ab0f231337957fca7c56bba783b8810c1698d38f7fdc145ba12e0ca",
-      "4b05cec1a5463dbb38f6676ef13b51feb527f2cd26e073119d4fc3a1fe508dd2",
-      "bdde35d69bd2fb1b669dcdf01f862bdc0a3c35605eb372f0ea56617b6957e052"
+      "417c21a6619cce050bdc0ea5c4a61c286c84961ffcb5f4fa76be9da52252a168",
+      "69ae28f53ce2a91b1424f7f07cfae4e2e9f261223e1fb9b5232f4e0598abf4f8",
+      "0f7255eb4646ca38c2dfa3355dac63f5a7441d382f4cb938414d6f116350c3d7",
+      "1597c9d3b2662db9f2f4efcfaf36a28dec9fd78d3abc8e83a3334f467aeef589",
+      "3eebe80042a4a3f39fa0dbb171deb7c225ea3eb8e677824795e4640bb17f73c1",
+      "fdaad795a20b0bf2baa6b93c95f551b675849f333d7e8227a7f3b86d9982312d",
+      "43850592e721ccebe9fca2f7a5ffee7f8a36c74399fb3f8133d22860adff8838",
+      "aae3c755118be96a2ff763b970aef0a5092ff38e876f2f6880815a3b0e90f930",
+      "23fce596925b151288e843e7b3bc094ef3b2a5d44678f204232a2c91599784ae",
+      "9b42877c37c7b325815773f06b4f6534abc97c2f1b4fcf5b77efe39d6a889378",
+      "d355796ecb37904b01dc34c384e07f7ace984f7fb097d61dc09289905f28ba11"
     ],
     "versions": [
       2,
@@ -2629,6 +2633,8 @@
       2,
       2,
       2,
+      3,
+      3,
       3,
       3,
       3,
@@ -2714,6 +2720,16 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "h-2": 1,
@@ -2796,6 +2812,16 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -2890,6 +2916,16 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "h-2": 1,
@@ -2982,6 +3018,16 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -3081,6 +3127,16 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "h-2": 1,
@@ -3089,11 +3145,11 @@
         }
       },
       {
-        "label": "acceptNamingA2a",
+        "label": "acceptDev2H2",
         "seq": 11,
         "state": {
           "seq": 11,
-          "head": "c917f693c971f73a9a57810f3065684886fbafa4147b38e27a33e3226637c929",
+          "head": "417c21a6619cce050bdc0ea5c4a61c286c84961ffcb5f4fa76be9da52252a168",
           "devices": [
             {
               "id": "a-1",
@@ -3170,7 +3226,6 @@
               "from": {
                 "kind": "devices",
                 "ids": [
-                  "a-1",
                   "dev-2"
                 ]
               }
@@ -3180,6 +3235,16 @@
               "from": {
                 "kind": "admins"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -3194,108 +3259,7 @@
         "seq": 12,
         "state": {
           "seq": 12,
-          "head": "c3caae1719838c326e6b1dc3d836ba58ea4a54b3ff1bf5cb7c72b8941f894416",
-          "devices": [
-            {
-              "id": "a-1",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "a-2",
-              "host": false,
-              "admin": false,
-              "a2a": true,
-              "status": "active"
-            },
-            {
-              "id": "dev-0",
-              "host": false,
-              "admin": true,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "dev-1",
-              "host": false,
-              "admin": true,
-              "a2a": false,
-              "status": "removed"
-            },
-            {
-              "id": "dev-2",
-              "host": false,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "h-2",
-              "host": true,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            },
-            {
-              "id": "m-1",
-              "host": true,
-              "admin": false,
-              "a2a": false,
-              "status": "active"
-            }
-          ],
-          "a2aDevices": [
-            "a-1",
-            "a-2"
-          ],
-          "a2aAccept": [
-            {
-              "host": "h-2",
-              "devices": [
-                "a-1",
-                "a-2"
-              ]
-            },
-            {
-              "host": "m-1",
-              "devices": [
-                "a-1"
-              ]
-            }
-          ],
-          "accept": [
-            {
-              "host": "h-2",
-              "from": {
-                "kind": "devices",
-                "ids": [
-                  "a-1",
-                  "dev-2"
-                ]
-              }
-            },
-            {
-              "host": "m-1",
-              "from": {
-                "kind": "all"
-              }
-            }
-          ],
-          "hostKeyDue": null,
-          "machineKeyEpochs": {
-            "h-2": 1,
-            "m-1": 0
-          }
-        }
-      },
-      {
-        "label": "acceptDropsA2a",
-        "seq": 13,
-        "state": {
-          "seq": 13,
-          "head": "813559aa8eebbf3a76cec49f75f410fb5c7cab89645d95c5c0d2715688ef1154",
+          "head": "69ae28f53ce2a91b1424f7f07cfae4e2e9f261223e1fb9b5232f4e0598abf4f8",
           "devices": [
             {
               "id": "a-1",
@@ -3381,6 +3345,16 @@
               "from": {
                 "kind": "all"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
             }
           ],
           "hostKeyDue": null,
@@ -3392,10 +3366,10 @@
       },
       {
         "label": "a2aNoneM1",
-        "seq": 14,
+        "seq": 13,
         "state": {
-          "seq": 14,
-          "head": "eaeb4039acf58f71cea8ce9f1301c5ce9e3bd71a5c8493872051d687968246a5",
+          "seq": 13,
+          "head": "0f7255eb4646ca38c2dfa3355dac63f5a7441d382f4cb938414d6f116350c3d7",
           "devices": [
             {
               "id": "a-1",
@@ -3481,10 +3455,128 @@
               }
             }
           ],
-          "hostKeyDue": null,
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": "m-1",
           "machineKeyEpochs": {
             "h-2": 1,
             "m-1": 0
+          }
+        }
+      },
+      {
+        "label": "a2aNoneKeyM1",
+        "seq": 14,
+        "state": {
+          "seq": 14,
+          "head": "1597c9d3b2662db9f2f4efcfaf36a28dec9fd78d3abc8e83a3334f467aeef589",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-1",
+            "a-2"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": [
+                "a-1",
+                "a-2"
+              ]
+            },
+            {
+              "host": "m-1",
+              "devices": []
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "devices",
+                "ids": [
+                  "dev-2"
+                ]
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 1,
+            "m-1": 1
           }
         }
       },
@@ -3493,7 +3585,7 @@
         "seq": 15,
         "state": {
           "seq": 15,
-          "head": "d6bfc70373081ee9f933475c78271ecdfa0e001172a85c9c105f22118d9bde8f",
+          "head": "3eebe80042a4a3f39fa0dbb171deb7c225ea3eb8e677824795e4640bb17f73c1",
           "devices": [
             {
               "id": "a-1",
@@ -3577,10 +3669,20 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "h-2": 1,
-            "m-1": 0
+            "m-1": 1
           }
         }
       },
@@ -3589,7 +3691,7 @@
         "seq": 16,
         "state": {
           "seq": 16,
-          "head": "5fbb796cefc69c01594d8ab576088a4ed5fc53c3083ae2a0d31f9283f03bb354",
+          "head": "fdaad795a20b0bf2baa6b93c95f551b675849f333d7e8227a7f3b86d9982312d",
           "devices": [
             {
               "id": "a-1",
@@ -3675,19 +3777,139 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "h-2": 1,
-            "m-1": 0
+            "m-1": 1
+          }
+        }
+      },
+      {
+        "label": "pauseA1OnM1",
+        "seq": 17,
+        "state": {
+          "seq": 17,
+          "head": "43850592e721ccebe9fca2f7a5ffee7f8a36c74399fb3f8133d22860adff8838",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-1"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": [
+                "a-1"
+              ]
+            },
+            {
+              "host": "m-1",
+              "devices": [
+                "a-1"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "devices",
+                "ids": [
+                  "dev-2"
+                ]
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": [
+                "a-1"
+              ]
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 1,
+            "m-1": 1
           }
         }
       },
       {
         "label": "stopH2",
-        "seq": 17,
+        "seq": 18,
         "state": {
-          "seq": 17,
-          "head": "445e0c452ab0f231337957fca7c56bba783b8810c1698d38f7fdc145ba12e0ca",
+          "seq": 18,
+          "head": "aae3c755118be96a2ff763b970aef0a5092ff38e876f2f6880815a3b0e90f930",
           "devices": [
             {
               "id": "a-1",
@@ -3768,19 +3990,31 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": [
+                "a-1"
+              ]
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "h-2": 1,
-            "m-1": 0
+            "m-1": 1
           }
         }
       },
       {
         "label": "restartH2",
-        "seq": 18,
+        "seq": 19,
         "state": {
-          "seq": 18,
-          "head": "4b05cec1a5463dbb38f6676ef13b51feb527f2cd26e073119d4fc3a1fe508dd2",
+          "seq": 19,
+          "head": "23fce596925b151288e843e7b3bc094ef3b2a5d44678f204232a2c91599784ae",
           "devices": [
             {
               "id": "a-1",
@@ -3859,21 +4093,33 @@
               "from": {
                 "kind": "all"
               }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": [
+                "a-1"
+              ]
             }
           ],
           "hostKeyDue": "h-2",
           "machineKeyEpochs": {
             "h-2": 1,
-            "m-1": 0
+            "m-1": 1
           }
         }
       },
       {
         "label": "restartKeyH2",
-        "seq": 19,
+        "seq": 20,
         "state": {
-          "seq": 19,
-          "head": "bdde35d69bd2fb1b669dcdf01f862bdc0a3c35605eb372f0ea56617b6957e052",
+          "seq": 20,
+          "head": "9b42877c37c7b325815773f06b4f6534abc97c2f1b4fcf5b77efe39d6a889378",
           "devices": [
             {
               "id": "a-1",
@@ -3954,10 +4200,129 @@
               }
             }
           ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": [
+                "a-1"
+              ]
+            }
+          ],
           "hostKeyDue": null,
           "machineKeyEpochs": {
             "h-2": 2,
-            "m-1": 0
+            "m-1": 1
+          }
+        }
+      },
+      {
+        "label": "a2aAgainH2",
+        "seq": 21,
+        "state": {
+          "seq": 21,
+          "head": "d355796ecb37904b01dc34c384e07f7ace984f7fb097d61dc09289905f28ba11",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-1"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": [
+                "a-1"
+              ]
+            },
+            {
+              "host": "m-1",
+              "devices": [
+                "a-1"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "admins"
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": [
+                "a-1"
+              ]
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 2,
+            "m-1": 1
           }
         }
       }
@@ -3986,8 +4351,8 @@
       }
     ],
     "state": {
-      "seq": 19,
-      "head": "bdde35d69bd2fb1b669dcdf01f862bdc0a3c35605eb372f0ea56617b6957e052",
+      "seq": 21,
+      "head": "d355796ecb37904b01dc34c384e07f7ace984f7fb097d61dc09289905f28ba11",
       "devices": [
         {
           "id": "a-1",
@@ -4045,7 +4410,9 @@
       "a2aAccept": [
         {
           "host": "h-2",
-          "devices": []
+          "devices": [
+            "a-1"
+          ]
         },
         {
           "host": "m-1",
@@ -4068,10 +4435,22 @@
           }
         }
       ],
+      "paused": [
+        {
+          "host": "h-2",
+          "ids": []
+        },
+        {
+          "host": "m-1",
+          "ids": [
+            "a-1"
+          ]
+        }
+      ],
       "hostKeyDue": null,
       "machineKeyEpochs": {
         "h-2": 2,
-        "m-1": 0
+        "m-1": 1
       }
     },
     "control": [
@@ -4392,14 +4771,14 @@
       {
         "device": "a-1",
         "host": "m-1",
-        "ok": true,
-        "error": null
+        "ok": false,
+        "error": "notAccepted"
       },
       {
         "device": "a-1",
         "host": "h-2",
-        "ok": false,
-        "error": "notAccepted"
+        "ok": true,
+        "error": null
       },
       {
         "device": "a-1",
@@ -4507,7 +4886,7 @@
       {
         "device": "a-1",
         "hosts": [
-          "m-1"
+          "h-2"
         ]
       },
       {
@@ -4873,6 +5252,44 @@
         "rule": "only a host accepts A2A calls"
       },
       {
+        "name": "an accept list naming an A2A proxy",
+        "entries": [
+          "020006616363742d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e80001f58655d4197d278eb878e7dc3c068c5a71f116954eff6ef22053c77422bb81db00056465762d307cacdf026e2b540d523cdeffb8665c93a30c91033a1837f0588bf9fd9817505de952bfc2345356858cf681950bb29877d0afb0be188d9b72b192c28a3689f30c0101da4898f20f5707425dc8c94d6fb3b57cb6d254de4535c49ed2f0b3083a24013b1bc119eecc50ff75c4356b7b313537dde8fe0606162daae13edc4074828488692f1a39ab750acef95bf4d007462686dbd3a3dcd1c6d0354bdb6f9b7d08328d0b34efb1661bae94de24a9aa0b6f55b3a85bea62ca3cedd66be22d77edfaac4fced556cba27bee9cafe901a911883233ab7bbb491d27ff7ce5471851bcc1df620a",
+          "020006616363742d310000000000000001161fd71301b04fb9be0a12e4a6e231e1fe19c7cf93796435c453d40ab7e49fb700000000000007d00100056465762d300200056465762d31d268a4af153f506e2f4a27eed0cfd5ec26e4427cfaa905f18fc79cae1dbb651001a2146013c327652668b6e612239930929981e01041e6c21e7b91a79fda0d6e012aa9bb8e500cf1c1cd6aaed21f629048f803a08142f6fe4df46ba14cf2adc47bc1d140a7f29445deb4ed0dbc81cb48efa17fb352ea202de2d4846e304a667c0a",
+          "020006616363742d310000000000000002eff0177bac2f093c8acda8931ede107fe5b6b900e2cddb78d36eefe77a9ea8880000000000000bb80100056465762d300400036d2d312b0c802df20d5a6d308e2e9b38081bca1f1dae67f99441662291124ffb1397986294764f6d66978309d86c859edb6ffb802652f096154df847630d71ee21675d7c12bc7def20453e46ecf44ce492abd6a7908318986c2885aa894f6b0c1937ac6cdc4592a6c9fe8a54d395218b49847b7a07fb8764e6717c38fe5a41ffc39a0e",
+          "020006616363742d310000000000000003d6e8f32a9bfe8569916c4011004a3a8846d1b515e41228261a4fdae01263aab80000000000000fa00100056465762d300200056465762d32dbfeca178bccaea804547594cb91fc2e125c31fd30c3f5288979ed23a71a6077e5a472a6e0c751b5732886f8d925a011e27259f155971b43c44414ca66936d120088901f5470faf0646a476000bd2b22761d07b941ccf796600a014732324ade6bb3ab9f0426b5b3f004fa2d21105f786f8724f4fd9e96acc9114a8b858782c30e",
+          "020006616363742d31000000000000000472445d94410de5379e9f58d5ed8512346092acc418b8214bf642b39f92d4cea800000000000013880100056465762d300300056465762d31701de6c2f5e89c4f7dcf84a09957467fad1ee8d7b7d9be5ae48f3a1d80dc84c49265077de833ff37c26ede9ffa04b10e746419c49d66e5d462ad2a5052cdc303",
+          "030006616363742d310000000000000005dae60d66a68166c01802e92ddc92f913c55baaa095d6d1d72ab65c8744fbcf9f00000000000027140100056465762d300c0003682d32fb7566882ca382319738ce00546d17f1a098dbd2cfb7125897ee43cb9de69dbe56c1c14133b20159c9cb311f5c1712a52da556f1ed73063feaca44faaace24350101b51b6c3dbea607ffeca8aeacc4c312ae4f705de2146d733eaf8f98f2da74a14eb15093362ab1d426ecf201b87fb1f79ff526a166d0629c808e1e2532264f0e",
+          "030006616363742d31000000000000000698f6d7ecafb9f31ff7e987c40e86e3e0e73586269dfb800e361de9622629cbcd00000000000027150100056465762d300a0000010003682d3200000000c840363cc4581710202d60ef0b55044ca5fecf3073603e70c2c13ce67cbc70cff2fcc3684150d45e60fc24dca1c221351ead1440842acd6a42985aa5b10872120ec48e55edb81d4423b825d17cdf9db650ef4ba753f1c492385df4ed5363270e",
+          "030006616363742d3100000000000000072f4016877444ad0fa532f725f0ee6b29b9876ce77bb1cfff7ba59451b19d2cd7000000000000ea660100056465762d300c0003612d314d98a90804e4e7eb94d215c919a90a73cddad0323e8a2e3f00280c4e5685200c9aaaf24842376a9a0a1614b552fd28ff5c8a392ffefb8d3a136f1c223f2da84d04de5cabc244df4b16e55bd63110e40f05ecbf06c8eae45b7759bfea663329b8519ba3be2341b2520cd3fa4835de64f4c460b82fd61f2cca5d1d795cd03fe08700",
+          "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
+          "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
+          "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
+          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab300000000000111700100056465762d30130003682d320200020003612d3100056465762d32e3db3e3b9834b858f22a52ae0fe6b51eeca9b9e2778e74e6979350dd278a63348bcbade36bd42ebff88800e996ee845c1ef9a7aaef4f3dbce257a488a25f5704"
+        ],
+        "error": "notAllowed",
+        "rule": "an A2A proxy controls nothing: an accept list never names one"
+      },
+      {
+        "name": "an accept list naming only an A2A proxy",
+        "entries": [
+          "020006616363742d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e80001f58655d4197d278eb878e7dc3c068c5a71f116954eff6ef22053c77422bb81db00056465762d307cacdf026e2b540d523cdeffb8665c93a30c91033a1837f0588bf9fd9817505de952bfc2345356858cf681950bb29877d0afb0be188d9b72b192c28a3689f30c0101da4898f20f5707425dc8c94d6fb3b57cb6d254de4535c49ed2f0b3083a24013b1bc119eecc50ff75c4356b7b313537dde8fe0606162daae13edc4074828488692f1a39ab750acef95bf4d007462686dbd3a3dcd1c6d0354bdb6f9b7d08328d0b34efb1661bae94de24a9aa0b6f55b3a85bea62ca3cedd66be22d77edfaac4fced556cba27bee9cafe901a911883233ab7bbb491d27ff7ce5471851bcc1df620a",
+          "020006616363742d310000000000000001161fd71301b04fb9be0a12e4a6e231e1fe19c7cf93796435c453d40ab7e49fb700000000000007d00100056465762d300200056465762d31d268a4af153f506e2f4a27eed0cfd5ec26e4427cfaa905f18fc79cae1dbb651001a2146013c327652668b6e612239930929981e01041e6c21e7b91a79fda0d6e012aa9bb8e500cf1c1cd6aaed21f629048f803a08142f6fe4df46ba14cf2adc47bc1d140a7f29445deb4ed0dbc81cb48efa17fb352ea202de2d4846e304a667c0a",
+          "020006616363742d310000000000000002eff0177bac2f093c8acda8931ede107fe5b6b900e2cddb78d36eefe77a9ea8880000000000000bb80100056465762d300400036d2d312b0c802df20d5a6d308e2e9b38081bca1f1dae67f99441662291124ffb1397986294764f6d66978309d86c859edb6ffb802652f096154df847630d71ee21675d7c12bc7def20453e46ecf44ce492abd6a7908318986c2885aa894f6b0c1937ac6cdc4592a6c9fe8a54d395218b49847b7a07fb8764e6717c38fe5a41ffc39a0e",
+          "020006616363742d310000000000000003d6e8f32a9bfe8569916c4011004a3a8846d1b515e41228261a4fdae01263aab80000000000000fa00100056465762d300200056465762d32dbfeca178bccaea804547594cb91fc2e125c31fd30c3f5288979ed23a71a6077e5a472a6e0c751b5732886f8d925a011e27259f155971b43c44414ca66936d120088901f5470faf0646a476000bd2b22761d07b941ccf796600a014732324ade6bb3ab9f0426b5b3f004fa2d21105f786f8724f4fd9e96acc9114a8b858782c30e",
+          "020006616363742d31000000000000000472445d94410de5379e9f58d5ed8512346092acc418b8214bf642b39f92d4cea800000000000013880100056465762d300300056465762d31701de6c2f5e89c4f7dcf84a09957467fad1ee8d7b7d9be5ae48f3a1d80dc84c49265077de833ff37c26ede9ffa04b10e746419c49d66e5d462ad2a5052cdc303",
+          "030006616363742d310000000000000005dae60d66a68166c01802e92ddc92f913c55baaa095d6d1d72ab65c8744fbcf9f00000000000027140100056465762d300c0003682d32fb7566882ca382319738ce00546d17f1a098dbd2cfb7125897ee43cb9de69dbe56c1c14133b20159c9cb311f5c1712a52da556f1ed73063feaca44faaace24350101b51b6c3dbea607ffeca8aeacc4c312ae4f705de2146d733eaf8f98f2da74a14eb15093362ab1d426ecf201b87fb1f79ff526a166d0629c808e1e2532264f0e",
+          "030006616363742d31000000000000000698f6d7ecafb9f31ff7e987c40e86e3e0e73586269dfb800e361de9622629cbcd00000000000027150100056465762d300a0000010003682d3200000000c840363cc4581710202d60ef0b55044ca5fecf3073603e70c2c13ce67cbc70cff2fcc3684150d45e60fc24dca1c221351ead1440842acd6a42985aa5b10872120ec48e55edb81d4423b825d17cdf9db650ef4ba753f1c492385df4ed5363270e",
+          "030006616363742d3100000000000000072f4016877444ad0fa532f725f0ee6b29b9876ce77bb1cfff7ba59451b19d2cd7000000000000ea660100056465762d300c0003612d314d98a90804e4e7eb94d215c919a90a73cddad0323e8a2e3f00280c4e5685200c9aaaf24842376a9a0a1614b552fd28ff5c8a392ffefb8d3a136f1c223f2da84d04de5cabc244df4b16e55bd63110e40f05ecbf06c8eae45b7759bfea663329b8519ba3be2341b2520cd3fa4835de64f4c460b82fd61f2cca5d1d795cd03fe08700",
+          "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
+          "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
+          "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
+          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab300000000000111700100056465762d301300036d2d310200010003612d328d8fed68149e5b58eb450ef1887bdc2d3e710f8b3c8aec40d4b7fb53ce0e97e57154b9c5ed6a798a96b865b1bbf323ba6516b60e1dab609ad071cae386e91303"
+        ],
+        "error": "notAllowed",
+        "rule": "an A2A proxy controls nothing: an accept list never names one"
+      },
+      {
         "name": "an A2A list for an A2A proxy",
         "entries": [
           "020006616363742d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e80001f58655d4197d278eb878e7dc3c068c5a71f116954eff6ef22053c77422bb81db00056465762d307cacdf026e2b540d523cdeffb8665c93a30c91033a1837f0588bf9fd9817505de952bfc2345356858cf681950bb29877d0afb0be188d9b72b192c28a3689f30c0101da4898f20f5707425dc8c94d6fb3b57cb6d254de4535c49ed2f0b3083a24013b1bc119eecc50ff75c4356b7b313537dde8fe0606162daae13edc4074828488692f1a39ab750acef95bf4d007462686dbd3a3dcd1c6d0354bdb6f9b7d08328d0b34efb1661bae94de24a9aa0b6f55b3a85bea62ca3cedd66be22d77edfaac4fced556cba27bee9cafe901a911883233ab7bbb491d27ff7ce5471851bcc1df620a",
@@ -5025,6 +5442,46 @@
         "rule": "the host already accepts exactly those A2A proxies"
       },
       {
+        "name": "an A2A list that drops a proxy, without the host's next key",
+        "entries": [
+          "020006616363742d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e80001f58655d4197d278eb878e7dc3c068c5a71f116954eff6ef22053c77422bb81db00056465762d307cacdf026e2b540d523cdeffb8665c93a30c91033a1837f0588bf9fd9817505de952bfc2345356858cf681950bb29877d0afb0be188d9b72b192c28a3689f30c0101da4898f20f5707425dc8c94d6fb3b57cb6d254de4535c49ed2f0b3083a24013b1bc119eecc50ff75c4356b7b313537dde8fe0606162daae13edc4074828488692f1a39ab750acef95bf4d007462686dbd3a3dcd1c6d0354bdb6f9b7d08328d0b34efb1661bae94de24a9aa0b6f55b3a85bea62ca3cedd66be22d77edfaac4fced556cba27bee9cafe901a911883233ab7bbb491d27ff7ce5471851bcc1df620a",
+          "020006616363742d310000000000000001161fd71301b04fb9be0a12e4a6e231e1fe19c7cf93796435c453d40ab7e49fb700000000000007d00100056465762d300200056465762d31d268a4af153f506e2f4a27eed0cfd5ec26e4427cfaa905f18fc79cae1dbb651001a2146013c327652668b6e612239930929981e01041e6c21e7b91a79fda0d6e012aa9bb8e500cf1c1cd6aaed21f629048f803a08142f6fe4df46ba14cf2adc47bc1d140a7f29445deb4ed0dbc81cb48efa17fb352ea202de2d4846e304a667c0a",
+          "020006616363742d310000000000000002eff0177bac2f093c8acda8931ede107fe5b6b900e2cddb78d36eefe77a9ea8880000000000000bb80100056465762d300400036d2d312b0c802df20d5a6d308e2e9b38081bca1f1dae67f99441662291124ffb1397986294764f6d66978309d86c859edb6ffb802652f096154df847630d71ee21675d7c12bc7def20453e46ecf44ce492abd6a7908318986c2885aa894f6b0c1937ac6cdc4592a6c9fe8a54d395218b49847b7a07fb8764e6717c38fe5a41ffc39a0e",
+          "020006616363742d310000000000000003d6e8f32a9bfe8569916c4011004a3a8846d1b515e41228261a4fdae01263aab80000000000000fa00100056465762d300200056465762d32dbfeca178bccaea804547594cb91fc2e125c31fd30c3f5288979ed23a71a6077e5a472a6e0c751b5732886f8d925a011e27259f155971b43c44414ca66936d120088901f5470faf0646a476000bd2b22761d07b941ccf796600a014732324ade6bb3ab9f0426b5b3f004fa2d21105f786f8724f4fd9e96acc9114a8b858782c30e",
+          "020006616363742d31000000000000000472445d94410de5379e9f58d5ed8512346092acc418b8214bf642b39f92d4cea800000000000013880100056465762d300300056465762d31701de6c2f5e89c4f7dcf84a09957467fad1ee8d7b7d9be5ae48f3a1d80dc84c49265077de833ff37c26ede9ffa04b10e746419c49d66e5d462ad2a5052cdc303",
+          "030006616363742d310000000000000005dae60d66a68166c01802e92ddc92f913c55baaa095d6d1d72ab65c8744fbcf9f00000000000027140100056465762d300c0003682d32fb7566882ca382319738ce00546d17f1a098dbd2cfb7125897ee43cb9de69dbe56c1c14133b20159c9cb311f5c1712a52da556f1ed73063feaca44faaace24350101b51b6c3dbea607ffeca8aeacc4c312ae4f705de2146d733eaf8f98f2da74a14eb15093362ab1d426ecf201b87fb1f79ff526a166d0629c808e1e2532264f0e",
+          "030006616363742d31000000000000000698f6d7ecafb9f31ff7e987c40e86e3e0e73586269dfb800e361de9622629cbcd00000000000027150100056465762d300a0000010003682d3200000000c840363cc4581710202d60ef0b55044ca5fecf3073603e70c2c13ce67cbc70cff2fcc3684150d45e60fc24dca1c221351ead1440842acd6a42985aa5b10872120ec48e55edb81d4423b825d17cdf9db650ef4ba753f1c492385df4ed5363270e",
+          "030006616363742d3100000000000000072f4016877444ad0fa532f725f0ee6b29b9876ce77bb1cfff7ba59451b19d2cd7000000000000ea660100056465762d300c0003612d314d98a90804e4e7eb94d215c919a90a73cddad0323e8a2e3f00280c4e5685200c9aaaf24842376a9a0a1614b552fd28ff5c8a392ffefb8d3a136f1c223f2da84d04de5cabc244df4b16e55bd63110e40f05ecbf06c8eae45b7759bfea663329b8519ba3be2341b2520cd3fa4835de64f4c460b82fd61f2cca5d1d795cd03fe08700",
+          "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
+          "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
+          "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
+          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab300000000000111700100056465762d30170003682d3200010003612d32c87b27098736d0eae5255d0e4eb5edc1cec5a6de39bbecaeacc0af3f349145fca0a6a8d14d7347b8df6d02e05bd792ee8152cccc1c6a80f6e31828a314438909",
+          "030006616363742d31000000000000000c46bdf534c5a31d4751f476b08f6e449eec8e96e966ab9d3f1e76275175ea605100000000000111700100056465762d301700036d2d3100020003612d310003612d3249c94cd99e66b7af772d3ce09cdcc0b5cb3491a38220fc727f170b8fa8e394ec9c6678fcefaed7041567124a9a1df5f9c2a95e650a6e6d718a020e0e213c530c"
+        ],
+        "error": "notAllowed",
+        "rule": "a new host's machine key epoch must come next"
+      },
+      {
+        "name": "an A2A list that drops a proxy, with another host's key",
+        "entries": [
+          "020006616363742d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e80001f58655d4197d278eb878e7dc3c068c5a71f116954eff6ef22053c77422bb81db00056465762d307cacdf026e2b540d523cdeffb8665c93a30c91033a1837f0588bf9fd9817505de952bfc2345356858cf681950bb29877d0afb0be188d9b72b192c28a3689f30c0101da4898f20f5707425dc8c94d6fb3b57cb6d254de4535c49ed2f0b3083a24013b1bc119eecc50ff75c4356b7b313537dde8fe0606162daae13edc4074828488692f1a39ab750acef95bf4d007462686dbd3a3dcd1c6d0354bdb6f9b7d08328d0b34efb1661bae94de24a9aa0b6f55b3a85bea62ca3cedd66be22d77edfaac4fced556cba27bee9cafe901a911883233ab7bbb491d27ff7ce5471851bcc1df620a",
+          "020006616363742d310000000000000001161fd71301b04fb9be0a12e4a6e231e1fe19c7cf93796435c453d40ab7e49fb700000000000007d00100056465762d300200056465762d31d268a4af153f506e2f4a27eed0cfd5ec26e4427cfaa905f18fc79cae1dbb651001a2146013c327652668b6e612239930929981e01041e6c21e7b91a79fda0d6e012aa9bb8e500cf1c1cd6aaed21f629048f803a08142f6fe4df46ba14cf2adc47bc1d140a7f29445deb4ed0dbc81cb48efa17fb352ea202de2d4846e304a667c0a",
+          "020006616363742d310000000000000002eff0177bac2f093c8acda8931ede107fe5b6b900e2cddb78d36eefe77a9ea8880000000000000bb80100056465762d300400036d2d312b0c802df20d5a6d308e2e9b38081bca1f1dae67f99441662291124ffb1397986294764f6d66978309d86c859edb6ffb802652f096154df847630d71ee21675d7c12bc7def20453e46ecf44ce492abd6a7908318986c2885aa894f6b0c1937ac6cdc4592a6c9fe8a54d395218b49847b7a07fb8764e6717c38fe5a41ffc39a0e",
+          "020006616363742d310000000000000003d6e8f32a9bfe8569916c4011004a3a8846d1b515e41228261a4fdae01263aab80000000000000fa00100056465762d300200056465762d32dbfeca178bccaea804547594cb91fc2e125c31fd30c3f5288979ed23a71a6077e5a472a6e0c751b5732886f8d925a011e27259f155971b43c44414ca66936d120088901f5470faf0646a476000bd2b22761d07b941ccf796600a014732324ade6bb3ab9f0426b5b3f004fa2d21105f786f8724f4fd9e96acc9114a8b858782c30e",
+          "020006616363742d31000000000000000472445d94410de5379e9f58d5ed8512346092acc418b8214bf642b39f92d4cea800000000000013880100056465762d300300056465762d31701de6c2f5e89c4f7dcf84a09957467fad1ee8d7b7d9be5ae48f3a1d80dc84c49265077de833ff37c26ede9ffa04b10e746419c49d66e5d462ad2a5052cdc303",
+          "030006616363742d310000000000000005dae60d66a68166c01802e92ddc92f913c55baaa095d6d1d72ab65c8744fbcf9f00000000000027140100056465762d300c0003682d32fb7566882ca382319738ce00546d17f1a098dbd2cfb7125897ee43cb9de69dbe56c1c14133b20159c9cb311f5c1712a52da556f1ed73063feaca44faaace24350101b51b6c3dbea607ffeca8aeacc4c312ae4f705de2146d733eaf8f98f2da74a14eb15093362ab1d426ecf201b87fb1f79ff526a166d0629c808e1e2532264f0e",
+          "030006616363742d31000000000000000698f6d7ecafb9f31ff7e987c40e86e3e0e73586269dfb800e361de9622629cbcd00000000000027150100056465762d300a0000010003682d3200000000c840363cc4581710202d60ef0b55044ca5fecf3073603e70c2c13ce67cbc70cff2fcc3684150d45e60fc24dca1c221351ead1440842acd6a42985aa5b10872120ec48e55edb81d4423b825d17cdf9db650ef4ba753f1c492385df4ed5363270e",
+          "030006616363742d3100000000000000072f4016877444ad0fa532f725f0ee6b29b9876ce77bb1cfff7ba59451b19d2cd7000000000000ea660100056465762d300c0003612d314d98a90804e4e7eb94d215c919a90a73cddad0323e8a2e3f00280c4e5685200c9aaaf24842376a9a0a1614b552fd28ff5c8a392ffefb8d3a136f1c223f2da84d04de5cabc244df4b16e55bd63110e40f05ecbf06c8eae45b7759bfea663329b8519ba3be2341b2520cd3fa4835de64f4c460b82fd61f2cca5d1d795cd03fe08700",
+          "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
+          "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
+          "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
+          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab300000000000111700100056465762d30170003682d3200010003612d32c87b27098736d0eae5255d0e4eb5edc1cec5a6de39bbecaeacc0af3f349145fca0a6a8d14d7347b8df6d02e05bd792ee8152cccc1c6a80f6e31828a314438909",
+          "030006616363742d31000000000000000c46bdf534c5a31d4751f476b08f6e449eec8e96e966ab9d3f1e76275175ea605100000000000111700100056465762d300a00000100036d2d3100000000aa3600a8ccf1b11389392a1f78e0bdbbe5bd268d0baa0fd0244f5bd36e55adf151bcfab20064079d4a46e7736889df44fcef5f9b77ebc007dc427ad8a6c0c6240b476e4bc9ef5f6354789c397621a9d1a3fb2180c44669e173c92e6ff4582800"
+        ],
+        "error": "notAllowed",
+        "rule": "a new host's machine key epoch must come next"
+      },
+      {
         "name": "an empty A2A list where none is set",
         "entries": [
           "020006616363742d310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e80001f58655d4197d278eb878e7dc3c068c5a71f116954eff6ef22053c77422bb81db00056465762d307cacdf026e2b540d523cdeffb8665c93a30c91033a1837f0588bf9fd9817505de952bfc2345356858cf681950bb29877d0afb0be188d9b72b192c28a3689f30c0101da4898f20f5707425dc8c94d6fb3b57cb6d254de4535c49ed2f0b3083a24013b1bc119eecc50ff75c4356b7b313537dde8fe0606162daae13edc4074828488692f1a39ab750acef95bf4d007462686dbd3a3dcd1c6d0354bdb6f9b7d08328d0b34efb1661bae94de24a9aa0b6f55b3a85bea62ca3cedd66be22d77edfaac4fced556cba27bee9cafe901a911883233ab7bbb491d27ff7ce5471851bcc1df620a",
@@ -5055,12 +5512,12 @@
           "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
           "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
           "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
-          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d320200020003612d3100056465762d32c04c12b0101187c6105f6f88c9b9bf3b02722049147907b4bd220c31cd3994f9aee8223a3d5a10f6fab1a08522411c355324500903c8a26a327acdd301d2e706",
-          "030006616363742d31000000000000000cc917f693c971f73a9a57810f3065684886fbafa4147b38e27a33e3226637c929000000000000ea6b0100056465762d301300036d2d310166a565620430f45e12891da63ad0616b6924bd69e22af652b0a61c5f0af776b2922edb87118ef3de24c917a0ff6726333c9613bb64890bb61984a85e4983e108",
-          "030006616363742d31000000000000000dc3caae1719838c326e6b1dc3d836ba58ea4a54b3ff1bf5cb7c72b8941f894416000000000000ea6c0100056465762d30130003682d3202000100056465762d323eb1454caa7ba6ebd915f2ba0f62e12d60cd0460d1771a3489e9afc0438ed967112415c8fee714fb8d2f65393904fd730002cfd44ccd6110285ec2e288759a04",
-          "030006616363742d31000000000000000e813559aa8eebbf3a76cec49f75f410fb5c7cab89645d95c5c0d2715688ef1154000000000000ea6d0100056465762d301700036d2d3100002a4279f719afe397cc48a785a0b0942c60bae034eb0d6c8038ccdf8ab5630e120d4f99cd282822b0c0d8b25fda60140e30032014f55a709a9871a7f56ea86709",
-          "030006616363742d31000000000000000feaeb4039acf58f71cea8ce9f1301c5ce9e3bd71a5c8493872051d687968246a5000000000000ea6e0100056465762d300f0003612d32c37114bc3a53e38ab65d774e57efc2a1d13e57077b04c31d29ddb67a8ad1d58652bc22be52dffd284fa78b21d8afec097293bd49a17be4a42df95ee83f90ab0b",
-          "030006616363742d310000000000000010d6bfc70373081ee9f933475c78271ecdfa0e001172a85c9c105f22118d9bde8f00000000000111700100056465762d30170003682d3200010003612d319bb5c841630226b24e2c104a4fd24ba6679976293265d5fd247febaf43daf371618fd5faf91c6edbf0e038a6c2ce992e5ebe72362e088c0646dabe7373791109"
+          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d3202000100056465762d3264aee0dedc0d84f975d15217c5ccdb2e273583f77411d45c20e052ae38c2dcf51af8e01170d21726fe7ca5438feca1bd7aad60f89961855c080dc478e4029500",
+          "030006616363742d31000000000000000c417c21a6619cce050bdc0ea5c4a61c286c84961ffcb5f4fa76be9da52252a168000000000000ea6b0100056465762d301300036d2d3101e2d81012e5f1b0d94490638b1e82ca7053d1fc15e06639f0d38fca935842a3ca209bf5f52b9cc532278c69db911bd0c99e7b6e580421f1fd2fa61a25efbf720c",
+          "030006616363742d31000000000000000d69ae28f53ce2a91b1424f7f07cfae4e2e9f261223e1fb9b5232f4e0598abf4f8000000000000ea6c0100056465762d301700036d2d310000299c81ba871da192bd036130cbc39e5e008ee3fcbf313f51d267550ab73bb93da1ac71c3435fd332012079c18427b6a3bff2c20043a0276384066cd5f20d7109",
+          "030006616363742d31000000000000000e0f7255eb4646ca38c2dfa3355dac63f5a7441d382f4cb938414d6f116350c3d7000000000000ea6d0100056465762d300a00000100036d2d31000000008c4c98b42b303e5000e02f373af6af88aea255a8e59692d6d23ded7dad761fe43af06c92f72cefc1dc57220da25da5e667a468d85fc3ece6ce190b69b89f1a0b96a9c6a1f3a6c729e143773d781e9529701981921bb89b131370ba05b8deb008",
+          "030006616363742d31000000000000000f1597c9d3b2662db9f2f4efcfaf36a28dec9fd78d3abc8e83a3334f467aeef589000000000000ea6e0100056465762d300f0003612d32d7767767055d93991b30e089a96aba30f30f9a1a66cda762ef43c2946b1b27b37dd1fe72525daca2e9f104336245e53473d155e8eceaafd6fe65158cd6119501",
+          "030006616363742d3100000000000000103eebe80042a4a3f39fa0dbb171deb7c225ea3eb8e677824795e4640bb17f73c100000000000111700100056465762d30170003682d3200010003612d31513b642f548ac281ec752c57dfd1edd466ddc183f41e535156c83ad3503a488cfd133348ad3db4de04994f2ee21440c816960cc993ee61bda358241bae904a01"
         ],
         "error": "notAllowed",
         "rule": "the host already accepts exactly those A2A proxies"
@@ -5079,12 +5536,12 @@
           "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
           "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
           "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
-          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d320200020003612d3100056465762d32c04c12b0101187c6105f6f88c9b9bf3b02722049147907b4bd220c31cd3994f9aee8223a3d5a10f6fab1a08522411c355324500903c8a26a327acdd301d2e706",
-          "030006616363742d31000000000000000cc917f693c971f73a9a57810f3065684886fbafa4147b38e27a33e3226637c929000000000000ea6b0100056465762d301300036d2d310166a565620430f45e12891da63ad0616b6924bd69e22af652b0a61c5f0af776b2922edb87118ef3de24c917a0ff6726333c9613bb64890bb61984a85e4983e108",
-          "030006616363742d31000000000000000dc3caae1719838c326e6b1dc3d836ba58ea4a54b3ff1bf5cb7c72b8941f894416000000000000ea6c0100056465762d30130003682d3202000100056465762d323eb1454caa7ba6ebd915f2ba0f62e12d60cd0460d1771a3489e9afc0438ed967112415c8fee714fb8d2f65393904fd730002cfd44ccd6110285ec2e288759a04",
-          "030006616363742d31000000000000000e813559aa8eebbf3a76cec49f75f410fb5c7cab89645d95c5c0d2715688ef1154000000000000ea6d0100056465762d301700036d2d3100002a4279f719afe397cc48a785a0b0942c60bae034eb0d6c8038ccdf8ab5630e120d4f99cd282822b0c0d8b25fda60140e30032014f55a709a9871a7f56ea86709",
-          "030006616363742d31000000000000000feaeb4039acf58f71cea8ce9f1301c5ce9e3bd71a5c8493872051d687968246a5000000000000ea6e0100056465762d300f0003612d32c37114bc3a53e38ab65d774e57efc2a1d13e57077b04c31d29ddb67a8ad1d58652bc22be52dffd284fa78b21d8afec097293bd49a17be4a42df95ee83f90ab0b",
-          "030006616363742d310000000000000010d6bfc70373081ee9f933475c78271ecdfa0e001172a85c9c105f22118d9bde8f00000000000111700100056465762d30170003682d3200020003612d310003612d327398204811d0acea59c84ed9d671f2722e1da3c10b2acacd2c806b93df82f8ef87313d6af45cec059ffca4e738af2a06eb14f817ccaba41539bc1e8c9d236e0a"
+          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d3202000100056465762d3264aee0dedc0d84f975d15217c5ccdb2e273583f77411d45c20e052ae38c2dcf51af8e01170d21726fe7ca5438feca1bd7aad60f89961855c080dc478e4029500",
+          "030006616363742d31000000000000000c417c21a6619cce050bdc0ea5c4a61c286c84961ffcb5f4fa76be9da52252a168000000000000ea6b0100056465762d301300036d2d3101e2d81012e5f1b0d94490638b1e82ca7053d1fc15e06639f0d38fca935842a3ca209bf5f52b9cc532278c69db911bd0c99e7b6e580421f1fd2fa61a25efbf720c",
+          "030006616363742d31000000000000000d69ae28f53ce2a91b1424f7f07cfae4e2e9f261223e1fb9b5232f4e0598abf4f8000000000000ea6c0100056465762d301700036d2d310000299c81ba871da192bd036130cbc39e5e008ee3fcbf313f51d267550ab73bb93da1ac71c3435fd332012079c18427b6a3bff2c20043a0276384066cd5f20d7109",
+          "030006616363742d31000000000000000e0f7255eb4646ca38c2dfa3355dac63f5a7441d382f4cb938414d6f116350c3d7000000000000ea6d0100056465762d300a00000100036d2d31000000008c4c98b42b303e5000e02f373af6af88aea255a8e59692d6d23ded7dad761fe43af06c92f72cefc1dc57220da25da5e667a468d85fc3ece6ce190b69b89f1a0b96a9c6a1f3a6c729e143773d781e9529701981921bb89b131370ba05b8deb008",
+          "030006616363742d31000000000000000f1597c9d3b2662db9f2f4efcfaf36a28dec9fd78d3abc8e83a3334f467aeef589000000000000ea6e0100056465762d300f0003612d32d7767767055d93991b30e089a96aba30f30f9a1a66cda762ef43c2946b1b27b37dd1fe72525daca2e9f104336245e53473d155e8eceaafd6fe65158cd6119501",
+          "030006616363742d3100000000000000103eebe80042a4a3f39fa0dbb171deb7c225ea3eb8e677824795e4640bb17f73c100000000000111700100056465762d30170003682d3200020003612d310003612d327393f4e07203a10104206b0ee71305769c23391a5435a6b72dc7bcd91a93f8f5bc924d398bc6728bd9e3b72720d3d4be2256a82e9581f645899fa3096372aa09"
         ],
         "error": "unknownId",
         "rule": null
@@ -5103,16 +5560,17 @@
           "030006616363742d310000000000000008028fa9af0c8bc62e8afc25f2c5c3e246d15969855942d33528247fafa067154e000000000000ea670100056465762d300c0003612d32ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe0304ae731ddbfb0db6c7ee764927248b6ce4164b8a317ce0f52383052a7a2c4010dbcbd876d6547f7f8733ad3ae5042e8c6c2de80b354aeb69a5586479e6b85e6d08",
           "030006616363742d310000000000000009cf209d85b721a648b4c32523ecc95e86285c1f5f4a681f6afe8a5ed3b6803e94000000000000ea680100056465762d301700036d2d3100010003612d3194e2d3110483a2839d30a45dc14e71271d45de1a389f83ff8745e66fa79857ad98dcb2430cdc84a8ca85cf9edd41242ab520707c693e8234f9031a58b4360b0c",
           "030006616363742d31000000000000000a4d2217c798de2f29c2a196bf12e25df107ea058720a5b811814acf850bb21d71000000000000ea690100056465762d30170003682d3200020003612d310003612d32ecef9c06c95e0c4a6f28a972149117a2fd0896f9270ac50887820b826d2ddbd1261ae1d31db6ad36f5bc1bad20d26da8108b40225e29e883d40b7e9f9b44f00e",
-          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d320200020003612d3100056465762d32c04c12b0101187c6105f6f88c9b9bf3b02722049147907b4bd220c31cd3994f9aee8223a3d5a10f6fab1a08522411c355324500903c8a26a327acdd301d2e706",
-          "030006616363742d31000000000000000cc917f693c971f73a9a57810f3065684886fbafa4147b38e27a33e3226637c929000000000000ea6b0100056465762d301300036d2d310166a565620430f45e12891da63ad0616b6924bd69e22af652b0a61c5f0af776b2922edb87118ef3de24c917a0ff6726333c9613bb64890bb61984a85e4983e108",
-          "030006616363742d31000000000000000dc3caae1719838c326e6b1dc3d836ba58ea4a54b3ff1bf5cb7c72b8941f894416000000000000ea6c0100056465762d30130003682d3202000100056465762d323eb1454caa7ba6ebd915f2ba0f62e12d60cd0460d1771a3489e9afc0438ed967112415c8fee714fb8d2f65393904fd730002cfd44ccd6110285ec2e288759a04",
-          "030006616363742d31000000000000000e813559aa8eebbf3a76cec49f75f410fb5c7cab89645d95c5c0d2715688ef1154000000000000ea6d0100056465762d301700036d2d3100002a4279f719afe397cc48a785a0b0942c60bae034eb0d6c8038ccdf8ab5630e120d4f99cd282822b0c0d8b25fda60140e30032014f55a709a9871a7f56ea86709",
-          "030006616363742d31000000000000000feaeb4039acf58f71cea8ce9f1301c5ce9e3bd71a5c8493872051d687968246a5000000000000ea6e0100056465762d300f0003612d32c37114bc3a53e38ab65d774e57efc2a1d13e57077b04c31d29ddb67a8ad1d58652bc22be52dffd284fa78b21d8afec097293bd49a17be4a42df95ee83f90ab0b",
-          "030006616363742d310000000000000010d6bfc70373081ee9f933475c78271ecdfa0e001172a85c9c105f22118d9bde8f000000000000ea6f0100056465762d301700036d2d3100010003612d315f1940565229319ddefe3d74026555485377b722dd084f2991f13289f0b5ea2eff38d3ef8d0d4d836c87c0548081b98ebc21cb694a498bbad9dbcc4178fd4007",
-          "030006616363742d3100000000000000115fbb796cefc69c01594d8ab576088a4ed5fc53c3083ae2a0d31f9283f03bb354000000000000ea700100056465762d300e0003682d3200268a704ba0f60c20abc26f1e37d33517407d9022ede3f9abf9c3bdacd60ea5a18b80501941055c0c0f69162bf8382bc0ef6773e00c8e5240b39390554420450e",
-          "030006616363742d310000000000000012445e0c452ab0f231337957fca7c56bba783b8810c1698d38f7fdc145ba12e0ca000000000000ea710100056465762d300e0003682d3201430bf68e0d96590a93372e998eb633fa9fecfd5af3b0fde66ff99f02e0c7906784082d314b8ebaec3b2cd1325f3fb0e896714d68f1b5b8b7f759189c4fa36c04",
-          "030006616363742d3100000000000000134b05cec1a5463dbb38f6676ef13b51feb527f2cd26e073119d4fc3a1fe508dd2000000000000ea720100056465762d300a0000010003682d320000000148983d883ea26e0eeb3a3b732287fc4876f99002c5490f9adaa849ca8a15c18ffc26024a9f6b9d88712df737a1bace7c1c2bb95f08e9d5f1e9cc3231966dde1a87377e97fae180871dbb9105478c4aa14cc06f00d1f5b5f757149f512aa0b500",
-          "030006616363742d310000000000000014bdde35d69bd2fb1b669dcdf01f862bdc0a3c35605eb372f0ea56617b6957e05200000000000111700100056465762d30170003682d32000068216bed00c134fd9b698dbc6b621941fb23884bb476c5abdc072169b4b38287c4066370d302b14fb4fb894f5fe70fd43275e13f7cb32c900db6cdf92efe780f"
+          "030006616363742d31000000000000000b55f5f07524c03b3846b43e16dfbd2b4be2f3b1ff28739781d9de757e45166ab3000000000000ea6a0100056465762d30130003682d3202000100056465762d3264aee0dedc0d84f975d15217c5ccdb2e273583f77411d45c20e052ae38c2dcf51af8e01170d21726fe7ca5438feca1bd7aad60f89961855c080dc478e4029500",
+          "030006616363742d31000000000000000c417c21a6619cce050bdc0ea5c4a61c286c84961ffcb5f4fa76be9da52252a168000000000000ea6b0100056465762d301300036d2d3101e2d81012e5f1b0d94490638b1e82ca7053d1fc15e06639f0d38fca935842a3ca209bf5f52b9cc532278c69db911bd0c99e7b6e580421f1fd2fa61a25efbf720c",
+          "030006616363742d31000000000000000d69ae28f53ce2a91b1424f7f07cfae4e2e9f261223e1fb9b5232f4e0598abf4f8000000000000ea6c0100056465762d301700036d2d310000299c81ba871da192bd036130cbc39e5e008ee3fcbf313f51d267550ab73bb93da1ac71c3435fd332012079c18427b6a3bff2c20043a0276384066cd5f20d7109",
+          "030006616363742d31000000000000000e0f7255eb4646ca38c2dfa3355dac63f5a7441d382f4cb938414d6f116350c3d7000000000000ea6d0100056465762d300a00000100036d2d31000000008c4c98b42b303e5000e02f373af6af88aea255a8e59692d6d23ded7dad761fe43af06c92f72cefc1dc57220da25da5e667a468d85fc3ece6ce190b69b89f1a0b96a9c6a1f3a6c729e143773d781e9529701981921bb89b131370ba05b8deb008",
+          "030006616363742d31000000000000000f1597c9d3b2662db9f2f4efcfaf36a28dec9fd78d3abc8e83a3334f467aeef589000000000000ea6e0100056465762d300f0003612d32d7767767055d93991b30e089a96aba30f30f9a1a66cda762ef43c2946b1b27b37dd1fe72525daca2e9f104336245e53473d155e8eceaafd6fe65158cd6119501",
+          "030006616363742d3100000000000000103eebe80042a4a3f39fa0dbb171deb7c225ea3eb8e677824795e4640bb17f73c1000000000000ea6f0100056465762d301700036d2d3100010003612d312042d4eb01cd0e5184a18e85edc72d1aa88390aec5e8f5ab2954494980a21174f02c7089a562bb2938528250ee842f3cc98f17d720d0afa243cc762cf4de2f0b",
+          "030006616363742d310000000000000011fdaad795a20b0bf2baa6b93c95f551b675849f333d7e8227a7f3b86d9982312d000000000000ea700100056465762d3016a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a200000100036d2d3100010003612d3122b625c9434550ab345262168619f85a85abd446f4858be2c6e692a3043641baf45baabc7df2d210e24b410ba7e53f46a8d5c057541cdd874d5d47447e99b502",
+          "030006616363742d31000000000000001243850592e721ccebe9fca2f7a5ffee7f8a36c74399fb3f8133d22860adff8838000000000000ea710100056465762d300e0003682d3200ce6d84f876b72f2806293242ee31d2b47a0c68efd79aa39f6566712751ed1b4c0aa6a70fdd71f7e0380e713704b30301670b25ba4e757e7094cade94f2a2bb04",
+          "030006616363742d310000000000000013aae3c755118be96a2ff763b970aef0a5092ff38e876f2f6880815a3b0e90f930000000000000ea720100056465762d300e0003682d32017ae44bf903e7966d64082818d184368673661c38fc245357efe77b22dcc38ac6c61b533697b7ea4eac38248b51197a572d35e5040d95fcc2a76120bee0d63504",
+          "030006616363742d31000000000000001423fce596925b151288e843e7b3bc094ef3b2a5d44678f204232a2c91599784ae000000000000ea730100056465762d300a0000010003682d320000000148983d883ea26e0eeb3a3b732287fc4876f99002c5490f9adaa849ca8a15c18f14a82887655e1c8c56626bc8ff0d778468db91dbe19f7b6ef33f2966e610210ed7437cb6a31ad2e244be3e6f8735babec03d6421fd313b393332165d15eb960c",
+          "030006616363742d3100000000000000159b42877c37c7b325815773f06b4f6534abc97c2f1b4fcf5b77efe39d6a88937800000000000111700100056465762d30170003682d320000a7f21627dc6cfa919de90efbd2330adfd3fc71c6c1007ef0149589bf964f1782355472a753808be706c491ecf72c3ab86054d23b90e066915303e7fdf23d8f0f"
         ],
         "error": "notAllowed",
         "rule": "the host already accepts exactly those A2A proxies"

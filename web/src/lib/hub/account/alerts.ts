@@ -6,7 +6,7 @@
  * pinning the account writes where alerts start.
  */
 import { ASSURANCE_ON_DEVICE, PAUSE_COMPLETED, PAUSE_START } from "@/lib/e2e";
-import { admits } from "../chain-policy";
+import { acceptsA2a, admits } from "../chain-policy";
 import type { AckRecord } from "../seen-store";
 import type { AccountBasics } from "./basics";
 import type { Standing } from "./devices";
@@ -128,10 +128,11 @@ export class ChainAlerts {
         case "renewalPause": {
           // Control paused over hosts while identity keys are renewed (§3.4 rule 10): a note. An ending marker names no
           // removals; its start did. "Resumes" names only the control that comes back: never an edge the base has since
-          // dropped (a hand setAccept, a removal, a host that stopped hosting) or another open pause still holds.
+          // dropped (a hand setAccept, a removal, a host that stopped hosting) or another open pause still holds. An A2A
+          // proxy's calls a pause held come back as well (docs/a2a.md §7.1).
           const phase = action.phase === PAUSE_START ? "start" : action.phase === PAUSE_COMPLETED ? "completed" : "cancelled";
           const removals = (action.phase === PAUSE_START ? action.removals : (chain.pause(action.op)?.removals ?? []))
-            .map((r) => ({ host: r.host, ids: action.phase === PAUSE_COMPLETED ? r.ids.filter((id) => admits(chain, r.host, id)) : [...r.ids] }))
+            .map((r) => ({ host: r.host, ids: action.phase === PAUSE_COMPLETED ? r.ids.filter((id) => admits(chain, r.host, id) || acceptsA2a(chain, r.host, id)) : [...r.ids] }))
             .filter((r) => r.ids.length > 0);
           out.push({ alert: { seq, kind: "renewalPause", by, subject: null, pause: { phase, removals }, atMs, remove: null }, pending: false });
           break;

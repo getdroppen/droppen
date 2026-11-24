@@ -40,7 +40,9 @@
  *   calls the A2A of the hosts that accept it (`setA2aAccept`, `mayCallA2a`).
  *   It is fixed at join, never a host or an admin (`RULES.a2aPlain`), never
  *   joins with a passkey, and never controls anything: `mayControl` refuses
- *   it whatever `setAccept` says, so no machine key is ever sealed to it.
+ *   it, `all` does not take it in and no `setAccept` list names it
+ *   (`RULES.a2aNotController`), so no machine key is ever sealed to it. A
+ *   renewal pause that names it for a host holds its A2A calls to that host.
  * - A current host renews its identity key with `rotateHostKey`
  *   (`docs/host-identity-rotation.md` §3.4): an admin signs the entry, the
  *   host's current and new keys both sign the proof inside it
@@ -407,13 +409,13 @@ export interface DeviceV3 {
   flags: Flags;
 }
 
-/** Whom a host accepts control from (`setAccept`) besides admin devices, which it always accepts. */
+/** Whom a host accepts control from (`setAccept`) besides admin devices, which it always accepts — never an A2A proxy (`mayControl`). */
 export type Accept =
   /** Admin devices only: the default. */
   | { type: "admins" }
-  /** Every current device of the account. */
+  /** Every current device of the account (an A2A proxy is none of them). */
   | { type: "all" }
-  /** Admin devices and these (ascending by bytes, no repeats, 1–`MAX_ACCEPT_IDS`). */
+  /** Admin devices and these (ascending by bytes, no repeats, 1–`MAX_ACCEPT_IDS`, never an A2A proxy: `RULES.a2aNotController`). */
   | { type: "devices"; ids: string[] };
 
 export type Action =
@@ -455,8 +457,10 @@ export type Action =
   | { type: "renewalPause"; op: Bytes; phase: PausePhase; removals: PauseRemoval[] }
   /**
    * Kind 23 (`docs/a2a.md` §7.1): which A2A proxies host `host` takes A2A calls from — current A2A proxies, ascending
-   * by bytes, no repeats, at most `MAX_ACCEPT_IDS`, possibly none. An admin signs it; it replaces the host's list and
-   * never touches its `setAccept` policy (an A2A proxy controls nothing: `mayCallA2a` is its one relation).
+   * by bytes, no repeats, at most `MAX_ACCEPT_IDS`, possibly none. An admin signs it; one that drops a proxy takes the
+   * host's next machine key epoch in the very next entry (`RULES.hostKeyNext`: a session the proxy started could read the
+   * host's key files). It replaces the host's list and never touches its `setAccept` policy (an A2A proxy controls nothing: `mayCallA2a` is its one relation). A renewal
+   * pause that names the proxy for the host holds its calls too (`pausedEdges`).
    */
   | { type: "setA2aAccept"; host: string; devices: string[] };
 
@@ -621,6 +625,8 @@ export const RULES = {
   a2aAcceptNotA2a: "an A2A accept list names only current A2A proxies",
   /** A `setA2aAccept` equal to the host's list now is refused (no alert for a no-op), as `setAccept`'s. */
   a2aAcceptSame: "the host already accepts exactly those A2A proxies",
+  /** A `setAccept` list never names an A2A proxy: it controls nothing, and a name written but ignored would mislead whoever reads the list. */
+  a2aNotController: "an A2A proxy controls nothing: an accept list never names one",
 } as const;
 
 export class ChainError extends Error {
@@ -1757,6 +1763,7 @@ export class ChainState {
             if (!validId(id)) throw new ChainError("badId", `entry ${seq}: invalid id`, { seq });
             if (!this.device(id)) throw unknownId(id);
             if (id === a.host) throw notAllowed(RULES.acceptSelf);
+            if (this.device(id)?.a2a) throw notAllowed(RULES.a2aNotController);
           }
         }
         if (sameAccept(this.acceptPolicy(a.host), a.from)) throw notAllowed(RULES.acceptSame);
@@ -1822,8 +1829,7 @@ export class ChainState {
       }
       case "setA2aAccept": {
         // As in Rust (docs/a2a.md §7.1): an admin signs it (checked above); a current host takes A2A calls from the
-        // current A2A proxies it names (canonical: decoding refused any other order). An A2A proxy never held a machine
-        // key, so a narrowing owes no new epoch.
+        // current A2A proxies it names (canonical: decoding refused any other order).
         const record = this.devices.get(a.host);
         if (!record || record.status.type !== "active") throw unknownId(a.host);
         if (!record.host) throw notAllowed(RULES.a2aAcceptNotHost);
@@ -1834,6 +1840,10 @@ export class ChainState {
           if (!listed.a2a) throw notAllowed(RULES.a2aAcceptNotA2a);
         }
         if (sameIds(this.a2aAccept(a.host), a.devices)) throw notAllowed(RULES.a2aAcceptSame);
+        // A proxy it stops taking calls from never held a machine key, but a session it started there could read the
+        // host's key files, its machine key included: as for a setAccept narrowing (D2), the host's next epoch comes in
+        // the very next entry. Adding proxies owes nothing.
+        if (this.a2aAccept(a.host).some((id) => !a.devices.includes(id))) hostKeyDue = a.host;
         if (a.devices.length === 0) this.a2aLists.delete(a.host);
         else this.a2aLists.set(a.host, [...a.devices]);
         break;
@@ -2059,7 +2069,8 @@ export class ChainState {
 
   /**
    * The ids host `host` stops accepting while renewal pauses are open (§3.4 rule 10): every open pause's removals for
-   * it, sorted by bytes, once each (Rust's `paused_edges`). `mayControl` refuses them, whatever `baseAccept` says.
+   * it, sorted by bytes, once each (Rust's `paused_edges`). `mayControl` refuses them, whatever `baseAccept` says, and so
+   * does `mayCallA2a` for an A2A proxy, whatever `a2aAccept` says.
    */
   pausedEdges(host: string): string[] {
     const ids = new Set<string>();
@@ -2234,7 +2245,7 @@ export class ChainState {
     return byId([...this.slots.values()], (s) => s.slot.slot);
   }
 
-  /** Whom host `host` accepts control from besides admin devices (an A2A proxy it names does not count: `mayControl`). */
+  /** Whom host `host` accepts control from besides admin devices (never an A2A proxy: `mayControl`). */
   acceptPolicy(host: string): Accept {
     return this.accept.get(host) ?? { type: "admins" };
   }
@@ -2311,8 +2322,9 @@ export class ChainState {
 
   /**
    * Whether A2A proxy `device` may call host `host`'s A2A (Rust's `may_call_a2a`, docs/a2a.md §7.1) — a relation of
-   * its own, not control: only a current A2A proxy, only to a current host whose `setA2aAccept` list names it. What a
-   * channel's admission and the bridge check for an A2A proxy (`mayControl` never lets one in).
+   * its own, not control: only a current A2A proxy, only to a current host whose `setA2aAccept` list names it, and not
+   * while a renewal pause holds it (`pausedEdges`). What a channel's admission and the bridge check for an A2A proxy
+   * (`mayControl` never lets one in).
    */
   mayCallA2a(device: string, host: string): void {
     if (device === host) throw new ChainError("selfControl", "a device does not control itself");
@@ -2321,6 +2333,9 @@ export class ChainState {
     const refuse = (reason: string) => new ChainError("notAccepted", `device ${device} may not call the A2A of ${host}: ${reason}`, { device, host, reason });
     if (!requester.a2a) throw refuse("only an A2A proxy calls a host's A2A");
     if (!this.machine(host)) throw refuse("not a current host of this account");
+    // As in Rust (§3.4 rule 10, as for control): a pause is about who may reach a host whose identity key is renewed, not
+    // about machine keys, and an A2A call reaches it as surely as control does.
+    if (this.pausedEdges(host).includes(device)) throw refuse("A2A calls are paused while identity keys are renewed");
     if (!(this.a2aLists.get(host) ?? []).includes(device)) throw refuse("the host does not accept A2A calls from this proxy");
   }
 

@@ -551,6 +551,7 @@ export function a2aStateJson(state: ChainState, hosts: string[]) {
       .map((d) => d.info.id),
     a2aAccept: hosts.map((host) => ({ host, devices: state.a2aAccept(host) })),
     accept: hosts.map((host) => ({ host, from: acceptJson(state.acceptPolicy(host)) })),
+    paused: hosts.map((host) => ({ host, ids: state.pausedEdges(host) })),
     hostKeyDue: state.hostKeyDue,
     machineKeyEpochs: Object.fromEntries(hosts.map((host) => [host, state.machineKeyEpochs(host)])),
   };
@@ -626,7 +627,7 @@ async function a2aVectors() {
     grants: 0,
     selfActivate: true,
   };
-  const [uk0, mk0, mk1] = [await seed(318), await seed(319), await seed(320)];
+  const [uk0, mk0, mk1, mk2] = [await seed(318), await seed(319), await seed(320), await seed(321)];
   const byDev = (m: Member) => ({ type: "device", id: m.id }) as const;
   const v3 = (m: Member, flags: { host?: boolean; admin?: boolean; a2a?: boolean }) => ({
     id: m.id,
@@ -648,20 +649,24 @@ async function a2aVectors() {
     ["addA1", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(a1, { a2a: true }) }],
     ["addA2", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(a2, { a2a: true }) }],
     ["a2aAccept", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [a1.id, a2.id] }],
-    // An accept list naming an A2A proxy: it does not count (mayControl), and taking it off owes no new key.
-    ["acceptNamingA2a", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [a1.id, devP.id] } }],
-    ["acceptDropsA2a", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [devP.id] } }],
+    // An accept list for the plain device (a list never names an A2A proxy: RULES.a2aNotController).
+    ["acceptPlain", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [devP.id] } }],
     ["acceptAll", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "all" } }],
     // A removal drops the proxy from every A2A list.
     ["removeA1", byDev(dev0), dev0.key, { type: "removeDevice3", id: a1.id }],
     ["a2aNone", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [] }],
+    // Dropping a proxy takes the host's next machine key epoch next: a session it started could read the host's key files.
+    ["a2aNoneKey", byDev(dev0), dev0.key, await mkCommit(1, mk2)],
     ["a2aAgain", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [a2.id] }],
     // Its A2A list goes with its hosting, as its accept policy does.
     ["stopHost", byDev(dev0), dev0.key, { type: "setHost", id: h1.id, host: false }],
     ["restartHost", byDev(dev0), dev0.key, { type: "setHost", id: h1.id, host: true }],
-    ["restartKey", byDev(dev0), dev0.key, await mkCommit(1, mk1)],
+    ["restartKey", byDev(dev0), dev0.key, await mkCommit(2, mk1)],
     ["acceptAllAgain", byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "all" } }],
     ["a2aFinal", byDev(dev0), dev0.key, { type: "setA2aAccept", host: h1.id, devices: [a2.id] }],
+    // A renewal pause holds the proxy's calls as it holds control; cancelled, they come back.
+    ["pauseA2", byDev(dev0), dev0.key, { type: "renewalPause", op: new Uint8Array(16).fill(0xa2), phase: PAUSE_START, removals: [{ host: h1.id, ids: [a2.id] }] }],
+    ["pauseA2Ended", byDev(dev0), dev0.key, { type: "renewalPause", op: new Uint8Array(16).fill(0xa2), phase: PAUSE_CANCELLED, removals: [] }],
   ];
   const labels: { label: string; seq: number; state: ReturnType<typeof a2aStateJson> }[] = [{ label: "genesis", seq: 0, state: a2aStateJson(state, hosts) }];
   for (const [label, signer, key, action] of steps) {
@@ -712,12 +717,17 @@ async function a2aVectors() {
   await ruled("the recovery words sign an A2A list", at("addA2"), { type: "recovery" }, rk.signing, setA2a(h1.id, [a1.id]), "the recovery key signs only recovery entries");
   await ruled("an A2A list for a device that is not a host", at("addA2"), byDev(dev0), dev0.key, setA2a(devP.id, [a1.id]), RULES.a2aAcceptNotHost);
   await ruled("an A2A list for an A2A proxy", at("addA2"), byDev(dev0), dev0.key, setA2a(a2.id, [a1.id]), RULES.a2aAcceptNotHost);
+  // An accept list never names an A2A proxy: it controls nothing, and a name written but ignored would mislead.
+  await ruled("an accept list naming an A2A proxy", at("a2aAccept"), byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [a1.id, devP.id] } }, RULES.a2aNotController);
+  await ruled("an accept list naming only an A2A proxy", at("a2aAccept"), byDev(dev0), dev0.key, { type: "setAccept", host: h1.id, from: { type: "devices", ids: [a2.id] } }, RULES.a2aNotController);
   await ruled("an A2A list naming a plain device", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, devP.id]), RULES.a2aAcceptNotA2a);
   await ruled("an A2A list naming the host", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [h1.id]), RULES.a2aAcceptNotA2a);
   await ruled("an A2A list naming an admin", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, [dev0.id]), RULES.a2aAcceptNotA2a);
   await refused("an A2A list naming nobody the chain knows", at("addA2"), await sign(at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, ["ts-a-9"])), "unknownId", null);
   await refused("an A2A list naming a removed proxy", at("removeA1"), await sign(at("removeA1"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, a2.id])), "unknownId", null);
   await ruled("an A2A list that changes nothing", at("a2aAccept"), byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, a2.id]), RULES.a2aAcceptSame);
+  const narrowed = [...at("a2aAccept"), await sign(at("a2aAccept"), byDev(dev0), dev0.key, setA2a(h1.id, [a2.id]))];
+  await ruled("an A2A list that drops a proxy, without the host's next key", narrowed, byDev(dev0), dev0.key, setA2a(h1.id, [a1.id, a2.id]), RULES.hostKeyNext);
   await ruled("an empty A2A list where none is set", at("addA2"), byDev(dev0), dev0.key, setA2a(h1.id, []), RULES.a2aAcceptSame);
   await ruled("the A2A list a removal left, written again", at("removeA1"), byDev(dev0), dev0.key, setA2a(h1.id, [a2.id]), RULES.a2aAcceptSame);
   await ruled("a restarted host's A2A list, set back to none", at("restartKey"), byDev(dev0), dev0.key, setA2a(h1.id, []), RULES.a2aAcceptSame);
