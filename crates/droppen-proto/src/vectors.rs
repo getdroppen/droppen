@@ -3146,6 +3146,7 @@ pub(crate) fn rust_vectors() -> Value {
         "identity": identity_vectors(),
         "pairing": pairing_vectors(),
         "path": path_vectors(),
+        "pace": crate::pace::pace_scenario(),
     })
 }
 

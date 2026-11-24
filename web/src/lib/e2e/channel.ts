@@ -18,10 +18,19 @@
  * Path times are milliseconds of a monotonic clock (`performance.now()` in
  * the driver); the transports seal with wall-clock milliseconds for
  * rekeying. Rust keeps one clock in microseconds; the rules are the same.
+ *
+ * Pacing (`setPacing`; the driver turns it on): what is in flight on the path
+ * carrying new frames is kept near what that path delivers in a round trip
+ * (`pace.ts`), well below the hub window or the direct path's limit on a slow
+ * link. The session follows its data with markers (probes whose answers only
+ * the pace hears) and polls the multiplexer within the budget the cap leaves.
+ * Each path has its own pace; a direct path starts from the hub path's rate,
+ * and the hub path, back in use, from the direct one's if it has none.
  */
-import type { Frame } from "./frame";
-import { decodeMuxFrame, encodeMuxFrame, Mux, type MuxEvent, type MuxFrame, type Role } from "./mux";
+import { INITIAL_CREDIT, type Frame } from "./frame";
+import { type Budget, BUDGET_UNLIMITED, decodeMuxFrame, encodeMuxFrame, Mux, type MuxEvent, type MuxFrame, type Role } from "./mux";
 import type { Transport } from "./noise";
+import { Pace, type PaceStats } from "./pace";
 import {
   decodeDcMessage,
   decodeEnvelope,
@@ -127,11 +136,23 @@ function dataOf(frame: MuxFrame): { sid: number; len: number } | null {
   return frame.type === "data" ? { sid: frame.sid, len: frame.data.length } : null;
 }
 
+/** What a sealed message weighs on its path: a `DATA` payload, or a DataChannel message. */
+function wireLength(wire: Wire): number {
+  return wire.type === "direct" ? wire.message.length : wire.frame.type === "data" ? wire.frame.payload.length : 0;
+}
+
 class Paths {
   readonly lanes = new Lanes();
   direct: Transport | null = null;
-  /** Envelopes for the hub outside the multiplexer's order: a `down`, resends, probes and their answers. */
+  /** Envelopes for the hub outside the multiplexer's order: a `down`, probes and their answers. They go ahead of everything else there. */
   outRelay: Envelope[] = [];
+  /** What a direct path that failed did not deliver (sequenced already), to send again over the hub ahead of anything new, behind `outRelay`. */
+  resendRelay: Envelope[] = [];
+  /** Whether new frames go by the paths' paces (`Session.setPacing`). */
+  pacing = false;
+  /** The hub path's pace (for the channel's life), and the direct path's while one is attached. */
+  relayPace = new Pace(INITIAL_CREDIT);
+  directPace: Pace | null = null;
   /** Probes and their answers for the direct path. */
   outDirect: Envelope[] = [];
   readonly probes = new Map<number, [Via, number]>();
@@ -280,10 +301,19 @@ class Paths {
     this.outDirect = [];
     for (const [nonce, [via]] of this.probes) if (via !== "relay") this.probes.delete(nonce);
     this.counts.downs += 1;
-    // The resends go first, ahead of anything queued for the hub since (a
-    // probe, a probe's answer), and the `down` ahead of them.
-    const down: Envelope[] = tellPeer ? [{ type: "down", reason }] : [];
-    this.outRelay = [...down, ...this.lanes.takeUnacked(), ...this.outRelay];
+    // The hub path carries on at its own pace; one that never had a rate starts from the direct path's.
+    if (this.directPace) this.relayPace.seedRate(this.directPace.rateSample());
+    this.directPace = null;
+    // The resends go ahead of anything new (in order, after any from an
+    // earlier fallback still waiting), behind the hub path's control — the
+    // `down` first of all.
+    this.resendRelay = this.resendRelay.concat(this.lanes.takeUnacked());
+    if (tellPeer) this.outRelay.unshift({ type: "down", reason });
+  }
+
+  /** The pace of `via`: the direct path's while one is attached, else the hub path's. */
+  pace(via: Via): Pace {
+    return via === "direct" && this.directPace ? this.directPace : this.relayPace;
   }
 }
 
@@ -315,6 +345,18 @@ export class Session {
     return this.paths?.direct != null;
   }
 
+  /** Keep what is in flight on each path near what it delivers in a round trip (`pace.ts`), or send as the windows allow (`false`, the default). Only a session with paths can: the markers are envelopes. */
+  setPacing(on: boolean): void {
+    if (this.paths) this.paths.pacing = on;
+  }
+
+  /** The pace of the path new frames go on, while pacing (`null` otherwise). */
+  paceStats(): PaceStats | null {
+    const p = this.paths;
+    if (!p?.pacing) return null;
+    return (p.directPace ?? p.relayPace).stats();
+  }
+
   stats(): SessionPathStats {
     const p = this.paths;
     if (!p) return { direct: false, relayRttMs: null, directRttMs: null, relayProbeAgeMs: null, relayQuietMs: null, ups: 0, downs: 0, lanes: new Lanes().stats() };
@@ -331,7 +373,7 @@ export class Session {
       unackedBytes: p.lanes.unackedBytes,
       unackedFrames: p.lanes.unackedFrames,
       heldRxBytes: p.lanes.heldRxBytes,
-      outRelay: p.outRelay.length,
+      outRelay: p.outRelay.length + p.resendRelay.length,
       probesOut: p.probes.size,
       oldestProbeMs: oldest === null ? null : Math.max(0, nowMs - oldest),
     };
@@ -360,6 +402,8 @@ export class Session {
     p.lastDirectProgressMs = nowMs;
     p.nextDirectProbeMs = nowMs;
     p.outDirect = [];
+    // A new path: its own round trip to measure, the hub path's rate to start from.
+    p.directPace = Pace.seeded(UNACKED_LIMIT, p.relayPace.rateSample());
     p.counts.ups += 1;
     p.events.push({ type: "directUp" });
   }
@@ -396,13 +440,20 @@ export class Session {
       const data = dataOf(frame);
       return { wire: await this.relay(wallMs, encodeMuxFrame(frame)), data };
     }
-    // Queued envelopes for each path first: on the hub path that is what a
-    // fallback resends, which must go before anything newer.
+    // Queued envelopes for each path first: on the hub path its control (a
+    // `down`, probes and their answers: small, and timed by the peer), then
+    // what a fallback resends, which must go before anything newer.
     if (room.relay) {
       const env = p.outRelay.shift();
       if (env) {
         p.noteProbe(env, "relay", nowMs);
         return { wire: await this.relay(wallMs, encodeEnvelope(env)), data: null };
+      }
+      const resend = p.resendRelay.shift();
+      if (resend) {
+        const wire = await this.relay(wallMs, encodeEnvelope(resend));
+        if (p.pacing) p.relayPace.dataSent(wireLength(wire), nowMs);
+        return { wire, data: null };
       }
     }
     if (room.direct && p.direct) {
@@ -414,27 +465,50 @@ export class Session {
     }
     const direct = p.direct;
     if (!this.pathRoom(room)) return null;
+    const via: Via = direct ? "direct" : "relay";
     // New frames on the direct path also wait while too much it carries is
     // unacknowledged; an acknowledgement never does (it is not kept).
     const dataRoom = direct === null || p.lanes.unackedBytes < UNACKED_LIMIT;
+    // And, pacing, for what the path's cap leaves (a marker first, when one is due).
+    const pending = p.pacing && this.mux.hasPending();
+    let budget: Budget = BUDGET_UNLIMITED;
+    if (pending && dataRoom) {
+      const next = p.pace(via).next(nowMs);
+      if (next.type === "marker") return { wire: await this.marker(via, nowMs, wallMs), data: null };
+      budget = next.budget;
+    }
     let env: Envelope;
     let data: Polled["data"] = null;
-    const frame = dataRoom ? this.mux.poll() : null;
+    const frame = dataRoom ? this.mux.pollWithin(budget) : null;
     if (frame) {
       data = dataOf(frame);
       env = p.lanes.stampAt(encodeMuxFrame(frame), direct !== null, nowMs);
+    } else if (p.pacing && p.pace(via).stopped(pending)) {
+      // Sending stopped: a marker after what went, so its delivery is heard.
+      return { wire: await this.marker(via, nowMs, wallMs), data: null };
     } else {
       const due = p.lanes.ackDueMs();
       if (due === null || due > nowMs) return null;
       env = { type: "ack", ack: p.lanes.takeAck() };
     }
-    return { wire: direct ? await this.directWire(direct, wallMs, env) : await this.relay(wallMs, encodeEnvelope(env)), data };
+    const wire = direct ? await this.directWire(direct, wallMs, env) : await this.relay(wallMs, encodeEnvelope(env));
+    if (p.pacing && env.type === "data") p.pace(via).dataSent(wireLength(wire), nowMs);
+    return { wire, data };
   }
 
-  /** Whether the path new envelopes go on can take one now (the hub path waits behind its own queue). */
+  /** A marker (a probe only the pace hears the answer to) for `via`, sealed. */
+  private async marker(via: Via, nowMs: number, wallMs: number): Promise<Wire> {
+    const p = this.paths!;
+    const nonce = p.nonce();
+    p.pace(via).markerSent(nonce, nowMs);
+    const env: Envelope = { type: "probe", nonce };
+    return via === "direct" && p.direct ? this.directWire(p.direct, wallMs, env) : this.relay(wallMs, encodeEnvelope(env));
+  }
+
+  /** Whether the path new envelopes go on can take one now (the hub path waits behind its own queues). */
   private pathRoom(room: Room): boolean {
     const p = this.paths!;
-    return p.direct ? room.direct : room.relay && p.outRelay.length === 0;
+    return p.direct ? room.direct : room.relay && p.outRelay.length === 0 && p.resendRelay.length === 0;
   }
 
   private async relay(wallMs: number, plain: Uint8Array): Promise<Wire> {
@@ -520,7 +594,10 @@ export class Session {
       }
       case "probeAck": {
         const sent = p.probes.get(env.nonce);
-        if (sent) {
+        if (!sent && p.pacing) {
+          // One of the paces' markers, or nothing this side remembers.
+          p.pace(via).answered(env.nonce, nowMs);
+        } else if (sent) {
           p.probes.delete(env.nonce);
           if (sent[0] === via) {
             const ms = Math.max(0, nowMs - sent[1]);

@@ -49,6 +49,36 @@ pub const BLOB_CHUNK: usize = 16 * 1024;
 pub const MAX_META: usize = 8 * 1024;
 /// The most streams open at once on one channel.
 pub const MAX_STREAMS: usize = 1024;
+/// A data frame bigger than its [`Budget`] is cut to fit, but not to less than
+/// this: a smaller remainder waits for room instead of going as a sliver.
+pub const MIN_CUT: usize = 4 * 1024;
+
+/// What new stream data may take now, by priority ([`Mux::poll_within`]):
+/// term, rpc and mux data within `interactive`, blob data within `bulk`.
+/// Control frames, and a close with nothing before it, never wait for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Budget {
+    pub interactive: usize,
+    pub bulk: usize,
+}
+
+impl Budget {
+    /// No limit: [`Mux::poll`].
+    pub const UNLIMITED: Budget = Budget {
+        interactive: usize::MAX,
+        bulk: usize::MAX,
+    };
+    /// Control frames only.
+    pub const NONE: Budget = Budget { interactive: 0, bulk: 0 };
+
+    fn of(self, priority: usize) -> usize {
+        if priority >= 3 {
+            self.bulk
+        } else {
+            self.interactive
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -378,15 +408,30 @@ impl Mux {
 
     /// The next frame to send, by priority, or `None` if everything sendable has gone.
     pub fn poll(&mut self) -> Option<MuxFrame> {
+        self.poll_within(Budget::UNLIMITED)
+    }
+
+    /// [`Mux::poll`] within `budget` ([`crate::pace`]): a stream whose next
+    /// data does not fit its priority's budget waits (others of its priority
+    /// still take their turns), and data bigger than the budget is cut to it
+    /// when at least [`MIN_CUT`] is left.
+    pub fn poll_within(&mut self, budget: Budget) -> Option<MuxFrame> {
         if let Some(frame) = self.control.pop_front() {
             return Some(frame);
         }
         for priority in 1..=3 {
+            let room = budget.of(priority);
+            let fits = |s: &Stream| {
+                s.pending.front().is_some_and(|front| {
+                    let n = (front.len() as u64).min(s.send_credit);
+                    n > 0 && (n <= room as u64 || room >= MIN_CUT)
+                })
+            };
             let ready: Vec<u32> = self
                 .streams
                 .iter()
                 .filter(|(_, s)| s.class.priority() == priority)
-                .filter(|(_, s)| (!s.pending.is_empty() && s.send_credit > 0) || (s.pending.is_empty() && s.pending_close.is_some()))
+                .filter(|(_, s)| fits(s) || (s.pending.is_empty() && s.pending_close.is_some()))
                 .map(|(&sid, _)| sid)
                 .collect();
             if ready.is_empty() {
@@ -397,7 +442,7 @@ impl Mux {
             self.last_served[priority] = sid;
             let stream = self.streams.get_mut(&sid).expect("listed above");
             if let Some(front) = stream.pending.front_mut() {
-                let n = front.len().min(stream.send_credit.min(usize::MAX as u64) as usize);
+                let n = front.len().min(stream.send_credit.min(usize::MAX as u64) as usize).min(room);
                 let data = if n == front.len() {
                     stream.pending.pop_front().expect("front")
                 } else {
@@ -576,6 +621,48 @@ mod tests {
                 "data1:10"
             ]
         );
+    }
+
+    /// The same steps as the browser's `e2e-pace.test.ts` ("the multiplexer
+    /// polls within a budget"), with the same frames out.
+    #[test]
+    fn a_budget_cuts_bulk_to_fit_lets_interactive_by_its_own_and_never_holds_control() {
+        let mut mux = Mux::new(Role::Initiator);
+        let blob = mux.open(StreamClass::Blob, b"file").unwrap();
+        let rpc = mux.open(StreamClass::Rpc, b"GET /api/screens").unwrap();
+        mux.send(blob, &vec![0; 40_000]).unwrap();
+        mux.send(rpc, &[0; 2048]).unwrap();
+        // As the session does: what goes out of either budget comes off both.
+        let mut take = |mut budget: Budget| {
+            let mut out = Vec::new();
+            while let Some(f) = mux.poll_within(budget) {
+                let len = if let MuxFrame::Data { data, .. } = &f { data.len() } else { 0 };
+                out.push(match f {
+                    MuxFrame::Data { sid, data } => format!("data{sid}:{}", data.len()),
+                    MuxFrame::Open { sid, .. } => format!("open{sid}"),
+                    other => format!("{other:?}"),
+                });
+                budget.interactive = budget.interactive.saturating_sub(len);
+                budget.bulk = budget.bulk.saturating_sub(len);
+            }
+            out
+        };
+        assert_eq!(take(Budget::NONE), ["open1", "open3"], "control needs no budget");
+        assert_eq!(
+            take(Budget {
+                interactive: 1000,
+                bulk: 21_000
+            }),
+            ["data1:16384", "data1:4616"],
+            "the rpc answer does not fit 1000 and is not cut below MIN_CUT; blob takes a chunk and the rest"
+        );
+        assert_eq!(take(Budget { interactive: 2048, bulk: 0 }), ["data3:2048"], "interactive by its own budget");
+        assert!(take(Budget {
+            interactive: MIN_CUT - 1,
+            bulk: MIN_CUT - 1
+        })
+        .is_empty());
+        assert_eq!(take(Budget::UNLIMITED), ["data1:11768", "data1:7232"], "the rest, as poll would");
     }
 
     #[test]
