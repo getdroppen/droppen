@@ -38,7 +38,7 @@ import { RecvWindow, SendWindow } from "./flow";
 import { type Frame, INITIAL_CREDIT, MAX_PAYLOAD_LEN } from "./frame";
 import type { MuxEvent, Role, StreamClass } from "./mux";
 import type { Transport } from "./noise";
-import type { DownReason } from "./path";
+import type { DirectLoad, DownReason } from "./path";
 import { Serial } from "./serial";
 
 /** A stream's reason for ending when its channel went first. */
@@ -239,6 +239,11 @@ export class ChannelDriver {
   /** The paths' state; `null` on a channel without paths. */
   get paths(): PathStats | null {
     return this.stats;
+  }
+
+  /** What the direct path carries now, or carried as it was last let go (`Session.directLoad`; reads only). */
+  directLoad(): DirectLoad | null {
+    return this.session.directLoad();
   }
 
   /** The hub channel's Noise handshake hash, which a direct path is bound to. */
