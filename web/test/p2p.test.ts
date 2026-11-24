@@ -17,7 +17,9 @@
 // DataChannel that closes, or a path the driver gives up, falls back to the
 // hub and is retried; paths that keep dying young are retried only on the
 // backoff — not on a network change, and not afresh on the next channel —
-// until one lives; closing the channel closes everything.
+// until one lives, and one given up under load (a deadline ran out, or the
+// agent closed its DataChannel with the peer connection up) waits no longer
+// than the congestion ceiling; closing the channel closes everything.
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import {
@@ -628,6 +630,39 @@ test("direct paths that keep dying young are not retried at once on every networ
   s.setAllowed(false);
   s.setAllowed(true);
   assert.equal(s.peers.length, count + 3, "at once, when the user turns them back on");
+});
+
+test("a path given up under load waits at most the congestion ceiling, however long the backoff had grown, and still counts towards the streak", async (t) => {
+  // retryFirstMs 40: after four young deaths the backoff is 640 ms; the
+  // ceiling for a path given up under load is 120 ms.
+  const s = await setUp(t, { timing: { retryFirstMs: 40, retryMaxMs: 5_000, stableMs: 60_000, congestedRetryMaxMs: 120 } });
+  s.paths.start();
+  await dieYoung(s, 4);
+  assert.equal(s.paths.history.backoffMs, 640);
+  assert.equal(s.paths.history.shortLived, 4);
+  // The agent closes its DataChannel while the peer connection stays up: its
+  // own deadline ran out (as an agent's does under load), not the network.
+  await until(() => s.paths.state === "direct" && s.agent.dcs.at(-1)?.state === "open", "a direct path carrying the channel");
+  s.peers.at(-1)!.connectionState = "connected";
+  const count = s.peers.length;
+  s.agent.dcs.at(-1)!.close();
+  await until(() => s.paths.state === "waiting", "let go");
+  const endedAt = performance.now();
+  assert.equal(s.paths.history.backoffMs, 120, "the next wait is the ceiling too, not twice the 640 ms");
+  assert.equal(s.paths.history.shortLived, 5, "it still counts: a network change does not start it again at once");
+  s.networkChanged();
+  assert.equal(s.peers.length, count, "no attempt at once");
+  await until(() => s.peers.length === count + 1, "the next attempt");
+  const waited = s.peerTimes.at(-1)! - endedAt;
+  assert.ok(waited < 400, `within the ceiling (120 ms), not the backoff (640 ms): ${waited}`);
+  // A deadline here that runs out while the path carries (it went dark mid-typing) is the same.
+  await until(() => s.device.paths?.direct === true && s.agent.dcs.at(-1)?.state === "open", "carrying again");
+  s.peers.at(-1)!.dc.blackhole = true;
+  s.agent.dcs.at(-1)!.blackhole = true;
+  const { term } = terminal(s);
+  for (let k = 0; k < 3; k++) term.send(Uint8Array.of(k));
+  await until(() => s.paths.state === "waiting", "given up on its deadline", 15_000);
+  assert.equal(s.paths.history.backoffMs, 120);
 });
 
 test("a direct path that lives past STABLE_MS ends the streak: the next network change retries at once again", async (t) => {

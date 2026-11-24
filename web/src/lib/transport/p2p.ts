@@ -33,6 +33,13 @@
  *    mobile data) is left on the hub for longer and longer. A `DirectHistory`
  *    keeps the backoff and the streak for one machine across its channels, so
  *    a new channel (the hub connection came back) does not start from 2 s.
+ *    A path given up under load — a deadline on this side (`timeout`), or the
+ *    agent closing the DataChannel while the peer connection stays up (the
+ *    agent's own deadline: an agent says why only later, over the hub) — is
+ *    a full link, not one that kills direct paths: the wait after it grows
+ *    to `CONGESTED_RETRY_MAX_MS` at most, so one congestion episode does not
+ *    keep the direct path away for minutes. It still counts towards the
+ *    streak, so the page coming and going cannot make it churn.
  *
  * "Hub only" (`hubOnly`, a setting of this device kept in `localStorage`)
  * stops all of it: direct connections show this device's IP address to the
@@ -88,6 +95,16 @@ export const STABLE_MS = 60_000;
 export const SHORT_LIVED_LIMIT = 3;
 /** How long the agent has to answer the signaling stream's head. */
 export const SIGNAL_HEAD_TIMEOUT_MS = 15_000;
+/**
+ * The longest wait after a direct path that was given up under load (a
+ * deadline of either side's ran out while it carried the channel): the link
+ * works — the hub path carries the channel over it, and the peer connection
+ * was up — it was full. Half a minute: the direct path is back within about
+ * that of a congestion episode's end, and while one lasts a path is tried at
+ * most about twice a minute (each try a few kilobytes of signaling; each
+ * flap a stall of at most `DIRECT_TIMEOUT_MAX_MS` and a resend over the hub).
+ */
+export const CONGESTED_RETRY_MAX_MS = 30_000;
 
 export interface DirectTiming {
   attemptTimeoutMs: number;
@@ -95,6 +112,7 @@ export interface DirectTiming {
   retryMaxMs: number;
   stableMs: number;
   signalHeadTimeoutMs: number;
+  congestedRetryMaxMs: number;
 }
 
 export const DIRECT_TIMING: DirectTiming = {
@@ -103,6 +121,7 @@ export const DIRECT_TIMING: DirectTiming = {
   retryMaxMs: RETRY_MAX_MS,
   stableMs: STABLE_MS,
   signalHeadTimeoutMs: SIGNAL_HEAD_TIMEOUT_MS,
+  congestedRetryMaxMs: CONGESTED_RETRY_MAX_MS,
 };
 
 // ---------------------------------------------------------------------------
@@ -513,7 +532,10 @@ export class DirectPaths {
     };
     dc.onopen = () => void this.opened(a);
     dc.onmessage = (ev) => this.dcMessage(a, ev.data);
-    dc.onclose = () => this.fail(a, "failed", "the data channel closed");
+    // Closed under a path that carries the channel, with the peer connection
+    // still up: the agent let it go (its deadline ran out: it says so only
+    // later, over the hub path, `path.peerDown`).
+    dc.onclose = () => this.fail(a, "failed", "the data channel closed", a.link !== null && peerState(pc) === "connected");
     dc.onerror = () => this.fail(a, "failed", "the data channel failed");
     void this.offer(a);
   }
@@ -605,7 +627,7 @@ export class DirectPaths {
         // "done" and "disabled" are the agent's decision, not the path failing:
         // they do not count towards the streak of paths that died young.
         this.end(a, null, s.detail, "failed", s.reason !== "done" && s.reason !== "disabled");
-        this.afterEnd();
+        this.afterEnd(false);
         break;
       case "offer":
         break;
@@ -750,10 +772,12 @@ export class DirectPaths {
     this.log("direct.down", { attempt: a.id, cause: reason, livedMs: a.attachedAt === null ? null : this.env.now() - a.attachedAt, channelClosed: this.driver.isClosed });
     // "closed": the channel ended, or another path replaced this one — not a failure of the path.
     this.end(a, this.driver.isClosed ? null : reason === "closed" ? "done" : "failed", `the direct path ${reason === "timeout" ? "timed out" : reason}`, null, reason !== "closed");
-    this.afterEnd();
+    // "timeout": a deadline ran out while it carried the channel — under load.
+    this.afterEnd(reason === "timeout");
   }
 
-  private fail(a: Attempt, bye: ByeReason, detail: string): void {
+  /** `congested`: the path was given up under load (`CONGESTED_RETRY_MAX_MS`). */
+  private fail(a: Attempt, bye: ByeReason, detail: string, congested = false): void {
     if (a.done) return;
     this.env.log(`attempt ${a.id}: ${detail}`);
     this.log(a.link ? "direct.down" : "direct.fail", {
@@ -765,7 +789,7 @@ export class DirectPaths {
       pc: peerState(a.pc),
     });
     this.end(a, bye, detail, "failed");
-    this.afterEnd();
+    this.afterEnd(congested);
   }
 
   /**
@@ -814,22 +838,27 @@ export class DirectPaths {
     }
   }
 
-  /** After an attempt ended: wait, then try again (unless trying is over). */
-  private afterEnd(): void {
+  /** After an attempt ended: wait, then try again (unless trying is over). `congested`: it was given up under load. */
+  private afterEnd(congested: boolean): void {
     if (this.closed) return;
     if (this.driver.isClosed) return this.close();
     if (!this.env.allowed()) return this.setState("off");
     if (this.unsupported) return this.setState("unsupported");
-    this.scheduleRetry(true);
+    this.scheduleRetry(true, congested);
   }
 
-  /** The next attempt after the backoff (jittered); `grow`: the one after that waits twice as long. */
-  private scheduleRetry(grow: boolean): void {
+  /**
+   * The next attempt after the backoff (jittered); `grow`: the one after that
+   * waits twice as long. `congested`: after a path given up under load, the
+   * wait and the next one are at most `congestedRetryMaxMs`.
+   */
+  private scheduleRetry(grow: boolean, congested = false): void {
     this.cancelRetry();
-    const backoff = this.history.backoffMs ?? this.timing.retryFirstMs;
-    const delay = Math.min(this.timing.retryMaxMs, Math.round(backoff * (0.8 + 0.4 * this.env.random())));
-    if (grow) this.history.backoffMs = Math.min(backoff * 2, this.timing.retryMaxMs);
-    this.log("direct.retry", { waitMs: delay, backoffMs: backoff, shortLived: this.history.shortLived, flapping: this.history.flapping });
+    const most = congested ? Math.min(this.timing.congestedRetryMaxMs, this.timing.retryMaxMs) : this.timing.retryMaxMs;
+    const backoff = Math.min(this.history.backoffMs ?? this.timing.retryFirstMs, most);
+    const delay = Math.min(most, Math.round(backoff * (0.8 + 0.4 * this.env.random())));
+    if (grow) this.history.backoffMs = Math.min(backoff * 2, most);
+    this.log("direct.retry", { waitMs: delay, backoffMs: backoff, shortLived: this.history.shortLived, flapping: this.history.flapping, congested: congested || undefined });
     this.retry = setTimeout(() => {
       this.retry = null;
       this.attemptNow();

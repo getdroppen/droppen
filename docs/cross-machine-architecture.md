@@ -574,7 +574,7 @@
 
 **浏览器**
 
-- `lib/transport/p2p.ts`：只有页面自己的那条通道尝试直连（改名、交钥匙这类临时通道不尝试）。`RTCPeerConnection`（STUN：Cloudflare、Google，无 TURN）+ 一条有序可靠的 DataChannel `rh`；有 `getRemoteCertificates` 的浏览器（Chrome）还会核对 DTLS 对端证书的 SHA-256 就是 answer 里写明的那个；一次尝试 15 s 内没完成直连握手就作废（`BYE Failed`），然后按 2 s、4 s、8 s……最多 5 分钟加抖动重试，每次都是新的 `RTCPeerConnection`（相当于 ICE restart）；直连撑过 60 s 后退避归零；网络变化（`online`、`navigator.connection` 的 `change`）和页面重新可见时立刻重试——但连续 3 条直连都是接上之后不到 60 s 就断（`SHORT_LIVED_LIMIT`），之后就只按退避走：网络变化、页面重新可见、新开的通道都不再立刻重试，直到某条直连撑过 60 s，或者用户把直连关掉再打开。退避和这个计数按机器保留在页面的 `MachineChannel` 里（`DirectHistory`），hub 重连后的新通道接着原来的退避，不再从 2 s 开始。每条通道同时只有一个尝试；多台设备各自有各自的直连。
+- `lib/transport/p2p.ts`：只有页面自己的那条通道尝试直连（改名、交钥匙这类临时通道不尝试）。`RTCPeerConnection`（STUN：Cloudflare、Google，无 TURN）+ 一条有序可靠的 DataChannel `rh`；有 `getRemoteCertificates` 的浏览器（Chrome）还会核对 DTLS 对端证书的 SHA-256 就是 answer 里写明的那个；一次尝试 15 s 内没完成直连握手就作废（`BYE Failed`），然后按 2 s、4 s、8 s……最多 5 分钟加抖动重试，每次都是新的 `RTCPeerConnection`（相当于 ICE restart）；直连撑过 60 s 后退避归零；网络变化（`online`、`navigator.connection` 的 `change`）和页面重新可见时立刻重试——但连续 3 条直连都是接上之后不到 60 s 就断（`SHORT_LIVED_LIMIT`），之后就只按退避走：网络变化、页面重新可见、新开的通道都不再立刻重试，直到某条直连撑过 60 s，或者用户把直连关掉再打开。满载时放弃的直连（这边的期限到了，或者 agent 在 PeerConnection 仍连着时关了 DataChannel——它自己的期限到了）是链路满了，不是网络在掐直连：之后的等待最多 `CONGESTED_RETRY_MAX_MS`（30 s），不会因为一阵拥塞就把直连挡在外面几分钟（那份日志里退避一路涨到 128 s）；它照样计入连续短命的次数，页面反复进出也不会让它来回折腾——拥塞持续时每分钟最多试两次，每次几 KB 信令，断一次最多停 8 s、经 hub 重发一次。退避和这个计数按机器保留在页面的 `MachineChannel` 里（`DirectHistory`），hub 重连后的新通道接着原来的退避，不再从 2 s 开始。每条通道同时只有一个尝试；多台设备各自有各自的直连。
 - 设备设置「只走 hub」：存在本机（`localStorage` 的 `rh.hub.hubOnly`），打开时立刻关掉直连、不再尝试；关掉后开始尝试，不用重连。
 - 路径指示：机器条上「端到端加密」旁边显示「直连 · 1 ms」或「经 hub · 180 ms」（当前路径最近一次探测的往返时间），悬停显示两条路的往返时间。
 
