@@ -118,6 +118,16 @@ pub struct InFlight {
     pub stale: bool,
 }
 
+/// Where one message stands ([`Receipts::whereabouts`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Whereabouts {
+    /// What became of it so far.
+    pub status: ReceiptStatus,
+    /// The session it went to, once known: a new session's message learns
+    /// it when its driver first reports, or when its route answers.
+    pub session_id: Option<String>,
+}
+
 /// The idempotency and receipt store, over the instance database.
 #[derive(Debug)]
 pub struct Receipts {
@@ -270,6 +280,33 @@ impl Receipts {
             Err(error) => {
                 tracing::warn!(path = %self.db.path().display(), qid, %error, "cannot record a message receipt");
                 false
+            }
+        }
+    }
+
+    /// Where the message travelling as `qid` stands, and the session it went
+    /// to; `None` for a queue id no client named.
+    ///
+    /// For a reader that follows one message by its queue id rather than a
+    /// client by its ids: the A2A backend (the server's `a2a_backend`), which
+    /// decides from it whether a task's message was in the turn that just
+    /// ended. A claim still being answered reads as [`ReceiptStatus::Queued`]:
+    /// it has not been taken into a turn.
+    pub fn whereabouts(&self, qid: &str) -> Option<Whereabouts> {
+        let read = self.db.read(|conn| {
+            conn.query_row("SELECT status, session_id FROM client_messages WHERE qid = ?1", [qid], |row| {
+                Ok(Whereabouts {
+                    status: ReceiptStatus::from_stored(&row.get::<_, String>(0)?),
+                    session_id: row.get(1)?,
+                })
+            })
+            .optional()
+        });
+        match read {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(path = %self.db.path().display(), qid, %error, "cannot read a message receipt");
+                None
             }
         }
     }
@@ -510,6 +547,28 @@ mod tests {
         let receipts_for = receipts.for_session(Source::Codex, "thread-1", now);
         assert_eq!(receipts_for.len(), 1);
         assert_eq!(receipts_for[0].client_message_id, "n");
+    }
+
+    /// A message followed by its queue id reads as not yet taken into a turn
+    /// while its claim is answered, learns its session from the first driver
+    /// report — before its route has answered — and reads as sent once it is.
+    #[test]
+    fn a_message_is_followed_by_its_queue_id_from_the_claim_on() {
+        let (_dir, receipts) = store();
+        let now = now_ms();
+        let qid = owned(receipts.claim("w", Kind::NewSession, Source::Claude, None, now).expect("claim"));
+        let pending = receipts.whereabouts(&qid).expect("claimed");
+        assert_eq!((pending.status, pending.session_id), (ReceiptStatus::Queued, None));
+        assert!(receipts.mark(&qid, ReceiptStatus::Sent, SESSION, now + 1));
+        assert_eq!(
+            receipts.whereabouts(&qid),
+            Some(Whereabouts {
+                status: ReceiptStatus::Sent,
+                session_id: Some(SESSION.to_string()),
+            }),
+            "the driver's word, before the route's answer"
+        );
+        assert_eq!(receipts.whereabouts("no-such-qid"), None, "an unnamed message is nobody's");
     }
 
     #[test]

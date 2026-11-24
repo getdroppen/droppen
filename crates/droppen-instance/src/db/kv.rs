@@ -79,6 +79,13 @@ pub mod scope {
     /// sign-in per tool) and `practiceFolder` (the practice folder step 03
     /// made last). Instance state: each instance has its own guide.
     pub const SETUP: &str = "setup";
+    /// What the A2A backend (the server's `a2a_backend`) keeps of the tasks
+    /// it follows, to pick them up again after a restart: one `task:<id>` row
+    /// per unfinished task (its messages' queue ids, where it stands), and
+    /// one `context:<id>` row per context (its worktree's base commit, and the
+    /// settings its session was started with). Instance state, beside the
+    /// receipts and the questions those rows point into.
+    pub const A2A_SESSIONS: &str = "a2a-sessions";
     /// Not a store: the record of which JSON files have already been drained.
     pub const IMPORTED: &str = "imported";
 }

@@ -4,6 +4,125 @@
  */
 
 export interface paths {
+    "/api/a2a/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List A2A entries
+         * @description Every A2A entry.
+         */
+        get: operations["list_a2a_entries"];
+        put?: never;
+        /**
+         * Create an A2A entry
+         * @description Create an A2A entry. It is off until `enabled` says otherwise.
+         */
+        post: operations["create_a2a_entry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/a2a/entries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an A2A entry
+         * @description One A2A entry.
+         */
+        get: operations["get_a2a_entry"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an A2A entry
+         * @description Delete an A2A entry. Its unfinished tasks are cancelled; their sessions
+         *     stay.
+         */
+        delete: operations["delete_a2a_entry"];
+        options?: never;
+        head?: never;
+        /**
+         * Update an A2A entry
+         * @description Change an A2A entry. Switching it off cancels its unfinished tasks, and
+         *     taking a device out of `allowedDevices` cancels that device's.
+         */
+        patch: operations["update_a2a_entry"];
+        trace?: never;
+    };
+    "/api/a2a/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List A2A tasks
+         * @description The A2A tasks, the most recently changed first.
+         */
+        get: operations["list_a2a_tasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/a2a/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List A2A tokens
+         * @description Every A2A token, without its secret.
+         */
+        get: operations["list_a2a_tokens"];
+        put?: never;
+        /**
+         * Create an A2A token
+         * @description Create an A2A token. Its secret is in this answer and never again.
+         */
+        post: operations["create_a2a_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/a2a/tokens/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke an A2A token
+         * @description Revoke an A2A token. Its caller's unfinished tasks are cancelled, their
+         *     push configurations deleted and their streams closed.
+         */
+        delete: operations["revoke_a2a_token"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/accounts": {
         parameters: {
             query?: never;
@@ -2650,6 +2769,220 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description One A2A agent. */
+        A2aEntry: {
+            /**
+             * @description The account it runs under: `{"kind": "default"}` (the instance's
+             *     default account), `{"kind": "local"}` (the CLI's own login) or
+             *     `{"kind": "id", "id": "…"}`.
+             */
+            account: components["schemas"]["RunAccount"];
+            /** @description The configured ACP agent it runs, for `acp`. */
+            acpAgent: string | null;
+            /** @description Whether a task's question may be answered over A2A. */
+            allowRemoteAnswers: boolean;
+            /**
+             * @description The a2a devices (§7) that may call it, by device id. Taking one out
+             *     cancels its unfinished tasks here. Callers are tokens only until M2.
+             */
+            allowedDevices: string[];
+            /** @description When it was made, ISO-8601. */
+            createdAt: string;
+            /** @description The directory its sessions start in, absolute. */
+            cwd: string;
+            /** @description The Agent Card's description. */
+            description: string;
+            /** @description Reasoning effort, or `null`. */
+            effort: string | null;
+            /** @description Whether it takes tasks. A new entry is off until it is switched on. */
+            enabled: boolean;
+            /** @description Its id, in the agent's URL: `^[a-z0-9][a-z0-9-]{0,39}$`. */
+            id: string;
+            /** @description Whether each new context runs in a worktree of its own. */
+            isolation: components["schemas"]["Isolation"];
+            /**
+             * @description How many of its tasks may be working at once, 1 to 8. A task beyond
+             *     that waits, submitted, for a slot.
+             */
+            maxConcurrent: number;
+            /** @description `--model`, or `null` for the CLI's default. */
+            model: string | null;
+            /** @description The Agent Card's name. */
+            name: string;
+            /**
+             * @description Permission / sandbox mode, as `POST /api/sessions/new` takes it, or
+             *     `null`.
+             */
+            permission: string | null;
+            /** @description The origins (`https://host[:port]`) a task's push may go to. */
+            pushOrigins: string[];
+            /** @description Which CLI it runs. */
+            source: components["schemas"]["EntrySource"];
+            /**
+             * @description The prompt a request is wrapped in; `null` is the default
+             *     (`A2aEntryList.defaultTemplate`). `{{caller}}`, `{{fence}}` and `{{request}}` are filled in.
+             */
+            template: string | null;
+            /** @description When it last changed, ISO-8601. */
+            updatedAt: string;
+        };
+        /** @description The body of `POST /api/a2a/entries`. */
+        A2aEntryCreate: {
+            /** @description The account to run under; the instance's default when not said. */
+            account?: components["schemas"]["RunAccount"];
+            /** @description The ACP agent, required for `acp`. */
+            acpAgent?: string;
+            /** @description `true` when not said. */
+            allowRemoteAnswers?: boolean;
+            /** @description None when not said. */
+            allowedDevices?: string[];
+            /** @description The directory, absolute; not needed for `tck`. */
+            cwd?: string;
+            /** @description The Agent Card's description. */
+            description?: string;
+            /** @description Reasoning effort. */
+            effort?: string;
+            /** @description Whether it takes tasks; `false` when not said. */
+            enabled?: boolean;
+            /** @description Its id: `^[a-z0-9][a-z0-9-]{0,39}$`. */
+            id: string;
+            /** @description `worktree` when not said (`none` for `tck`). */
+            isolation?: components["schemas"]["Isolation"];
+            /** @description 1 to 8; 1 when not said. */
+            maxConcurrent?: number;
+            /** @description `--model`. */
+            model?: string;
+            /** @description The Agent Card's name. */
+            name: string;
+            /** @description Permission / sandbox mode. */
+            permission?: string;
+            /** @description None when not said. */
+            pushOrigins?: string[];
+            /** @description Which CLI it runs. */
+            source: components["schemas"]["EntrySource"];
+            /** @description The prompt template; the default when not said. */
+            template?: string;
+        };
+        /** @description The entry list. */
+        A2aEntryList: {
+            /** @description The template an entry whose `template` is `null` uses. */
+            defaultTemplate: string;
+            /** @description Every entry, oldest first. */
+            entries: components["schemas"]["A2aEntry"][];
+        };
+        /**
+         * @description The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty
+         *     string in a nullable field (`acpAgent`, `model`, `effort`, `permission`,
+         *     `template`) sets it back to `null`.
+         */
+        A2aEntryUpdate: {
+            /** @description The account to run under. */
+            account?: components["schemas"]["RunAccount"];
+            /** @description The ACP agent; `""` clears it. */
+            acpAgent?: string;
+            /** @description Whether questions may be answered over A2A. */
+            allowRemoteAnswers?: boolean;
+            /**
+             * @description The a2a devices that may call it, replacing the list. A device taken
+             *     out has its unfinished tasks here cancelled.
+             */
+            allowedDevices?: string[];
+            /** @description The directory. */
+            cwd?: string;
+            /** @description The Agent Card's description. */
+            description?: string;
+            /** @description Reasoning effort; `""` clears it. */
+            effort?: string;
+            /** @description Switch it on or off. */
+            enabled?: boolean;
+            /** @description `none` or `worktree`. */
+            isolation?: components["schemas"]["Isolation"];
+            /** @description 1 to 8. */
+            maxConcurrent?: number;
+            /** @description `--model`; `""` clears it. */
+            model?: string;
+            /** @description The Agent Card's name. */
+            name?: string;
+            /** @description Permission / sandbox mode; `""` clears it. */
+            permission?: string;
+            /** @description The push origins, replacing the list. */
+            pushOrigins?: string[];
+            /** @description Which CLI it runs. */
+            source?: components["schemas"]["EntrySource"];
+            /** @description The prompt template; `""` goes back to the default. */
+            template?: string;
+        };
+        /** @description The task list. */
+        A2aTaskList: {
+            /** @description The most recently changed first, at most 500. */
+            tasks: components["schemas"]["A2aTaskSummary"][];
+        };
+        /** @description One task, for the page's list and the session list's "from A2A" mark. */
+        A2aTaskSummary: {
+            /** @description The worktree's branch. */
+            branch: string | null;
+            /** @description Who sent it: `a2a:token:<token id>`. */
+            caller: string;
+            /** @description The name of the token it came with, while that token is on file. */
+            callerName: string | null;
+            /** @description Its context. */
+            contextId: string;
+            /** @description When it was made, ISO-8601. */
+            createdAt: string;
+            /** @description The directory the session runs in. */
+            cwd: string;
+            /** @description Its entry. */
+            entry: string;
+            /** @description The task. */
+            id: string;
+            /** @description Its session, once known. */
+            sessionId: string | null;
+            /** @description Its session's CLI. */
+            source: components["schemas"]["EntrySource"];
+            /** @description Where it stands. */
+            state: components["schemas"]["TaskState"];
+            /** @description Its status message's text, if any. */
+            statusText: string | null;
+            /** @description When its status last changed, ISO-8601. */
+            updatedAt: string;
+        };
+        /** @description A token, without its secret. */
+        A2aToken: {
+            /** @description When it was made, ISO-8601. */
+            createdAt: string;
+            /** @description The entries it reaches. */
+            entries: string[];
+            /**
+             * @description Its id: the `<id>` of `dpa_<id>_<secret>`. Its tasks' caller is
+             *     `a2a:token:<id>`.
+             */
+            id: string;
+            /** @description When it last proved a request, ISO-8601, to the minute. */
+            lastUsedAt: string | null;
+            /** @description Its name, for a person: two tokens may share one. */
+            name: string;
+            /** @description When it was revoked, ISO-8601. */
+            revokedAt: string | null;
+        };
+        /** @description The body of `POST /api/a2a/tokens`. */
+        A2aTokenCreate: {
+            /** @description The entries it may reach: at least one. */
+            entries: string[];
+            /** @description Its name, for a person: 1 to 100 characters. */
+            name: string;
+        };
+        /** @description A new token, with the one copy of its secret there will ever be. */
+        A2aTokenCreated: {
+            /** @description `dpa_<id>_<secret>`: shown now and never again. */
+            secret: string;
+            /** @description The token. */
+            token: components["schemas"]["A2aToken"];
+        };
+        /** @description The token list. */
+        A2aTokenList: {
+            /** @description Every token, revoked ones included, the newest first. */
+            tokens: components["schemas"]["A2aToken"][];
+        };
         /** @description `PUT /api/cloud/access`. */
         AccessRequest: {
             /** @description Whether it may see and use other machines. */
@@ -3871,6 +4204,14 @@ export interface components {
             total: number;
         };
         /**
+         * @description Which CLI an entry runs: a provider's wire name, or the TCK's stand-in.
+         *
+         *     Its own enum rather than the sessions' `Source`, so this crate names no
+         *     provider; the backend picks its provider by [`EntrySource::as_str`].
+         * @enum {string}
+         */
+        EntrySource: "claude" | "codex" | "acp" | "tck";
+        /**
          * @description The error body every failing route returns.
          *
          *     Named `Error` because that is the schema name in `openapi/openapi.json` —
@@ -4054,6 +4395,11 @@ export interface components {
          * @enum {string}
          */
         InstallMethod: "native" | "brew" | "npm" | "unknown";
+        /**
+         * @description Where a new context's session runs.
+         * @enum {string}
+         */
+        Isolation: "none" | "worktree";
         /**
          * @description What kind of content an item carries.
          * @enum {string}
@@ -4961,6 +5307,21 @@ export interface components {
          * @enum {string}
          */
         Role: "user" | "assistant" | "system";
+        /**
+         * @description Which account a session runs under, as `NewSession.accountId` says it:
+         *     absent, `null`, or an id.
+         */
+        RunAccount: {
+            /** @enum {string} */
+            kind: "default";
+        } | {
+            /** @enum {string} */
+            kind: "local";
+        } | {
+            id: string;
+            /** @enum {string} */
+            kind: "id";
+        };
         /** @description One scheduled task. */
         ScheduledTask: {
             /** @description When it was created, ISO-8601. */
@@ -6186,6 +6547,11 @@ export interface components {
          */
         TaskKind: "install" | "update" | "login";
         /**
+         * @description A task's lifecycle state.
+         * @enum {string}
+         */
+        TaskState: "TASK_STATE_UNSPECIFIED" | "TASK_STATE_SUBMITTED" | "TASK_STATE_WORKING" | "TASK_STATE_COMPLETED" | "TASK_STATE_FAILED" | "TASK_STATE_CANCELED" | "TASK_STATE_INPUT_REQUIRED" | "TASK_STATE_REJECTED" | "TASK_STATE_AUTH_REQUIRED";
+        /**
          * @description What became of a task the last time the scheduler acted on it.
          *
          *     An enum rather than the free text it started as, and the deviation is the
@@ -6566,6 +6932,308 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_a2a_entries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every A2A entry, and the default template */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aEntryList"];
+                };
+            };
+        };
+    };
+    create_a2a_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The body of `POST /api/a2a/entries`. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["A2aEntryCreate"];
+            };
+        };
+        responses: {
+            /** @description The entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aEntry"];
+                };
+            };
+            /** @description An unusable setting, or one the entry's CLI does not take */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The id is taken, or there are too many entries */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_a2a_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aEntry"];
+                };
+            };
+            /** @description A2A entry not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    delete_a2a_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A2A entry deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendResult"];
+                };
+            };
+            /** @description A2A entry not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    update_a2a_entry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * @description The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty
+         *     string in a nullable field (`acpAgent`, `model`, `effort`, `permission`,
+         *     `template`) sets it back to `null`.
+         */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["A2aEntryUpdate"];
+            };
+        };
+        responses: {
+            /** @description The entry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aEntry"];
+                };
+            };
+            /** @description An unusable setting, or one the entry's CLI does not take */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description A2A entry not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_a2a_tasks: {
+        parameters: {
+            query?: {
+                /** @description Only this entry's tasks. */
+                entry?: string | null;
+                /** @description Only tasks in this state: `TASK_STATE_WORKING`, or `working`. */
+                state?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The A2A tasks, the most recently changed first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aTaskList"];
+                };
+            };
+            /** @description Not a task state */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    list_a2a_tokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every A2A token, revoked ones included */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aTokenList"];
+                };
+            };
+        };
+    };
+    create_a2a_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The body of `POST /api/a2a/tokens`. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["A2aTokenCreate"];
+            };
+        };
+        responses: {
+            /** @description The token and its secret, shown once */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aTokenCreated"];
+                };
+            };
+            /** @description An unusable name, or an entry that does not exist */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The name is taken, or there are too many tokens */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    revoke_a2a_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A2A token revoked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendResult"];
+                };
+            };
+            /** @description A2A token not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     list_accounts: {
         parameters: {
             query?: never;
