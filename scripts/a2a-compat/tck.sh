@@ -98,7 +98,7 @@ else
 
   log "making the tck entry and its token"
   curl -sf -X POST "$BASE/api/a2a/entries" -H 'content-type: application/json' \
-    -d '{"id": "tck", "name": "Droppen TCK", "description": "The A2A TCK scenarios.", "source": "tck", "enabled": true, "pushOrigins": ["https://example.com"]}' >/dev/null
+    -d '{"id": "tck", "name": "Droppen TCK", "description": "The A2A TCK scenarios.", "source": "tck", "enabled": true, "pushOrigins": ["https://example.com", "http://localhost", "http://127.0.0.1"]}' >/dev/null
   TOKEN=$(curl -sf -X POST "$BASE/api/a2a/tokens" -H 'content-type: application/json' \
     -d '{"name": "a2a-tck", "entries": ["tck"]}' | python3 -c 'import json, sys; print(json.load(sys.stdin)["secret"])')
 fi
