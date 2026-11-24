@@ -116,6 +116,8 @@ JSON-RPC 错误的 `error.data` 是 `{"code": "<下表>"}`；HTTP+JSON 的错误
 | `droppen.attestation_stale` | （§7）7 天内没有完整设备作证，开不了通道；提示「在任一设备上打开一次 Droppen」 |
 | `droppen.not_accepted` | （§7）这台设备不接受这个 a2a 设备 |
 | `droppen.device_removed` | （§7）这个 a2a 设备已被移出账号 |
+| `droppen.quota_exceeded` | 超过 §5 的每调用方限额（排队数、每天新 context 数、push 配置数、请求体大小） |
+| `droppen.revoked` | 调用方的 token 被吊销、被移出入口的 `allowedDevices`，或入口停用（task 被取消时状态消息里也带它） |
 
 ## 4. 存储
 
@@ -136,7 +138,7 @@ JSON-RPC 错误的 `error.data` 是 `{"code": "<下表>"}`；HTTP+JSON 的错误
 - push：每次状态变化（不含 `WORKING` 的进度消息）和每个 artifact 各 POST 一次 `StreamResponse`，`Content-Type: application/a2a+json`，`Authorization: <scheme> <credentials>`，给了 `token` 时同时带 `A2A-Notification-Token` 与 `X-A2A-Notification-Token`。同一任务按序；重试 3 次（立即、10 秒、60 秒）。
 - 隔离：`worktree` 时每个新 context 在 `<cwd>/.worktrees/a2a-<contextId>` 建 worktree，分支 `a2a/<contextId>`（完整 UUID，不截断；已存在就拒绝），会话在里面跑。不自动删除 worktree。
 - 消息里的 `url` part（文件链接）一律不去取；part 的 `filename` 不当路径用；图片按大小上限收。
-- 限额（每个调用方）：排队中的 task 至多 20 个，每天新 context 至多 50 个，每个 task 的 push 配置至多 3 个；`/a2a/*` 请求体至多 10 MiB。超出回 A2A 的错误，不开会话。
+- 限额（每个调用方）：排队中的 task 至多 20 个，每天新 context 至多 50 个，每个 task 的 push 配置至多 3 个；`/a2a/*` 请求体至多 10 MiB。超出回 `droppen.quota_exceeded`，不开会话。
 - 提示词模板（入口可改）默认：
 
 ```
