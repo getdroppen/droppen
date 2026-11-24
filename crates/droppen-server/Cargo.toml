@@ -86,6 +86,8 @@ droppen-notify = { path = "../droppen-notify" }
 # The link to Droppen: the link routes, the remote-view gate, link control and
 # the aggregator gateway.
 droppen-cloud = { path = "../droppen-cloud" }
+# `droppen a2a-proxy`.
+droppen-a2a-proxy = { path = "../droppen-a2a-proxy" }
 gotcha = { workspace = true }
 # Named by no code here (the routes reach axum through gotcha), but the one
 # dependency that keeps axum's default features in the binary: gotcha takes
