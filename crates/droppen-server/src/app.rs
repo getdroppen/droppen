@@ -483,6 +483,10 @@ impl RemoteHandApp {
                 let a2a = state.a2a.clone();
                 async move { a2a.resume().await }
             });
+            // Finished A2A tasks are kept 30 days (`docs/a2a.md` §4); the
+            // owner prunes them, as it does everything else that writes the
+            // instance's state on a timer.
+            state.a2a.spawn_retention();
         }
         let cancel = state.cancel.clone();
         let desktop_app = state.desktop_app;

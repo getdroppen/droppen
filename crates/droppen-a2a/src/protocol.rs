@@ -6,12 +6,15 @@
 //! loopback is `403`; an entry the token does not reach is `404`, exactly as
 //! one that does not exist. A local login counts for nothing here (the login
 //! guard lets `/a2a/*` through to this check, and this check reads only an
-//! A2A token). Each request then writes one audit line — when, who, which
-//! entry, which method, which task — and never what it said.
+//! A2A token). A request with a body asks again once the body is in: a
+//! token revoked while it was on its way proves nothing. Each request then
+//! writes one audit line — when, who, which entry, which method, which task —
+//! and never what it said.
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::stream::{self, Stream, StreamExt as _};
 use gotcha::axum::extract::{ConnectInfo, Path, Query, Request, State};
@@ -24,7 +27,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use crate::backend::ErrorCode;
-use crate::engine::{A2a, Caller, Denied, Follow, Sent, MAX_BODY};
+use crate::engine::{A2a, Caller, Denied, Follow, Sent, StreamSlot, MAX_BODY};
 use crate::error::{self, a2a_json, json_as, A2aError, ErrorKind};
 use crate::wire::{
     AgentCapabilities, AgentCard, AgentInterface, AgentSkill, GetTaskRequest, HttpAuthSecurityScheme, ListPushConfigsRequest, ListTasksRequest,
@@ -34,6 +37,9 @@ use crate::wire::{
 
 /// The protocol version this server speaks.
 pub const PROTOCOL_VERSION: &str = "1.0";
+
+/// How long a request's body may take to arrive (§5).
+const BODY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The router to nest at `/a2a`.
 pub fn router(a2a: Arc<A2a>) -> Router {
@@ -54,20 +60,34 @@ fn admit(a2a: &A2a, request: &Request, entry: &str, method: &str) -> Result<Call
     let authorization = request.headers().get(header::AUTHORIZATION).and_then(|value| value.to_str().ok());
     a2a.authorize(authorization, peer, entry).map_err(|denied| {
         audit(None, entry, method, None, denied_outcome(denied));
-        match denied {
-            Denied::Unauthenticated => error::unauthenticated(),
-            Denied::NotLoopback => {
-                let body = json!({"error": {
-                    "code": 403,
-                    "status": "PERMISSION_DENIED",
-                    "message": "A2A tokens are taken on this device's loopback only",
-                    "details": [],
-                }});
-                json_as(StatusCode::FORBIDDEN, &body, "application/json")
-            }
-            Denied::NotFound => error::no_such_agent(),
-        }
+        refusal(denied)
     })
+}
+
+/// The caller asked again once its request's body is in ([`A2a::recheck`]),
+/// or the answer that refuses it now.
+fn readmit(a2a: &A2a, who: &Caller, entry: &str, method: &str) -> Result<Caller, Response> {
+    a2a.recheck(who).map_err(|denied| {
+        audit(Some(who), entry, method, None, denied_outcome(denied));
+        refusal(denied)
+    })
+}
+
+/// The answer that refuses a request for `denied`.
+fn refusal(denied: Denied) -> Response {
+    match denied {
+        Denied::Unauthenticated => error::unauthenticated(),
+        Denied::NotLoopback => {
+            let body = json!({"error": {
+                "code": 403,
+                "status": "PERMISSION_DENIED",
+                "message": "A2A tokens are taken on this device's loopback only",
+                "details": [],
+            }});
+            json_as(StatusCode::FORBIDDEN, &body, "application/json")
+        }
+        Denied::NotFound => error::no_such_agent(),
+    }
 }
 
 fn denied_outcome(denied: Denied) -> &'static str {
@@ -80,17 +100,29 @@ fn denied_outcome(denied: Denied) -> &'static str {
 
 /// One audit line (§6): when (the log's own time), who, which entry, which
 /// method, which task, and how it went. Nothing the request said, and no
-/// token.
+/// token. The entry, the method and the task are what the request named, so
+/// each is cut short and rid of control characters: a line says no more
+/// than it should, and nothing a request sends can forge another.
 fn audit(caller: Option<&Caller>, entry: &str, method: &str, task: Option<&str>, outcome: &str) {
     tracing::info!(
         target: "droppen_a2a::audit",
         caller = caller.map_or("-", |caller| caller.caller.as_str()),
-        entry,
-        method,
-        task = task.unwrap_or("-"),
+        entry = %audit_field(entry, 64),
+        method = %audit_field(method, 64),
+        task = %task.map_or_else(|| "-".to_string(), |task| audit_field(task, 128)),
         outcome,
         "a2a request"
     );
+}
+
+/// `text` as an audit field: without control characters, and at most
+/// `chars` characters of it.
+fn audit_field(text: &str, chars: usize) -> String {
+    let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+    if clean.chars().count() <= chars {
+        return clean;
+    }
+    clean.chars().take(chars.saturating_sub(1)).chain(['…']).collect()
 }
 
 /// Whether a method call without an `A2A-Version` (or with an empty one) is
@@ -136,11 +168,18 @@ fn check_version(headers: &HeaderMap, query: Option<&str>) -> Result<(), A2aErro
     ))
 }
 
-/// The body, at most [`MAX_BODY`] of it.
+/// The body, at most [`MAX_BODY`] of it, in at most [`BODY_TIMEOUT`].
 async fn body_of(request: Request) -> Result<gotcha::axum::body::Bytes, A2aError> {
-    gotcha::axum::body::to_bytes(request.into_body(), MAX_BODY)
-        .await
-        .map_err(|_| A2aError::unsupported(format!("a request body is at most {} MiB", MAX_BODY / (1024 * 1024))).with_code(ErrorCode::QuotaExceeded))
+    match tokio::time::timeout(BODY_TIMEOUT, gotcha::axum::body::to_bytes(request.into_body(), MAX_BODY)).await {
+        Ok(Ok(body)) => Ok(body),
+        Ok(Err(_)) => {
+            Err(A2aError::unsupported(format!("a request body is at most {} MiB", MAX_BODY / (1024 * 1024))).with_code(ErrorCode::QuotaExceeded))
+        }
+        Err(_) => Err(A2aError::new(
+            ErrorKind::InvalidRequest,
+            format!("the request body did not arrive within {} seconds", BODY_TIMEOUT.as_secs()),
+        )),
+    }
 }
 
 /* ── the card ────────────────────────────────────────────────────────── */
@@ -253,14 +292,18 @@ impl Framing {
     }
 }
 
-/// An SSE answer: `first`, then whatever `follow` yields.
-fn sse(first: StreamResponse, follow: Option<Follow>, framing: Framing) -> Response {
+/// An SSE answer: `first`, then whatever `follow` yields. It holds `slot`,
+/// one of its caller's open streams (§5), until it ends.
+fn sse(first: StreamResponse, follow: Option<Follow>, framing: Framing, slot: StreamSlot) -> Response {
     let items = stream::once(async move { first }).chain(stream::unfold(follow, |follow| async move {
         let mut follow = follow?;
         let item = follow.next().await?;
         Some((item, Some(follow)))
     }));
-    let events = items.map(move |item| Ok::<_, Infallible>(Event::default().data(framing.frame(&item))));
+    let events = items.map(move |item| {
+        let _held = &slot;
+        Ok::<_, Infallible>(Event::default().data(framing.frame(&item)))
+    });
     sse_response(events)
 }
 
@@ -270,13 +313,13 @@ fn sse_response(events: impl Stream<Item = Result<Event, Infallible>> + Send + '
 
 /// A sent message as a stream: the message alone, or the task's snapshot
 /// and its events.
-fn stream_of(sent: Sent, framing: Framing) -> (Response, Option<String>) {
+fn stream_of(sent: Sent, framing: Framing, slot: StreamSlot) -> (Response, Option<String>) {
     match sent {
-        Sent::Message(message) => (sse(StreamResponse::Message(message), None, framing), None),
+        Sent::Message(message) => (sse(StreamResponse::Message(message), None, framing, slot), None),
         Sent::Task { follow, .. } => {
             let task = follow.task_id().to_string();
             let first = StreamResponse::Task(follow.snapshot());
-            (sse(first, Some(*follow), framing), Some(task))
+            (sse(first, Some(*follow), framing, slot), Some(task))
         }
     }
 }
@@ -330,9 +373,13 @@ async fn jsonrpc(State(a2a): State<Arc<A2a>>, Path(entry): Path<String>, request
     let body = match body_of(request).await {
         Ok(body) => body,
         Err(error) => {
-            audit(Some(&who), &entry, "jsonrpc", None, "too_large");
+            audit(Some(&who), &entry, "jsonrpc", None, error_outcome(&error));
             return rpc_error(&null, &error);
         }
+    };
+    let who = match readmit(&a2a, &who, &entry, "jsonrpc") {
+        Ok(who) => who,
+        Err(refused) => return refused,
     };
     let call: Value = match serde_json::from_slice(&body) {
         Ok(call) => call,
@@ -410,16 +457,20 @@ async fn call_method(a2a: &Arc<A2a>, who: &Caller, method: &str, value: &Value, 
                 Err(error) => return (Err(error), None),
             };
             let streaming = method == "SendStreamingMessage";
-            match a2a.send(who, request, streaming).await {
-                Ok(sent) if streaming => {
-                    let (response, task) = stream_of(sent, Framing::JsonRpc(id.clone()));
+            let slot = match streaming.then(|| a2a.stream_slot(who)).transpose() {
+                Ok(slot) => slot,
+                Err(error) => return (Err(error), None),
+            };
+            match (a2a.send(who, request, streaming).await, slot) {
+                (Ok(sent), Some(slot)) => {
+                    let (response, task) = stream_of(sent, Framing::JsonRpc(id.clone()), slot);
                     (Ok(response), task)
                 }
-                Ok(sent) => {
+                (Ok(sent), None) => {
                     let (answer, task) = answer_of(sent).await;
                     (Ok(rpc_result(id, to_value(answer))), task)
                 }
-                Err(error) => (Err(error), None),
+                (Err(error), _) => (Err(error), None),
             }
         }
         "GetTask" => {
@@ -455,11 +506,11 @@ async fn call_method(a2a: &Arc<A2a>, who: &Caller, method: &str, value: &Value, 
                 Err(error) => return (Err(error), None),
             };
             let task = Some(request.id.clone());
-            let follow = a2a.subscribe(who, &request.id);
+            let follow = a2a.stream_slot(who).and_then(|slot| Ok((a2a.subscribe(who, &request.id)?, slot)));
             (
-                follow.map(|follow| {
+                follow.map(|(follow, slot)| {
                     let first = StreamResponse::Task(follow.snapshot());
-                    sse(first, Some(follow), Framing::JsonRpc(id.clone()))
+                    sse(first, Some(follow), Framing::JsonRpc(id.clone()), slot)
                 }),
                 task,
             )
@@ -651,7 +702,27 @@ async fn rest(State(a2a): State<Arc<A2a>>, Path((entry, path)): Path<(String, St
         return A2aError::new(ErrorKind::MethodNotFound, format!("no such operation: {method} {path}")).rest_response();
     };
     let task = op.task().map(str::to_string);
-    let (response, outcome) = match rest_call(&a2a, &who, op, request).await {
+    if let Err(error) = check_version(request.headers(), request.uri().query()) {
+        audit(Some(&who), &entry, name, task.as_deref(), error_outcome(&error));
+        return error.rest_response();
+    }
+    let query: std::collections::HashMap<String, String> = Query::try_from_uri(request.uri()).map(|Query(query)| query).unwrap_or_default();
+    let body = if matches!(op, Operation::Send | Operation::Stream | Operation::CreatePush(_)) {
+        match body_of(request).await {
+            Ok(body) => body,
+            Err(error) => {
+                audit(Some(&who), &entry, name, task.as_deref(), error_outcome(&error));
+                return error.rest_response();
+            }
+        }
+    } else {
+        gotcha::axum::body::Bytes::new()
+    };
+    let who = match readmit(&a2a, &who, &entry, name) {
+        Ok(who) => who,
+        Err(refused) => return refused,
+    };
+    let (response, outcome) = match rest_call(&a2a, &who, op, &query, &body).await {
         Ok((response, sent_task)) => (response, (sent_task.or(task), "ok")),
         Err(error) => (error.rest_response(), (task, error_outcome(&error))),
     };
@@ -659,39 +730,43 @@ async fn rest(State(a2a): State<Arc<A2a>>, Path((entry, path)): Path<(String, St
     response
 }
 
-async fn rest_call(a2a: &Arc<A2a>, who: &Caller, op: Operation, request: Request) -> Result<(Response, Option<String>), A2aError> {
-    check_version(request.headers(), request.uri().query())?;
-    let query: std::collections::HashMap<String, String> = Query::try_from_uri(request.uri()).map(|Query(query)| query).unwrap_or_default();
+async fn rest_call(
+    a2a: &Arc<A2a>,
+    who: &Caller,
+    op: Operation,
+    query: &std::collections::HashMap<String, String>,
+    body: &[u8],
+) -> Result<(Response, Option<String>), A2aError> {
     match op {
         Operation::Send | Operation::Stream => {
-            let body = body_of(request).await?;
             if body.iter().all(u8::is_ascii_whitespace) {
                 return Err(A2aError::invalid("a SendMessageRequest is required"));
             }
-            let send: SendMessageRequest = json_body(&body)?;
+            let send: SendMessageRequest = json_body(body)?;
             let streaming = op == Operation::Stream;
+            let slot = streaming.then(|| a2a.stream_slot(who)).transpose()?;
             let sent = a2a.send(who, send, streaming).await?;
-            if streaming {
-                let (response, task) = stream_of(sent, Framing::Rest);
+            if let Some(slot) = slot {
+                let (response, task) = stream_of(sent, Framing::Rest, slot);
                 return Ok((response, task));
             }
             let (answer, task) = answer_of(sent).await;
             Ok((rest_ok(to_value(answer)), task))
         }
-        Operation::List => Ok((rest_ok(to_value(a2a.list_tasks(who, &list_request(&query)?)?)), None)),
+        Operation::List => Ok((rest_ok(to_value(a2a.list_tasks(who, &list_request(query)?)?)), None)),
         Operation::Get(id) => {
-            let history_length = list_request(&query)?.history_length;
+            let history_length = list_request(query)?.history_length;
             Ok((rest_ok(to_value(a2a.get_task(who, &id, history_length)?)), None))
         }
         Operation::Cancel(id) => Ok((rest_ok(to_value(a2a.cancel_task(who, &id).await?)), None)),
         Operation::Subscribe(id) => {
+            let slot = a2a.stream_slot(who)?;
             let follow = a2a.subscribe(who, &id)?;
             let first = StreamResponse::Task(follow.snapshot());
-            Ok((sse(first, Some(follow), Framing::Rest), None))
+            Ok((sse(first, Some(follow), Framing::Rest, slot), None))
         }
         Operation::CreatePush(id) => {
-            let body = body_of(request).await?;
-            let mut config: TaskPushNotificationConfig = json_body(&body)?;
+            let mut config: TaskPushNotificationConfig = json_body(body)?;
             if !config.task_id.is_empty() && config.task_id != id {
                 return Err(A2aError::invalid("the body's taskId is not the path's"));
             }
@@ -733,6 +808,19 @@ mod tests {
         assert_eq!(op(Method::DELETE, "tasks/t1"), None);
         assert_eq!(op(Method::POST, "tasks/:cancel"), None, "no task id");
         assert_eq!(op(Method::GET, "elsewhere"), None);
+    }
+
+    #[test]
+    fn an_audit_field_is_short_and_one_line() {
+        assert_eq!(audit_field("SendMessage", 64), "SendMessage");
+        assert_eq!(
+            audit_field("Send\nMessage\r\u{1b}[2J", 64),
+            "SendMessage[2J",
+            "no control character survives"
+        );
+        let long = audit_field(&"t".repeat(500), 128);
+        assert_eq!(long.chars().count(), 128);
+        assert!(long.ends_with('…'));
     }
 
     #[test]

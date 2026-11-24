@@ -424,6 +424,16 @@ pub enum ErrorCode {
     /// `droppen.revoked`: the caller's token was revoked, its device taken
     /// out of `allowedDevices`, or the entry switched off.
     Revoked,
+    /// `droppen.context_closed`: the entry's source, directory, account,
+    /// permission mode or isolation changed since the context was opened
+    /// (§6): a follow-up opens a new context.
+    ContextClosed,
+    /// `droppen.context_not_found`: no such context, or not this caller's on
+    /// this entry; the two are not told apart (§6).
+    ContextNotFound,
+    /// `droppen.push_origin_not_allowed`: a push configuration's URL is not
+    /// at an origin the entry's `pushOrigins` lists (§6).
+    PushOriginNotAllowed,
 }
 
 impl ErrorCode {
@@ -439,6 +449,9 @@ impl ErrorCode {
             ErrorCode::DeviceRemoved => "droppen.device_removed",
             ErrorCode::QuotaExceeded => "droppen.quota_exceeded",
             ErrorCode::Revoked => "droppen.revoked",
+            ErrorCode::ContextClosed => "droppen.context_closed",
+            ErrorCode::ContextNotFound => "droppen.context_not_found",
+            ErrorCode::PushOriginNotAllowed => "droppen.push_origin_not_allowed",
         }
     }
 

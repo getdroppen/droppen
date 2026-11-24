@@ -475,6 +475,11 @@ pub const SCHEMA: &[&str] = &[
     // webhook is told every status change and artifact at least once. A row
     // an older binary writes reads 0: it is told its task from the start.
     "ALTER TABLE a2a_push_configs ADD COLUMN delivered_seq INTEGER NOT NULL DEFAULT 0",
+    // 14 — when an A2A context was closed (`docs/a2a.md` §6): its entry's
+    // source, directory, account, permission mode or isolation changed after
+    // it was opened, so no follow-up goes into its session again. `NULL`,
+    // which every row an older binary wrote reads, is open.
+    "ALTER TABLE a2a_contexts ADD COLUMN closed_ms INTEGER",
 ];
 
 /// Bring `conn` up to the newest step, and say nothing if it is already there.
@@ -834,6 +839,27 @@ mod tests {
             .read(|conn| conn.query_row("SELECT delivered_seq FROM a2a_push_configs WHERE task_id = 't'", [], |row| row.get(0)))
             .expect("the new column");
         assert_eq!(cursor, 0);
+    }
+
+    /// Step 14 leaves the contexts a step 13 database holds open.
+    #[test]
+    fn a_database_at_step_thirteen_keeps_its_contexts_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.db");
+        {
+            let conn = database_at(&path, 13);
+            conn.execute(
+                "INSERT INTO a2a_contexts (context_id, entry, caller, source, cwd, created_ms) VALUES ('c', 'main', 'a2a:token:t', 'claude', '/work', 1)",
+                [],
+            )
+            .expect("a context step 13 wrote");
+        }
+        let db = Db::open(&path);
+        assert_eq!(db.user_version(), SCHEMA.len() as i64);
+        let closed: Option<i64> = db
+            .read(|conn| conn.query_row("SELECT closed_ms FROM a2a_contexts WHERE context_id = 'c'", [], |row| row.get(0)))
+            .expect("the new column");
+        assert_eq!(closed, None);
     }
 
     /// The release gate: the binary this one replaces must still work against

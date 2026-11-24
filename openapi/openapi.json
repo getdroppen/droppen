@@ -1,6 +1,68 @@
 {
   "components": {
     "schemas": {
+      "A2aContextList": {
+        "description": "A page of the open contexts.",
+        "properties": {
+          "contexts": {
+            "description": "The newest first.",
+            "items": {
+              "$ref": "#/components/schemas/A2aContextSummary"
+            },
+            "type": "array"
+          },
+          "nextPageToken": {
+            "description": "The `pageToken` of the next page; `null` on the last.",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "contexts",
+          "nextPageToken"
+        ],
+        "type": "object"
+      },
+      "A2aContextSummary": {
+        "description": "An open context: a session an A2A client started, for the session list's\n\"from A2A\" mark.",
+        "properties": {
+          "caller": {
+            "description": "Who opened it: `a2a:token:<token id>`.",
+            "type": "string"
+          },
+          "callerName": {
+            "description": "The name of the token it came with, while that token is on file.",
+            "nullable": true,
+            "type": "string"
+          },
+          "contextId": {
+            "description": "The context.",
+            "type": "string"
+          },
+          "entry": {
+            "description": "The entry it came in through.",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "Its session, once known.",
+            "nullable": true,
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EntrySource",
+            "description": "Its session's CLI."
+          }
+        },
+        "required": [
+          "contextId",
+          "entry",
+          "caller",
+          "callerName",
+          "source",
+          "sessionId"
+        ],
+        "type": "object"
+      },
       "A2aEntry": {
         "description": "One A2A agent.",
         "properties": {
@@ -213,11 +275,17 @@
               "$ref": "#/components/schemas/A2aEntry"
             },
             "type": "array"
+          },
+          "publicBase": {
+            "description": "The base of the Agent Cards' interface URLs (`[a2a] public_base`);\n`null` when not set, and the card then uses the request's `Host`.",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
           "entries",
-          "defaultTemplate"
+          "defaultTemplate",
+          "publicBase"
         ],
         "type": "object"
       },
@@ -7714,6 +7782,75 @@
   },
   "openapi": "3.2.0",
   "paths": {
+    "/api/a2a/contexts": {
+      "get": {
+        "deprecated": false,
+        "description": "The open A2A contexts: the sessions A2A clients started, newest first.",
+        "operationId": "list_a2a_contexts",
+        "parameters": [
+          {
+            "description": "How many contexts a page holds: 1 to 500, 500 when not said.",
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many contexts a page holds: 1 to 500, 500 when not said."
+            }
+          },
+          {
+            "description": "Where to go on from: the previous page's `nextPageToken`.",
+            "in": "query",
+            "name": "pageToken",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Where to go on from: the previous page's `nextPageToken`."
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/A2aContextList"
+                }
+              }
+            },
+            "description": "A page of the open A2A contexts, the newest first"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A page size out of range, or a page token this server did not give"
+          }
+        },
+        "summary": "List open A2A contexts",
+        "tags": [
+          "a2a"
+        ]
+      }
+    },
     "/api/a2a/entries": {
       "get": {
         "deprecated": false,
@@ -7729,7 +7866,7 @@
                 }
               }
             },
-            "description": "Every A2A entry, and the default template"
+            "description": "Every A2A entry, the default template and the cards' public base"
           }
         },
         "summary": "List A2A entries",
@@ -7876,7 +8013,7 @@
       },
       "patch": {
         "deprecated": false,
-        "description": "Change an A2A entry. Switching it off cancels its unfinished tasks, and\ntaking a device out of `allowedDevices` cancels that device's.",
+        "description": "Change an A2A entry. Switching it off cancels its unfinished tasks,\ntaking a device out of `allowedDevices` cancels that device's, and a new\nsource, directory, account, permission mode or isolation closes its\ncontexts.",
         "operationId": "update_a2a_entry",
         "parameters": [
           {

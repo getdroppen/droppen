@@ -52,6 +52,7 @@ struct Script {
     resumes: HashMap<String, Result<Resumed, BackendError>>,
     entry_check: Option<String>,
     sessions: usize,
+    held_starts: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 /// The fake backend. Every call succeeds unless a test queued another
@@ -127,6 +128,14 @@ impl FakeBackend {
     /// [`Resumed::Working`].
     pub fn on_resume(&self, task_id: &str, result: Result<Resumed, BackendError>) {
         self.script().resumes.insert(task_id.to_string(), result);
+    }
+
+    /// From now on a start is written down and then waits, until the test
+    /// adds a permit to the semaphore this hands back: one per start.
+    pub fn hold_starts(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        self.script().held_starts = Some(gate.clone());
+        gate
     }
 
     /// Every entry check refuses with `message` (`None`: accepts again).
@@ -210,20 +219,28 @@ impl SessionBackend for FakeBackend {
     }
 
     fn start(&self, start: StartSession) -> BoxFuture<'_, Result<Started, BackendError>> {
-        let answer = {
+        let (answer, gate) = {
             let mut script = self.script();
             script.sessions += 1;
             let n = script.sessions;
-            script.starts.pop_front().unwrap_or_else(|| {
+            let answer = script.starts.pop_front().unwrap_or_else(|| {
                 Ok(Started {
                     session_id: Some(format!("session-{n}")),
                     cwd: start.task.session.cwd.clone(),
                     branch: None,
                 })
-            })
+            });
+            (answer, script.held_starts.clone())
         };
         self.record(Call::Start(start));
-        Box::pin(async move { answer })
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                if let Ok(permit) = gate.acquire().await {
+                    permit.forget();
+                }
+            }
+            answer
+        })
     }
 
     fn send(&self, send: SendToSession) -> BoxFuture<'_, Result<(), BackendError>> {

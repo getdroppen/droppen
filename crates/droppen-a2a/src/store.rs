@@ -1,5 +1,5 @@
 //! The A2A tables of the instance database (`docs/a2a.md` §4; the schema is
-//! steps 12 and 13 of [`droppen_instance::db::SCHEMA`]).
+//! steps 12 to 14 of [`droppen_instance::db::SCHEMA`]).
 //!
 //! Synchronous, like every store over [`Db`]: each call is one indexed query
 //! or one transaction over a single connection. A task and the events its
@@ -23,6 +23,10 @@ const EVENTS_KEPT_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 /// The pruning of finished tasks' events runs at most once an hour.
 static PRUNE: PruneGate = PruneGate::new(60 * 60 * 1000);
+
+/// How long a finished task is kept, with its events, its messages and its
+/// push configurations (§4); a context goes with its last task.
+pub const TASKS_KEPT_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// A token, as kept: the digest of its secret, never the secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +60,9 @@ pub struct ContextRow {
     pub session: SessionRef,
     /// When it was opened, epoch ms.
     pub created_ms: i64,
+    /// When it was closed, epoch ms: its entry was tightened after it was
+    /// opened (§6), and nothing goes into its session again.
+    pub closed_ms: Option<i64>,
 }
 
 /// A task, as kept.
@@ -132,6 +139,9 @@ pub struct NewTask {
     pub message_key: Option<(String, String)>,
     /// Its first event, numbered `task.seq`.
     pub event: EventRow,
+    /// The push configuration its first message came with: told the task
+    /// from its first event.
+    pub push: Option<PushRow>,
 }
 
 /// The filters of a task list.
@@ -157,6 +167,8 @@ pub struct Store {
 
 const TASK_COLUMNS: &str =
     "id, context_id, entry, caller, state, status_message, status_ms, artifacts, history, client_message_id, dispatched, seq, created_ms, updated_ms";
+
+const CONTEXT_COLUMNS: &str = "context_id, entry, caller, source, session_id, cwd, branch, created_ms, closed_ms";
 
 fn task_at(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
     let state: String = row.get(4)?;
@@ -194,6 +206,7 @@ fn context_at(row: &Row<'_>) -> rusqlite::Result<ContextRow> {
             branch: row.get(6)?,
         },
         created_ms: row.get(7)?,
+        closed_ms: row.get(8)?,
     })
 }
 
@@ -289,13 +302,20 @@ impl Store {
         })
     }
 
-    /// Replace an entry's settings.
-    pub fn replace_entry(&self, entry: &A2aEntry, now_ms: i64) -> rusqlite::Result<()> {
+    /// Replace an entry's settings; with `close_contexts`, close every open
+    /// context of it in the same write (§6).
+    pub fn replace_entry(&self, entry: &A2aEntry, now_ms: i64, close_contexts: bool) -> rusqlite::Result<()> {
         self.db.write(|tx| {
             tx.execute(
                 "UPDATE a2a_entries SET payload = ?2, updated_ms = ?3 WHERE id = ?1",
                 params![entry.id, json(entry), now_ms],
             )?;
+            if close_contexts {
+                tx.execute(
+                    "UPDATE a2a_contexts SET closed_ms = ?2 WHERE entry = ?1 AND closed_ms IS NULL",
+                    params![entry.id, now_ms],
+                )?;
+            }
             Ok(())
         })
     }
@@ -394,7 +414,7 @@ impl Store {
         self.db
             .read(|conn| {
                 conn.query_row(
-                    "SELECT context_id, entry, caller, source, session_id, cwd, branch, created_ms FROM a2a_contexts WHERE context_id = ?1",
+                    &format!("SELECT {CONTEXT_COLUMNS} FROM a2a_contexts WHERE context_id = ?1"),
                     [id],
                     context_at,
                 )
@@ -409,8 +429,7 @@ impl Store {
         self.db
             .read(|conn| {
                 conn.query_row(
-                    "SELECT context_id, entry, caller, source, session_id, cwd, branch, created_ms FROM a2a_contexts
-                      WHERE context_id = ?1 AND entry = ?2 AND caller = ?3",
+                    &format!("SELECT {CONTEXT_COLUMNS} FROM a2a_contexts WHERE context_id = ?1 AND entry = ?2 AND caller = ?3"),
                     params![id, entry, caller],
                     context_at,
                 )
@@ -439,8 +458,7 @@ impl Store {
         self.db
             .read(|conn| {
                 conn.query_row(
-                    "SELECT context_id, entry, caller, source, session_id, cwd, branch, created_ms FROM a2a_contexts
-                      WHERE source = ?1 AND session_id = ?2",
+                    &format!("SELECT {CONTEXT_COLUMNS} FROM a2a_contexts WHERE source = ?1 AND session_id = ?2"),
                     params![source.as_str(), session_id],
                     context_at,
                 )
@@ -468,6 +486,23 @@ impl Store {
             }
             Ok(())
         });
+    }
+
+    /// The open contexts, the newest first: `limit` of them after `after`
+    /// (the `(created_ms, context_id)` the previous page ended at).
+    pub fn open_contexts(&self, after: Option<(i64, String)>, limit: usize) -> Vec<ContextRow> {
+        let (ms, id) = after.unwrap_or((i64::MAX, String::new()));
+        self.db
+            .read(|conn| {
+                let mut statement = conn.prepare(&format!(
+                    "SELECT {CONTEXT_COLUMNS} FROM a2a_contexts
+                      WHERE closed_ms IS NULL AND (created_ms < ?1 OR (created_ms = ?1 AND context_id > ?2))
+                      ORDER BY created_ms DESC, context_id LIMIT ?3"
+                ))?;
+                let rows = statement.query_map(params![ms, id, limit as i64], context_at)?;
+                Ok(rows.filter_map(Result::ok).collect())
+            })
+            .unwrap_or_default()
     }
 
     /* ── tasks ───────────────────────────────────────────────────────── */
@@ -534,8 +569,7 @@ impl Store {
             }
             if let Some(context) = &new.context {
                 tx.execute(
-                    "INSERT INTO a2a_contexts (context_id, entry, caller, source, session_id, cwd, branch, created_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    &format!("INSERT INTO a2a_contexts ({CONTEXT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"),
                     params![
                         context.context_id,
                         context.entry,
@@ -544,12 +578,16 @@ impl Store {
                         context.session.session_id,
                         context.session.cwd,
                         context.session.branch,
-                        context.created_ms
+                        context.created_ms,
+                        context.closed_ms
                     ],
                 )?;
             }
             insert_task(tx, &new.task)?;
             insert_event(tx, &new.task.id, &new.event, new.task.created_ms)?;
+            if let Some(push) = &new.push {
+                insert_push(tx, push, true)?;
+            }
             Ok(None)
         });
         match outcome {
@@ -559,13 +597,15 @@ impl Store {
         }
     }
 
-    /// Write a task's new state and the events its change made.
-    pub fn save(&self, task: &TaskRow, events: &[EventRow]) -> rusqlite::Result<()> {
+    /// Write a task's new state and the events its change made; its history
+    /// too when `history` says it changed (a status message does not rewrite
+    /// it).
+    pub fn save(&self, task: &TaskRow, events: &[EventRow], history: bool) -> rusqlite::Result<()> {
         let prune = task.state.is_terminal() && PRUNE.due(task.updated_ms);
         self.db.write(|tx| {
             tx.execute(
-                "UPDATE a2a_tasks SET state = ?2, status_message = ?3, status_ms = ?4, artifacts = ?5, history = ?6,
-                        dispatched = ?7, seq = ?8, updated_ms = ?9
+                "UPDATE a2a_tasks SET state = ?2, status_message = ?3, status_ms = ?4, artifacts = ?5,
+                        dispatched = ?6, seq = ?7, updated_ms = ?8
                   WHERE id = ?1",
                 params![
                     task.id,
@@ -573,12 +613,14 @@ impl Store {
                     task.status_message.as_ref().map(json),
                     task.status_ms,
                     json(&task.artifacts),
-                    json(&task.history),
                     i64::from(task.dispatched),
                     task.seq,
                     task.updated_ms
                 ],
             )?;
+            if history {
+                tx.execute("UPDATE a2a_tasks SET history = ?2 WHERE id = ?1", params![task.id, json(&task.history)])?;
+            }
             for event in events {
                 insert_event(tx, &task.id, event, task.updated_ms)?;
             }
@@ -729,6 +771,40 @@ impl Store {
         .next()
     }
 
+    /// The tasks of an entry still waiting for a slot, oldest first, as
+    /// `(task, context, caller)`: their rows, histories and all, are read one
+    /// at a time as they go.
+    pub fn pending(&self, entry: &str) -> Vec<(String, String, String)> {
+        self.db
+            .read(|conn| {
+                let mut statement = conn.prepare(
+                    "SELECT id, context_id, caller FROM a2a_tasks WHERE entry = ?1 AND dispatched = 0 AND state = ?2 ORDER BY created_ms, id",
+                )?;
+                let rows = statement.query_map(params![entry, TaskState::Submitted.as_str()], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+                Ok(rows.filter_map(Result::ok).collect())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether a context has a task handed to the backend and not finished:
+    /// its session is being started, or runs a turn.
+    pub fn context_running(&self, context_id: &str) -> bool {
+        self.db
+            .read(|conn| {
+                conn.query_row(
+                    &format!(
+                        "SELECT EXISTS (SELECT 1 FROM a2a_tasks WHERE context_id = ?1 AND dispatched = 1 AND state NOT IN ({}))",
+                        terminal_states()
+                    ),
+                    [context_id],
+                    |row| row.get::<_, bool>(0),
+                )
+            })
+            .unwrap_or(false)
+    }
+
     /// How many of an entry's tasks hold a slot: handed to the backend and
     /// submitted or working.
     pub fn running(&self, entry: &str) -> usize {
@@ -757,6 +833,24 @@ impl Store {
             })
             .ok()
             .flatten()
+    }
+
+    /// Forget every task that ended before `before_ms` — its events, its
+    /// messages' keys and its push configurations with it — and every
+    /// context left with no task (§4). How many tasks went.
+    pub fn prune_finished(&self, before_ms: i64) -> rusqlite::Result<usize> {
+        let finished = format!("SELECT id FROM a2a_tasks WHERE state IN ({}) AND status_ms < ?1", terminal_states());
+        self.db.write(|tx| {
+            for table in ["a2a_task_events", "a2a_messages", "a2a_push_configs"] {
+                tx.execute(&format!("DELETE FROM {table} WHERE task_id IN ({finished})"), [before_ms])?;
+            }
+            let tasks = tx.execute(&format!("DELETE FROM a2a_tasks WHERE id IN ({finished})"), [before_ms])?;
+            tx.execute(
+                "DELETE FROM a2a_contexts WHERE NOT EXISTS (SELECT 1 FROM a2a_tasks t WHERE t.context_id = a2a_contexts.context_id)",
+                [],
+            )?;
+            Ok(tasks)
+        })
     }
 
     fn query_tasks(&self, clause: &str, args: &[&str]) -> Vec<TaskRow> {
@@ -795,24 +889,7 @@ impl Store {
     /// one added later is told what happens from then on, and an event
     /// written after this is never one it was not meant to get.
     pub fn put_push(&self, push: &PushRow, from_start: bool) -> rusqlite::Result<()> {
-        self.db.write(|tx| {
-            tx.execute(
-                "INSERT OR REPLACE INTO a2a_push_configs (task_id, id, url, token, auth_scheme, auth_credentials, created_ms, delivered_seq)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-                         CASE WHEN ?8 THEN 0 ELSE COALESCE((SELECT seq FROM a2a_tasks WHERE id = ?1), 0) END)",
-                params![
-                    push.task_id,
-                    push.id,
-                    push.url,
-                    push.token,
-                    push.auth_scheme,
-                    push.auth_credentials,
-                    push.created_ms,
-                    from_start
-                ],
-            )?;
-            Ok(())
-        })
+        self.db.write(|tx| insert_push(tx, push, from_start))
     }
 
     /// Where a push configuration's delivery stands: the number of the last
@@ -922,6 +999,26 @@ fn insert_task(tx: &rusqlite::Transaction<'_>, task: &TaskRow) -> rusqlite::Resu
             task.seq,
             task.created_ms,
             task.updated_ms
+        ],
+    )?;
+    Ok(())
+}
+
+/// Keep a push configuration, its cursor as [`Store::put_push`] says.
+fn insert_push(tx: &rusqlite::Transaction<'_>, push: &PushRow, from_start: bool) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT OR REPLACE INTO a2a_push_configs (task_id, id, url, token, auth_scheme, auth_credentials, created_ms, delivered_seq)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                 CASE WHEN ?8 THEN 0 ELSE COALESCE((SELECT seq FROM a2a_tasks WHERE id = ?1), 0) END)",
+        params![
+            push.task_id,
+            push.id,
+            push.url,
+            push.token,
+            push.auth_scheme,
+            push.auth_credentials,
+            push.created_ms,
+            from_start
         ],
     )?;
     Ok(())
