@@ -36,6 +36,19 @@ use super::answers::{AnswerBody, Refused, RefusedWithReason};
 
 /// The largest rpc request body the bridge buffers.
 const MAX_BODY: usize = 64 * 1024 * 1024;
+/// The largest request body the bridge buffers for an A2A proxy: the A2A
+/// server takes no more (`docs/a2a.md` §5), so a proxy cannot have this
+/// device hold more of one in memory either.
+pub const MAX_A2A_BODY: usize = 10 * 1024 * 1024;
+
+/// The largest request body the bridge buffers on a channel admitted for
+/// `access`.
+fn body_limit(access: Access) -> usize {
+    match access {
+        Access::Full => MAX_BODY,
+        Access::A2aOnly => MAX_A2A_BODY,
+    }
+}
 
 /// Request headers a device may set; everything else is dropped.
 const FORWARDED: [&str; 9] = [
@@ -400,8 +413,8 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         // The A2A server's settings: its entries decide what runs here and
         // how, and its tokens are credentials, so changing either is posture;
         // its task list is no more than the session list shows
-        // (`docs/a2a.md` §2). `/a2a/*` itself is never reached over a channel
-        // ([`never_from_cloud`]).
+        // (`docs/a2a.md` §2). `/a2a/*` itself is reached over an A2A proxy's
+        // channel only ([`A2A_ROUTES`], [`never_from_cloud`]).
         ("GET", "/api/a2a/entries", Posture),
         ("POST", "/api/a2a/entries", Posture),
         ("GET", "/api/a2a/entries/{id}", Posture),
@@ -411,6 +424,9 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("POST", "/api/a2a/tokens", Posture),
         ("DELETE", "/api/a2a/tokens/{id}", Posture),
         ("GET", "/api/a2a/tasks", Use),
+        // Which A2A proxies this device takes calls from, for the entry
+        // form: no more than "My devices" shows.
+        ("GET", "/api/a2a/devices", Use),
         // The local Droppen link (and, under the same prefix rule, the
         // gateway `/api/agg/*`): never over a channel.
         ("GET", "/api/cloud", Never),
@@ -772,7 +788,7 @@ pub async fn serve(incoming: Incoming, device: String, loopback: Arc<Loopback>, 
         let mut stream = stream;
         // A request's body first (up to `End`), as any answer does: the
         // device reads the answer once it has sent the whole request.
-        if matches!(class, StreamClass::Rpc | StreamClass::Blob) && request_body(&mut stream, MAX_BODY).await.is_none() {
+        if matches!(class, StreamClass::Rpc | StreamClass::Blob) && request_body(&mut stream, body_limit(standing.access)).await.is_none() {
             return;
         }
         return answer(stream, refused.answer()).await;
@@ -875,7 +891,7 @@ async fn local_rpc(mut stream: Stream, head: RequestHead, device: &str, local: &
 /// proxy's is marked as its own ([`KIND_HEADER`]), and may say which A2A
 /// version and extensions it speaks ([`A2A_FORWARDED`]).
 async fn rpc(mut stream: Stream, head: RequestHead, class: StreamClass, device: &str, access: Access, loopback: &Loopback, local: &dyn Local) {
-    let Some(body) = request_body(&mut stream, MAX_BODY).await else {
+    let Some(body) = request_body(&mut stream, body_limit(access)).await else {
         return;
     };
     let Some(stream) = still_served(stream, &head, class, device, local).await else {

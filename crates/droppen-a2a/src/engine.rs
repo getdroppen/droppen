@@ -37,6 +37,7 @@ use crate::backend::{
     Answer, AnswerValue, BackendError, BackendEvent, EntrySource, ErrorCode, EventInbox, Image, Prompt, Question, Resumed, SendKind, SendToSession,
     SessionBackend, SessionRef, StartSession, TaskRef, TurnOutcome, TurnResult,
 };
+use crate::devices::DeviceGate;
 use crate::entry::{fence, render, A2aEntry};
 use crate::error::{A2aError, ErrorKind};
 use crate::store::{ContextRow, CreateError, EventRow, NewTask, PushRow, Store, TaskFilter, TaskRow, TokenRow};
@@ -169,15 +170,28 @@ pub trait TaskEventSink: Send + Sync + 'static {
     fn resume(&self) {}
 }
 
-/// Who a request is: a token that proved itself, on an entry in its scope.
+/// Who a request is: a token that proved itself, on an entry in its scope;
+/// or an A2A proxy the device chain admits, on an entry that allows it
+/// (`docs/a2a.md` §7.3).
 #[derive(Debug, Clone)]
 pub struct Caller {
-    /// The token's id.
-    pub token_id: String,
-    /// `a2a:token:<token id>`.
+    /// What proved it.
+    pub principal: Principal,
+    /// `a2a:token:<token id>` or `a2a:device:<device id>`: what its tasks are
+    /// kept under.
     pub caller: String,
     /// The entry the request is for.
     pub entry: A2aEntry,
+}
+
+/// What a [`Caller`] proved itself with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Principal {
+    /// An A2A token, by its id.
+    Token(String),
+    /// An A2A proxy bridged in from the account's device chain, by its
+    /// device id: no token, ever.
+    Device(String),
 }
 
 /// Why a request was not let in.
@@ -247,6 +261,13 @@ struct ProgressGate {
     scheduled: bool,
 }
 
+/// Whether `entry` lets A2A proxy `device` call it: its `allowedDevices`
+/// names it, and it runs in no bypass permission mode (§6), which an entry
+/// saved before that rule might.
+fn entry_admits_device(entry: &A2aEntry, device: &str) -> bool {
+    entry.allowed_devices.iter().any(|allowed| allowed == device) && !crate::entry::is_bypass(entry.permission.0.as_deref())
+}
+
 /// What [`A2a::next_job`] hands the backend.
 struct Job {
     task: TaskRef,
@@ -260,6 +281,7 @@ struct Job {
 pub struct A2a {
     store: Store,
     backend: Arc<dyn SessionBackend>,
+    devices: Arc<dyn DeviceGate>,
     settings: Settings,
     cancel: CancellationToken,
     write: Mutex<()>,
@@ -556,11 +578,23 @@ fn answer_of(message: &Message, open: &str) -> Result<Answer, A2aError> {
 
 impl A2a {
     /// The server over `store`, driving sessions through `backend`, which
-    /// reports into `inbox`. Its event loop runs until `cancel`.
-    pub fn new(store: Store, backend: Arc<dyn SessionBackend>, inbox: EventInbox, settings: Settings, cancel: CancellationToken) -> Arc<Self> {
+    /// reports into `inbox`, and asking `devices` which A2A proxies the
+    /// device chain admits. Its event loop runs until `cancel`; so does its
+    /// watch on `devices`, which takes back what a proxy the chain no longer
+    /// admits has here ([`A2a::devices_changed`]).
+    pub fn new(
+        store: Store,
+        backend: Arc<dyn SessionBackend>,
+        devices: Arc<dyn DeviceGate>,
+        inbox: EventInbox,
+        settings: Settings,
+        cancel: CancellationToken,
+    ) -> Arc<Self> {
+        let mut changes = devices.changes();
         let a2a = Arc::new_cyclic(|me| A2a {
             store,
             backend,
+            devices,
             settings,
             cancel: cancel.clone(),
             write: Mutex::new(()),
@@ -582,6 +616,18 @@ impl A2a {
                 };
                 let (Some(event), Some(a2a)) = (event, weak.upgrade()) else { return };
                 a2a.on_backend_event(event).await;
+            }
+        });
+        let weak = Arc::downgrade(&a2a);
+        let stop = a2a.cancel.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    () = stop.cancelled() => return,
+                    changed = changes.changed() => if changed.is_err() { return },
+                }
+                let Some(a2a) = weak.upgrade() else { return };
+                a2a.devices_changed().await;
             }
         });
         a2a
@@ -651,10 +697,39 @@ impl A2a {
         }
         let entry = self.store.entry(entry_id).ok_or(Denied::NotFound)?;
         Ok(Caller {
-            token_id: row.id.clone(),
+            principal: Principal::Token(row.id.clone()),
             caller: crate::token::caller_of(&row.id),
             entry,
         })
+    }
+
+    /// Who an A2A proxy bridged in as `device` speaks for on `entry_id`
+    /// (`docs/a2a.md` §7.3): itself, `a2a:device:<id>`, while the device
+    /// chain admits it — no longer, and it is as unauthenticated as a revoked
+    /// token — and only on an entry whose `allowedDevices` lists it (and
+    /// that runs in no bypass permission mode, §6): any other entry is not
+    /// found, exactly as one that does not exist. It never needs a token, and
+    /// none counts for it.
+    pub fn authorize_device(&self, device: &str, entry_id: &str) -> Result<Caller, Denied> {
+        if !crate::devices::valid_id(device) || !self.devices.admits(device) {
+            return Err(Denied::Unauthenticated);
+        }
+        let entry = self
+            .store
+            .entry(entry_id)
+            .filter(|entry| entry_admits_device(entry, device))
+            .ok_or(Denied::NotFound)?;
+        Ok(Caller {
+            principal: Principal::Device(device.to_string()),
+            caller: crate::devices::caller_of(device),
+            entry,
+        })
+    }
+
+    /// The A2A proxies the device chain admits here, for the entry form's
+    /// `allowedDevices` (`GET /api/a2a/devices`).
+    pub fn admitted_devices(&self) -> Vec<crate::devices::A2aDevice> {
+        self.devices.admitted()
     }
 
     /// Write down that a token was used, at most once a minute.
@@ -690,16 +765,23 @@ impl A2a {
     }
 
     /// Whether `who` may still reach its entry: its token stands and has the
-    /// entry in scope, and the entry is there and on. Asked again before
-    /// every stream event (§6).
+    /// entry in scope — or, for an A2A proxy, the device chain still admits
+    /// it and the entry still allows it — and the entry is there and on.
+    /// Asked again before every stream event (§6).
     pub fn still_reaches(&self, who: &Caller) -> bool {
-        let token = self.store.token(&who.token_id);
-        let entry = self.store.entry(&who.entry.id);
-        token.is_some_and(|token| token.revoked_ms.is_none() && token.entries.contains(&who.entry.id)) && entry.is_some_and(|entry| entry.enabled)
+        let entry = self.store.entry(&who.entry.id).filter(|entry| entry.enabled);
+        match &who.principal {
+            Principal::Token(id) => {
+                let token = self.store.token(id);
+                token.is_some_and(|token| token.revoked_ms.is_none() && token.entries.contains(&who.entry.id)) && entry.is_some()
+            }
+            Principal::Device(device) => self.devices.admits(device) && entry.is_some_and(|entry| entry_admits_device(&entry, device)),
+        }
     }
 
     /// Whether `caller` (`a2a:token:<token id>` or `a2a:device:<id>`) may
     /// still reach `entry_id`: what a push asks before each delivery (§6).
+    /// An A2A proxy: while the device chain admits it, too.
     pub fn caller_reaches(&self, caller: &str, entry_id: &str) -> bool {
         let Some(entry) = self.store.entry(entry_id).filter(|entry| entry.enabled) else {
             return false;
@@ -710,10 +792,31 @@ impl A2a {
                 .token(token_id)
                 .is_some_and(|token| token.revoked_ms.is_none() && token.entries.contains(&entry.id));
         }
-        if let Some(device) = caller.strip_prefix("a2a:device:") {
-            return entry.allowed_devices.iter().any(|allowed| allowed == device);
+        if let Some(device) = crate::devices::device_of(caller) {
+            return self.devices.admits(device) && entry_admits_device(&entry, device);
         }
         false
+    }
+
+    /// The device chain moved, or the device link started or stopped
+    /// (`docs/a2a.md` §6, §7.3): every A2A proxy with unfinished tasks here
+    /// that the chain no longer admits — removed from the account, taken off
+    /// this device's A2A list, or this device no longer running AI — has
+    /// them taken back as a revoked token's are ([`A2a::revoke`]), and every
+    /// open stream asks again whether its caller still reaches its entry.
+    pub async fn devices_changed(&self) {
+        let gone: std::collections::BTreeSet<String> = self
+            .store
+            .open_tasks()
+            .into_iter()
+            .filter(|task| crate::devices::device_of(&task.caller).is_some_and(|device| !self.devices.admits(device)))
+            .map(|task| task.caller)
+            .collect();
+        self.revocations.send_modify(|generation| *generation += 1);
+        for caller in gone {
+            tracing::info!(%caller, "the device chain no longer admits an A2A proxy: taking back its tasks");
+            self.revoke(Some(&caller), None).await;
+        }
     }
 
     /// Take away what `caller` has on `entry_id` (every entry when `None`):

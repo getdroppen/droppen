@@ -155,7 +155,7 @@ impl RemoteHandApp {
         let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(drive.providers.clone())
             .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
         let cancel = CancellationToken::new();
-        let a2a = a2a_server(&paths, config, &a2a_sessions, cancel.clone())?;
+        let a2a = a2a_server(&paths, config, &a2a_sessions, &cloud, cancel.clone())?;
         Ok(AppState {
             a2a,
             acp_agents,
@@ -187,11 +187,13 @@ impl RemoteHandApp {
 }
 
 /// The A2A server over this instance's database (`docs/a2a.md`), its tasks
-/// run by `sessions` and reported through its inbox.
+/// run by `sessions` and reported through its inbox, its A2A proxies those
+/// the Droppen link's device chain admits (§7.3).
 fn a2a_server(
     paths: &Paths,
     config: &ConfigWrapper<AppConfig>,
     sessions: &Arc<crate::a2a_backend::A2aSessions>,
+    cloud: &Arc<droppen_cloud::Cloud>,
     cancel: CancellationToken,
 ) -> GotchaResult<Arc<droppen_a2a::A2a>> {
     let inbox = sessions
@@ -199,7 +201,8 @@ fn a2a_server(
         .ok_or_else(|| GotchaError::message("the A2A sessions' inbox was taken already"))?;
     let store = droppen_a2a::store::Store::new(droppen_instance::db::at(paths.instance_db()));
     let settings = droppen_a2a::Settings::from_env(droppen_http::SERVER_VERSION, config.app.a2a.public_base());
-    let a2a = droppen_a2a::A2a::new(store, sessions.clone(), inbox, settings, cancel);
+    let devices = crate::a2a_backend::LinkDevices::new(cloud.control.clone());
+    let a2a = droppen_a2a::A2a::new(store, sessions.clone(), devices, inbox, settings, cancel);
     // Every status change and artifact goes to the callers' webhooks from
     // here on; what an earlier run left undelivered goes at `A2a::resume`,
     // which only the instance's owner calls.

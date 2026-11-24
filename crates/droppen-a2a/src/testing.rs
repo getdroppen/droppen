@@ -250,3 +250,65 @@ impl SessionBackend for FakeBackend {
         Box::pin(async move { result })
     }
 }
+
+/// A [`crate::DeviceGate`] of the tests' own: it admits the A2A proxies a
+/// test lets in, and says so each time the test changes that, as the device
+/// chain moving would.
+pub struct FakeDevices {
+    admitted: Mutex<std::collections::BTreeSet<String>>,
+    changes: tokio::sync::watch::Sender<u64>,
+}
+
+impl FakeDevices {
+    /// A gate admitting `ids`.
+    pub fn admitting(ids: &[&str]) -> Arc<Self> {
+        Arc::new(Self {
+            admitted: Mutex::new(ids.iter().map(|id| id.to_string()).collect()),
+            changes: tokio::sync::watch::channel(0).0,
+        })
+    }
+
+    fn admitted_ids(&self) -> std::sync::MutexGuard<'_, std::collections::BTreeSet<String>> {
+        self.admitted.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Admit `id` from now, and say the chain moved.
+    pub fn admit(&self, id: &str) {
+        self.admitted_ids().insert(id.to_string());
+        self.changes.send_modify(|n| *n += 1);
+    }
+
+    /// Admit `id` no longer, and say the chain moved.
+    pub fn forget(&self, id: &str) {
+        self.admitted_ids().remove(id);
+        self.changes.send_modify(|n| *n += 1);
+    }
+
+    /// Admit `id` no longer, and say nothing: a chain change the A2A server
+    /// has not heard of yet, which every check it makes must see all the
+    /// same.
+    pub fn forget_quietly(&self, id: &str) {
+        self.admitted_ids().remove(id);
+    }
+}
+
+impl crate::DeviceGate for FakeDevices {
+    fn admits(&self, device: &str) -> bool {
+        self.admitted_ids().contains(device)
+    }
+
+    fn admitted(&self) -> Vec<crate::devices::A2aDevice> {
+        self.admitted_ids()
+            .iter()
+            .map(|id| crate::devices::A2aDevice {
+                id: id.clone(),
+                fingerprint: format!("fp-{id}"),
+                name: droppen_http::openapi_ext::Nullable(None),
+            })
+            .collect()
+    }
+
+    fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+}

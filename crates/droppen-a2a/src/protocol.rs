@@ -1,13 +1,18 @@
 //! `/a2a/*`: the Agent Card and the two bindings (`docs/a2a.md` §2), as a
 //! router of its own that the server nests at `/a2a`.
 //!
-//! Every request proves an A2A token first, whatever it asks for: no token
-//! is `401`, the same on every path; a token from anywhere but this device's
-//! loopback is `403`; an entry the token does not reach is `404`, exactly as
-//! one that does not exist. A local login counts for nothing here (the login
-//! guard lets `/a2a/*` through to this check, and this check reads only an
-//! A2A token). Each request then writes one audit line — when, who, which
-//! entry, which method, which task — and never what it said.
+//! Every request proves its caller first, whatever it asks for: an A2A
+//! token, or an A2A proxy bridged in over its channel (`docs/a2a.md` §7.3,
+//! the guard's [`BridgedDevice`] with `a2a` set, [`A2a::authorize_device`]).
+//! No token is `401`, the same on every path, and so is a proxy the device
+//! chain no longer admits; a token from anywhere but this device's loopback
+//! is `403`; an entry the caller does not reach is `404`, exactly as one that
+//! does not exist. A request bridged in is its device and nothing else: a
+//! token it carries counts for nothing. A local login counts for nothing
+//! here either (the login guard lets `/a2a/*` through to this check, and
+//! this check reads only an A2A token or a bridged A2A proxy). Each request
+//! then writes one audit line — when, who, which entry, which method, which
+//! task — and never what it said.
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -22,6 +27,8 @@ use gotcha::axum::routing::{any, get, post};
 use gotcha::axum::Router;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+
+use droppen_http::identity::BridgedDevice;
 
 use crate::backend::ErrorCode;
 use crate::engine::{A2a, Caller, Denied, Follow, Sent, MAX_BODY};
@@ -52,7 +59,15 @@ pub fn router(a2a: Arc<A2a>) -> Router {
 fn admit(a2a: &A2a, request: &Request, entry: &str, method: &str) -> Result<Caller, Response> {
     let peer = request.extensions().get::<ConnectInfo<SocketAddr>>().map(|info| info.0.ip());
     let authorization = request.headers().get(header::AUTHORIZATION).and_then(|value| value.to_str().ok());
-    a2a.authorize(authorization, peer, entry).map_err(|denied| {
+    let admitted = match request.extensions().get::<BridgedDevice>() {
+        // An A2A proxy over its channel: the device, and no token.
+        Some(device) if device.a2a => a2a.authorize_device(&device.id, entry),
+        // Any other device bridged in: the guard keeps it out; were one let
+        // through, it is nobody here.
+        Some(_) => Err(Denied::Unauthenticated),
+        None => a2a.authorize(authorization, peer, entry),
+    };
+    admitted.map_err(|denied| {
         audit(None, entry, method, None, denied_outcome(denied));
         match denied {
             Denied::Unauthenticated => error::unauthenticated(),

@@ -3029,8 +3029,23 @@ mod tests {
                             Ok(n) => request.extend_from_slice(&buf[..n]),
                         }
                     }
-                    let text = String::from_utf8_lossy(&request);
-                    seen.lock().unwrap().push(text.split("\r\n\r\n").next().unwrap_or_default().to_string());
+                    let text = String::from_utf8_lossy(&request).into_owned();
+                    let head = text.split("\r\n\r\n").next().unwrap_or_default().to_string();
+                    // The whole body before the answer, so a large one is not
+                    // cut off by it.
+                    let length: usize = head_headers(&head)
+                        .into_iter()
+                        .find(|(name, _)| name == "content-length")
+                        .and_then(|(_, value)| value.parse().ok())
+                        .unwrap_or(0);
+                    let mut got = request.len() - (head.len() + 4);
+                    while got < length {
+                        match tcp.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => got += n,
+                        }
+                    }
+                    seen.lock().unwrap().push(head);
                     let body = r#"{"ok":true}"#;
                     let reply = format!(
                         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -3242,6 +3257,24 @@ mod tests {
             assert!(!names.contains(&absent.to_string()), "{absent}: {head}");
         }
         assert!(head_headers(&head).contains(&("x-rh-agent-device".into(), "d-1".into())));
+    }
+
+    /// An A2A proxy's request body is held to what the A2A server takes
+    /// (10 MiB, `docs/a2a.md` §5): one past it is refused before the agent
+    /// buffers more, and never reaches the server; one within it does.
+    #[tokio::test]
+    async fn an_a2a_proxys_request_body_is_capped_at_ten_mib() {
+        let (addr, heads) = loopback_server().await;
+        let a = with_proxy(account_at(super::super::streams::Handle::detached(), addr), true);
+        let mut routes = Routes::new();
+        let on_proxy = connect(&a, &proxy(), "p-1", 1, &mut routes).await.expect("A2aOnly");
+        let path = "/a2a/agents/main/jsonrpc";
+        let over = vec![b'x'; bridge::MAX_A2A_BODY + 1];
+        assert_eq!(rpc(&on_proxy, "POST", path, &over).await, None, "refused, unanswered");
+        assert!(heads.lock().unwrap().is_empty(), "nothing reached the server");
+        let within = vec![b'x'; 1024 * 1024];
+        assert_eq!(rpc(&on_proxy, "POST", path, &within).await, Some((200, json!({"ok": true}))));
+        assert_eq!(heads.lock().unwrap().len(), 1);
     }
 
     /// "Who may call my A2A" holds for an open channel, as "who may control

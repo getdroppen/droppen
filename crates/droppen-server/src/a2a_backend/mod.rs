@@ -40,11 +40,14 @@
 //! (`store`), and [`SessionBackend::resume`] reads it against what the
 //! receipts, the questions and the drivers the boot adopted say now.
 
+mod devices;
 mod git;
 mod store;
 #[cfg(test)]
 mod tests;
 mod turn;
+
+pub use devices::LinkDevices;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
