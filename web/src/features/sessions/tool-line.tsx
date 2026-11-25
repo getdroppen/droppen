@@ -146,14 +146,16 @@ export const ToolLine = memo(function ToolLine({
   const description = (commandOnly ? item.toolName : item.text) || item.toolName || t("tool");
   const callDetail = item.detail ?? (commandOnly ? item.text : item.meta?.startsWith("$ ") ? item.meta : null);
   const status = exitCode !== undefined
-    ? `exit ${exitCode}`
+    ? isError
+      ? `${t("failed")} · exit ${exitCode}`
+      : `exit ${exitCode}`
     : isError
       ? t("failed")
       : ack || (item.background && !result)
-        ? t("bg")
-        : result
-          ? t("completed")
-          : null;
+        ? t("background")
+        : // A plain success says nothing: the row is finished and the next one
+          // speaks. Failures and background work keep a word of their own.
+          null;
   // Flat mode draws no per-turn header, so a run of fifty steps carries no time
   // anchor anywhere on screen; the row's own hover is the cheapest place to put
   // one back, and it goes on the row rather than on one span inside it so that
