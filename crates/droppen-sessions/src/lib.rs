@@ -29,6 +29,7 @@ pub mod loader;
 pub mod mentions;
 pub mod owned_sessions;
 pub mod pins;
+pub mod purge;
 pub mod reference;
 pub mod repo;
 pub mod resume;
@@ -51,6 +52,8 @@ use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::mtime_ms;
 pub use reference::SessionRef;
 pub use sources::{TranscriptSources, Transcripts};
+
+pub use purge::Purged;
 use account::AccountRef;
 use context::ModelIdExt;
 use util::TranscriptItem;

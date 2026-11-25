@@ -253,6 +253,25 @@ export function PreferencesSection() {
           </TabsList>
         </Tabs>
       </SettingRow>
+      <SettingRow className="mt-3" label={t("delete archived data after")} hint={t("archived sessions and their transcripts · checked hourly")}>
+        {prefs ? (
+          <SelectField
+            aria-label={t("delete archived data after")}
+            value={prefs.archivedRetention ?? "never"}
+            options={[
+              { value: "never", label: t("never") },
+              { value: "1d", label: t("1 day") },
+              { value: "3d", label: t("3 days") },
+              { value: "5d", label: t("5 days") },
+              { value: "7d", label: t("7 days") },
+              { value: "30d", label: t("30 days") },
+            ]}
+            onValueChange={(v) => save.mutate({ ...prefs, archivedRetention: v as Prefs["archivedRetention"] })}
+          />
+        ) : (
+          <LoadingValue />
+        )}
+      </SettingRow>
     </SettingsSection>
   );
 }

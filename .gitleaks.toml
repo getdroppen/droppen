@@ -49,3 +49,31 @@ targetRules = ["generic-api-key"]
 paths = ['''^web/test/setup-tools-live\.test\.tsx$''']
 regexTarget = "secret"
 regexes = ['''^sk-test-0123456789abcdef$''']
+
+# A2A's fixtures: a made-up proxy token and two synthetic `dpa_…` secrets. The
+# branch is not merged yet, but the history scan reads every fetched head, so
+# these keep every new pull request's scan green until it is. A real value in
+# the same file is still a finding (`condition = "AND"`).
+[[allowlists]]
+description = "the made-up A2A proxy token in its tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^crates/droppen-a2a-proxy/src/lib\.rs$''']
+regexTarget = "secret"
+regexes = ['''^0123456789abcdef0123456789abcdef$''']
+
+[[allowlists]]
+description = "synthetic A2A secrets in the settings fixture and its DOM test"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^web/ui-audit/a2a\.tsx$''']
+regexTarget = "secret"
+regexes = ['''^dpa_n4x8w2_Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEtcmVhbC1zZWNyZXQ$''']
+
+[[allowlists]]
+description = "the synthetic A2A secret in its DOM test"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^web/test/a2a-settings-dom\.test\.tsx$''']
+regexTarget = "secret"
+regexes = ['''^dpa_n4x8w2_c3ludGhldGljLW5vdC1hLXJlYWwtc2VjcmV0LWF0LWFsbA$''']

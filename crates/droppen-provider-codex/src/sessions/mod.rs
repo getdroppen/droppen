@@ -5,5 +5,6 @@
 pub mod codex;
 pub mod codex_claims;
 pub mod codex_tools;
+pub mod purge;
 #[cfg(test)]
 mod codex_resume_tests;

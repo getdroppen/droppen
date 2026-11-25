@@ -883,7 +883,15 @@ impl AcpRuns {
         tokio::fs::create_dir_all(&archived)
             .await
             .and(tokio::fs::rename(&from, archived.join(format!("{id}.jsonl"))).await)
-            .map_err(|error| ArchiveError(format!("cannot archive the ACP session: {error}")))
+            .map_err(|error| ArchiveError(format!("cannot archive the ACP session: {error}")))?;
+        // The file's mtime is the archive instant the retention purge reads.
+        // Best effort: a file that will not stamp is dated by whenever it was
+        // last written, which is close enough to keep it another pass.
+        let moved = archived.join(format!("{id}.jsonl"));
+        if let Ok(file) = std::fs::File::open(&moved) {
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
+        Ok(())
     }
 
     /// Start `agent` for the session `id` and open it: a new one in `cwd`, or

@@ -431,6 +431,17 @@ impl RemoteHandApp {
                 // sits behind the same gate. It only probes a login nothing has
                 // read for a while, and never one another process is probing.
                 droppen_accounts::quota::spawn_fallback_ticker(state.drive.quota.clone(), state.drive.accounts.clone(), state.cancel.clone());
+                // And the retention pass, which deletes archived session data
+                // once its window has passed. Under the same lock: two servers
+                // deleting one transcript is avoidable, and the pass also has
+                // to stop when the claim is lost.
+                crate::archived_retention::spawn(
+                    held.clone(),
+                    state.paths.clone(),
+                    state.drive.providers.clone(),
+                    state.refresh.clone(),
+                    state.cancel.clone(),
+                );
             }
         }
         let cancel = state.cancel.clone();
