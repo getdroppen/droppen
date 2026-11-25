@@ -445,7 +445,7 @@ function SettledQuestion({ question, entries }: { question: SessionQuestion; ent
  * behind the turn that is waiting for it. A composer that looked the same as
  * ever would leave the user to guess which of the two their message became.
  */
-export function AnswerNotice({ show }: { show: boolean }) {
+export function AnswerNotice({ show, blocked = false }: { show: boolean; blocked?: boolean }) {
   const { t } = useTranslation();
   if (!show) return null;
   return (
@@ -458,7 +458,9 @@ export function AnswerNotice({ show }: { show: boolean }) {
         ?
       </span>
       <span className="min-w-0 flex-1 break-words">
-        {t("the agent is waiting for your answer — what you send now goes in as the answer")}
+        {blocked
+          ? t("the agent is waiting for your answer — answer it in the card above")
+          : t("the agent is waiting for your answer — what you send now goes in as the answer")}
       </span>
     </div>
   );

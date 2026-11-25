@@ -256,6 +256,11 @@ test("the notice is drawn only when it is true", () => {
     visibleText(draw(<AnswerNotice show />)),
     /the agent is waiting for your answer — what you send now goes in as the answer/,
   );
+  // A pending question holds the composer's send, so the notice points at the card.
+  assert.match(
+    visibleText(draw(<AnswerNotice show blocked />)),
+    /the agent is waiting for your answer — answer it in the card above/,
+  );
 });
 
 /* ── the card ───────────────────────────────────────────────────────────── */

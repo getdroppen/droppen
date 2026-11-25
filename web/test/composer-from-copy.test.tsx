@@ -396,6 +396,53 @@ test("back on the machine after the copy, the row stays empty and nothing leaves
   assert.deepEqual(errors, []);
 });
 
+test("a pending question holds the send, with the reason, until it is answered in its card", async (t) => {
+  const posted: Record<string, unknown>[] = [];
+  reset(posted);
+  const { page, errors } = await mount(foldState(fromCopy(), stateFrame));
+  t.after(() => page.unmount());
+  await until("the composer", () => !!textarea());
+  await type("an answer drafted here");
+  await until("a sendable composer", () => !sendButton()!.hasAttribute("disabled"));
+
+  // The agent stops to ask, and the card in the transcript holds it.
+  const pending = {
+    requestId: "req-1",
+    toolUseId: "toolu_1",
+    questions: [{ question: "Which colour?", header: "Colour", multiSelect: false, options: [{ label: "Red", description: null }] }],
+    state: "pending",
+    answers: null,
+    response: null,
+    answeredBy: null,
+    answeredAt: null,
+    createdAt: "2026-11-08T09:00:00Z",
+  } as never;
+  await React.act(async () => setDetail(foldState(fromCopy(), { ...stateFrame, questions: [pending] })));
+  await until("the question's reason", () => textarea()!.getAttribute("placeholder") === "answer the question above first");
+  assert.equal(textarea()!.disabled, false, "the text stays editable");
+  assert.equal(sendButton()!.hasAttribute("disabled"), true, "sending waits for the card");
+  assert.match(
+    first((n) => n.hasAttribute("data-answer-notice"))?.textContent ?? "",
+    /answer it in the card above/,
+    "the notice points at the card rather than at the box",
+  );
+  await enter();
+  propsOf(sendButton()).onClick!();
+  await settle(150);
+  assert.deepEqual(posted, [], "neither Enter nor the button sent it");
+  assert.equal(textarea()!.value, "an answer drafted here", "and the draft is still where it was typed");
+
+  // The question is answered in the card: sending comes back.
+  await React.act(async () => setDetail(foldState(fromCopy(), { ...stateFrame, questions: [{ ...(pending as Record<string, unknown>), state: "answered" } as never] })));
+  await until("a sendable composer", () => !sendButton()!.hasAttribute("disabled"));
+  assert.match(textarea()!.getAttribute("placeholder") ?? "", /^send a message to this session…/);
+  assert.equal(first((n) => n.hasAttribute("data-answer-notice")), undefined, "and the notice is gone with the question");
+  propsOf(sendButton()).onClick!();
+  await until("the message", () => posted.length === 1);
+  assert.equal(posted[0]!.text, "an answer drafted here");
+  assert.deepEqual(errors, []);
+});
+
 test("another device in the local app's gateway, read from its copy, keeps the read-only line it had: no row at all", async (t) => {
   const posted: Record<string, unknown>[] = [];
   // The gateway shows another device through the same offline transport over its copy.
