@@ -260,7 +260,7 @@ async function optionsOf(scope: HTMLElement, label: string): Promise<(string | n
   return [...open()!.querySelectorAll('[role="option"]')].map((o) => o.textContent);
 }
 
-test("an entry other devices may call is offered no bypass mode", async () => {
+test("an entry that names its devices is offered the bypass modes", async () => {
   const sent: Sent[] = [];
   const called = entry({ id: "remote", name: "Remote", cwd: "/home/studio/code", allowedDevices: ["d-7Kq2"] });
   await mount(sent, { entries: [called], tokens: [] });
@@ -269,10 +269,10 @@ test("an entry other devices may call is offered no bypass mode", async () => {
   const form = () => $('[data-a2a-entry-form="remote"]')!;
   await until("the form", () => !!form());
   assert.match(form().querySelector("[data-a2a-allowed-devices]")!.textContent!, /d-7Kq2/, "the devices, read-only");
-  assert.deepEqual(await optionsOf(form(), "permission"), ["CLI default", "acceptEdits", "auto", "plan", "dontAsk"]);
+  assert.ok((await optionsOf(form(), "permission")).includes("bypassPermissions"));
 });
 
-test("an entry other devices may call that holds a bypass mode shows it, and cannot be saved with it", async () => {
+test("an entry with a bypass mode saves while it names its devices", async () => {
   const sent: Sent[] = [];
   const called = entry({ id: "remote", name: "Remote", cwd: "/home/studio/code", permission: "bypassPermissions", allowedDevices: ["d-7Kq2"] });
   await mount(sent, { entries: [called], tokens: [] });
@@ -280,20 +280,19 @@ test("an entry other devices may call that holds a bypass mode shows it, and can
   await click($('[data-a2a-entry="remote"] button[aria-label="edit entry"]'));
   const form = () => $('[data-a2a-entry-form="remote"]')!;
   await until("the form", () => !!form());
-  assert.match(form().querySelector("[data-a2a-problems]")!.textContent!, /a mode that bypasses permissions cannot be used while other devices may call this entry/);
-  assert.ok(byText('[data-a2a-entry-form="remote"] button', "save")!.hasAttribute("disabled"));
-  // What is saved is shown as such; no other bypass mode is offered beside it.
-  assert.deepEqual(await optionsOf(form(), "permission"), ["CLI default", "acceptEdits", "auto", "plan", "dontAsk", "bypassPermissions"]);
+  assert.equal(form().querySelector("[data-a2a-problems]"), null, "nothing is wrong");
+  assert.ok(!byText('[data-a2a-entry-form="remote"] button', "save")!.hasAttribute("disabled"));
+  assert.ok((await optionsOf(form(), "permission")).includes("bypassPermissions"), "what is saved stays offered");
 });
 
-test("an entry no other device calls is offered every mode, the bypass included", async () => {
+test("an entry that names no device is offered no bypass mode, and says so if one is held", async () => {
   const sent: Sent[] = [];
   await mount(sent, { entries: [DONT_DO], tokens: [] });
   await until("the entry", () => !!$('[data-a2a-entry="dont-do"]'));
   await click($('[data-a2a-entry="dont-do"] button[aria-label="edit entry"]'));
   await until("the form", () => !!$('[data-a2a-entry-form="dont-do"]'));
-  assert.equal($('[data-a2a-entry-form="dont-do"] [data-a2a-allowed-devices]'), null, "no devices, no line for them");
-  assert.deepEqual(await optionsOf($('[data-a2a-entry-form="dont-do"]')!, "permission"), ["CLI default", "acceptEdits", "auto", "plan", "dontAsk", "bypassPermissions"]);
+  assert.match($('[data-a2a-entry-form="dont-do"] [data-a2a-allowed-devices]')!.textContent!, /all A2A devices/);
+  assert.deepEqual(await optionsOf($('[data-a2a-entry-form="dont-do"]')!, "permission"), ["CLI default", "acceptEdits", "auto", "plan", "dontAsk"]);
 });
 
 test("each entry's Agent Card URL is this page's origin and /a2a/agents/<id>, to copy", async () => {

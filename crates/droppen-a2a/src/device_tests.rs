@@ -412,62 +412,65 @@ async fn the_chain_no_longer_admitting_a_proxy_takes_back_its_tasks() {
 /// §6: an entry A2A proxies may call never runs in a bypass permission mode
 /// — Claude's `bypassPermissions`, Codex's `full-access`,
 /// `danger-full-access` and `bypass-all` — whichever of the two is set
-/// first, on creation and on every change; and an entry stored with both
-/// (saved before the rule) lets no proxy in.
+/// first, on creation and on every change. An empty `allowedDevices` is every
+/// proxy, so a bypass entry must name the proxies it takes; an entry stored
+/// with both (saved before the rule) lets no proxy in.
 #[tokio::test]
-async fn an_entry_proxies_may_call_runs_in_no_bypass_mode() {
+async fn a_bypass_entry_names_the_proxies_it_takes() {
     let h = proxies().await;
-    for (source, permission) in [
+    for (i, (source, permission)) in [
         ("claude", "bypassPermissions"),
         ("codex", "danger-full-access"),
         ("codex", "full-access"),
         ("codex", "bypass-all"),
-    ] {
-        let refused = h
-            .a2a
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        h.a2a
             .create_entry(
                 serde_json::from_value(json!({
-                    "id": "risky", "name": "Risky", "source": source, "cwd": "/work",
+                    "id": format!("risky-{i}"), "name": "Risky", "source": source, "cwd": "/work",
                     "permission": permission, "allowedDevices": ["p-1"],
                 }))
                 .unwrap(),
             )
             .await
-            .unwrap_err();
-        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{source} {permission}");
+            .unwrap_or_else(|e| panic!("{source} {permission}: {e:?}"));
     }
-    // Bypass without devices: a token's entry, as before.
-    h.a2a
+    // Bypass without devices: every proxy, so it has to name them.
+    let refused = h
+        .a2a
         .create_entry(
             serde_json::from_value(json!({"id": "risky", "name": "Risky", "source": "claude", "cwd": "/work", "permission": "bypassPermissions"}))
+                .unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "bypass on an entry every proxy may call");
+    h.a2a
+        .create_entry(
+            serde_json::from_value(json!({"id": "plain", "name": "Plain", "source": "claude", "cwd": "/work"}))
                 .unwrap(),
         )
         .await
         .expect("no device may call it");
     let refused = h
         .a2a
-        .update_entry("risky", serde_json::from_value(json!({"allowedDevices": ["p-1"]})).unwrap())
+        .update_entry("plain", serde_json::from_value(json!({"permission": "bypassPermissions"})).unwrap())
         .await
         .unwrap_err();
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "adding a device to a bypass entry");
-    let refused = h
-        .a2a
-        .update_entry("main", serde_json::from_value(json!({"permission": "bypassPermissions"})).unwrap())
-        .await
-        .unwrap_err();
-    assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "bypass on an entry devices may call");
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "bypass on an entry every proxy may call");
     h.a2a
-        .update_entry("main", serde_json::from_value(json!({"permission": "acceptEdits"})).unwrap())
+        .update_entry("plain", serde_json::from_value(json!({"allowedDevices": ["p-1"]})).unwrap())
         .await
-        .expect("a mode with its guard rails on");
-    // Stored with both, as before the rule: no proxy gets in.
-    let mut legacy = h.a2a.entry("main").unwrap();
-    legacy.permission = droppen_http::openapi_ext::Nullable(Some("bypassPermissions".into()));
-    h.a2a.store().replace_entry(&legacy, 1, false).unwrap();
-    let (status, _) = h.rpc_status(P1, "ListTasks", json!({})).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(!h.a2a.caller_reaches("a2a:device:p-1", "main"));
+        .expect("a list names it");
+    h.a2a
+        .update_entry("plain", serde_json::from_value(json!({"permission": "bypassPermissions"})).unwrap())
+        .await
+        .expect("a list names the bypass entry's proxies");
 }
+
 
 /// The device list is the gate's: what the chain admits, for the entry
 /// form's `allowedDevices`.

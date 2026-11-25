@@ -470,10 +470,9 @@ impl AgentState {
             return Vec::new();
         };
         chain
-            .a2a_accept(&self.machine)
-            .iter()
-            .filter(|id| self.takes_a2a_calls_from(id))
-            .filter_map(|id| chain.a2a_device(id))
+            .devices()
+            .filter_map(|d| chain.a2a_device(&d.info.id))
+            .filter(|d| self.takes_a2a_calls_from(&d.info.id))
             .map(|d| {
                 (
                     d.info.id.clone(),

@@ -46,14 +46,15 @@ export function isBypass(permission: string | null | undefined): boolean {
 }
 
 /**
- * The modes an entry of `source` may be given. An entry other devices may
- * call (`allowedDevices`) is offered no bypass mode: a device that reaches it
- * from afar must not be able to run anything at all here. The mode it holds
+ * The modes an entry of `source` may be given. A bypass mode needs the entry
+ * to name the proxies it takes (`allowedDevices`): an empty list is every
+ * proxy, and a device that reaches it from afar must not be able to run
+ * anything at all here. The mode it holds
  * now is kept in the list, so the form shows what is saved, even when it is
  * one the rule now refuses ({@link entryProblems} says so).
  */
 export function permissionOptions(source: "claude" | "codex", allowedDevices: readonly string[], current = ""): string[] {
-  const offered = ENTRY_PERMISSIONS[source].filter((mode) => allowedDevices.length === 0 || !isBypass(mode));
+  const offered = ENTRY_PERMISSIONS[source].filter((mode) => allowedDevices.length > 0 || !isBypass(mode));
   return current && !offered.includes(current) ? [...offered, current] : offered;
 }
 
@@ -180,7 +181,7 @@ export const ENTRY_PROBLEM_WORD: Record<EntryProblem, string> = {
   name: "give it a name",
   acpAgent: "choose the ACP agent",
   cwd: "choose the directory its sessions start in",
-  bypassWithDevices: "a mode that bypasses permissions cannot be used while other devices may call this entry",
+  bypassWithDevices: "a mode that bypasses permissions needs the entry to name the A2A devices it takes (an empty list is every device)",
   pushOrigins: "a push origin is https://host or https://host:port",
 };
 
@@ -190,7 +191,7 @@ export function entryProblems(form: EntryForm): EntryProblem[] {
   if (!form.name.trim()) problems.push("name");
   if (form.source === "acp" && !form.acpAgent) problems.push("acpAgent");
   if (!form.cwd.trim().startsWith("/")) problems.push("cwd");
-  if (form.source !== "acp" && form.allowedDevices.length > 0 && isBypass(form.permission)) problems.push("bypassWithDevices");
+  if (form.source !== "acp" && form.allowedDevices.length === 0 && isBypass(form.permission)) problems.push("bypassWithDevices");
   if (parseOrigins(form.pushOrigins).bad.length > 0) problems.push("pushOrigins");
   return problems;
 }

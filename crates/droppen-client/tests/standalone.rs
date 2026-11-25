@@ -448,18 +448,17 @@ async fn each_failure_is_sorted_as_the_proxy_needs_it() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_host_that_stopped_accepting_the_device_is_a_refusal_for_its_chain_to_judge() {
-    // The hub trims the ticket's hosts to whom the chain lets the device
-    // reach: no ticket names the host, and the relay refuses the `OPEN`.
+async fn a_paused_call_is_a_refusal_for_its_chain_to_judge() {
+    // A pause holds the call: the hub trims the ticket's hosts to whom the
+    // chain lets the device reach, so no ticket names the host, and the relay
+    // refuses the `OPEN`.
     let mut stand = Stand::new(echo()).await;
     stand.append(
-        vec![
-            Action::SetA2aAccept {
-                host: HOST.into(),
-                devices: Vec::new(),
-            },
-            Account::host_key(1),
-        ],
+        vec![Action::RenewalPause {
+            op: [0x88; 16],
+            phase: droppen_proto::chain::PausePhase::Start,
+            removals: vec![(HOST.into(), vec![PROXY.into()])],
+        }],
         true,
     );
     stand.device.sync_chain().await.unwrap();

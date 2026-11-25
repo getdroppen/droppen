@@ -261,7 +261,14 @@ test("a machine on an old key is amber, needs-you; a refused device keeps its ke
 });
 
 test("every string these screens use is translated into zh-CN, zh-TW and ja", () => {
-  const files = ["devices.tsx", "account-alerts.tsx", "add-device.tsx", "host-control.tsx", "this-device.tsx", "rotation-report.tsx", "renewal.tsx", "add-computer.tsx", "pairing-screen.tsx", "recovery.tsx", "qr.tsx", "ui.tsx", "cloud-app.tsx", "auth-screen.tsx", "cloud-bar.tsx", "machine-name.tsx", "device-row.tsx", "my-devices.tsx", "email-verify.tsx", "plan.tsx", "onboarding-hints.tsx", "browser-support.tsx"].map((f) => readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8"));
+  const files = ["devices.tsx", "account-alerts.tsx", "add-device.tsx", "host-control.tsx", "this-device.tsx", "rotation-report.tsx", "renewal.tsx", "add-computer.tsx", "pairing-screen.tsx", "recovery.tsx", "qr.tsx", "ui.tsx", "cloud-app.tsx", "auth-screen.tsx", "cloud-bar.tsx", "machine-name.tsx", "device-row.tsx", "my-devices.tsx", "email-verify.tsx", "plan.tsx", "onboarding-hints.tsx", "browser-support.tsx", "add-a2a-proxy.tsx"].map((f) => {
+    try {
+      return readFileSync(new URL(`../src/features/cloud/${f}`, import.meta.url), "utf8");
+    } catch {
+      // A screen another branch carries (the cloud A2A page).
+      return "";
+    }
+  });
   const keys = new Set<string>();
   for (const src of files) for (const m of src.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)*)"/g)) keys.add(m[1]!);
   assert.ok(keys.size > 50);
@@ -1523,11 +1530,12 @@ test("removing an A2A proxy a device takes calls from names that device as expos
   assert.match(box(opened.html), /aria-checked="true"/);
   assert.match(box(opened.html), /aria-disabled="true"/);
   assert.ok(opened.html.includes("also rotate the content keys (always, for an A2A proxy a device took calls from)"));
-  // A proxy no device takes calls from: no exposure to name, the rotation a choice again.
+  // An empty accept list changes nothing: the list no longer gates, so the
+  // exposure stands.
   await a.setA2aAccept("m-1", [], new FakeCourier());
   const none = drive(DevicesPanel, props, [(tree) => (rowOf(tree, proxy).props.onRemove as () => void)()]);
-  assert.doesNotMatch(none.html, /data-testid="remove-a2a-exposed"/);
-  assert.doesNotMatch(box(none.html), /aria-disabled="true"/, "ticked by default, and a choice");
+  assert.match(none.html, /data-testid="remove-a2a-exposed"/);
+  assert.match(box(none.html), /aria-disabled="true"/);
 });
 
 test("a device an A2A proxy that could call it no longer can says so on its row: it renews its identity key, or (one that cannot) should be added again", async () => {

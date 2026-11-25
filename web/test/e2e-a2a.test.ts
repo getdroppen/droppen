@@ -252,12 +252,13 @@ test("setA2aAccept: an admin's, for a current host, naming current A2A proxies, 
   assert.deepEqual(state.a2aAccept(plain.id), [], "none by default");
 });
 
-test("mayCallA2a: only a current A2A proxy, only to a current host whose list names it", async () => {
+test("mayCallA2a: a current A2A proxy, to any current host — a list no longer gates", async () => {
   const { state, admin, host, plain, x, y, push } = await fixture();
-  assert.throws(() => state.mayCallA2a(x.id, host.id), kind("notAccepted"), "none by default");
+  state.mayCallA2a(x.id, host.id);
+  state.mayCallA2a(y.id, host.id);
   await push({ type: "setA2aAccept", host: host.id, devices: [x.id] });
   state.mayCallA2a(x.id, host.id);
-  assert.throws(() => state.mayCallA2a(y.id, host.id), kind("notAccepted"), "not on the list");
+  state.mayCallA2a(y.id, host.id);
   assert.throws(() => state.mayCallA2a(admin.id, host.id), kind("notAccepted"), "an admin is no A2A proxy");
   assert.throws(() => state.mayCallA2a(plain.id, host.id), kind("notAccepted"));
   assert.throws(() => state.mayCallA2a(x.id, plain.id), kind("notAccepted"), "not a host");
@@ -267,7 +268,10 @@ test("mayCallA2a: only a current A2A proxy, only to a current host whose list na
     state.hostsAcceptingA2a(x.id).map((d) => d.info.id),
     [host.id],
   );
-  assert.deepEqual(state.hostsAcceptingA2a(y.id), []);
+  assert.deepEqual(
+    state.hostsAcceptingA2a(y.id).map((d) => d.info.id),
+    [host.id],
+  );
   assert.deepEqual(state.hostsAcceptingA2a(admin.id), []);
 });
 
@@ -325,7 +329,7 @@ test("a renewal pause holds an A2A proxy's calls as it holds control; its end gi
   }
 });
 
-test("a removal drops the proxy from every A2A list; a host that stops running AI drops its own", async () => {
+test("a removal keeps the lists exact for display; a host that stops running AI drops its own", async () => {
   const { state, host, x, y, push, tryPush } = await fixture();
   await push({ type: "setA2aAccept", host: host.id, devices: [x.id, y.id] });
   const copy = state.clone();
@@ -345,7 +349,7 @@ test("a removal drops the proxy from every A2A list; a host that stops running A
   await f.push({ type: "setHost", id: f.host.id, host: true });
   await f.push({ type: "keyEpochs", user: null, machines: [{ machine: f.host.id, epoch: 1, hash: await machineKeyCommit("acct-a2a", f.host.id, 1, new Uint8Array(32).fill(2)) }] });
   assert.deepEqual(f.state.a2aAccept(f.host.id), [], "restarting starts from none, never silently from before");
-  assert.throws(() => f.state.mayCallA2a(f.x.id, f.host.id), kind("notAccepted"));
+  f.state.mayCallA2a(f.x.id, f.host.id);
 });
 
 test("an A2A loss exposes the host until a renewal of its identity key staged after the loss — one staged before does not clear it", async () => {
