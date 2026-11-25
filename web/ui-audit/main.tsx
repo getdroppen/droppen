@@ -1254,7 +1254,9 @@ async function mountSessionFromCopy(): Promise<void> {
 const auditPath = "/home/studio/projects/demo";
 const AUDIT_MACHINE = "studio-mac";
 const AUDIT_SESSION = "9f4c1d20-6a3b-4c7e-8d15-2b0a5e9f3c71";
-const AUDIT_TITLE = `<cross-session-message from="uds:/tmp/droppen-ff.sock" from-name="droppen-ff" from-mode="prompting">`;
+const AUDIT_ENVELOPE = `<cross-session-message from="uds:/tmp/droppen-ff.sock" from-name="droppen-ff" from-mode="prompting">`;
+/** What the server's `title_line` makes of that envelope: the sender's words. */
+const AUDIT_TITLE = "The cursor argument is agreed in #318; keep the blocked row until it lands.";
 const auditItem = (n: number, role: string, kind: string, text: string, more: Record<string, unknown> = {}) => ({
   ...copyItem(n, role as never, kind as never, text, more),
   ...more,
@@ -1365,6 +1367,7 @@ const AUDIT_MORE = [
     detail: "git diff main...origin/status-table-paging -- docs/status.md",
   }),
   auditItem(38, "user", "tool_result", "the branch adds the cursor argument and leaves every existing caller alone", { resultOf: "a-11" }),
+  auditItem(38.5, "user", "text", `${AUDIT_ENVELOPE}\n\nThe cursor argument is agreed in #318; keep the blocked row until it lands.\n</cross-session-message>`),
 ];
 const auditPhase = query.get("phase") === "after" ? [...AUDIT_BASE, ...AUDIT_MORE] : AUDIT_BASE;
 const auditWorking = query.get("state") === "working";

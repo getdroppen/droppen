@@ -151,6 +151,8 @@ export const zhCN: Record<string, string> = {
   "command output": "命令输出",
   "composer send shortcut": "输入框发送快捷键",
   "contains a failed tool call": "包含失败的工具调用",
+  "cross-session message": "来自其他会话的消息",
+  "cross-session message from {{name}}": "来自 {{name}} 的跨会话消息",
   "context compacted": "上下文已压缩",
   "copy session id": "复制会话 ID",
   "copy agent name": "复制 agent 名称",

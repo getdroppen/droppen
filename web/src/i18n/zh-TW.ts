@@ -151,6 +151,8 @@ export const zhTW: Record<string, string> = {
   "command output": "命令輸出",
   "composer send shortcut": "輸入框傳送快捷鍵",
   "contains a failed tool call": "包含失敗的工具呼叫",
+  "cross-session message": "來自其他工作階段的消息",
+  "cross-session message from {{name}}": "來自 {{name}} 的跨工作階段訊息",
   "context compacted": "上下文已壓縮",
   "copy session id": "複製工作階段 ID",
   "copy agent name": "複製 agent 名稱",

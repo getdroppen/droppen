@@ -72,23 +72,36 @@ export function SystemLine({
             : FAILED_WORDS.test(headline)
               ? "text-danger"
               : "text-warn-fg";
+  const line = cn(
+    "-mx-1 rounded px-1 font-mono text-2xs",
+    // Two lines, not one truncated one: the answer to a question the agent
+    // asked used to be cut off right after the question on a phone, where
+    // there is no hover to read the rest from.
+    "line-clamp-2 break-words",
+    tone,
+  );
+  // A line with no more to give is not a fold: an `Interrupted` used to open
+  // onto nothing.
+  if (!body) {
+    return (
+      <div className={rowClass}>
+        <span className={line}>{headline}</span>
+      </div>
+    );
+  }
   return (
     <details className={rowClass}>
       <summary
         title={joined ? t("reported on the card that launched it, above") : undefined}
-        className={cn(
-          "-mx-1 cursor-pointer list-none truncate rounded px-1 font-mono text-2xs hover:bg-hover",
-          tone,
-        )}
+        className={cn(line, "cursor-pointer list-none hover:bg-hover")}
       >
         {headline}
       </summary>
-      {body &&
-        (item.background ? (
-          <Markdown text={body} className="mt-1 mb-1 text-muted" />
-        ) : (
-          <div className="mt-1 mb-1 text-2xs leading-4 whitespace-pre-wrap text-faint">{item.text}</div>
-        ))}
+      {item.background ? (
+        <Markdown text={body} className="mt-1 mb-1 text-muted" />
+      ) : (
+        <div className="mt-1 mb-1 text-2xs leading-4 whitespace-pre-wrap text-faint">{item.text}</div>
+      )}
     </details>
   );
 }

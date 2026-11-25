@@ -569,3 +569,29 @@ test("the run a live turn is writing into stays open", () => {
 test("a run whose turn has ended is folded again", () => {
   assert.doesNotMatch(draw(<StepGroup items={steps(4)} base={0} />), /<details[^>]*\bopen=/);
 });
+
+/* ── words Droppen put in the user's place ─────────────────────────────── */
+
+test("a notice Droppen wrote is a system line, not the user speaking", () => {
+  const html = draw(
+    <ItemBlock item={item({ kind: "text", role: "user", text: "[Droppen] This session switched from account a to b.\n\nContinue from the interruption." })} />,
+  );
+  assert.doesNotMatch(html, /USER/);
+  assert.match(html, /This session switched from account a to b\./);
+  assert.doesNotMatch(html, /\[Droppen\]/, "the marker is the styling, not a word to read");
+});
+
+test("a cross-session message names its sender instead of showing its envelope", () => {
+  const html = draw(
+    <ItemBlock
+      item={item({
+        kind: "text",
+        role: "user",
+        text: '<cross-session-message from="uds:/tmp/ff.sock" from-name="droppen-ff">\n\nRun the soak again.\n</cross-session-message>',
+      })}
+    />,
+  );
+  assert.doesNotMatch(html, /&lt;cross-session-message/);
+  assert.match(html, /cross-session message from droppen-ff/);
+  assert.match(html, /Run the soak again\./);
+});

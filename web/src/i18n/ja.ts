@@ -151,6 +151,8 @@ export const ja: Record<string, string> = {
   "command output": "コマンド出力",
   "composer send shortcut": "送信ショートカット",
   "contains a failed tool call": "失敗したツール呼び出しを含みます",
+  "cross-session message": "別のセッションからのメッセージ",
+  "cross-session message from {{name}}": "{{name}} からのセッション間メッセージ",
   "context compacted": "コンテキストを圧縮しました",
   "copy session id": "セッション ID をコピー",
   "copy agent name": "エージェント名をコピー",

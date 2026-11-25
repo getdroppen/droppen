@@ -16,6 +16,7 @@ import { asyncLaunchAckOf, latchOutcome, subagentOutcome, type AgentOutcome } fr
 import { QuestionCard } from "@/features/sessions/question-card";
 import type { SessionQuestion } from "@/features/sessions/session-questions";
 import { CommandChip, CompactDivider, ModelFallbackNotice, modelFallbackOf, SyntheticNotice } from "@/features/sessions/transcript-notices";
+import { crossSessionOf, droppenNoticeOf } from "@/features/sessions/cross-session";
 import { countSteps, foldClassOf, modelOf, pairToolResults } from "@/features/sessions/transcript-groups";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
@@ -235,7 +236,7 @@ function AgentResultLine({ result }: { result: TranscriptItem }) {
     <span
       className={cn(
         "flex min-w-0 items-baseline gap-1.5 font-mono text-2xs",
-        result.isError ? "text-danger/90" : "text-faint",
+        result.isError ? "text-danger" : "text-faint",
       )}
     >
       <span className="shrink-0">↳</span>
@@ -472,6 +473,48 @@ const ItemRow = memo(function ItemRow({
   }
 
   const role = ROLE_STYLE[item.role] ?? ROLE_STYLE.system!;
+
+  // Two things arrive on the user side that the person did not type: Droppen's
+  // own notices, and another session's message in its envelope. Both keep the
+  // user role in the record, and both read as the user speaking until they are
+  // drawn for what they are.
+  if (item.role === "user" && item.kind === "text") {
+    const notice = droppenNoticeOf(item.text);
+    if (notice !== null) {
+      return <SystemLine item={{ ...item, text: notice }} rowClass={rowClass} />;
+    }
+    const cross = crossSessionOf(item.text);
+    if (cross) {
+      return (
+        <div className={cn(inBubble ? "py-1" : "border-b border-border px-4 pt-2 pb-2.5", !inBubble && "bg-raised")}>
+          {inBubble ? (
+            model &&
+            !modelSaidAbove && (
+              <div className="mb-0.5 min-w-0 font-mono text-[10px] break-words text-muted" title={model}>
+                {model}
+              </div>
+            )
+          ) : (
+            <MessageHead role={role} model={model} timestamp={item.timestamp} />
+          )}
+          {/* Who sent it, where the envelope used to be raw text. */}
+          <div className="mb-1 flex min-w-0">
+            <span
+              data-label=""
+              className="max-w-full truncate border border-border px-1.5 py-px font-mono text-[10px] text-muted"
+              title={cross.from ?? undefined}
+            >
+              {cross.from ? t("cross-session message from {{name}}", { name: cross.from }) : t("cross-session message")}
+            </span>
+          </div>
+          <Markdown
+            text={cross.body}
+            className={inBubble ? undefined : "max-w-none [&>*:not(div):not(pre)]:max-w-[48em]"}
+          />
+        </div>
+      );
+    }
+  }
   return (
     <div
       className={cn(
