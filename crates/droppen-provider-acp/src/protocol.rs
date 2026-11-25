@@ -152,6 +152,15 @@ pub struct ToolCallUpdate {
     /// Where it is now.
     #[serde(default)]
     pub status: Option<ToolCallStatus>,
+    /// What the agent calls it, when it left that to the first update.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What it is for, when the first update is the one that says it.
+    #[serde(default)]
+    pub kind: Option<ToolKind>,
+    /// The tool's input, when the first update is the one that carries it.
+    #[serde(default)]
+    pub raw_input: Option<Value>,
     /// What it produced, for the user to read.
     #[serde(default)]
     pub content: Option<Vec<ToolCallContent>>,

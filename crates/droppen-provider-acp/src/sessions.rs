@@ -32,8 +32,10 @@
 //!   transcript reads as messages and only a turn still streaming reads as
 //!   deltas. It is also the one line [`droppen_sessions::attention`] counts as the agent
 //!   speaking, once per message rather than once per token.
-//! * `tool_call` — `id`, `title`, `kind` and `input`; `tool_result` — `id`,
-//!   `status` and `output`.
+//! * `tool_call` — `id`, `title`, `kind` and `input`; one that also carries
+//!   `refine` fills in the call of its `id` rather than announcing a new one,
+//!   which is how an agent's later title and input for a call are written;
+//!   `tool_result` — `id`, `status` and `output`.
 //! * `compact` — the agent handed its context off to a fresh one.
 //! * `usage` — the context window reading: `used` of `size` tokens.
 //! * `config` — the `model` and `effort` the session runs on from here, written
@@ -208,12 +210,15 @@ pub(crate) enum Record<'a> {
     /// `thinking`.
     Thinking { text: &'a str },
     /// `tool_call`: `input` is the agent's own JSON as it came, `null` when
-    /// it sent none.
+    /// it sent none. A `refine` line fills the call of its `id` in, and is
+    /// written when a later update brings a title or input the call left out.
     ToolCall {
         id: &'a str,
         title: &'a str,
         kind: &'a str,
         input: Option<&'a Value>,
+        #[serde(skip_serializing_if = "is_false")]
+        refine: bool,
     },
     /// `tool_result`.
     ToolResult { id: &'a str, status: &'a str, output: &'a str },
@@ -275,6 +280,10 @@ impl Record<'_> {
 pub struct Translator {
     /// `("text" | "thinking", everything streamed so far)`.
     run: Option<(&'static str, String)>,
+    /// The kind each call was announced with, by id. Some agents leave the
+    /// kind out of the updates that carry the call's title and input, and the
+    /// line those updates write still says what the call is.
+    kinds: HashMap<String, &'static str>,
 }
 
 impl Translator {
@@ -291,12 +300,14 @@ impl Translator {
             SessionUpdate::ToolCall(call) => {
                 out.extend(self.flush());
                 if !is_compaction(call.meta.as_ref()) {
+                    self.kinds.insert(call.tool_call_id.clone(), kind_name(call.kind));
                     out.push(
                         Record::ToolCall {
                             id: &call.tool_call_id,
                             title: &call.title,
                             kind: kind_name(call.kind),
                             input: call.raw_input.as_ref(),
+                            refine: false,
                         }
                         .stamped(),
                     );
@@ -306,13 +317,42 @@ impl Translator {
                 let status = match update.status {
                     Some(ToolCallStatus::Completed) => "completed",
                     Some(ToolCallStatus::Failed) => "failed",
-                    _ => return out,
+                    // Still running. An agent may announce a call with only
+                    // its tool name and send the title and input in this
+                    // first update (dimcode does), so they are recorded as
+                    // another line for the same call, which the parser folds
+                    // into the one already drawn.
+                    _ => {
+                        if is_compaction(update.meta.as_ref()) {
+                            return out;
+                        }
+                        let title = update.title.as_deref().filter(|title| !title.is_empty());
+                        let input = update.raw_input.as_ref().filter(|input| !input.is_null());
+                        if title.is_some() || input.is_some() {
+                            out.push(
+                                Record::ToolCall {
+                                    id: &update.tool_call_id,
+                                    title: title.unwrap_or_default(),
+                                    kind: update
+                                        .kind
+                                        .map(kind_name)
+                                        .or_else(|| self.kinds.get(&update.tool_call_id).copied())
+                                        .unwrap_or("other"),
+                                    input,
+                                    refine: true,
+                                }
+                                .stamped(),
+                            );
+                        }
+                        return out;
+                    }
                 };
                 out.extend(self.flush());
                 if is_compaction(update.meta.as_ref()) {
                     out.push(Record::Compact {}.stamped());
                     return out;
                 }
+                self.kinds.remove(&update.tool_call_id);
                 let mut output = update.content.as_deref().map(tool_content_text).unwrap_or_default();
                 if output.is_empty() {
                     output = match &update.raw_output {
@@ -393,6 +433,11 @@ fn is_compaction(meta: Option<&serde_json::Map<String, Value>>) -> bool {
     meta.and_then(|meta| meta.get("contextCompaction")) == Some(&Value::Bool(true))
 }
 
+/// `serde`'s skip: the `refine` key is written only on the lines that are one.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// The text of one ACP content block.
 fn content_text(content: &ContentBlock) -> String {
     match content {
@@ -459,6 +504,9 @@ fn parse_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<TranscriptItem> 
     // The run of deltas no closing record has superseded yet.
     let mut run: Option<(String, String, Option<String>)> = None;
     let mut tools: HashMap<String, String> = HashMap::new();
+    // Where each call's item is, so a later line for the same call can fill it
+    // in rather than draw it a second time.
+    let mut drawn: HashMap<String, usize> = HashMap::new();
     let close_run = |run: &mut Option<(String, String, Option<String>)>, items: &mut Vec<TranscriptItem>| {
         if let Some((kind, text, at)) = run.take() {
             items.push(agent_item(&kind, &text, at.as_deref()));
@@ -502,13 +550,32 @@ fn parse_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<TranscriptItem> 
                     "tool_call" => {
                         let id = field("id").to_string();
                         let name = tool_name(field("kind"));
-                        tools.insert(id.clone(), name.to_string());
                         let input = entry.get("input").filter(|input| !input.is_null());
                         let detail = input.map(|input| match input {
                             Value::String(text) => text.clone(),
                             other => serde_json::to_string_pretty(other).unwrap_or_default(),
                         });
                         let title = field("title");
+                        // An agent may send a call's title and input in a
+                        // `refine` line for the same id, having announced it
+                        // with nothing but its tool name: fill the line
+                        // already drawn instead of drawing the call twice.
+                        let refine = entry.get("refine").and_then(Value::as_bool).unwrap_or(false);
+                        if let Some(&index) = drawn.get(&id).filter(|_| refine && !id.is_empty()) {
+                            let item = &mut items[index];
+                            if !title.is_empty() {
+                                item.text = first_line_of(title, LINE);
+                            }
+                            if let Some(detail) = detail {
+                                item.detail = Nullable(Some(detail));
+                            }
+                            if name != "tool" {
+                                item.tool_name = Nullable(Some(name.to_string()));
+                                tools.insert(id, name.to_string());
+                            }
+                            continue;
+                        }
+                        tools.insert(id.clone(), name.to_string());
                         let mut item = make_tool_item(
                             Role::Assistant,
                             ItemKind::ToolUse,
@@ -524,7 +591,8 @@ fn parse_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<TranscriptItem> 
                             },
                             at,
                         );
-                        item.tool_use_id = Some(id).filter(|id| !id.is_empty());
+                        item.tool_use_id = Some(id.clone()).filter(|id| !id.is_empty());
+                        drawn.insert(id, items.len());
                         items.push(item);
                     }
                     "tool_result" => {
@@ -1089,6 +1157,56 @@ pub(crate) mod tests {
         assert!(items[2].is_error);
         assert_eq!(items[2].text, "$ ls -la");
         assert_eq!(items[2].tool_name.0.as_deref(), Some("shell"));
+    }
+
+    #[test]
+    fn a_progress_update_fills_in_the_title_and_input_the_call_left_out() {
+        let mut translator = Translator::default();
+        let mut records = translator.update(&update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "exec", "kind": "execute",
+        })));
+        // Neither a title nor an input: nothing new to draw.
+        records.extend(translator.update(&update(
+            json!({"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress"}),
+        )));
+        records.extend(translator.update(&update(json!({
+            "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "pending",
+            "title": "List current directory", "rawInput": {"command": "ls -la"},
+        }))));
+        assert_eq!(
+            unstamped_lines(&records),
+            [
+                r#"{"id":"call-1","title":"exec","kind":"execute","input":null,"type":"tool_call","timestamp":"<timestamp>"}"#,
+                r#"{"id":"call-1","title":"List current directory","kind":"execute","input":{"command":"ls -la"},"refine":true,"type":"tool_call","timestamp":"<timestamp>"}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_later_line_fills_the_call_it_names_rather_than_drawing_it_twice() {
+        let records = [
+            record("tool_call", json!({"id": "call-1", "title": "exec", "kind": "execute", "input": null})),
+            record(
+                "tool_call",
+                json!({"id": "call-1", "title": "List current directory", "kind": "execute", "input": {"command": "ls -la"}, "refine": true}),
+            ),
+        ];
+        let items = parse(&records);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "List current directory");
+        assert_eq!(items[0].detail.0.as_deref(), Some("{\n  \"command\": \"ls -la\"\n}"));
+        assert_eq!(items[0].tool_use_id.as_deref(), Some("call-1"));
+    }
+
+    #[test]
+    fn an_announced_call_reusing_an_id_is_drawn_again() {
+        let records = [
+            record("tool_call", json!({"id": "call-1", "title": "one", "kind": "execute", "input": null})),
+            record("tool_call", json!({"id": "call-1", "title": "two", "kind": "execute", "input": null})),
+        ];
+        let items = parse(&records);
+        assert_eq!(items.len(), 2);
+        assert_eq!((items[0].text.as_str(), items[1].text.as_str()), ("one", "two"));
     }
 
     #[test]
