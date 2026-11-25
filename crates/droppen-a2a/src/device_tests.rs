@@ -463,7 +463,7 @@ async fn an_entry_proxies_may_call_runs_in_no_bypass_mode() {
     // Stored with both, as before the rule: no proxy gets in.
     let mut legacy = h.a2a.entry("main").unwrap();
     legacy.permission = droppen_http::openapi_ext::Nullable(Some("bypassPermissions".into()));
-    h.a2a.store().replace_entry(&legacy, 1).unwrap();
+    h.a2a.store().replace_entry(&legacy, 1, false).unwrap();
     let (status, _) = h.rpc_status(P1, "ListTasks", json!({})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!h.a2a.caller_reaches("a2a:device:p-1", "main"));

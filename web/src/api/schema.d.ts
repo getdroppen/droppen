@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/a2a/contexts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List open A2A contexts
+         * @description The open A2A contexts: the sessions A2A clients started, newest first.
+         */
+        get: operations["list_a2a_contexts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/a2a/devices": {
         parameters: {
             query?: never;
@@ -74,8 +94,10 @@ export interface paths {
         head?: never;
         /**
          * Update an A2A entry
-         * @description Change an A2A entry. Switching it off cancels its unfinished tasks, and
-         *     taking a device out of `allowedDevices` cancels that device's.
+         * @description Change an A2A entry. Switching it off cancels its unfinished tasks,
+         *     taking a device out of `allowedDevices` cancels that device's, and a new
+         *     source, directory, account, permission mode or isolation closes its
+         *     contexts.
          */
         patch: operations["update_a2a_entry"];
         trace?: never;
@@ -2791,6 +2813,31 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description A page of the open contexts. */
+        A2aContextList: {
+            /** @description The newest first. */
+            contexts: components["schemas"]["A2aContextSummary"][];
+            /** @description The `pageToken` of the next page; `null` on the last. */
+            nextPageToken: string | null;
+        };
+        /**
+         * @description An open context: a session an A2A client started, for the session list's
+         *     "from A2A" mark.
+         */
+        A2aContextSummary: {
+            /** @description Who opened it: `a2a:token:<token id>`. */
+            caller: string;
+            /** @description The name of the token it came with, while that token is on file. */
+            callerName: string | null;
+            /** @description The context. */
+            contextId: string;
+            /** @description The entry it came in through. */
+            entry: string;
+            /** @description Its session, once known. */
+            sessionId: string | null;
+            /** @description Its session's CLI. */
+            source: components["schemas"]["EntrySource"];
+        };
         /**
          * @description An A2A proxy this device takes A2A calls from, as the entry form's
          *     `allowedDevices` picker lists it (`GET /api/a2a/devices`).
@@ -2909,6 +2956,11 @@ export interface components {
             defaultTemplate: string;
             /** @description Every entry, oldest first. */
             entries: components["schemas"]["A2aEntry"][];
+            /**
+             * @description The base of the Agent Cards' interface URLs (`[a2a] public_base`);
+             *     `null` when not set, and the card then uses the request's `Host`.
+             */
+            publicBase: string | null;
         };
         /**
          * @description The body of `PATCH /api/a2a/entries/{id}`: every field a patch. An empty
@@ -6975,6 +7027,40 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_a2a_contexts: {
+        parameters: {
+            query?: {
+                /** @description How many contexts a page holds: 1 to 500, 500 when not said. */
+                pageSize?: number | null;
+                /** @description Where to go on from: the previous page's `nextPageToken`. */
+                pageToken?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the open A2A contexts, the newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["A2aContextList"];
+                };
+            };
+            /** @description A page size out of range, or a page token this server did not give */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     list_a2a_devices: {
         parameters: {
             query?: never;
@@ -7004,7 +7090,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Every A2A entry, and the default template */
+            /** @description Every A2A entry, the default template and the cards' public base */
             200: {
                 headers: {
                     [name: string]: unknown;

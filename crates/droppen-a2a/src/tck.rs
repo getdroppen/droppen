@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::engine::{A2a, Caller, Created, Sent};
+use crate::engine::{context_not_found, A2a, Caller, Created, Making, Sent};
 use crate::error::A2aError;
 use crate::wire::{Artifact, Message, Part, PartContent, Role, SendMessageConfiguration, TaskState};
 
@@ -157,16 +157,13 @@ pub(crate) async fn send(a2a: &Arc<A2a>, who: &Caller, message: Message, config:
         Some(
             a2a.store()
                 .context_for(&who.entry.id, &who.caller, &message.context_id)
-                .ok_or_else(|| A2aError::invalid("contextId is not a context of this agent's: leave it out to start a new one"))?,
+                .ok_or_else(context_not_found)?,
         )
     };
     let message_id = message.message_id.clone();
-    let Created::New(follow) = a2a.create(who, message, context, false)? else {
+    let Created::New(follow) = a2a.create(who, message, context, Making::Tck, config.task_push_notification_config)? else {
         return Err(A2aError::internal("a tck task is never a duplicate"));
     };
-    if let Some(push) = config.task_push_notification_config {
-        a2a.add_push(follow.task_id(), push)?;
-    }
     a2a.start_scenario(follow.task_id(), &message_id);
     Ok(Sent::Task {
         follow: follow.history(history_length),

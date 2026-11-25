@@ -21,7 +21,17 @@
 //! An entry runs at most `maxConcurrent` tasks at once: a task holds a slot
 //! from the moment it is handed to the backend until it ends or stops to ask
 //! a question. One beyond that stays submitted, not yet handed over, and the
-//! oldest such goes when a slot frees.
+//! oldest such goes when a slot frees. A task whose context has no session
+//! yet starts it; one in a context whose session is still being started
+//! waits for it, and the tasks after it go first.
+//!
+//! # Taking back, under the same lock
+//!
+//! A revocation and a tightened entry (§6) read the tasks they take back
+//! under the writer's lock, and a task is made, and picked to be handed over,
+//! under it too, after asking whether its caller still reaches the entry and
+//! its context is still open. So a task either is refused there or is one
+//! they take back: none slips between.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
@@ -40,7 +50,7 @@ use crate::backend::{
 use crate::devices::DeviceGate;
 use crate::entry::{fence, render, A2aEntry};
 use crate::error::{A2aError, ErrorKind};
-use crate::store::{ContextRow, CreateError, EventRow, NewTask, PushRow, Store, TaskFilter, TaskRow, TokenRow};
+use crate::store::{ContextRow, CreateError, EventRow, NewTask, PushRow, Store, TaskFilter, TaskRow, TokenRow, TASKS_KEPT_MS};
 use crate::wire::{
     Artifact, AuthenticationInfo, ListPushConfigsResponse, ListTasksRequest, ListTasksResponse, Message, Part, PartContent, Role, SendMessageRequest,
     StreamResponse, Task, TaskArtifactUpdateEvent, TaskPushNotificationConfig, TaskState, TaskStatus, TaskStatusUpdateEvent,
@@ -52,6 +62,9 @@ const PROGRESS_EVERY: Duration = Duration::from_secs(5);
 const PROGRESS_CHARS: usize = 280;
 /// How many messages a task's history keeps.
 const HISTORY_KEPT: usize = 50;
+/// The most a task's history keeps once its messages have gone to the
+/// backend, in bytes of JSON: the oldest messages go first (§4).
+const HISTORY_BYTES: usize = 1024 * 1024;
 /// The longest request, in characters of text.
 const MAX_REQUEST_CHARS: usize = 100_000;
 /// How many images one message may carry.
@@ -68,6 +81,13 @@ const MAX_CONTEXTS_PER_DAY: usize = 50;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// The largest request body on `/a2a/*` (§5).
 pub const MAX_BODY: usize = 10 * 1024 * 1024;
+/// The most a task waiting for a slot holds, in bytes of JSON: the messages
+/// it takes into its turn once it has one, files and all (§5).
+const WAITING_BYTES: usize = MAX_BODY;
+/// How many streams one caller may hold open at once (§5).
+const MAX_STREAMS: usize = 16;
+/// How often what finished long ago is pruned (§4).
+const RETENTION_EVERY: Duration = Duration::from_secs(60 * 60);
 /// The media types a part may be sent in, by content.
 const IMAGE_TYPES: [&str; 2] = ["image/png", "image/jpeg"];
 /// How long a token's last use is not written again.
@@ -211,6 +231,33 @@ fn over_quota(what: impl Into<String>) -> A2aError {
     A2aError::unsupported(what).with_code(ErrorCode::QuotaExceeded)
 }
 
+/// The error for a caller that no longer reaches the entry: its token was
+/// revoked, or the entry switched off, while its request was on its way.
+fn revoked() -> A2aError {
+    A2aError::unsupported("this caller's access was revoked").with_code(ErrorCode::Revoked)
+}
+
+/// The error for a follow-up to a closed context (§6).
+fn context_closed() -> A2aError {
+    A2aError::unsupported("the context is closed: this agent's settings changed since it was opened; leave contextId out to start a new one")
+        .with_code(ErrorCode::ContextClosed)
+}
+
+/// The error for a context that does not exist, and for one this caller may
+/// not reach on this entry alike (§6).
+pub(crate) fn context_not_found() -> A2aError {
+    A2aError::invalid("contextId is not a context of this agent's: leave it out to start a new one").with_code(ErrorCode::ContextNotFound)
+}
+
+/// What a task cancelled for `code` says.
+fn canceled_text(code: Option<ErrorCode>) -> &'static str {
+    match code {
+        Some(ErrorCode::Revoked) => "canceled: the caller's access was revoked",
+        Some(ErrorCode::ContextClosed) => "canceled: this agent's settings changed; send it again without its contextId to start a new context",
+        _ => "canceled",
+    }
+}
+
 /// The metadata of a status message that carries a droppen code: the same
 /// `ErrorInfo` an error would (§3.5).
 fn code_metadata(code: ErrorCode) -> serde_json::Map<String, Value> {
@@ -277,6 +324,58 @@ struct Job {
     start: bool,
 }
 
+/// A task [`A2a::mutate_pick`] handed over.
+struct Picked {
+    /// The task, marked handed over.
+    task: TaskRow,
+    /// Its messages as they were taken, files and all; the row keeps
+    /// placeholders for the files from now on.
+    messages: Vec<Message>,
+    /// Its context.
+    context: ContextRow,
+}
+
+/// Where [`A2a::append`] put a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Appended {
+    /// Into the task's messages: it waits for a slot.
+    Queued,
+    /// Nowhere: a waiting task holds no more (§5).
+    Full,
+    /// To the backend: the task has gone to it.
+    Handed,
+}
+
+/// Which rules a new task is made under ([`A2a::create`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Making {
+    /// A client's message: claimed by its `(caller, messageId)` and held to
+    /// the caller's quotas (§5).
+    Client,
+    /// A TCK scenario's: neither, as the TCK sends one message id again and
+    /// again and opens a context for nearly every test.
+    Tck,
+}
+
+/// A place among the streams one caller may hold open (§5), given back
+/// when it is dropped with the stream that held it.
+pub struct StreamSlot {
+    a2a: Arc<A2a>,
+    caller: String,
+}
+
+impl Drop for StreamSlot {
+    fn drop(&mut self) {
+        let mut streams = locked(&self.a2a.streams);
+        if let Some(held) = streams.get_mut(&self.caller) {
+            *held = held.saturating_sub(1);
+            if *held == 0 {
+                streams.remove(&self.caller);
+            }
+        }
+    }
+}
+
 /// The A2A server.
 pub struct A2a {
     store: Store,
@@ -291,6 +390,10 @@ pub struct A2a {
     scenarios: Mutex<HashMap<String, tokio::task::AbortHandle>>,
     touched: Mutex<HashMap<String, i64>>,
     revocations: tokio::sync::watch::Sender<u64>,
+    /// The contexts whose session the backend is starting.
+    starting: Mutex<std::collections::HashSet<String>>,
+    /// How many streams each caller holds open.
+    streams: Mutex<HashMap<String, usize>>,
     me: Weak<A2a>,
 }
 
@@ -368,12 +471,40 @@ impl TaskRow {
         })
     }
 
+    /// Keep a message the backend has had: its files as placeholders only,
+    /// and the oldest messages dropped while the history is over
+    /// [`HISTORY_KEPT`] messages or [`HISTORY_BYTES`].
     fn push_history(&mut self, message: Message) {
+        self.history.push(without_files(message));
+        self.trim_history();
+    }
+
+    /// Keep a message as it came, files and all: one the task takes into its
+    /// turn once it has a slot.
+    fn queue_history(&mut self, message: Message) {
         self.history.push(message);
-        if self.history.len() > HISTORY_KEPT {
-            let excess = self.history.len() - HISTORY_KEPT;
-            self.history.drain(..excess);
+    }
+
+    /// The history has gone to the backend: from now on it keeps
+    /// placeholders for its files, and no more than [`Self::push_history`]
+    /// keeps.
+    fn dispatched_history(&mut self) {
+        let history = std::mem::take(&mut self.history);
+        self.history = history.into_iter().map(without_files).collect();
+        self.trim_history();
+    }
+
+    /// Drop the oldest messages while there are more than [`HISTORY_KEPT`]
+    /// or they take more than [`HISTORY_BYTES`]; the newest one stays.
+    fn trim_history(&mut self) {
+        let sizes: Vec<usize> = self.history.iter().map(json_size).collect();
+        let mut total: usize = sizes.iter().sum();
+        let mut dropped = 0;
+        while dropped + 1 < self.history.len() && (self.history.len() - dropped > HISTORY_KEPT || total > HISTORY_BYTES) {
+            total -= sizes[dropped];
+            dropped += 1;
         }
+        self.history.drain(..dropped);
     }
 
     fn agent_message(&self, parts: Vec<Part>, metadata: Option<serde_json::Map<String, Value>>) -> Message {
@@ -387,6 +518,24 @@ impl TaskRow {
             ..Message::default()
         }
     }
+}
+
+/// How many bytes `value` takes as JSON.
+fn json_size(value: &impl serde::Serialize) -> usize {
+    serde_json::to_vec(value).map_or(0, |bytes| bytes.len())
+}
+
+/// `message` with each file's bytes replaced by what they were: a data part
+/// `{"kind": "omitted_file", "mediaType": …, "size": <bytes>}`, its file name
+/// kept. The bytes went to the session; the history keeps no copy (§4).
+fn without_files(mut message: Message) -> Message {
+    for part in &mut message.parts {
+        let PartContent::Raw(bytes) = &part.content else { continue };
+        let placeholder = json!({"kind": "omitted_file", "mediaType": base_type(part), "size": bytes.len()});
+        part.content = PartContent::Data(placeholder);
+        part.media_type = "application/json".to_string();
+    }
+    message
 }
 
 /// The text a question's status message shows a client that reads text only.
@@ -604,6 +753,8 @@ impl A2a {
             scenarios: Mutex::new(HashMap::new()),
             touched: Mutex::new(HashMap::new()),
             revocations: tokio::sync::watch::channel(0).0,
+            starting: Mutex::new(std::collections::HashSet::new()),
+            streams: Mutex::new(HashMap::new()),
             me: me.clone(),
         });
         let weak = Arc::downgrade(&a2a);
@@ -732,6 +883,56 @@ impl A2a {
         self.devices.admitted()
     }
 
+    /// `who` asked again as things stand now: its token still stands and
+    /// still has the entry in scope — or, for an A2A proxy, the device chain
+    /// still admits it and the entry still allows it — and the entry is still
+    /// there, read afresh. A request asks once its body is in, so a caller
+    /// revoked while the body was on its way proves nothing (§6).
+    pub fn recheck(&self, who: &Caller) -> Result<Caller, Denied> {
+        let entry = match &who.principal {
+            Principal::Token(id) => {
+                let token = self
+                    .store
+                    .token(id)
+                    .filter(|token| token.revoked_ms.is_none())
+                    .ok_or(Denied::Unauthenticated)?;
+                if !token.entries.contains(&who.entry.id) {
+                    return Err(Denied::NotFound);
+                }
+                self.store.entry(&who.entry.id).ok_or(Denied::NotFound)?
+            }
+            Principal::Device(device) => {
+                if !self.devices.admits(device) {
+                    return Err(Denied::Unauthenticated);
+                }
+                self.store
+                    .entry(&who.entry.id)
+                    .filter(|entry| entry_admits_device(entry, device))
+                    .ok_or(Denied::NotFound)?
+            }
+        };
+        Ok(Caller {
+            principal: who.principal.clone(),
+            caller: who.caller.clone(),
+            entry,
+        })
+    }
+
+    /// A place for one more open stream of `who`'s, while it has fewer than
+    /// [`MAX_STREAMS`] (§5); given back when the slot is dropped.
+    pub fn stream_slot(&self, who: &Caller) -> Result<StreamSlot, A2aError> {
+        let mut streams = locked(&self.streams);
+        let held = streams.entry(who.caller.clone()).or_default();
+        if *held >= MAX_STREAMS {
+            return Err(over_quota(format!("a caller holds at most {MAX_STREAMS} streams open at once")));
+        }
+        *held += 1;
+        Ok(StreamSlot {
+            a2a: self.me(),
+            caller: who.caller.clone(),
+        })
+    }
+
     /// Write down that a token was used, at most once a minute.
     fn touch(&self, row: &TokenRow) {
         let now = now_ms();
@@ -824,14 +1025,21 @@ impl A2a {
     /// interrupted once it runs — with `droppen.revoked` in its status, its
     /// push configurations deleted, and every open stream told to look again
     /// (§6).
+    ///
+    /// The revocation itself (the token's row, the entry's settings) is
+    /// written before this is called. The tasks are read under the writer's
+    /// lock: a task made, or picked to be handed over, before the revocation
+    /// was written is among them, and one after it is refused there.
     pub async fn revoke(&self, caller: Option<&str>, entry_id: Option<&str>) {
-        let tasks: Vec<TaskRow> = self
-            .store
-            .open_tasks()
-            .into_iter()
-            .filter(|task| caller.is_none_or(|caller| task.caller == caller) && entry_id.is_none_or(|entry| task.entry == entry))
-            .collect();
         self.revocations.send_modify(|generation| *generation += 1);
+        let tasks: Vec<TaskRow> = {
+            let _writer = locked(&self.write);
+            self.store
+                .open_tasks()
+                .into_iter()
+                .filter(|task| caller.is_none_or(|caller| task.caller == caller) && entry_id.is_none_or(|entry| task.entry == entry))
+                .collect()
+        };
         for task in tasks {
             if let Err(error) = self.cancel(task.clone(), Some(ErrorCode::Revoked)).await {
                 tracing::warn!(task = %task.id, %error, "a revoked caller's task could not be cancelled through the backend");
@@ -841,6 +1049,73 @@ impl A2a {
             }
         }
         self.revocations.send_modify(|generation| *generation += 1);
+    }
+
+    /// Keep an entry's new settings. When they changed where a session is
+    /// bound to them — its source (and ACP agent), directory, account,
+    /// permission mode or isolation — every context of the entry is closed
+    /// with them, in the same write and under the writer's lock, so no task
+    /// is made or handed over in between; their unfinished tasks are then
+    /// cancelled with `droppen.context_closed` (§6).
+    pub(crate) async fn replace_entry(&self, before: &A2aEntry, entry: &A2aEntry, now: i64) -> rusqlite::Result<()> {
+        let closing = before.source != entry.source
+            || before.acp_agent != entry.acp_agent
+            || before.cwd != entry.cwd
+            || before.account != entry.account
+            || before.permission != entry.permission
+            || before.isolation != entry.isolation;
+        let tasks = {
+            let _writer = locked(&self.write);
+            self.store.replace_entry(entry, now, closing)?;
+            if closing {
+                self.store.open_tasks_of_entry(&entry.id)
+            } else {
+                Vec::new()
+            }
+        };
+        for task in tasks {
+            if let Err(error) = self.cancel(task.clone(), Some(ErrorCode::ContextClosed)).await {
+                tracing::warn!(task = %task.id, %error, "a closed context's task could not be cancelled through the backend");
+            }
+        }
+        Ok(())
+    }
+
+    /// Forget the tasks that ended more than 30 days before `now`, with
+    /// their events, messages and push configurations, and the contexts
+    /// they leave empty (§4). Under the writer's lock, so no task is made in
+    /// a context as it goes. How many tasks went.
+    pub fn retain(&self, now: i64) -> usize {
+        let _writer = locked(&self.write);
+        match self.store.prune_finished(now - TASKS_KEPT_MS) {
+            Ok(pruned) => pruned,
+            Err(error) => {
+                tracing::warn!(%error, "cannot prune finished A2A tasks");
+                0
+            }
+        }
+    }
+
+    /// Prune what finished long ago ([`Self::retain`]) now and every hour,
+    /// until the server stops. The instance's owner calls it, once.
+    pub fn spawn_retention(&self) {
+        let weak = self.me.clone();
+        let cancel = self.cancel.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(RETENTION_EVERY);
+            every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    () = cancel.cancelled() => return,
+                    _ = every.tick() => {}
+                }
+                let Some(a2a) = weak.upgrade() else { return };
+                let pruned = a2a.retain(now_ms());
+                if pruned > 0 {
+                    tracing::info!(pruned, "pruned A2A tasks finished more than 30 days ago");
+                }
+            }
+        });
     }
 
     /// The backend's view of a task.
@@ -860,8 +1135,19 @@ impl A2a {
     /// Change a task under the writer's lock, and write and send what the
     /// change emits. `None` when there is no such task.
     fn mutate<R>(&self, task_id: &str, change: impl FnOnce(&mut TaskRow) -> (Vec<Emit>, R)) -> Option<(TaskRow, R)> {
-        let _writer = locked(&self.write);
-        let mut row = self.store.task(task_id)?;
+        let writer = locked(&self.write);
+        let row = self.store.task(task_id)?;
+        self.write_change(&writer, row, change)
+    }
+
+    /// [`Self::mutate`] on `row`, read under the writer's lock the caller
+    /// holds (`_writer`).
+    fn write_change<R>(
+        &self,
+        _writer: &MutexGuard<'_, ()>,
+        mut row: TaskRow,
+        change: impl FnOnce(&mut TaskRow) -> (Vec<Emit>, R),
+    ) -> Option<(TaskRow, R)> {
         let before = row.clone();
         let (emits, out) = change(&mut row);
         if emits.is_empty() && row == before {
@@ -911,7 +1197,7 @@ impl A2a {
                 payload: serde_json::to_string(&event.response).unwrap_or_default(),
             })
             .collect();
-        if let Err(error) = self.store.save(&row, &rows) {
+        if let Err(error) = self.store.save(&row, &rows, row.history != before.history) {
             tracing::warn!(task = %row.id, %error, "cannot write an A2A task's change");
             return None;
         }
@@ -977,17 +1263,28 @@ impl A2a {
     /// End a task in `state`, with `text` as its status message and `code`
     /// in its metadata, unless it has ended already. Frees its slot.
     fn end(&self, task_id: &str, state: TaskState, text: &str, code: Option<ErrorCode>) {
-        let ended = self.mutate(task_id, |task| {
+        let ended = {
+            let writer = locked(&self.write);
+            self.end_in(&writer, task_id, state, text, code)
+        };
+        if let Some(entry) = ended {
+            self.pump(&entry);
+        }
+    }
+
+    /// [`Self::end`] under the writer's lock the caller holds, and without
+    /// handing out the slot it frees: the task's entry, when it ended it.
+    fn end_in(&self, writer: &MutexGuard<'_, ()>, task_id: &str, state: TaskState, text: &str, code: Option<ErrorCode>) -> Option<String> {
+        let row = self.store.task(task_id)?;
+        let (_, entry) = self.write_change(writer, row, |task| {
             if task.state.is_terminal() {
                 return (Vec::new(), None);
             }
             task.state = state;
             task.status_message = (!text.is_empty()).then(|| task.agent_message(vec![Part::text(text)], code.map(code_metadata)));
             (vec![Emit::Status], Some(task.entry.clone()))
-        });
-        if let Some((_, Some(entry))) = ended {
-            self.pump(&entry);
-        }
+        })?;
+        entry
     }
 
     /* ── the backend's reports ───────────────────────────────────────── */
@@ -1017,7 +1314,13 @@ impl A2a {
                 });
             }
             BackendEvent::TurnEnded { task_id, outcome } => self.turn_ended(&task_id, outcome),
-            BackendEvent::SessionIdentified { context_id, session_id } => self.store.set_session(&context_id, Some(&session_id), None, None),
+            BackendEvent::SessionIdentified { context_id, session_id } => {
+                self.store.set_session(&context_id, Some(&session_id), None, None);
+                // The context's later tasks waited for its session.
+                if let Some(context) = self.store.context(&context_id) {
+                    self.pump(&context.entry);
+                }
+            }
             BackendEvent::SessionGone { context_id, message } => {
                 for task in self.store.open_tasks_of_context(&context_id) {
                     self.end(&task.id, TaskState::Failed, &message, None);
@@ -1154,50 +1457,83 @@ impl A2a {
             }
             return None;
         }
-        let picked = self.mutate_pick(&entry)?;
-        let context = self.store.context(&picked.context_id)?;
-        let start =
-            self.store.first_task_of_context(&picked.context_id).as_deref() == Some(picked.id.as_str()) && context.session.session_id.is_none();
-        let (request, images) = request_of(&picked.history);
+        let Picked { task, messages, context } = self.mutate_pick(&entry)?;
+        let (request, images) = request_of(&messages);
         Some(Job {
+            start: context.session.session_id.is_none(),
             task: TaskRef {
-                task_id: picked.id.clone(),
-                context_id: picked.context_id.clone(),
-                entry_id: picked.entry.clone(),
-                caller: picked.caller.clone(),
+                task_id: task.id.clone(),
+                context_id: task.context_id.clone(),
+                entry_id: task.entry.clone(),
+                caller: task.caller.clone(),
                 session: context.session,
             },
             run: entry.run_spec(),
             prompt: Prompt {
-                text: render(entry.template(), &self.caller_label(&picked.caller), &request, &fence()),
+                text: render(entry.template(), &self.caller_label(&task.caller), &request, &fence()),
                 images,
             },
-            client_message_id: picked.client_message_id.clone(),
-            start,
+            client_message_id: task.client_message_id.clone(),
         })
     }
 
-    /// Under the writer's lock: the oldest waiting task of `entry`, if a slot
-    /// is free, marked handed over — its history as it stands is what goes.
-    fn mutate_pick(&self, entry: &A2aEntry) -> Option<TaskRow> {
-        let _writer = locked(&self.write);
+    /// Under the writer's lock: the oldest waiting task of `entry` that may
+    /// go, if a slot is free, marked handed over, with its messages as they
+    /// stood. On the way, a task whose caller no longer reaches the entry is
+    /// cancelled with `droppen.revoked`, and one whose context was closed
+    /// with `droppen.context_closed` (§6). A task whose context's session is
+    /// being started, or runs its first turn with no id known yet, waits for
+    /// it; the tasks of other contexts go before it.
+    fn mutate_pick(&self, entry: &A2aEntry) -> Option<Picked> {
+        let writer = locked(&self.write);
         if self.store.running(&entry.id) >= entry.max_concurrent.max(1) as usize {
             return None;
         }
-        let mut task = self.store.next_pending(&entry.id)?;
-        task.dispatched = true;
-        task.updated_ms = now_ms().max(task.updated_ms);
-        if let Err(error) = self.store.save(&task, &[]) {
-            tracing::warn!(task = %task.id, %error, "cannot mark an A2A task handed over");
-            return None;
+        for (task_id, context_id, caller) in self.store.pending(&entry.id) {
+            let context = self.store.context(&context_id);
+            let refused = if !self.caller_reaches(&caller, &entry.id) {
+                Some((TaskState::Canceled, canceled_text(Some(ErrorCode::Revoked)), Some(ErrorCode::Revoked)))
+            } else {
+                match &context {
+                    None => Some((TaskState::Failed, "the task's context is gone", None)),
+                    Some(context) if context.closed_ms.is_some() => Some((
+                        TaskState::Canceled,
+                        canceled_text(Some(ErrorCode::ContextClosed)),
+                        Some(ErrorCode::ContextClosed),
+                    )),
+                    Some(_) => None,
+                }
+            };
+            if let Some((state, text, code)) = refused {
+                self.end_in(&writer, &task_id, state, text, code);
+                continue;
+            }
+            let Some(context) = context else { continue };
+            if context.session.session_id.is_none() && (locked(&self.starting).contains(&context_id) || self.store.context_running(&context_id)) {
+                continue;
+            }
+            let Some(task) = self.store.task(&task_id) else { continue };
+            let messages = task.history.clone();
+            let (task, ()) = self.write_change(&writer, task, |row| {
+                row.dispatched = true;
+                row.dispatched_history();
+                (Vec::new(), ())
+            })?;
+            if context.session.session_id.is_none() {
+                locked(&self.starting).insert(context_id);
+            }
+            return Some(Picked { task, messages, context });
         }
-        Some(task)
+        None
     }
 
     async fn dispatch(&self, job: Job) {
         let task_id = job.task.task_id.clone();
-        let outcome = if job.start {
-            let context_id = job.task.context_id.clone();
+        let context_id = job.task.context_id.clone();
+        let entry_id = job.task.entry_id.clone();
+        let caller = job.task.caller.clone();
+        let start = job.start;
+        let outcome = if start {
             let started = self
                 .backend
                 .start(StartSession {
@@ -1207,14 +1543,16 @@ impl A2a {
                     client_message_id: job.client_message_id,
                 })
                 .await;
-            started.map(|started| {
+            let started = started.map(|started| {
                 self.store.set_session(
                     &context_id,
                     started.session_id.as_deref(),
                     Some(&started.cwd),
                     Some(started.branch.as_deref()),
                 );
-            })
+            });
+            locked(&self.starting).remove(&context_id);
+            started
         } else {
             self.backend
                 .send(SendToSession {
@@ -1226,7 +1564,30 @@ impl A2a {
                 .await
         };
         match outcome {
-            Ok(()) => {}
+            Ok(()) => {
+                // A revocation or a tightened entry that came while the call
+                // was out may have found a task the backend had not taken
+                // yet: the turn just begun is stopped here.
+                let code = if !self.caller_reaches(&caller, &entry_id) {
+                    Some(ErrorCode::Revoked)
+                } else if self.store.context(&context_id).is_some_and(|context| context.closed_ms.is_some()) {
+                    Some(ErrorCode::ContextClosed)
+                } else {
+                    None
+                };
+                if let Some(code) = code {
+                    if let Some(task_ref) = self.store.task(&task_id).and_then(|task| self.task_ref(&task)) {
+                        if let Err(error) = self.backend.cancel(&task_ref).await {
+                            tracing::warn!(task = %task_id, %error, "a task taken back while it was handed over could not be stopped");
+                        }
+                    }
+                    self.end(&task_id, TaskState::Canceled, canceled_text(Some(code)), Some(code));
+                }
+                if start {
+                    // The context's later tasks waited for its session.
+                    self.pump(&entry_id);
+                }
+            }
             Err(BackendError::Rejected { code, message }) => self.end(&task_id, TaskState::Rejected, &message, code),
             Err(BackendError::Invalid(message)) => self.end(&task_id, TaskState::Rejected, &message, None),
             Err(other) => self.end(&task_id, TaskState::Failed, &other.to_string(), None),
@@ -1327,6 +1688,9 @@ impl A2a {
                 return Err(A2aError::invalid("contextId is not the task's context"));
             }
             message.context_id = task.context_id.clone();
+            if !task.state.is_terminal() && self.store.context(&task.context_id).is_some_and(|context| context.closed_ms.is_some()) {
+                return Err(context_closed());
+            }
             return match task.state {
                 state if state.is_terminal() => Err(A2aError::unsupported(
                     "the task is finished: send a new message with its contextId and no taskId to continue the session",
@@ -1336,29 +1700,23 @@ impl A2a {
                 _ => Err(A2aError::unsupported("the task takes no message in its state")),
             };
         }
-        if self.store.queued(&who.caller) >= MAX_QUEUED {
-            return Err(over_quota(format!("at most {MAX_QUEUED} of a caller's tasks may be queued")));
-        }
-        if message.context_id.is_empty() && self.store.contexts_since(&who.caller, now_ms() - DAY_MS) >= MAX_CONTEXTS_PER_DAY {
-            return Err(over_quota(format!("a caller opens at most {MAX_CONTEXTS_PER_DAY} contexts a day")));
-        }
         let context = if message.context_id.is_empty() {
             None
         } else {
             let context = self
                 .store
                 .context_for(&who.entry.id, &who.caller, &message.context_id)
-                .ok_or_else(|| A2aError::invalid("contextId is not a context of this agent's: leave it out to start a new one"))?;
+                .ok_or_else(context_not_found)?;
+            if context.closed_ms.is_some() {
+                return Err(context_closed());
+            }
             Some(context)
         };
-        let created = self.create(who, message, context, true)?;
+        let created = self.create(who, message, context, Making::Client, config.task_push_notification_config)?;
         let follow = match created {
             Created::New(follow) => follow,
             Created::Duplicate(task_id) => return self.again(who, &task_id, history_length, blocking),
         };
-        if let Some(push) = &config.task_push_notification_config {
-            self.put_push(&follow.snapshot.id, push.clone(), true)?;
-        }
         self.pump(&who.entry.id);
         Ok(Sent::Task {
             follow: follow.history(history_length),
@@ -1376,11 +1734,25 @@ impl A2a {
         })
     }
 
-    /// Make a task for `message`: in `context`, or in a new one. Followed
-    /// from its first snapshot, before anything can move it.
-    pub(crate) fn create(&self, who: &Caller, mut message: Message, context: Option<ContextRow>, idempotent: bool) -> Result<Created, A2aError> {
+    /// Make a task for `message`: in `context`, or in a new one, with `push`
+    /// if the message came with a push configuration (checked already).
+    /// Followed from its first snapshot, before anything can move it.
+    ///
+    /// Under the writer's lock, the caller is asked again whether it still
+    /// reaches the entry, the context whether it is still open, and the
+    /// caller's quotas (§5) are counted: a revocation, a closing and another
+    /// request of the same caller each come before or after, never between.
+    pub(crate) fn create(
+        &self,
+        who: &Caller,
+        mut message: Message,
+        context: Option<ContextRow>,
+        making: Making,
+        push: Option<TaskPushNotificationConfig>,
+    ) -> Result<Created, A2aError> {
         let now = now_ms();
         let task_id = new_id();
+        let existing = context.as_ref().map(|context| context.context_id.clone());
         let (context_id, new_context) = match context {
             Some(context) => (context.context_id, None),
             None => {
@@ -1396,6 +1768,7 @@ impl A2a {
                         branch: None,
                     },
                     created_ms: now,
+                    closed_ms: None,
                 };
                 (context_id, Some(context))
             }
@@ -1403,7 +1776,7 @@ impl A2a {
         message.context_id = context_id.clone();
         message.task_id = task_id.clone();
         let client_message_id = format!("a2a:{}:{}", who.caller, message.message_id);
-        let message_key = idempotent.then(|| (who.caller.clone(), message.message_id.clone()));
+        let message_key = (making == Making::Client).then(|| (who.caller.clone(), message.message_id.clone()));
         let mut task = TaskRow {
             id: task_id.clone(),
             context_id,
@@ -1420,7 +1793,7 @@ impl A2a {
             created_ms: now,
             updated_ms: now,
         };
-        task.push_history(message);
+        task.queue_history(message);
         let first = StreamResponse::StatusUpdate(TaskStatusUpdateEvent {
             task_id: task.id.clone(),
             context_id: task.context_id.clone(),
@@ -1433,26 +1806,54 @@ impl A2a {
                 kind: EventKind::Status.as_str().into(),
                 payload: serde_json::to_string(&first).unwrap_or_default(),
             },
+            push: push.map(|push| push_row(&task_id, push, now)),
             task,
             context: new_context,
             message_key,
         };
-        match self.store.create(&new) {
-            Ok(()) => {}
-            Err(CreateError::Duplicate(holder)) => return Ok(Created::Duplicate(holder)),
-            Err(CreateError::Db(error)) => return Err(A2aError::internal(format!("cannot keep the task: {error}"))),
-        }
-        let sink = self.sink.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-        if let Some(sink) = sink {
-            sink.task_event(&TaskEvent {
-                task_id: new.task.id.clone(),
-                context_id: new.task.context_id.clone(),
-                entry_id: new.task.entry.clone(),
-                seq: 1,
-                kind: EventKind::Status,
-                state: TaskState::Submitted,
-                response: first,
-            });
+        {
+            let _writer = locked(&self.write);
+            if !self.still_reaches(who) {
+                return Err(revoked());
+            }
+            if let Some(context_id) = &existing {
+                match self.store.context(context_id) {
+                    None => return Err(context_not_found()),
+                    Some(context) if context.closed_ms.is_some() => return Err(context_closed()),
+                    Some(_) => {}
+                }
+            }
+            if let Some((caller, message_id)) = &new.message_key {
+                if let Some(holder) = self.store.message_task(caller, message_id) {
+                    return Ok(Created::Duplicate(holder));
+                }
+                if self.store.queued(caller) >= MAX_QUEUED {
+                    return Err(over_quota(format!("at most {MAX_QUEUED} of a caller's tasks may be queued")));
+                }
+                if new.context.is_some() && self.store.contexts_since(caller, now - DAY_MS) >= MAX_CONTEXTS_PER_DAY {
+                    return Err(over_quota(format!("a caller opens at most {MAX_CONTEXTS_PER_DAY} contexts a day")));
+                }
+            }
+            match self.store.create(&new) {
+                Ok(()) => {}
+                Err(CreateError::Duplicate(holder)) => return Ok(Created::Duplicate(holder)),
+                Err(CreateError::Db(error)) => return Err(A2aError::internal(format!("cannot keep the task: {error}"))),
+            }
+            let sink = self.sink.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            if let Some(sink) = sink {
+                sink.task_event(&TaskEvent {
+                    task_id: new.task.id.clone(),
+                    context_id: new.task.context_id.clone(),
+                    entry_id: new.task.entry.clone(),
+                    seq: 1,
+                    kind: EventKind::Status,
+                    state: TaskState::Submitted,
+                    response: first,
+                });
+                if new.push.is_some() {
+                    sink.push_added(&task_id);
+                }
+            }
         }
         let follow = self
             .follow(Some(who), &task_id, None)
@@ -1472,6 +1873,12 @@ impl A2a {
         let task_ref = self.task_ref(&task).ok_or_else(|| A2aError::internal("the task's context is gone"))?;
         if let Some(holder) = self.claim(who, &message, &task.id)? {
             return self.again(who, &holder, history_length, blocking);
+        }
+        // Asked again right before the backend is: a revocation while the
+        // request was on its way takes it back (§6).
+        if !self.still_reaches(who) {
+            self.store.release_message(&who.caller, &message.message_id);
+            return Err(revoked());
         }
         match self.backend.answer(&task_ref, answer).await {
             Ok(()) => {
@@ -1512,20 +1919,36 @@ impl A2a {
         }
         let mut message = message;
         message.task_id = task.id.clone();
-        let waiting = self
+        let size = json_size(&message);
+        let appended = self
             .mutate(&task.id, |row| {
                 if row.dispatched || row.state.is_terminal() {
-                    return (Vec::new(), false);
+                    return (Vec::new(), Appended::Handed);
                 }
-                row.push_history(message.clone());
-                (Vec::new(), true)
+                if row.history.len() >= HISTORY_KEPT || json_size(&row.history) + size > WAITING_BYTES {
+                    return (Vec::new(), Appended::Full);
+                }
+                row.queue_history(message.clone());
+                (Vec::new(), Appended::Queued)
             })
-            .is_some_and(|(_, waiting)| waiting);
-        if !waiting {
+            .map_or(Appended::Handed, |(_, appended)| appended);
+        if appended == Appended::Full {
+            self.store.release_message(&who.caller, &message.message_id);
+            return Err(over_quota(format!(
+                "a task waiting for a slot holds at most {HISTORY_KEPT} messages and {} MiB: send more once it runs",
+                WAITING_BYTES / (1024 * 1024)
+            )));
+        }
+        if appended == Appended::Handed {
             let task = self.store.task(&task.id).ok_or_else(A2aError::task_not_found)?;
             if task.state.is_terminal() {
                 self.store.release_message(&who.caller, &message.message_id);
                 return Err(A2aError::unsupported("the task finished meanwhile"));
+            }
+            // Asked again right before the backend is (§6).
+            if !self.still_reaches(who) {
+                self.store.release_message(&who.caller, &message.message_id);
+                return Err(revoked());
             }
             let task_ref = self.task_ref(&task).ok_or_else(|| A2aError::internal("the task's context is gone"))?;
             let (request, images) = request_of(std::slice::from_ref(&message));
@@ -1619,8 +2042,11 @@ impl A2a {
             String::new()
         };
         let include = request.include_artifacts.unwrap_or(false);
+        // A list carries no history unless it is asked for: a task's history
+        // is up to a megabyte (v1.0 §3.2.4 leaves the default to the server).
+        let history_length = request.history_length.or(Some(0));
         Ok(ListTasksResponse {
-            tasks: rows.iter().map(|row| row.to_task(request.history_length, Some(include))).collect(),
+            tasks: rows.iter().map(|row| row.to_task(history_length, Some(include))).collect(),
             next_page_token,
             page_size,
             total_size: i32::try_from(total).unwrap_or(i32::MAX),
@@ -1639,17 +2065,14 @@ impl A2a {
     }
 
     /// Cancel `task`, whoever asks; `code` says why in its status message
-    /// (`droppen.revoked` for a revocation).
+    /// (`droppen.revoked` for a revocation, `droppen.context_closed` for a
+    /// closed context).
     pub(crate) async fn cancel(&self, task: TaskRow, code: Option<ErrorCode>) -> Result<(), A2aError> {
         let scenario = locked(&self.scenarios).remove(&task.id);
         if let Some(handle) = scenario {
             handle.abort();
         }
-        let text = if code == Some(ErrorCode::Revoked) {
-            "canceled: the caller's access was revoked"
-        } else {
-            "canceled"
-        };
+        let text = canceled_text(code);
         let canceled = |row: &mut TaskRow| {
             row.state = TaskState::Canceled;
             row.status_message = Some(row.agent_message(vec![Part::text(text)], code.map(code_metadata)));
@@ -1710,9 +2133,12 @@ impl A2a {
         // The rule the sender holds every attempt to (§6), so a configuration
         // made here is one it delivers to while the entry stays as it is.
         if let Err(refusal) = crate::push::guard::push_target(&push.url, &entry.push_origins, entry.source, self.settings.tck) {
-            return Err(A2aError::invalid(format!(
-                "a push url is https, at an origin this agent's pushOrigins lists: {refusal}"
-            )));
+            // The whole request is refused, with a code a client can tell
+            // apart: it may send it again without the push configuration.
+            return Err(
+                A2aError::invalid(format!("a push url is https, at an origin this agent's pushOrigins lists: {refusal}"))
+                    .with_code(ErrorCode::PushOriginNotAllowed),
+            );
         }
         if push.id.chars().count() > 128 || push.id.chars().any(char::is_control) {
             return Err(A2aError::invalid("a push configuration's id is at most 128 characters"));
@@ -1724,28 +2150,11 @@ impl A2a {
     /// event when it came with the message that made the task (`from_start`),
     /// else from the next event on.
     fn put_push(&self, task_id: &str, push: TaskPushNotificationConfig, from_start: bool) -> Result<TaskPushNotificationConfig, A2aError> {
-        let id = if push.id.is_empty() { new_id() } else { push.id.clone() };
+        let row = push_row(task_id, push, now_ms());
         let existing = self.store.pushes(task_id);
-        if existing.len() >= MAX_PUSH_CONFIGS && !existing.iter().any(|row| row.id == id) {
+        if existing.len() >= MAX_PUSH_CONFIGS && !existing.iter().any(|kept| kept.id == row.id) {
             return Err(over_quota(format!("a task has at most {MAX_PUSH_CONFIGS} push configurations")));
         }
-        let row = PushRow {
-            task_id: task_id.to_string(),
-            id,
-            url: push.url,
-            token: (!push.token.is_empty()).then_some(push.token),
-            auth_scheme: push
-                .authentication
-                .as_ref()
-                .map(|auth| auth.scheme.clone())
-                .filter(|scheme| !scheme.is_empty()),
-            auth_credentials: push
-                .authentication
-                .as_ref()
-                .map(|auth| auth.credentials.clone())
-                .filter(|credentials| !credentials.is_empty()),
-            created_ms: now_ms(),
-        };
         self.store
             .put_push(&row, from_start)
             .map_err(|error| A2aError::internal(format!("cannot keep the push configuration: {error}")))?;
@@ -1836,7 +2245,9 @@ impl A2a {
         locked(&self.scenarios).remove(task_id);
     }
 
-    /// Keep a push configuration a send came with, checked already.
+    /// Keep a push configuration of a task as if its first message came with
+    /// it, unchecked: what a test plants.
+    #[cfg(test)]
     pub(crate) fn add_push(&self, task_id: &str, push: TaskPushNotificationConfig) -> Result<TaskPushNotificationConfig, A2aError> {
         self.put_push(task_id, push, true)
     }
@@ -1866,6 +2277,28 @@ pub(crate) enum Created {
     Duplicate(String),
 }
 
+/// A push configuration of `task_id` as it is kept; its id made up when it
+/// has none.
+fn push_row(task_id: &str, push: TaskPushNotificationConfig, now: i64) -> PushRow {
+    PushRow {
+        task_id: task_id.to_string(),
+        id: if push.id.is_empty() { new_id() } else { push.id },
+        url: push.url,
+        token: (!push.token.is_empty()).then_some(push.token),
+        auth_scheme: push
+            .authentication
+            .as_ref()
+            .map(|auth| auth.scheme.clone())
+            .filter(|scheme| !scheme.is_empty()),
+        auth_credentials: push
+            .authentication
+            .as_ref()
+            .map(|auth| auth.credentials.clone())
+            .filter(|credentials| !credentials.is_empty()),
+        created_ms: now,
+    }
+}
+
 fn push_config(row: &PushRow) -> TaskPushNotificationConfig {
     TaskPushNotificationConfig {
         tenant: String::new(),
@@ -1880,12 +2313,14 @@ fn push_config(row: &PushRow) -> TaskPushNotificationConfig {
     }
 }
 
-fn encode_page_token(status_ms: i64, id: &str) -> String {
+/// A page token: where a page ended, as `(time, id)`.
+pub(crate) fn encode_page_token(status_ms: i64, id: &str) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("{status_ms}:{id}"))
 }
 
-fn decode_page_token(token: &str) -> Option<(i64, String)> {
+/// The `(time, id)` a page token says a page ended at.
+pub(crate) fn decode_page_token(token: &str) -> Option<(i64, String)> {
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(token).ok()?;
     let text = String::from_utf8(bytes).ok()?;

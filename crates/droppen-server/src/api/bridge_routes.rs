@@ -172,6 +172,7 @@ fn no_device_reaches_the_a2a_server() {
         assert_eq!(refusal(method, path, ADMIN), Some(Refusal::NotFromCloud), "{method} {path}");
     }
     assert_eq!(classify("GET", "/api/a2a/tasks"), Some(RouteClass::Use));
+    assert_eq!(classify("GET", "/api/a2a/contexts"), Some(RouteClass::Use));
     assert_eq!(classify("POST", "/api/a2a/tokens"), Some(RouteClass::Posture));
     assert_eq!(classify("PATCH", "/api/a2a/entries/main"), Some(RouteClass::Posture));
 }

@@ -149,6 +149,7 @@ async fn the_management_routes_answer_a_login_only() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["entries"][0]["id"], "main");
     assert!(body["defaultTemplate"].as_str().unwrap().contains("{{fence}}"));
+    assert_eq!(body["publicBase"], Value::Null, "no [a2a] public_base: the card uses the request's Host");
 
     let (status, created) = send(
         &mut router,
@@ -168,6 +169,12 @@ async fn the_management_routes_answer_a_login_only() {
     );
     let (status, _) = send(&mut router, "GET", "/api/a2a/tasks?state=working", Some(&login), None, &[]).await;
     assert_eq!(status, 200);
+    let (status, contexts) = send(&mut router, "GET", "/api/a2a/contexts?pageSize=10", Some(&login), None, &[]).await;
+    assert_eq!((status, contexts), (200, json!({"contexts": [], "nextPageToken": null})));
+    let (status, _) = send(&mut router, "GET", "/api/a2a/contexts?pageSize=0", Some(&login), None, &[]).await;
+    assert_eq!(status, 400);
+    let (status, _) = send(&mut router, "GET", "/api/a2a/contexts", Some(&token), None, &[]).await;
+    assert_eq!(status, 401, "an A2A token opens no management route");
     // The A2A proxies this device takes calls from: none, on a server not
     // linked to Droppen.
     let (status, _) = send(&mut router, "GET", "/api/a2a/devices", None, None, &[]).await;
