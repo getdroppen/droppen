@@ -211,3 +211,12 @@ droppen-notify = { path = "../droppen-notify", features = ["test-support"] }
 # What the tests of the cloud routes, the remote-view gate and link control
 # (`api::cloud_routes`, `api::cloud_control`) reach of cloud (`droppen_cloud::testing`).
 droppen-cloud = { path = "../droppen-cloud", features = ["test-support"] }
+# The A2A proxy end to end (`a2a_proxy_e2e`), on droppen-client's stand
+# (`tests/support`): a relay in this process (the library the relay binary
+# runs), the test hub's ticket key and the admin's signatures (`ed25519-dalek`),
+# and the stand's `wss://` front (`rustls`, `tokio-rustls`; ring only, as
+# everywhere in this workspace).
+droppen-relay-core = { path = "../droppen-relay-core" }
+ed25519-dalek = "2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }

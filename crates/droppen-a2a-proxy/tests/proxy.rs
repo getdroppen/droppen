@@ -706,10 +706,13 @@ async fn end_to_end_each_failure_is_judged_by_the_proxys_own_chain() {
         .unwrap();
     assert_eq!(ok.status(), 200);
     stand.append(
-        vec![Action::SetA2aAccept {
-            host: support::HOST.into(),
-            devices: Vec::new(),
-        }],
+        vec![
+            Action::SetA2aAccept {
+                host: support::HOST.into(),
+                devices: Vec::new(),
+            },
+            support::Account::host_key(1),
+        ],
         true,
     );
     stand.device.sync_chain().await.unwrap();

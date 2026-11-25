@@ -30,19 +30,17 @@ use droppen_client::verified::VerifiedChain;
 use droppen_client::{hex, now_ms};
 use droppen_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead};
 use droppen_proto::chain::{
-    genesis3_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainState, DeviceV3, Entry, Flags, Freshness, KeyCommit,
-    KeyCommits, Signer,
+    genesis3_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainState, DeviceV3, Entry, Flags, KeyCommit, KeyCommits,
+    Signer,
 };
 use droppen_proto::channel::Session;
 use droppen_proto::driver::{Channel, Incoming, StreamEvent, StreamWriter};
 use droppen_proto::frame::Frame;
-use droppen_proto::handshake::{
-    self, Accepted, AgentSide, HandshakeError, HelloBody, ReplyBody, ReplyStatus, FRESHNESS_MAX_AGE_MS, MAX_HELLO_ENTRIES,
-};
+use droppen_proto::handshake::{self, Accepted, AgentSide, FRESHNESS_MAX_AGE_MS};
 use droppen_proto::identity::fingerprint;
 use droppen_proto::keys::DhKeypair;
 use droppen_proto::mux::{Role, StreamClass};
-use droppen_proto::noise::{self, Binding, RekeyPolicy, ReplayGuard};
+use droppen_proto::noise::{RekeyPolicy, ReplayGuard};
 use droppen_proto::sig::{HubLogin, LoginRole};
 use droppen_proto::ticket::{RelayTicket, TicketLimits, TicketRole};
 use droppen_relay_core::config::{Config, Timing, TrustProxy};
@@ -110,7 +108,13 @@ impl Account {
     /// machine key epoch, the device under test (an A2A proxy: the a2a flag
     /// alone), and the host taking A2A calls from it (`SetA2aAccept`).
     pub fn new() -> Account {
-        let mut account = Account::hosts_only();
+        let (host, host_dh) = keys(2);
+        Account::with_host(host.verifying_key().to_bytes(), host_dh.public())
+    }
+
+    /// [`Account::new`] with the host's own keys: a real agent's identity.
+    pub fn with_host(host_sign: [u8; 32], host_dh: [u8; 32]) -> Account {
+        let mut account = Account::hosts_only_with(host_sign, host_dh);
         let (proxy, proxy_dh) = keys(3);
         account.append(vec![Action::AddDevice3(DeviceV3 {
             id: PROXY.into(),
@@ -128,6 +132,12 @@ impl Account {
     /// The account before any A2A proxy joined: genesis (the admin), user key
     /// epoch 0, the host with its first machine key epoch.
     pub fn hosts_only() -> Account {
+        let (host, host_dh) = keys(2);
+        Account::hosts_only_with(host.verifying_key().to_bytes(), host_dh.public())
+    }
+
+    /// [`Account::hosts_only`] with the host's own keys.
+    pub fn hosts_only_with(host_sign: [u8; 32], host_dh: [u8; 32]) -> Account {
         let ak = SigningKey::from_bytes(&[9; 32]);
         let (admin, admin_dh) = keys(1);
         let genesis = genesis3_draft(
@@ -160,12 +170,11 @@ impl Account {
             }),
             machines: Vec::new(),
         })]);
-        let (host, host_dh) = keys(2);
         account.append(vec![
             Action::AddDevice3(DeviceV3 {
                 id: HOST.into(),
-                sign_key: host.verifying_key().to_bytes(),
-                dh_key: host_dh.public(),
+                sign_key: host_sign,
+                dh_key: host_dh,
                 flags: Flags {
                     host: true,
                     admin: false,
@@ -214,7 +223,12 @@ impl Account {
 
     /// The admin vouching for the chain as it is now.
     pub fn attestation(&self) -> Attestation {
-        Attestation::create(&self.chain, ADMIN, &self.admin, now_ms())
+        self.attestation_at(now_ms())
+    }
+
+    /// The admin vouching for the chain as it is now, at `time_ms`.
+    pub fn attestation_at(&self, time_ms: u64) -> Attestation {
+        Attestation::create(&self.chain, ADMIN, &self.admin, time_ms)
     }
 
     pub fn entries(&self) -> Vec<Entry> {
@@ -366,6 +380,13 @@ pub struct HubState {
     pub enrollments: HashMap<String, Enrollment>,
     /// Its own origin, as sign-ins name it.
     pub origin: String,
+    /// What each host's agent declared (`agent_info`); the stand-in agent
+    /// "declares" `a2a/1` for the host.
+    pub agent_features: HashMap<String, Vec<String>>,
+    /// Attestations to hand the agents (`ATTEST`), encoded.
+    pub attest_queue: Vec<Vec<u8>>,
+    /// The relay tickets agents asked for.
+    pub agent_tickets: u32,
     /// Answer every session with this status and error code.
     pub refuse_sessions: Option<(u16, &'static str)>,
     pub tickets: u32,
@@ -389,6 +410,9 @@ impl TestHub {
             peers: None,
             enrollments: HashMap::new(),
             origin: String::new(),
+            agent_features: HashMap::from([(HOST.to_string(), vec!["a2a/1".to_string()])]),
+            attest_queue: Vec::new(),
+            agent_tickets: 0,
             refuse_sessions: None,
             tickets: 0,
             sessions: 0,
@@ -419,6 +443,11 @@ impl TestHub {
 }
 
 impl TestHub {
+    /// An admin's attestation, relayed to the agents (`ATTEST`).
+    pub fn attest(&self, attestation: &Attestation) {
+        self.state.lock().unwrap().attest_queue.push(attestation.encode());
+    }
+
     /// A page registers an enrollment code's token, of `kind`.
     pub fn register_code(&self, token: &[u8; 16], kind: &str) {
         self.state.lock().unwrap().enrollments.insert(
@@ -477,6 +506,9 @@ async fn claim(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
         return;
     }
     let Some(enroll) = json_of(socket.recv().await) else { return };
+    if enroll["t"] == "login" {
+        return agent_session(socket, state, nonce, enroll).await;
+    }
     let token = enroll["token"].as_str().unwrap_or_default().to_string();
     let known = {
         let st = state.lock().unwrap();
@@ -527,6 +559,144 @@ async fn claim(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
         });
     }
     let _ = socket.send(text(json!({"t": "enrolled", "account": ACCOUNT, "device": device}))).await;
+}
+
+/// The hub's side of an agent's connection (`/v1/agent`), as far as a real
+/// agent needs it to serve channels on a relay: its `login` (the
+/// signature checked against the key the chain names for the machine), then
+/// `relay_set` with the account's relays, `relay_tickets` answered with agent
+/// tickets, `agent_info` kept, `CHAIN` from a `chain_sub` and every entry
+/// after, the queued `ATTEST`s, and `PONG` to its pings.
+async fn agent_session(mut socket: WebSocket, state: Arc<Mutex<HubState>>, nonce: [u8; 32], login: Value) {
+    let machine = login["id"].as_str().unwrap_or_default().to_string();
+    let signed = {
+        let st = state.lock().unwrap();
+        let chain = ChainState::verify(&st.entries, None, &mut ChainClock::history()).unwrap();
+        let key = chain.machine(&machine).map(|d| d.info.sign_key);
+        let sig: Option<[u8; 64]> = droppen_client::unhex(login["sig"].as_str().unwrap_or_default())
+            .ok()
+            .and_then(|s| s.try_into().ok());
+        let login = HubLogin {
+            role: LoginRole::Agent,
+            account: ACCOUNT.into(),
+            id: machine.clone(),
+            hub: st.origin.clone(),
+            nonce,
+            time_ms: login["time_ms"].as_u64().unwrap_or_default(),
+        };
+        key.zip(sig).is_some_and(|(key, sig)| login.verify(&key, &sig))
+    };
+    if !signed {
+        let _ = socket
+            .send(text(json!({"t": "error", "code": "denied", "message": "no such machine"})))
+            .await;
+        return;
+    }
+    let relays: Vec<Value> = state
+        .lock()
+        .unwrap()
+        .relays
+        .iter()
+        .map(|(id, origin)| json!({"id": id, "origin": origin}))
+        .collect();
+    let directory: Vec<Value> = relays
+        .iter()
+        .map(|r| json!({"id": r["id"], "origin": r["origin"], "state": "up"}))
+        .collect();
+    for message in [
+        json!({"t": "welcome", "features": []}),
+        json!({"t": "relay_set", "relays": relays, "emergency": [], "limit": 4, "directory": directory}),
+    ] {
+        if socket.send(text(message)).await.is_err() {
+            return;
+        }
+    }
+    let mut cursor: Option<usize> = None;
+    let mut tick = tokio::time::interval(Duration::from_millis(50));
+    loop {
+        tokio::select! {
+            m = socket.recv() => match m {
+                Some(Ok(AxMessage::Text(t))) => {
+                    let v: Value = serde_json::from_str(t.as_str()).unwrap_or_default();
+                    match v["t"].as_str() {
+                        Some("agent_info") => {
+                            let features = v["features"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect();
+                            state.lock().unwrap().agent_features.insert(machine.clone(), features);
+                        }
+                        Some("chain_sub") => cursor = Some(v["from"].as_u64().unwrap_or(0) as usize),
+                        Some("relay_tickets") => {
+                            let answer = agent_tickets(&state, &machine, &v["relays"]);
+                            if socket.send(text(answer)).await.is_err() {
+                                return;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(AxMessage::Binary(b))) => {
+                    if let Ok(Frame::Ping { nonce }) = Frame::decode(&b) {
+                        let _ = socket.send(AxMessage::Binary(Frame::Pong { nonce }.encode().unwrap().into())).await;
+                    }
+                }
+                Some(Ok(_)) => {}
+                _ => return,
+            },
+            _ = tick.tick() => {
+                let (fresh, attestations) = {
+                    let mut st = state.lock().unwrap();
+                    let fresh: Vec<Vec<u8>> = cursor.map(|from| st.entries.iter().skip(from).map(Entry::encode).collect()).unwrap_or_default();
+                    (fresh, std::mem::take(&mut st.attest_queue))
+                };
+                for batch in fresh.chunks(16) {
+                    let frame = Frame::Chain { ch: 0, entries: batch.to_vec() };
+                    if socket.send(AxMessage::Binary(frame.encode().unwrap().into())).await.is_err() {
+                        return;
+                    }
+                }
+                if let Some(from) = cursor.as_mut() {
+                    *from += fresh.len();
+                }
+                for attestation in attestations {
+                    let frame = Frame::Attest { ch: 0, attestation };
+                    if socket.send(AxMessage::Binary(frame.encode().unwrap().into())).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// An agent's tickets for `relays` (`relay_tickets`).
+fn agent_tickets(state: &Arc<Mutex<HubState>>, machine: &str, relays: &Value) -> Value {
+    let mut st = state.lock().unwrap();
+    let chain = ChainState::verify(&st.entries, None, &mut ChainClock::history()).unwrap();
+    let Some(sign_key) = chain.machine(machine).map(|d| d.info.sign_key) else {
+        return json!({"t": "relay_tickets", "tickets": [], "errors": []});
+    };
+    let mut tickets = Vec::new();
+    for relay in relays.as_array().into_iter().flatten().filter_map(Value::as_str) {
+        let Some((_, origin)) = st.relays.iter().find(|(id, _)| id == relay).cloned() else {
+            continue;
+        };
+        let now = now_ms();
+        let ticket = RelayTicket {
+            kid: 1,
+            relay: relay.into(),
+            account: ACCOUNT.into(),
+            role: TicketRole::Agent,
+            id: machine.into(),
+            sign_key,
+            peers: Vec::new(),
+            limits: limits(),
+            flags: 0,
+            issued_ms: now,
+            expires_ms: now + 15 * 60 * 1000,
+        };
+        st.agent_tickets += 1;
+        tickets.push(json!({"relay": relay, "origin": origin, "ticket": ticket.sign(&hub_key()).unwrap(), "expires_ms": ticket.expires_ms}));
+    }
+    json!({"t": "relay_tickets", "tickets": tickets, "errors": []})
 }
 
 /// The hub's device socket (`/v1/client`) as far as a device follows the
@@ -637,13 +807,20 @@ async fn tickets(State(state): State<Arc<Mutex<HubState>>>, headers: axum::http:
     let device = st.session_devices.get(token).cloned().unwrap_or_else(|| PROXY.into());
     let mut clock = ChainClock::history();
     let chain = ChainState::verify(&st.entries, None, &mut clock).unwrap();
-    let Some(sign_key) = chain.device_record(&device).map(|d| d.info.sign_key) else {
+    // A current device of the chain only (`403 forbidden` otherwise).
+    let Some(sign_key) = chain.device(&device).map(|d| d.info.sign_key) else {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
     };
     // The hosts the chain lets the device reach: an A2A proxy's by
-    // `may_call_a2a`, any other device's by `may_control`.
+    // `may_call_a2a`, and only those whose agent declared `a2a/1`; any other
+    // device's by `may_control`.
+    let declared = |host: &str| st.agent_features.get(host).is_some_and(|f| f.iter().any(|f| f == "a2a/1"));
     let peers = st.peers.clone().unwrap_or_else(|| match chain.a2a_device(&device) {
-        Some(_) => chain.hosts_accepting_a2a(&device).map(|d| d.info.id.clone()).collect(),
+        Some(_) => chain
+            .hosts_accepting_a2a(&device)
+            .filter(|d| declared(&d.info.id))
+            .map(|d| d.info.id.clone())
+            .collect(),
         None => chain.hosts_admitting(&device).map(|d| d.info.id.clone()).collect(),
     });
     let mut out = Vec::new();
@@ -924,13 +1101,9 @@ impl TestAgent {
                 reason: reason.into(),
             });
         };
-        let outcome = match handshake::accept(side, device, hello, now_ms()) {
-            // Not one that may control the host: an A2A proxy it takes A2A
-            // calls from gets in as the agent's `A2aOnly` admission will.
-            Err(HandshakeError::NotAccepted(_)) if st.chain.may_call_a2a(device, HOST).is_ok() => accept_a2a(st, device, hello, server.as_bytes()),
-            outcome => outcome,
-        };
-        match outcome {
+        // An agent that serves A2A proxies: one it takes A2A calls from gets
+        // in as `A2aOnly`, any other device by `may_control`.
+        match handshake::accept_with_a2a(side, device, hello, now_ms()) {
             Ok(Accepted::Open { reply, transport, .. }) => {
                 st.outcomes.push("open".into());
                 let _ = out.send(Frame::Data { ch, payload: reply });
@@ -973,69 +1146,6 @@ impl TestAgent {
             }
         }
     }
-}
-
-/// The admission an agent gives an A2A proxy (`docs/a2a.md` §7.3, its
-/// `A2aOnly` channel) — [`handshake::accept`]'s checks in its order, with
-/// `may_call_a2a` where a device that controls has `may_control` — standing
-/// in for the agent's own until it has one. The hello's chain entries were
-/// taken already (by the `accept` that said "not accepted").
-fn accept_a2a(st: &mut AgentState, device: &str, message: &[u8], server: &[u8]) -> Result<Accepted, HandshakeError> {
-    let (_, host_dh) = keys(2);
-    let now = now_ms();
-    let binding = Binding {
-        account: ACCOUNT.into(),
-        device: device.into(),
-        machine: HOST.into(),
-    };
-    let mut responder = noise::Responder::with_prologue(&host_dh, &binding.prologue()?)?;
-    let hello = responder.read_hello(message)?;
-    let body = HelloBody::decode(&hello.payload)?;
-    st.chain
-        .authorize_device(device, &hello.initiator_static)
-        .map_err(|_| HandshakeError::Unauthorized)?;
-    st.chain
-        .may_call_a2a(device, HOST)
-        .map_err(|e| HandshakeError::NotAccepted(e.to_string()))?;
-    let reply = |status: ReplyStatus, chain: &ChainState| ReplyBody {
-        status,
-        chain_seq: chain.seq(),
-        chain_head: chain.head(),
-        need_from: if status == ReplyStatus::NeedEntries { chain.seq() + 1 } else { 0 },
-        server: server.to_vec(),
-        entries: chain
-            .entries()
-            .iter()
-            .skip(usize::try_from(body.chain_seq + 1).unwrap_or(usize::MAX))
-            .take(MAX_HELLO_ENTRIES)
-            .cloned()
-            .collect(),
-    };
-    let policy = RekeyPolicy::default();
-    match st.chain.freshness(device, &st.attestations, now, FRESHNESS_MAX_AGE_MS)? {
-        Freshness::Fresh => {}
-        Freshness::Behind { .. } => {
-            let from = st.chain.seq() + 1;
-            let (reply, _) = responder.write_reply(&reply(ReplyStatus::NeedEntries, &st.chain).encode()?, policy, now)?;
-            return Ok(Accepted::NeedEntries { reply, from, applied: 0 });
-        }
-        Freshness::Stale { newest_ms } => {
-            let (reply, _) = responder.write_reply(&reply(ReplyStatus::Stale, &st.chain).encode()?, policy, now)?;
-            return Ok(Accepted::Stale {
-                reply,
-                newest_ms,
-                applied: 0,
-            });
-        }
-    }
-    st.guard.check(device, &hello, now)?;
-    let (reply, transport) = responder.write_reply(&reply(ReplyStatus::Accepted, &st.chain).encode()?, policy, now)?;
-    Ok(Accepted::Open {
-        reply,
-        transport: Box::new(transport),
-        hello: body,
-        applied: 0,
-    })
 }
 
 /// One stream, bridged to `handler` as the agent's bridge would: the request

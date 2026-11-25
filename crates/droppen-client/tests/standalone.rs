@@ -338,12 +338,18 @@ async fn what_an_agents_reply_teaches_the_device_is_kept() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_agent_behind_the_device_asks_for_entries_and_lets_it_in_once_it_caught_up() {
     let mut stand = Stand::new(echo()).await;
-    // Eighteen entries the agent lacks: more than a hello carries.
+    // Eighteen entries the agent lacks: more than a hello carries. (A host
+    // that stops taking a proxy's calls renews its machine key next.)
     let mut actions = Vec::new();
-    for n in 0..18 {
+    for n in 0..6 {
         actions.push(Action::SetA2aAccept {
             host: HOST.into(),
-            devices: if n % 2 == 0 { Vec::new() } else { vec![PROXY.into()] },
+            devices: Vec::new(),
+        });
+        actions.push(Account::host_key(n + 1));
+        actions.push(Action::SetA2aAccept {
+            host: HOST.into(),
+            devices: vec![PROXY.into()],
         });
     }
     let entries = stand.account.append(actions);
@@ -447,10 +453,13 @@ async fn a_host_that_stopped_accepting_the_device_is_a_refusal_for_its_chain_to_
     // reach: no ticket names the host, and the relay refuses the `OPEN`.
     let mut stand = Stand::new(echo()).await;
     stand.append(
-        vec![Action::SetA2aAccept {
-            host: HOST.into(),
-            devices: Vec::new(),
-        }],
+        vec![
+            Action::SetA2aAccept {
+                host: HOST.into(),
+                devices: Vec::new(),
+            },
+            Account::host_key(1),
+        ],
         true,
     );
     stand.device.sync_chain().await.unwrap();
