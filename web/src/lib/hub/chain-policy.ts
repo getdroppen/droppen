@@ -504,7 +504,8 @@ export function pauseReturns(chain: ChainState, pause: OpenPause): { edges: { ho
     for (const id of r.ids) {
       const listed = chain.device(id);
       if (!listed || heldElsewhere(r.host, id)) continue;
-      const back = listed.a2a ? chain.a2aAccept(r.host).includes(id) : acceptNames(base, id, false);
+      // A proxy reaches every host: its list no longer gates (docs/a2a.md §7.1).
+      const back = listed.a2a ? true : acceptNames(base, id, false);
       if (!back) continue;
       edges.push({ host: r.host, id });
       if (base.type === "all" && !listed.a2a) all.add(r.host);
@@ -720,9 +721,10 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
 export function hostsExposedBy(chain: ChainState, device: string, from?: readonly string[]): string[] {
   const already = hostsToRotate(chain);
   const hosts = chain.hosts().filter((h) => h.status.type === "active");
-  // By default, every host it may control — and, for an A2A proxy, every host whose A2A list names it (docs/a2a.md §7.1).
+  // By default, every host it may control — and, for an A2A proxy, every host (docs/a2a.md §7.1).
+  const proxy = chain.device(device)?.a2a === true;
   const out = new Set<string>(
-    from ?? hosts.filter((h) => h.info.id !== device && (admits(chain, h.info.id, device) || chain.a2aAccept(h.info.id).includes(device))).map((h) => h.info.id),
+    from ?? hosts.filter((h) => h.info.id !== device && (proxy || admits(chain, h.info.id, device))).map((h) => h.info.id),
   );
   // A host with no host key yet is no host to renew (it is the device itself, for a host removed).
   out.delete(device);
@@ -1063,15 +1065,16 @@ export interface A2aAcceptChange {
 }
 
 /**
- * The current hosts whose A2A list names A2A proxy `id` (`setA2aAccept`, docs/a2a.md §7.1) — the list as written, a
- * call a renewal pause holds now included: each is exposed to it (a session it starts there can read any file the
- * host's user can, the identity key file included), so removing it turns their content keys over and they renew their
- * identity key after it ({@link hostsToRotate}).
+ * The current hosts A2A proxy `id` may call (docs/a2a.md §7.1) — every current host; its per-host accept list no
+ * longer gates. Each is exposed to it (a session it starts there can read any file the host's user can, the identity
+ * key file included), so removing it turns their content keys over and they renew their identity key after it
+ * ({@link hostsToRotate}).
  */
 export function a2aHostsOf(chain: ChainState, id: string): string[] {
+  if (chain.device(id)?.a2a !== true) return [];
   return chain
     .allDevices()
-    .filter((h) => chain.machine(h.info.id) && chain.a2aAccept(h.info.id).includes(id))
+    .filter((h) => chain.machine(h.info.id))
     .map((h) => h.info.id);
 }
 

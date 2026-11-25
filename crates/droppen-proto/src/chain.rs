@@ -27,8 +27,10 @@
 //!
 //! # The A2A proxy: a third flag (`docs/a2a.md` §7.1)
 //!
-//! - **a2a** (A2A 代理): a device that only calls the A2A server of the hosts
-//!   that accept it ([`Action::SetA2aAccept`], [`ChainState::may_call_a2a`]).
+//! - **a2a** (A2A 代理): a device that only calls the A2A server of the
+//!   account's hosts ([`ChainState::may_call_a2a`]); the per-host accept
+//!   lists ([`Action::SetA2aAccept`]) are kept for display, and a proxy calls
+//!   any current host.
 //!   It is never a host nor an admin ([`rules::A2A_PLAIN`]), so it signs
 //!   nothing, attests nothing and never holds `UK`; it never joins with a
 //!   passkey; and the flag is set at its join and never changes.
@@ -556,8 +558,8 @@ pub struct Flags {
     pub host: bool,
     /// 可管理账号: signs entries, holds `UK`, attests.
     pub admin: bool,
-    /// A2A 代理 (`docs/a2a.md` §7.1): calls the A2A of the hosts that accept
-    /// it ([`ChainState::may_call_a2a`]) and controls none. Set at its join,
+    /// A2A 代理 (`docs/a2a.md` §7.1): calls the A2A of the account's hosts
+    /// ([`ChainState::may_call_a2a`]) and controls none. Set at its join,
     /// never changed.
     pub a2a: bool,
 }
@@ -696,9 +698,10 @@ pub enum Action {
         removals: Vec<(String, Vec<String>)>,
     },
     /// Kind 23 (`docs/a2a.md` §7.1): which A2A proxies host `host` takes A2A
-    /// calls from ([`ChainState::may_call_a2a`]) — every one of `devices`, a
-    /// current a2a device, ascending by bytes, each once, at most
-    /// [`MAX_ACCEPT_IDS`]; empty: none (the default). An admin signs it. One
+    /// calls from — every one of `devices`, a current a2a device, ascending
+    /// by bytes, each once, at most [`MAX_ACCEPT_IDS`]; empty: none. Kept for
+    /// display: a proxy calls any current host whether a list names it or
+    /// not. An admin signs it. One
     /// that drops a proxy takes the host's next machine key epoch in the very
     /// next entry ([`rules::HOST_KEY_NEXT`]): a session the proxy started
     /// could read the host's key files. It is not control:
@@ -3172,8 +3175,9 @@ impl ChainState {
         self.accept.get(host).cloned().unwrap_or_default()
     }
 
-    /// The A2A proxies host `host` takes A2A calls from (`SetA2aAccept`),
-    /// ascending: current a2a devices only; none by default.
+    /// The A2A proxies host `host`'s last `SetA2aAccept` named, ascending:
+    /// current a2a devices only. Display only — [`ChainState::may_call_a2a`]
+    /// lets a proxy call every current host, listed or not.
     pub fn a2a_accept(&self, host: &str) -> &[String] {
         self.a2a_accept.get(host).map_or(&[], Vec::as_slice)
     }
@@ -3303,14 +3307,12 @@ impl ChainState {
         if self.paused_edges(host).iter().any(|id| id == device) {
             return Err(refuse("A2A calls are paused while identity keys are renewed"));
         }
-        if self.a2a_accept(host).iter().any(|id| id == device) {
-            Ok(())
-        } else {
-            Err(refuse("the host does not accept A2A calls from this proxy"))
-        }
+        // A proxy in the account calls any current host: the per-host accept
+        // lists are kept for display, but no call depends on them any more.
+        Ok(())
     }
 
-    /// The current hosts A2A proxy `device` may call — each one
+    /// The current hosts A2A proxy `device` may call — every current host
     /// [`ChainState::may_call_a2a`] allows — in id order: the hub's routing
     /// and ticket `peers` for it, and what the proxy offers.
     pub fn hosts_accepting_a2a<'a>(&'a self, device: &'a str) -> impl Iterator<Item = &'a DeviceRecord> + 'a {

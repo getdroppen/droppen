@@ -508,7 +508,7 @@ async fn a2a_calls_go_from_the_proxy_through_a_relay_and_the_agent_to_the_a2a_se
         .send()
         .await
         .unwrap();
-    assert_eq!(other.status(), 404);
+    assert_eq!(other.status(), 200, "an empty allowedDevices is every proxy");
 
     // The channel is A2A only: nothing of /api, no direct path.
     let api = e2e.device.rpc(support::HOST, support::Stand::get("/api/sessions")).await.unwrap();
@@ -550,7 +550,9 @@ async fn a_host_that_stops_taking_the_proxy_and_its_removal_are_answered_from_th
     let mut events = Events::new(response);
     events.next().await.unwrap().expect("the task first");
 
-    // The host stops taking the proxy's calls (and renews its machine key).
+    // The host's accept list no longer names the proxy (and it renews its
+    // machine key): nothing gates on the list any more, so the task keeps
+    // running and the stream stays open.
     e2e.append(vec![
         Action::SetA2aAccept {
             host: support::HOST.into(),
@@ -558,7 +560,27 @@ async fn a_host_that_stops_taking_the_proxy_and_its_removal_are_answered_from_th
         },
         support::Account::host_key(1),
     ]);
-    // Its open task is taken back, and the stream ends.
+    tokio::time::sleep(SYNC_EVERY + Duration::from_millis(200)).await;
+    assert!(matches!(
+        e2e.a2a.store().task(&task).unwrap().state,
+        droppen_a2a::wire::TaskState::Working | droppen_a2a::wire::TaskState::Submitted
+    ));
+    let answer: Value = e2e
+        .rpc("rpc-2", "GetTask", json!({"id": task}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(answer["id"], "rpc-2");
+    assert!(
+        matches!(answer["result"]["status"]["state"].as_str(), Some("TASK_STATE_WORKING" | "TASK_STATE_SUBMITTED")),
+        "{answer}"
+    );
+
+    // Removed from the account: its task is taken back and the stream ends.
+    e2e.append(vec![Action::RemoveDevice3(support::PROXY.into())]);
     let revoked = support::eventually(SECS, || {
         e2e.a2a
             .store()
@@ -572,25 +594,12 @@ async fn a_host_that_stops_taking_the_proxy_and_its_removal_are_answered_from_th
     loop {
         match events.next().await {
             Ok(Some(_)) => continue,
-            Err(why) if why == NO_EVENT => panic!("the stream stayed open after the host stopped taking the proxy"),
+            Err(why) if why == NO_EVENT => panic!("the stream stayed open after the proxy was removed"),
             Ok(None) | Err(_) => break,
         }
     }
-    // The next call: not accepted, by the proxy's own chain.
-    let answer: Value = e2e
-        .rpc("rpc-2", "GetTask", json!({"id": task}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(answer["id"], "rpc-2");
-    assert_eq!(code_of(&answer), "droppen.not_accepted", "{answer}");
-
-    // Removed from the account: device_removed, once the proxy synced its
+    // A call after the removal: device_removed, once the proxy synced its
     // chain again (a refused request syncs it, at most every 5 s).
-    e2e.append(vec![Action::RemoveDevice3(support::PROXY.into())]);
     let deadline = tokio::time::Instant::now() + SYNC_EVERY + SECS;
     let mut code = String::new();
     while tokio::time::Instant::now() < deadline {

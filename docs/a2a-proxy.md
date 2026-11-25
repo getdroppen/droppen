@@ -12,8 +12,8 @@ ciphertext, to the A2A server of the computer you name
 A2A client ──A2A over HTTP (private network)──▶ droppen a2a-proxy ──Noise channel, via a relay──▶ your computer: /a2a/*
 ```
 
-The computer decides what it serves: its A2A entries, and which A2A proxies
-each lets in. The proxy can do nothing else: it cannot control a computer,
+The computer decides what it serves: its A2A entries. Any A2A proxy of your
+account may call them; an entry may name only some. The proxy can do nothing else: it cannot control a computer,
 read your sessions or hold any of your keys, and the Hub never sees a
 request.
 

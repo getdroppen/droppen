@@ -77,31 +77,31 @@ not an external audit. Report a flaw privately, as
 
 ## A2A callers
 
-An A2A entry turns one directory of this computer into an agent an external
-A2A client can reach. The request is served on the computer itself; neither
-the Hub nor a relay sees it ([a2a.md](a2a.md)).
+An A2A entry turns one directory of this computer into an agent any A2A
+client in your account can reach. The request is served on the computer
+itself; neither the Hub nor a relay sees it ([a2a.md](a2a.md)).
 
-- **An A2A token, or an A2A proxy an entry allows, is that user's data access
+- **An A2A token, or an A2A proxy in the account, is that user's data access
   on this computer.** Sessions run as you: even a read-only tool can read any
   file (this program's device keys included) and put it in the result. Give it
   only to callers you trust.
 - An entry starts disabled and names its source, directory, account, model,
   permission mode and isolation (a worktree by default); the message carries
   only the task. Third-party text (an imported issue) is fenced in the
-  template, and an entry that allows an A2A proxy cannot use a bypass
-  permission mode.
+  template, and an entry with a bypass permission mode must name the
+  proxies it takes.
 - Tokens are taken only from this computer's loopback. Only
   `sha256(secret)` is stored, each token names the entries it may use, and it
-  can be revoked. An A2A proxy is a device of the account that only calls the
-  computers whose entries name it; it holds no key that decrypts anything and
-  is held to the chain.
+  can be revoked. An A2A proxy is a device of the account that only calls
+  computers (an entry may narrow that to some proxies); it holds no key that
+  decrypts anything and is held to the chain.
 - Push notifications go straight to the client's HTTPS origin, which the entry
   must list; loopback, private and link-local addresses are refused unless the
   entry names them.
 - The chain's freshness applies: a computer whose view no device confirmed in
   7 days refuses calls (`droppen.attestation_stale`), and revoking a token,
-  removing the proxy from an entry, or disabling the entry cancels its
-  unfinished tasks at once.
+  removing the proxy, or disabling an entry cancels its unfinished tasks at
+  once.
 - Every A2A request is logged locally (time, caller, entry, method, task),
   never its content or the token.
 

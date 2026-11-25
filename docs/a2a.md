@@ -137,7 +137,7 @@
 
 都在 `<instance>/state.db`（与 `scheduled_tasks` 同库，0600），是 `droppen-instance` 迁移链的第 12–14 步（`crates/droppen-instance/src/db/migrations.rs`，只增不删）。时间都是 epoch 毫秒（`*_ms`）。一个字段只在要按它查、排、约束时才是列，其余放 JSON。
 
-- `a2a_entries`：`id`（主键，`^[a-z0-9][a-z0-9-]{0,39}$`）、`payload`、`created_ms`、`updated_ms`。入口的设置整个是 `payload` 里的 JSON（管理 API 的 `A2aEntry`）：`name`、`description`、`enabled`（默认 false）、`source`（`claude|codex|acp|tck`）、`acpAgent`、`cwd`（绝对路径）、`account`（`{"kind": "default"}` 实例的默认账号，默认；`{"kind": "local"}` CLI 自己的登录；`{"kind": "id", "id": "…"}`）、`model`、`effort`、`permission`（同 `NewSession.permission`）、`isolation`（`none|worktree`，默认 `worktree`）、`maxConcurrent`（1–8，默认 1；同时占着名额的 task 数）、`template`（`null` 是默认模板）、`allowRemoteAnswers`（默认 true）、`pushOrigins`（`https://host[:port]`）、`allowedDevices`（§7 的 a2a 设备 id，默认空）、`createdAt`、`updatedAt`。
+- `a2a_entries`：`id`（主键，`^[a-z0-9][a-z0-9-]{0,39}$`）、`payload`、`created_ms`、`updated_ms`。入口的设置整个是 `payload` 里的 JSON（管理 API 的 `A2aEntry`）：`name`、`description`、`enabled`（默认 false）、`source`（`claude|codex|acp|tck`）、`acpAgent`、`cwd`（绝对路径）、`account`（`{"kind": "default"}` 实例的默认账号，默认；`{"kind": "local"}` CLI 自己的登录；`{"kind": "id", "id": "…"}`）、`model`、`effort`、`permission`（同 `NewSession.permission`）、`isolation`（`none|worktree`，默认 `worktree`）、`maxConcurrent`（1–8，默认 1；同时占着名额的 task 数）、`template`（`null` 是默认模板）、`allowRemoteAnswers`（默认 true）、`pushOrigins`（`https://host[:port]`）、`allowedDevices`（§7 的 a2a 设备 id；默认空 = 所有 a2a 设备）、`createdAt`、`updatedAt`。
 - `a2a_tokens`：`id`（主键，十六进制）、`name`（只给人看，可重名）、`entries`（作用域，JSON 数组）、`secret_hash`（`sha256(secret)`）、`created_ms`、`last_used_ms`（最多每分钟写一次）、`revoked_ms`。调用方是 `a2a:token:<id>`。
 - `a2a_contexts`：`context_id`（主键）、`entry`、`caller`、`source`、`session_id`（会话有了 id 才填；Codex 在 `thread/start` 之后）、`cwd`（worktree 时是 worktree）、`branch`、`created_ms`、`closed_ms`（§6「收紧要追溯」关闭它的时间；`NULL` 是开着，第 14 步加的列）。按 `(source, session_id)` 和 `(caller, created_ms)` 有索引。
 - `a2a_tasks`：`id`（主键）、`context_id`、`entry`、`caller`、`state`（`TASK_STATE_*`）、`status_message`（JSON Message）、`status_ms`（状态时间，列表按它倒序）、`artifacts`（JSON）、`history`（收到的消息，JSON：交给 backend 之后最多 50 条、1 MiB，超出丢最旧的；文件的字节交给会话后不再存，只留一个 `data` part `{"kind": "omitted_file", "mediaType": …, "size": <字节数>}`，文件名保留。`ListTasks` 不带 `historyLength` 时不回 history）、`client_message_id`（`a2a:<caller>:<messageId>`）、`dispatched`（第一条消息是否已交给 backend；没名额的 task 停在这里）、`seq`（最新事件的序号，流的开头快照取在这里）、`created_ms`、`updated_ms`。按 `(entry, caller, status_ms)`、`(context_id, created_ms)`、`(caller, state)` 有索引。
@@ -176,8 +176,8 @@
 
 - 一个能开会话的端点等于以用户身份执行代码。所以：入口默认停用直到用户填完；权限模式只来自入口；token 只存哈希；`/a2a/*` 不经通道开放。
 - **A2A 调用方能读到这台设备上该用户能读的一切。** 不管权限模式，只读工具也能让会话读任意文件（包括 Droppen 自己的设备钥文件）并写进结果带回去。所以一个 A2A token 或 a2a 设备，等于这台设备上该用户的数据访问权；只交给你信任的调用方。
-  - 有 `allowedDevices` 的入口不能用 bypass 类权限模式（Claude `bypassPermissions`、Codex `danger-full-access`）。
-  - 一台设备不再接受某个 a2a 设备（它被移除、被移出名单、或这台设备停止运行 AI）时，按「失去一个控制端」（D3）处理：这台设备、以及把它当控制端的设备（经它暴露）都算暴露，自动更新设备身份、轮换内容密钥、在更新前扣住发给它的密钥。原因：代理的会话能读到设备身份钥，只轮换内容密钥挡不住它。
+  - bypass 类权限模式（Claude `bypassPermissions`、Codex `danger-full-access`）的入口必须**列出** `allowedDevices`：空名单是“所有代理”，而 bypass 不给提问兜底。
+  - 一个 a2a 设备被移除、或这台设备停止运行 AI 时（名单不再拦人，所以「移出名单」不再是触发），按「失去一个控制端」（D3）处理：这台设备、以及把它当控制端的设备（经它暴露）都算暴露，自动更新设备身份、轮换内容密钥、在更新前扣住发给它的密钥。原因：代理的会话能读到设备身份钥，只轮换内容密钥挡不住它。
 - 提示注入：任务描述可能来自第三方（自动导入的 issue）。模板把它放进分隔块；入口默认不用 bypass 类权限模式；dont-do 默认不自动委派导入的 issue。
 - push 防 SSRF：只发 https；源必须在入口的 `pushOrigins` 里；解析后的地址不能是回环、私网、链路本地（除非 `pushOrigins` 明确写了这个地址）；不跟随重定向；超时 15 秒。
   - TCK 例外（只在 `DROPPEN_A2A_TCK=1` 且入口是 `source: "tck"` 时）：`pushOrigins` 可以列 `http://127.0.0.1`、`http://localhost`；列出时不带端口的回环 http 源接受该主机的任意端口（TCK 的接收端口每次不同），带端口的只接受那个端口。建配置与发送用同一条规则（`push::guard::push_target`）。
@@ -207,8 +207,8 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
   - 只在加入时定，之后没有任何条目能给它或去掉它。
 - **「控制」与「调用 A2A」是两个关系。** 在这份代码里「可以控制」同时意味着「收到这台设备的 `MK`」（`hosts_admitting`、`admits`、`sealHostKeys` 等都按它选收件人）。所以：
   - `may_control`、`hosts_admitting`、TS 的 `mayControl`、`chain-policy.ts` 的 `could`/`admits`/`acceptNames` 对 a2a 设备**一律不成立**，`SetAccept` 的 `All` 不包括它；`Devices` 名单写了它就整条拒绝（`A2A_NOT_CONTROLLER`）。
-  - 新条目 `SetA2aAccept { host, devices: [ids] }`（admin 签；名单升序、不重复，可以为空；只能列当前的 a2a 设备）：这台设备接受哪些 a2a 设备调用它的 A2A。新判断 `may_call_a2a(device, host)` 只用在通道准入和 bridge；设备身份续期的暂停同样暂停 A2A 调用（暂停结束即恢复）。
-  - a2a 设备不在 `extra_controllers` 里，也从不持 `MK`。但它发起的会话能读到这台设备磁盘上的钥文件，所以 `SetA2aAccept` 从名单里去掉任何设备时，下一条必须是这台设备的新 `KeyEpochs`（同 `SetAccept` 收窄的 `HOST_KEY_NEXT`）；移除一个仍在某些名单里的 a2a 设备时，这些设备的内容密钥同样轮换。去掉、移除、或这台设备停止运行 AI，都按「失去一个控制端」处理（§6）：这台设备与经它暴露的设备自动更新设备身份。
+  - **名单不再拦调用。** 一个 a2a 设备在账号里，就能调用任何当前机器。旧条目 `SetA2aAccept { host, devices: [ids] }` 仍然合法、仍然被应用（admin 签；升序、不重复；只能列当前的 a2a 设备），只是变成信息：页面照着显示“这台机器接受过谁”。判断 `may_call_a2a(device, host)` 只看“当前 a2a 设备 → 当前机器”；设备身份续期的暂停同样暂停 A2A 调用（暂停结束即恢复）。
+  - a2a 设备不在 `extra_controllers` 里，也从不持 `MK`。但它发起的会话能读到这台设备磁盘上的钥文件，所以**移除一个 a2a 设备**时，这台设备的下一条必须是新 `KeyEpochs`（同 `SetAccept` 收窄的 `HOST_KEY_NEXT`），这些设备的内容密钥同样轮换；旧客户端写 `SetA2aAccept` 收窄时同样如此。移除、或这台设备停止运行 AI，都按「失去一个控制端」处理（§6）：这台设备与经它暴露的设备自动更新设备身份。
   - 互通向量断言：`hosts_admitting(a2a 设备)` 为空；任何封钥路径都不会选中 a2a 设备。
 - **失败即拒绝**：不认识 a2a 的代码看到的是 `may_control` 不成立，只会拒绝它。解码 bit 2 与 `SetA2aAccept`、准入、bridge 的 a2a 策略在**同一个版本**里一起发；准入结果是类型（`Full` / `A2aOnly`），bridge 必须按类型处理。
 - 未知位、未知条目已经失败即拒绝（`Flags::from_byte`、`chain.ts`、`merge_partial` 停在解不了的条目前）。旧版本的设备会停在这一条之前、链头落后、通道开不了，也收不到之后的移除。所以添加 a2a 设备前，账号里所有可运行 AI 的设备、桌面应用都要先升级；添加界面按设备声明的 `a2a/1` 列出还没升级的，全部升级前不让加。这只关可用性：设备声明可以被 Hub 伪造，但安全不依赖它。
@@ -219,7 +219,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 
 1. 用户在 my.droppen.app「我的设备」→「添加 A2A 代理」。**码在页面上生成**（和今天加电脑一样，Hub 只存 `token`），页面向 Hub 登记 `{token, kind: "a2a"}`，并在本地记下这是 a2a 码；之后加什么标志由页面自己的记录决定，不信 Hub 回来的 `kind`。码 10 分钟有效、只用一次。
 2. 代理首次启动读 `DROPPEN_ENROLL_CODE`，生成自己的身份，按 `RH1` 协议证明。a2a 码用自己的版本前缀 `DA1-<账户指纹>-<秘密>`，证明用自己的标签（`PROOF_LABEL` 之外另一个常量，带 `a2a`）；`agent enroll` 拒绝 `DA1`，代理拒绝 `RH1`/`DR1`，两种码不能互换。代理在日志里打出自己的设备指纹。Hub 为它建 devices 行（`kind = 'a2a'`），不建 machines 行、不让它以 agent 身份登录。
-3. **页面要求用户把代理日志里的指纹粘进来**（与 `completeEnrollment` 的 `expect` 同一机制），对不上、或 Hub 显示有不止一个认领，就中止。然后让用户选哪些设备接受它，写一批：`[AddDevice3{flags: a2a}, SetA2aAccept{host, devices[…]} …]`（不带 `KeyEpochs`、不交任何密钥）。
+3. **页面要求用户把代理日志里的指纹粘进来**（与 `completeEnrollment` 的 `expect` 同一机制），对不上、或 Hub 显示有不止一个认领，就中止，然后写 `AddDevice3{flags: a2a}`（不带 `KeyEpochs`、不交任何密钥）。不选机器：加入后就能调所有机器；只有要限制某个入口时，才在那个入口的 `allowedDevices` 里挑代理。
 4. 代理在 `/v1/client` 上等链里出现自己（带 `a2a`、钥匙对得上），之后用设备会话工作。所有信件不拆就丢。
    - 认领协议（`/v1/agent` 上）：`enroll {token, kind: "a2a"}` → `enroll_assigned {account, device}` → `enroll_proof {kind, sign_key, dh_key, time_ms, sig, proof}`（`sig` 是角色为 Device 的 `HubLogin`；`proof` 用 `A2A_PROOF_LABEL = b"rh/v1 enroll-proof a2a\0"`）→ `enrolled`。向量在 `vectors/rust.json` 的 `identity.enrollA2a`。
    - 还没进链的 a2a 设备，Hub 要让它领设备会话、在 `/v1/client` 上 `chain_sub`、读 `GET /v1/chain`（它要等自己出现在链里）。
@@ -232,8 +232,8 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 - 通道准入：`may_control` 不成立时再看 `may_call_a2a`，成立则准入为 `A2aOnly`；不给它直连（准入时不登记直连，`accept_direct` 也拒绝它）。
 - bridge：a2a 的判断放在 `refusal()` 里（派发时的复核也走它）。`A2aOnly` 只能开 `rpc` 子流，只能到 A2A 绑定的方法加路径（自己的白名单：JSON-RPC 的 `POST …/jsonrpc`、REST 的固定几种，含 `{id}:cancel` 这类写法；按原始路径与逐段解码各判一次，沿用点、`//`、斜杠数的规则）；其余一律 403 `a2a_only`。其它设备碰 `/a2a/*` 仍是拒绝。新鲜度（`Lapsed`）照旧最先判。
 - 转发 `A2A-Version`、`A2A-Extensions` 两个头。
-- 身份：bridge 从通道得到设备 id，给 a2a 设备的请求加上 `x-rh-agent-kind: a2a`（只认本次启动的回环凭据，别的设备与本机进程伪造不了，由 guard 剥掉）。guard 给它的只有类型化的 `BridgedDevice { id, a2a: true }`，**不给** `cloud:<id>` 的登录身份，并且只放它到 `/a2a/*`。A2A 层把它当作调用方 `a2a:device:<id>`，并再查：经 agent 的链 `Access::A2aOnly` 仍成立、它是当前的 a2a 设备、入口的 `allowedDevices` 有它。
-- 入口多一个字段 `allowedDevices`（a2a 设备 id 列表，默认空）。
+- 身份：bridge 从通道得到设备 id，给 a2a 设备的请求加上 `x-rh-agent-kind: a2a`（只认本次启动的回环凭据，别的设备与本机进程伪造不了，由 guard 剥掉）。guard 给它的只有类型化的 `BridgedDevice { id, a2a: true }`，**不给** `cloud:<id>` 的登录身份，并且只放它到 `/a2a/*`。A2A 层把它当作调用方 `a2a:device:<id>`，并再查：经 agent 的链 `Access::A2aOnly` 仍成立、它是当前的 a2a 设备、入口的 `allowedDevices` 为空或含它。
+- 入口多一个字段 `allowedDevices`（a2a 设备 id 列表，默认空 = 所有 a2a 设备；只有要挑代理时才填）。
 - 提醒：加 a2a 设备、`SetA2aAccept` 变化时，告警文字要说「A2A 代理」；这台设备第一次被某个 a2a 设备连上时本机提醒一次；「我的设备」里给 a2a 设备一个徽章。
 
 ### 7.4 代理 `droppen a2a-proxy`
@@ -249,7 +249,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 ### 7.5 Hub 与发布顺序
 
 - Hub：
-  - 升级内嵌的 droppen（链里多了 bit 2 与 `SetA2aAccept`）。
+  - 升级内嵌的 droppen（链里多了 bit 2；`SetA2aAccept` 只在旧客户端那里出现）。
   - 注册码加 `kind`：`a2a` 按 `devices.max` 计、建 devices 行、不建 machines 行、不给 agent 登录。
   - a2a 设备会话只能读链、取票据、`GET /v1/relays`、看接受它的设备的在线状态；`/v1/me` 的邮箱与设备列表、`/v1/keys`、流的 `SUB` 与页、`POST /v1/devices`、配对、主设备、中继偏好一律拒绝。
   - 拒绝发给 a2a 设备的信件（用途 1、3、5）和由它发出的索钥信件（用途 4）。
