@@ -49,3 +49,22 @@ targetRules = ["generic-api-key"]
 paths = ['''^web/test/setup-tools-live\.test\.tsx$''']
 regexTarget = "secret"
 regexes = ['''^sk-test-0123456789abcdef$''']
+
+# The proxy's own token fixtures: `0123…cdef` is a made-up hex token in the
+# config and device-option tests, and the two `dpa_…` strings are the shape
+# of an A2A secret for the audit fixture and the settings DOM test.
+[[allowlists]]
+description = "a made-up proxy token in the proxy's tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^crates/droppen-a2a-proxy/src/config\.rs$''', '''^crates/droppen-a2a-proxy/src/lib\.rs$''']
+regexTarget = "secret"
+regexes = ['''^0123456789abcdef0123456789abcdef$''']
+
+[[allowlists]]
+description = "the shape of an A2A secret in the web fixtures"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^web/ui-audit/a2a\.tsx$''', '''^web/test/a2a-settings-dom\.test\.tsx$''']
+regexTarget = "secret"
+regexes = ['''^dpa_n4x8w2_[A-Za-z0-9_-]+$''']
