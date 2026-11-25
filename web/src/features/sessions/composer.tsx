@@ -409,12 +409,20 @@ export function Composer({
   // *this* message is the one that will go — one typed behind messages this tab
   // is still holding goes after them, and the first of those is the answer.
   //
+  // A `pending` question holds sending altogether: the field stays typable
+  // (its draft is kept), but the answer belongs in the card, and a message
+  // sent from here would be taken as the answer by the server whatever the
+  // button says — with a non-empty queue it says "add to queue", yet the route
+  // still answers the question with it. Once the question settles, sending
+  // comes back. An `expired` one blocks nothing and is not this.
+  //
   // Only the words (and attachments) go in as the answer. The model, effort and
   // permission pickers below stay as they are and are still sent, but the
   // server sets them aside for an answer: they describe a process, and the one
   // answering is blocked mid-turn and cannot change. They take effect with the
   // next message that starts a turn, which is why nothing here claims more.
   const answering = composerAnswersQuestion({ questions: detail.questions, row: detail.summary });
+  const questionPending = detail.questions?.some((question) => question.state === "pending") === true;
   const sendsAnswer = answering && canSend && queue.length === 0;
   const willQueue =
     !sendsAnswer &&
@@ -501,6 +509,7 @@ export function Composer({
       send.isPending ||
       shut ||
       !stateIn ||
+      questionPending ||
       anyFailed
     ) {
       return;
@@ -574,7 +583,7 @@ export function Composer({
         stopping={interrupt.isPending}
         onStop={bannerCanStop(banner) ? () => interrupt.mutate() : undefined}
       />
-      <AnswerNotice show={answering} />
+      <AnswerNotice show={answering} blocked={questionPending} />
       <AwaitingBackgroundNotice resident={residentOf(detail.summary)} />
       <RotationNotice source={source} id={id} rotation={detail.rotation} />
       {interrupted && (
@@ -672,9 +681,11 @@ export function Composer({
               ? (detail.sendBlockReason ?? t("the device is offline — this is a read-only copy"))
               : !stateIn
                 ? t("loading session…")
-                : canSend
-                  ? `${sendsAnswer ? t("type your answer…") : t("send a message to this session…")} (${sendHint})`
-                  : `${detail.sendBlockReason ?? t("session is busy")} — ${t("messages are queued")}`
+                : questionPending
+                  ? t("answer the question above first")
+                  : canSend
+                    ? `${sendsAnswer ? t("type your answer…") : t("send a message to this session…")} (${sendHint})`
+                    : `${detail.sendBlockReason ?? t("session is busy")} — ${t("messages are queued")}`
           }
           chips={<>
             {/* These three read the machine's state, which neither a window
@@ -696,7 +707,7 @@ export function Composer({
             <ChecklistChip source={source} id={id} toolTick={toolTick} />
           </>}
           send={{
-            disabled: send.isPending || shut || !stateIn || anyFailed || (!text.trim() && attachments.length === 0),
+            disabled: send.isPending || shut || !stateIn || questionPending || anyFailed || (!text.trim() && attachments.length === 0),
             label: sendsAnswer ? t("send as your answer") : willQueue ? t("add to queue") : t("send"),
             busy: send.isPending || sendQueued,
             queues: willQueue,

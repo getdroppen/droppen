@@ -751,8 +751,10 @@ export const zhCN: Record<string, string> = {
   "dismissed — left to the agent": "已忽略 — 交给 agent 决定",
   "cancelled — the turn was stopped": "已取消 — 这一轮被停止了",
   "the agent is waiting for your answer — what you send now goes in as the answer": "agent 在等你回答 — 现在发送的内容会作为回答",
+  "the agent is waiting for your answer — answer it in the card above": "agent 在等你回答 — 在上面的卡片里回答",
   "type your answer…": "输入你的回答…",
   "send as your answer": "作为回答发送",
+  "answer the question above first": "先回答上面的问题",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
   // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.

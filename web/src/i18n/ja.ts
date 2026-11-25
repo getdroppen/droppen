@@ -752,8 +752,10 @@ export const ja: Record<string, string> = {
   "dismissed — left to the agent": "スキップ — エージェントに任せました",
   "cancelled — the turn was stopped": "キャンセル — ターンが停止されました",
   "the agent is waiting for your answer — what you send now goes in as the answer": "エージェントが回答を待っています — 今送信する内容が回答になります",
+  "the agent is waiting for your answer — answer it in the card above": "エージェントが回答を待っています — 上のカードで回答してください",
   "type your answer…": "回答を入力…",
   "send as your answer": "回答として送信",
+  "answer the question above first": "先に上の質問に回答してください",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
   // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.
