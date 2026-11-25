@@ -165,10 +165,10 @@ function MarkdownTable({ children }: React.ComponentProps<"table">) {
 }
 
 const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
-  h1: ({ children }) => <h1 className="mt-3 mb-1 text-sm font-semibold first:mt-0">{children}</h1>,
-  h2: ({ children }) => <h2 className="mt-3 mb-1 text-[13px] font-semibold first:mt-0">{children}</h2>,
-  h3: ({ children }) => <h3 className="mt-2 mb-1 text-xs font-semibold first:mt-0">{children}</h3>,
-  h4: ({ children }) => <h4 className="mt-2 mb-0.5 text-xs font-semibold first:mt-0">{children}</h4>,
+  h1: ({ children }) => <h1 className="mt-3 mb-1 text-sm font-semibold first:mt-0 text-pretty">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-3 mb-1 text-[13px] font-semibold first:mt-0 text-pretty">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-2 mb-1 text-xs font-semibold first:mt-0 text-pretty">{children}</h3>,
+  h4: ({ children }) => <h4 className="mt-2 mb-0.5 text-xs font-semibold first:mt-0 text-pretty">{children}</h4>,
   p: ({ children }) => <p className="my-1 first:mt-0 last:mb-0">{children}</p>,
   ul: ({ children }) => <ul className="my-1 list-[square] space-y-0.5 pl-4 marker:text-faint">{children}</ul>,
   ol: ({ children }) => <ol className="my-1 list-decimal space-y-0.5 pl-5 marker:font-mono marker:text-faint">{children}</ol>,
@@ -203,7 +203,10 @@ const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
     if (block) {
       return <code className={cn("block font-mono text-2xs leading-[18px]", className)}>{children}</code>;
     }
-    return <code className="bg-raised px-1 py-px font-mono text-[0.9em] text-fg shadow-[inset_0_0_0_1px_var(--color-border)]">{children}</code>;
+    // A tint rather than an inset border: a border draws a fresh box around
+    // every line an inline code span wraps onto, which reads as several chips
+    // rather than one word. `slice` keeps the padding to the two ends.
+    return <code className="rounded-[2px] bg-fg/10 px-1 py-px font-mono text-[0.9em] text-fg [box-decoration-break:slice]">{children}</code>;
   },
   pre: MarkdownPre,
 };

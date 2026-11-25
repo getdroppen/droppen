@@ -912,7 +912,7 @@ test("inline code and other fenced languages stay exactly as they were, even wit
   await mount("`flowchart TD` and then\n\n```js\nconst x = 1;\n```\n");
 
   assert.equal(engine.workers.length, 0);
-  assert.match(container.innerHTML, /<code class="bg-raised px-1 py-px font-mono text-\[0\.9em\] text-fg shadow-\[inset_0_0_0_1px_var\(--color-border\)\]">flowchart TD<\/code>/);
+  assert.match(container.innerHTML, /<code class="[^"]*bg-fg\/10[^"]*font-mono[^"]*">flowchart TD<\/code>/);
   assert.match(container.innerHTML, /language-js/);
   assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
 });

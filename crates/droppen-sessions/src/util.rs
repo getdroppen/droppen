@@ -375,8 +375,30 @@ pub fn first_line_of(text: &str, limit: usize) -> String {
 }
 
 /// First line of a picked title, ellipsised the way the session list expects.
+///
+/// A message another session sent this one carries a `<cross-session-message
+/// …>` envelope on its first line, and as a title that is the whole of it: the
+/// envelope is all a list row would say. The sender's own words are taken
+/// instead.
 pub fn title_line(text: &str) -> String {
-    first_line_of(text, 120)
+    first_line_of(cross_session_body(text), 120)
+}
+
+/// `text` without a leading cross-session envelope and its closing tag.
+///
+/// Anything that does not open with the envelope is handed back untouched, and
+/// so is a line whose opening tag is never closed — the title then says what
+/// the message says, envelope and all, rather than nothing.
+fn cross_session_body(text: &str) -> &str {
+    let rest = text.trim_start();
+    let Some(rest) = rest.strip_prefix("<cross-session-message") else {
+        return text;
+    };
+    let Some(end) = rest.find('>') else { return text };
+    let body = rest[end + 1..].trim();
+    body.strip_suffix("</cross-session-message>")
+        .map(str::trim_end)
+        .unwrap_or(body)
 }
 
 /// What an attachment suffix on a user message decomposes into.
@@ -836,6 +858,31 @@ impl<T: Clone> FileCache<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cross-session envelope is not what a title is for: the sender's words
+    /// are. The envelope spans lines, so a title taken off the first line alone
+    /// would read `<cross-session-message from="uds:/tmp/droppen-ff.sock"
+    /// from-name="droppen-ff" from-mode="prompting">` and nothing else.
+    #[test]
+    fn a_cross_session_envelope_is_taken_off_a_title() {
+        let text = "<cross-session-message from=\"uds:/tmp/droppen-ff.sock\" from-name=\"droppen-ff\" from-mode=\"prompting\">\n\nThe cursor argument is agreed; keep the row blocked.\n</cross-session-message>";
+        assert_eq!(title_line(text), "The cursor argument is agreed; keep the row blocked.");
+    }
+
+    #[test]
+    fn an_envelope_without_its_closing_tag_still_loses_its_opening_one() {
+        let text = "<cross-session-message from-name=\"droppen-ff\">\n\nRun the soak again.";
+        assert_eq!(title_line(text), "Run the soak again.");
+    }
+
+    #[test]
+    fn a_title_that_is_not_an_envelope_is_untouched() {
+        assert_eq!(title_line("Fix the relay timeout"), "Fix the relay timeout");
+        // An unclosed opening tag leaves the message as it is rather than
+        // swallowing it.
+        let tag_only = "<cross-session-message from-name=\"droppen-ff\"";
+        assert_eq!(title_line(tag_only), tag_only);
+    }
 
     /// A path's extension, not its name's tail: `.png` is a dotfile.
     #[test]

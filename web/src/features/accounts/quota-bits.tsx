@@ -101,9 +101,12 @@ export function QuotaGauges({ windows }: { windows: QuotaWindow[] }) {
         return (
           <span key={`${w.label} ${w.windowMinutes}`} className="flex items-center gap-0.5">
             <span data-signal="quota" className="h-[3px] w-5 overflow-hidden bg-border">
+              {/* Anything left gets two pixels of bar: at one per cent the
+                  honest width is a fifth of a pixel, which draws as nothing
+                  and leaves the number sitting after an empty track. */}
               <span
                 className={cn("block h-full", remainingTone(remaining))}
-                style={{ width: `${remaining}%` }}
+                style={{ width: remaining > 0 ? `max(2px, ${remaining}%)` : undefined }}
               />
             </span>
             <span className="font-mono text-[9px] leading-none tabular-nums text-faint">

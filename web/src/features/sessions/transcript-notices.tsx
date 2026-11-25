@@ -87,7 +87,7 @@ export function CommandChip({ item }: { item: TranscriptItem }) {
       <div
         className={cn(
           "mt-1 ml-1 border-l pl-2 text-2xs leading-4 whitespace-pre-wrap",
-          item.isError ? "border-danger/40 text-danger/90" : "border-border text-faint",
+          item.isError ? "border-danger/40 text-danger" : "border-border text-faint",
         )}
       >
         {item.detail}
