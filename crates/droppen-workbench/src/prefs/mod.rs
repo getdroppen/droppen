@@ -1,6 +1,6 @@
 //! UI preferences.
 //!
-//! Eight settings, one row each in the machine-wide state database
+//! Nine settings, one row each in the machine-wide state database
 //! ([`droppen_instance::db`]) under [`scope::PREFS`], keyed by the same camelCase names the
 //! wire uses. A row per field rather than one row holding the document, because
 //! the settings are independent ones that happen to be saved together, and
@@ -135,6 +135,51 @@ pub enum DiagramStyle {
     Source,
 }
 
+/// How long archived sessions are kept before their data is deleted.
+///
+/// The transcripts of an archived session stay on disk after it leaves the
+/// list. This is the window after which the hourly retention pass
+/// (`droppen_server::archived_retention`) deletes them: the transcript or
+/// thread, and the metadata this server keeps about it. [`ArchivedRetention::Never`]
+/// is the default, so nothing is deleted until the user asks for it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+pub enum ArchivedRetention {
+    /// Keep archived data forever.
+    #[default]
+    #[serde(rename = "never")]
+    Never,
+    /// Delete an archived session's data one day after it was archived.
+    #[serde(rename = "1d")]
+    Day1,
+    /// Three days.
+    #[serde(rename = "3d")]
+    Day3,
+    /// Five days.
+    #[serde(rename = "5d")]
+    Day5,
+    /// Seven days.
+    #[serde(rename = "7d")]
+    Day7,
+    /// Thirty days.
+    #[serde(rename = "30d")]
+    Day30,
+}
+
+impl ArchivedRetention {
+    /// The window in milliseconds, or `None` for [`ArchivedRetention::Never`].
+    pub fn ms(self) -> Option<i64> {
+        match self {
+            ArchivedRetention::Never => None,
+            ArchivedRetention::Day1 => Some(1),
+            ArchivedRetention::Day3 => Some(3),
+            ArchivedRetention::Day5 => Some(5),
+            ArchivedRetention::Day7 => Some(7),
+            ArchivedRetention::Day30 => Some(30),
+        }
+        .map(|days| days * 24 * 60 * 60 * 1000)
+    }
+}
+
 /// The stored UI preferences.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
@@ -165,6 +210,12 @@ pub struct Prefs {
     // before the setting means, since it never showed the tree.
     #[serde(default)]
     pub subagent_tree: SubagentTree,
+    /// How long archived sessions are kept before their data is deleted; a
+    /// body without it means `never`.
+    // Defaulted for the same reason as `math`: never is also what a page from
+    // before the setting means, since nothing deleted archived data then.
+    #[serde(default)]
+    pub archived_retention: ArchivedRetention,
 }
 
 /// Reading a parsed preferences object.
@@ -199,6 +250,7 @@ impl PrefsValueExt for Value {
             math: self.prefs_field("math"),
             diagrams: self.prefs_field("diagrams"),
             subagent_tree: self.prefs_field("subagentTree"),
+            archived_retention: self.prefs_field("archivedRetention"),
         }
     }
 }
@@ -375,6 +427,7 @@ mod tests {
         assert_eq!(prefs.math, MathStyle::Rendered, "math is typeset unless the user asks for the source");
         assert_eq!(prefs.diagrams, DiagramStyle::Rendered, "and so are diagrams drawn");
         assert_eq!(prefs.subagent_tree, SubagentTree::Off, "opt-in");
+        assert_eq!(prefs.archived_retention, ArchivedRetention::Never, "nothing is deleted until asked");
     }
 
     #[test]
@@ -388,9 +441,11 @@ mod tests {
             "math": "source",
             "diagrams": "source",
             "subagentTree": "on",
+            "archivedRetention": "7d",
         });
         let prefs = (raw).prefs_from_value();
         assert_eq!(prefs.subagent_tree, SubagentTree::On);
+        assert_eq!(prefs.archived_retention, ArchivedRetention::Day7);
         assert_eq!(prefs.session_grouping, SessionGrouping::Directory);
         assert_eq!(prefs.composer_send, ComposerSend::Modifier);
         assert_eq!(prefs.font_size, FontSize::Xlarge);
@@ -407,6 +462,7 @@ mod tests {
             "fontSize": "gigantic",
             "language": 42,
             "transcriptStyle": "bubble",
+            "archivedRetention": "2d",
         });
         let prefs = (raw).prefs_from_value();
         assert_eq!(prefs.font_size, FontSize::Default, "an unknown size falls back on its own");
@@ -414,6 +470,11 @@ mod tests {
         assert_eq!(prefs.composer_send, ComposerSend::Enter, "an absent field is a default");
         assert_eq!(prefs.session_grouping, SessionGrouping::Directory, "the readable fields survive");
         assert_eq!(prefs.transcript_style, TranscriptStyle::Bubble);
+        assert_eq!(
+            prefs.archived_retention,
+            ArchivedRetention::Never,
+            "an unknown window falls back on its own"
+        );
     }
 
     #[test]
@@ -434,6 +495,7 @@ mod tests {
             math: MathStyle::Source,
             diagrams: DiagramStyle::Source,
             subagent_tree: SubagentTree::On,
+            archived_retention: ArchivedRetention::Day7,
         };
         let encoded = serde_json::to_value(&prefs).expect("encode");
         assert_eq!(encoded["subagentTree"], "on", "a string, which is what the store keeps");
@@ -444,6 +506,14 @@ mod tests {
         assert_eq!(encoded["transcriptStyle"], "bubble");
         assert_eq!(encoded["math"], "source");
         assert_eq!(encoded["diagrams"], "source");
+        assert_eq!(encoded["archivedRetention"], "7d", "a window is its short wire spelling");
+    }
+
+    #[test]
+    fn every_window_is_milliseconds_or_never() {
+        assert_eq!(ArchivedRetention::Never.ms(), None);
+        assert_eq!(ArchivedRetention::Day1.ms(), Some(24 * 60 * 60 * 1000));
+        assert_eq!(ArchivedRetention::Day30.ms(), Some(30 * 24 * 60 * 60 * 1000));
     }
 
     /// A page from before the setting saves the five fields it knows. The save
@@ -478,6 +548,11 @@ mod tests {
         let prefs: Prefs = serde_json::from_value(body).expect("an older page's save decodes");
         assert_eq!(prefs.math, MathStyle::Source);
         assert_eq!(prefs.diagrams, DiagramStyle::Rendered);
+        assert_eq!(
+            prefs.archived_retention,
+            ArchivedRetention::Never,
+            "and nothing is deleted until a page says so"
+        );
     }
 
     fn paths() -> (tempfile::TempDir, Paths) {
@@ -496,6 +571,7 @@ mod tests {
             math: MathStyle::Source,
             diagrams: DiagramStyle::Source,
             subagent_tree: SubagentTree::On,
+            archived_retention: ArchivedRetention::Day7,
         }
     }
 
@@ -577,8 +653,13 @@ mod tests {
             "kept, as a string"
         );
         assert_eq!(
+            reopened.kv_scope(scope::PREFS).get("archivedRetention").map(String::as_str),
+            Some("7d"),
+            "a window keeps its short spelling"
+        );
+        assert_eq!(
             reopened.kv_scope(scope::PREFS).len(),
-            8,
+            9,
             "one row per field, and the row is the wire spelling"
         );
     }

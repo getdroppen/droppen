@@ -28,6 +28,29 @@ def archive_thread(thread_id):
 if len(sys.argv) == 3 and sys.argv[1] == "archive":
     archive_thread(sys.argv[2])
     sys.exit(0)
+# `codex delete --force <id>`: record it and remove its archived rollout, as
+# the CLI does with the row and the file.
+if len(sys.argv) == 4 and sys.argv[1:3] == ["delete", "--force"]:
+    if (cwd / "codex-delete-exit.txt").exists():
+        flag = (cwd / "codex-delete-exit.txt").read_text().strip()
+        if flag == "after":
+            # Another server deleted the first row first: that call fails with
+            # the row gone; the next one fails with it still there.
+            import sqlite3
+            marker = cwd / "codex-delete-after-once.txt"
+            if not marker.exists():
+                marker.write_text("done")
+                db = test_root / ".codex/state_5.sqlite"
+                with sqlite3.connect(db) as conn:
+                    conn.execute("DELETE FROM threads WHERE id = ?", (sys.argv[3],))
+            sys.exit(1)
+        sys.exit(int(flag))
+    deleted = sys.argv[3]
+    with (test_root / "codex-deleted.txt").open("a") as log:
+        log.write(deleted + "\n")
+    for path in (test_root / ".codex/archived_sessions").glob(f"*{deleted}.jsonl"):
+        path.unlink(missing_ok=True)
+    sys.exit(0)
 # An account's model provider follows the subcommand as `-c` overrides.
 if sys.argv[1:2] != ["app-server"]:
     sys.exit(0)

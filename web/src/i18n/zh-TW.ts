@@ -570,6 +570,14 @@ export const zhTW: Record<string, string> = {
   /* the file browser hides dot-files; the switch is a per-browser setting */
   "show hidden files": "顯示隱藏檔案",
   "dot-files in the file browser · this device only": "檔案瀏覽器裡以 . 開頭的項目 · 僅本裝置",
+  "delete archived data after": "封存資料保留",
+  "archived sessions and their transcripts · checked hourly": "封存的會話及紀錄 · 每小時檢查一次",
+  never: "永不",
+  "1 day": "1 天",
+  "3 days": "3 天",
+  "5 days": "5 天",
+  "7 days": "7 天",
+  "30 days": "30 天",
   hide: "隱藏",
   show: "顯示",
   /* the login page, drawn only by a server that has accounts */

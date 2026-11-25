@@ -3202,6 +3202,17 @@ export interface components {
          * @enum {string}
          */
         AppType: "vscode";
+        /**
+         * @description How long archived sessions are kept before their data is deleted.
+         *
+         *     The transcripts of an archived session stay on disk after it leaves the
+         *     list. This is the window after which the hourly retention pass
+         *     (`droppen_server::archived_retention`) deletes them: the transcript or
+         *     thread, and the metadata this server keeps about it. [`ArchivedRetention::Never`]
+         *     is the default, so nothing is deleted until the user asks for it.
+         * @enum {string}
+         */
+        ArchivedRetention: "never" | "1d" | "3d" | "5d" | "7d" | "30d";
         /** @description A file parked in the uploads directory, ready to attach to a message. */
         Attachment: {
             /** @description Whether the composer should draw a thumbnail for it. */
@@ -4660,6 +4671,11 @@ export interface components {
         };
         /** @description The stored UI preferences. */
         Prefs: {
+            /**
+             * @description How long archived sessions are kept before their data is deleted; a
+             *     body without it means `never`.
+             */
+            archivedRetention?: components["schemas"]["ArchivedRetention"];
             /** @description What sends a composer message. */
             composerSend: components["schemas"]["ComposerSend"];
             /** @description How a Mermaid diagram in a message renders; a body without it means `rendered`. */
