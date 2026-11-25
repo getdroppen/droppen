@@ -19,6 +19,9 @@ import type { components } from "../src/api/schema.js";
 import { ApiError } from "../src/api/errors.js";
 import { formatTime } from "../src/lib/format.js";
 import { AnswerNotice, QuestionCard, QuestionCardView } from "../src/features/sessions/question-card.js";
+import { questionDraftKey, writeQuestionDraft } from "../src/features/sessions/question-draft.js";
+import { LOCAL } from "../src/lib/machines/key.js";
+import { MemoryStorage } from "./storage.js";
 import {
   answerBody,
   answersOnTap,
@@ -273,6 +276,24 @@ test("a pending question offers its options, an Other field and a way to decline
   assert.doesNotMatch(html, /role="radio"|role="checkbox"/);
   // The Other field's own send waits for something to be typed.
   assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="send answer"|<button[^>]*aria-label="send answer"[^>]*disabled=""/);
+});
+
+test("a draft is restored by the call's id when the card is rebuilt", () => {
+  // A switch away rebuilds the detail (and so every card) from scratch; what
+  // was typed and ticked has to come back with it.
+  const storage = new MemoryStorage();
+  const draft = typeOther(togglePick(EMPTY_DRAFT, 1, 0, true), 0, "Green", false);
+  writeQuestionDraft(storage, questionDraftKey(LOCAL, session, "toolu_1"), draft);
+  Object.assign(globalThis, { localStorage: storage });
+  try {
+    const html = draw(
+      <QuestionCard item={call({ question: [colour, toppings] })} record={record({ questions: [colour, toppings] })} session={session} />,
+    );
+    assert.match(html, /value="Green"/);
+    assert.equal((html.match(/aria-checked="true"/g) ?? []).length, 1);
+  } finally {
+    Reflect.deleteProperty(globalThis, "localStorage");
+  }
 });
 
 test("a multi-select question ticks boxes and is sent with a submit button", () => {
