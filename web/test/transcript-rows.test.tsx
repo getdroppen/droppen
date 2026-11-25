@@ -69,10 +69,10 @@ test("a tool summary is only icon, description and exit code", () => {
     />,
   );
   const summary = summaryOf(html);
-  assert.equal(visibleText(summary), `⚙${description}exit 1`);
+  assert.equal(visibleText(summary), `⚙${description}failed · exit 1`);
   assert.doesNotMatch(summary, /umask|mkdir|Permission denied/);
   assert.match(summary, /min-w-0 flex-1 truncate/, "the description owns the remaining width");
-  assert.match(summary, /shrink-0 pl-2 tabular-nums[^>]*>exit 1</, "the exit code cannot be truncated");
+  assert.match(summary, /shrink-0 pl-2 tabular-nums[^>]*>failed · exit 1</, "the failure keeps a compact word and the exit code cannot be truncated");
   assert.match(html, /<pre[^>]*>umask 077; mkdir/);
   assert.match(html, /Permission denied/);
 });
@@ -91,7 +91,7 @@ test("Codex's exit metadata is used instead of its stdout preview", () => {
 
 test("a result without an exit code shows completion without inventing zero", () => {
   const html = draw(<ToolLine item={call({ text: "Run checks" })} result={answer({ text: "42 tests passed" })} />);
-  assert.equal(visibleText(summaryOf(html)), "⚙Run checkscompleted");
+  assert.equal(visibleText(summaryOf(html)), "⚙Run checks");
   assert.doesNotMatch(summaryOf(html), /exit 0/);
 });
 
@@ -108,7 +108,7 @@ test("a codex command that yielded reads as running in the background, not compl
       })}
     />,
   );
-  assert.equal(visibleText(summaryOf(html)), "⚙uv run long.pybg");
+  assert.equal(visibleText(summaryOf(html)), "⚙uv run long.pybackground");
   assert.doesNotMatch(summaryOf(html), /completed/);
   assert.match(html, /<pre[^>]*>Downloading torch<\/pre>/, "what it printed so far stays readable");
 });
@@ -117,7 +117,7 @@ test("an exit-code phrase inside output is not promoted to a status code", () =>
   const html = draw(
     <ToolLine item={call({ text: "Review a failure" })} result={answer({ text: "The old build had Exit code 1" })} />,
   );
-  assert.equal(visibleText(summaryOf(html)), "⚙Review a failurecompleted");
+  assert.equal(visibleText(summaryOf(html)), "⚙Review a failure");
 });
 
 test("a failed call without an exit code keeps a compact failure status", () => {

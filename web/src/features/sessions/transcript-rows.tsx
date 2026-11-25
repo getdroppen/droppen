@@ -75,8 +75,8 @@ export const StepGroup = memo(function StepGroup({ items, base }: { items: Trans
         <span data-label="" className="label-caps shrink-0 text-[10px] text-fg">{t("{{n}} steps", { n: steps })}</span>
         <span className="truncate text-muted">{summary}</span>
         {hasError && (
-          <span data-signal="failed" className="shrink-0 text-danger" title={t("contains a failed tool call")}>
-            ×
+          <span data-signal="failed" className="shrink-0 text-danger" title={t("contains a failed tool call")} aria-label={t("contains a failed tool call")}>
+            ✗
           </span>
         )}
       </summary>
@@ -462,7 +462,13 @@ const ItemRow = memo(function ItemRow({
       ) : (
         <MessageHead role={role} model={model} timestamp={item.timestamp} />
       )}
-      <Markdown text={item.text} className={inBubble ? undefined : "max-w-[48em]"} lineBreaks={item.role === "user"} />
+      <Markdown
+        text={item.text}
+        // Prose keeps the 48em measure; tables and fences are the blocks allowed
+        // to use the pane, and pan inside themselves when even that is not enough.
+        className={inBubble ? undefined : "max-w-none [&>*:not(div):not(pre)]:max-w-[48em]"}
+        lineBreaks={item.role === "user"}
+      />
       {item.images && item.images.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {item.images.map((p) => (

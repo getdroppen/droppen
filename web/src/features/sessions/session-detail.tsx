@@ -33,6 +33,7 @@ import { scrollTopAfterPrepend } from "@/features/sessions/session-feed-state";
 import type { FeedState } from "@/features/sessions/session-feed-pool";
 import {
   NO_UNREAD,
+  lastContentBottom,
   pinAfterScroll,
   pinOnSettle,
   shouldTopUpHistory,
@@ -464,7 +465,8 @@ export function SessionDetailInner({
       atBottomRef.current = pinned;
       setAtBottom(pinned);
     }
-    const next = showJumpToBottom(pinned, box);
+    const el = scrollRef.current;
+    const next = showJumpToBottom(pinned, box, el && lastContentBottom(el, el.scrollTop));
     if (next !== jumpShownRef.current) {
       jumpShownRef.current = next;
       setJumpShown(next);
@@ -976,37 +978,41 @@ export function SessionDetailInner({
         </RunningTasksContext.Provider>
         </PairingContext.Provider>
       </div>
-      {/* Always rendered so it can fade both ways, and `inert` while hidden so
-          a button nobody can see is not in the tab order or read out. It only
-          appears once the newest row is properly off screen, so it never sits
-          over the message it would take you to. */}
-      <button
-        type="button"
-        inert={!jumpShown}
-        aria-label={t("jump to the newest messages")}
-        title={t("jump to the newest messages")}
-        onClick={() => glueToBottom(true)}
-        className={cn(
-          "absolute right-3 bottom-3 z-30 flex h-8 min-w-8 items-center justify-center gap-1 border border-border-strong bg-bg px-2 text-muted transition-opacity hover:bg-hover hover:text-fg",
-          jumpShown ? "opacity-100" : "pointer-events-none opacity-0",
-        )}
-      >
-        <ArrowDownIcon className="size-4 shrink-0" />
-        {/* What arrived while you were reading history — the reason to press it. */}
-        {unread > 0 && (
-          <span className="pr-0.5 font-mono text-2xs text-accent">{unreadLabel(unread)}</span>
-        )}
-      </button>
-      {/* Where this visit's unread messages begin, for a reader who arrived at
-          the newest of them. Centred, and narrow enough never to reach the
-          jump-to-bottom button in the corner. */}
-      <FirstUnreadButton
-        view={firstUnread.view}
-        paging={firstUnread.paging}
-        onJump={firstUnread.jump}
-        onCancel={firstUnread.cancel}
-        className="absolute bottom-3 left-1/2 z-30 max-w-[calc(100%-10rem)] -translate-x-1/2"
-      />
+      {/* A strip between the transcript and the composer, not a layer over the
+          transcript: both controls used to sit on top of the newest rows and
+          hide their text, timestamps and statuses. The strip only exists while
+          one of them does, so the reading pane keeps its height otherwise. */}
+      {(jumpShown || firstUnread.view !== null) && (
+        <div className="relative flex h-8 shrink-0 items-center border-t border-border bg-bg px-3">
+          {/* Where this visit's unread messages begin, for a reader who arrived
+              at the newest of them. Centred, and narrow enough to leave the
+              jump button its corner. */}
+          <FirstUnreadButton
+            view={firstUnread.view}
+            paging={firstUnread.paging}
+            onJump={firstUnread.jump}
+            onCancel={firstUnread.cancel}
+            className="mx-auto max-w-[calc(100%-5rem)]"
+          />
+          <button
+            type="button"
+            inert={!jumpShown}
+            aria-label={t("jump to the newest messages")}
+            title={t("jump to the newest messages")}
+            onClick={() => glueToBottom(true)}
+            className={cn(
+              "ml-auto flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 border border-border-strong bg-bg px-1.5 text-muted hover:bg-hover hover:text-fg",
+              !jumpShown && "invisible",
+            )}
+          >
+            <ArrowDownIcon className="size-4 shrink-0" />
+            {/* What arrived while you were reading history — the reason to press it. */}
+            {unread > 0 && (
+              <span className="pr-0.5 font-mono text-2xs text-accent">{unreadLabel(unread)}</span>
+            )}
+          </button>
+        </div>
+      )}
       </div>
       <Composer
         key={`${source}/${id}`}

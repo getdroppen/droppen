@@ -258,7 +258,7 @@ for (const [name, diagrams] of [
     const [mermaidBlock, rustBlock] = [...container.querySelectorAll("pre")].map((pre) => pre.outerHTML);
     assert.ok(mermaidBlock && rustBlock);
     assert.equal(mermaidBlock.replaceAll("language-mermaid", "language-rust"), rustBlock, "only the info string differs");
-    assert.match(mermaidBlock, /^<pre class="my-1\.5 overflow-x-auto border border-border bg-raised px-2\.5 py-2"><code class="block font-mono text-2xs leading-\[18px\] language-mermaid">/);
+    assert.match(mermaidBlock, /^<pre class="my-1\.5 overflow-x-auto border border-border bg-raised px-2\.5 py-2 whitespace-pre-wrap break-words"><code class="block font-mono text-2xs leading-\[18px\] language-mermaid">/);
     assert.match(mermaidBlock, /flowchart TD/);
     assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
   });

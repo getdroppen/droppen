@@ -7,6 +7,7 @@ import {
   bottomGap,
   holdBottomEdge,
   isAtBottom,
+  lastContentBottom,
   NO_UNREAD,
   pinAfterScroll,
   pinOnSettle,
@@ -162,6 +163,38 @@ test("the jump button appears only while the newest row is off screen", () => {
   assert.ok(!showJumpToBottom(true, box(400, 5000)));
   // Unpinned but the bottom is right there: nothing to jump to.
   assert.ok(!showJumpToBottom(false, box(4180, 5000)));
+});
+
+/** A scroller with a fixed top edge and rows at given bottoms. */
+function scroller(top: number, rows: { text: string; bottom: number }[]) {
+  return {
+    getBoundingClientRect: () => ({ top }),
+    querySelectorAll: () =>
+      rows.map((row) => ({ textContent: row.text, getBoundingClientRect: () => ({ bottom: row.bottom }) })),
+  };
+}
+
+test("the empty rows a consumed result leaves are not something to jump to", () => {
+  // The viewport (scrollTop 1000, 800 tall) ends at 1800; 200px of empty rows
+  // sit below it, so the box alone would read a gap of 200 and park the button
+  // over a line that is already fully in view. The last row with text ends
+  // exactly on the bottom edge, which is a gap of none.
+  const trailing = box(1000, 2000);
+  assert.equal(bottomGap(trailing), 200);
+  const flush = lastContentBottom(scroller(0, [{ text: "a line", bottom: 800 }, { text: "  ", bottom: 900 }]), 1000);
+  assert.equal(flush, 1800);
+  assert.ok(!showJumpToBottom(false, trailing, flush));
+
+  // And a newest line properly below the edge still offers the button.
+  const below = lastContentBottom(scroller(0, [{ text: "a line", bottom: 900 }]), 1000);
+  assert.equal(below, 1900);
+  assert.ok(showJumpToBottom(false, trailing, below));
+});
+
+test("a window with nothing readable in its last rows falls back to the box", () => {
+  const empty = scroller(0, Array.from({ length: 20 }, () => ({ text: "", bottom: 500 })));
+  assert.equal(lastContentBottom(empty, 0), null);
+  assert.ok(showJumpToBottom(false, box(400, 5000), null));
 });
 
 test("unread counts what arrived below the viewport while the user was away", () => {
