@@ -238,7 +238,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 
 ### 7.4 代理 `droppen a2a-proxy`
 
-- `droppen` 二进制的子命令，另出 Docker 镜像 `ghcr.io/getdroppen/droppen-a2a-proxy:vX.Y.Z`（随发版构建、带证明；部署见 `docs/a2a-proxy.md`）。`GET /healthz`（无鉴权）回 `{"status":"up","enrolled":bool}`；加入前 A2A 请求回 503。配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷：身份、已验证的链）、`DROPPEN_HUB`（默认 `https://api.droppen.app`）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理用的 Bearer，至少 32 个字符）、`PORT`；可选 `DROPPEN_A2A_PROXY_BASE`（Agent Card 里写的代理地址，默认取请求的 Host）、`DROPPEN_A2A_PROXY_ALIASES`（`别名=设备 id,…`）。
+- `droppen` 二进制的子命令，另出 Docker 镜像 `ghcr.io/getdroppen/droppen-a2a-proxy:vX.Y.Z`（随发版构建、带证明；部署见 `docs/a2a-proxy.md`）。`GET /healthz`（无鉴权）回 `{"status":"up","enrolled":bool}`；加入前 A2A 请求回 503。配置：`DROPPEN_ENROLL_CODE`（仅首次）、`DROPPEN_DATA_DIR`（必须是持久卷：身份、已验证的链）、`DROPPEN_HUB`（默认 `https://api.droppen.app`）、`DROPPEN_A2A_PROXY_TOKEN`（客户端访问代理用的 Bearer，至少 32 个字符）、`PORT`；可选 `DROPPEN_A2A_PROXY_BASE`（Agent Card 里写的代理地址，默认取请求的 Host）、`DROPPEN_A2A_PROXY_ALIASES`（`别名=设备 id,…`）、`DROPPEN_A2A_PROXY_RELAY_INSECURE`（`1`：也收环回上的 `ws://` 中继，自建中继用；默认只收公网 `wss://`，与 agent 的 `DROPPEN_AGENT_RELAY_INSECURE` 同义）。
 - 建在 `droppen-client` 上：要补设备侧开通道（从 `droppen-devkit` 提出来）、流式 `rpc`、中继票据续期（15 分钟前必须续，否则 4419）、链的持久化与指纹钉住。
 - 路由：`/a2a/<设备>/agents/<entry>/…`，`<设备>` 是设备 id 或代理配置里的别名；把请求作为 `rpc` 子流转给那台设备的 `/a2a/agents/<entry>/…`，把 Agent Card 里的接口地址改写成代理自己的地址。
 - 长流（SSE）会被中继迁移、票据、链变化、7 天新鲜度切断；代理不替客户端重连，客户端靠 `SubscribeToTask` 或轮询接着跟。

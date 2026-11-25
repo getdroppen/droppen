@@ -54,6 +54,7 @@ All of it is the environment:
 | `PORT` | where to listen (default 8080) |
 | `DROPPEN_A2A_PROXY_BASE` | optional: the proxy's address as your client reaches it (`http://droppen-a2a-proxy.railway.internal:8080`), for the Agent Card's interface addresses; unset, the request's `Host` over `http` |
 | `DROPPEN_A2A_PROXY_ALIASES` | optional: `name=device,…`, names to reach computers by besides their device ids |
+| `DROPPEN_A2A_PROXY_RELAY_INSECURE` | `1`: accept relays on loopback over plain `ws://` too, for a relay you run yourself (the agent has the same switch, `DROPPEN_AGENT_RELAY_INSECURE`). Unset: public `wss://` relays only |
 | `RUST_LOG` | the log filter (default `info`) |
 
 ## On Railway, beside your client

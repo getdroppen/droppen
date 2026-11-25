@@ -36,6 +36,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use droppen_client::device::DeviceOptions;
+use droppen_client::relays::RelayOptions;
 
 pub use config::Config;
 use server::Proxy;
@@ -58,10 +59,7 @@ pub async fn run(config: Config, version: &str) -> Result<(), String> {
     let listener = bind(config.bind).await?;
     tracing::info!(addr = %listener.local_addr().map_err(|e| e.to_string())?, "the a2a proxy is listening");
     let mut serving = tokio::spawn(serve(listener, proxy.clone(), stop_signal()));
-    let options = DeviceOptions {
-        client: format!("droppen-a2a-proxy/{version}"),
-        ..DeviceOptions::default()
-    };
+    let options = device_options(version, &config);
     let device = tokio::select! {
         device = enroll::open_or_join(&config, options) => Arc::new(device?),
         served = &mut serving => return served.map_err(|e| format!("serve: {e}"))?,
@@ -94,6 +92,20 @@ pub async fn run(config: Config, version: &str) -> Result<(), String> {
     proxy.ready(Arc::new(DeviceUpstream::new(device)));
     tracing::info!("the a2a proxy carries requests");
     serving.await.map_err(|e| format!("serve: {e}"))?
+}
+
+/// How the proxy's stand-alone device runs: its hello's client info, and
+/// whether it may dial a relay on loopback over `ws://`
+/// (`DROPPEN_A2A_PROXY_RELAY_INSECURE`; a self-run relay, local testing only).
+fn device_options(version: &str, config: &Config) -> DeviceOptions {
+    DeviceOptions {
+        client: format!("droppen-a2a-proxy/{version}"),
+        relays: RelayOptions {
+            allow_loopback: config.relay_insecure,
+            ..RelayOptions::default()
+        },
+        ..DeviceOptions::default()
+    }
 }
 
 /// Listen on `addr`; on every IPv4 address instead when it is `[::]` and the
@@ -170,4 +182,25 @@ async fn stop_signal() {
         let _ = tokio::signal::ctrl_c().await;
     }
     tracing::info!("stopping");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(insecure: bool) -> Config {
+        let values: Vec<(&str, String)> = vec![
+            ("DROPPEN_DATA_DIR", "/data".to_string()),
+            ("DROPPEN_A2A_PROXY_TOKEN", "0123456789abcdef0123456789abcdef".to_string()),
+            ("DROPPEN_A2A_PROXY_RELAY_INSECURE", if insecure { "1" } else { "" }.to_string()),
+        ];
+        Config::from_vars(|name| values.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())).unwrap()
+    }
+
+    #[test]
+    fn only_the_insecure_flag_opens_loopback_relays() {
+        assert!(!device_options("v", &config(false)).relays.allow_loopback);
+        assert!(device_options("v", &config(true)).relays.allow_loopback);
+        assert_eq!(device_options("1.2.3", &config(false)).client, "droppen-a2a-proxy/1.2.3");
+    }
 }

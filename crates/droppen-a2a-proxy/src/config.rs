@@ -9,6 +9,7 @@
 //! | `DROPPEN_ENROLL_CODE` | the first start only: the `DA1-` code from my.droppen.app that joins the proxy to an account ([`crate::enroll`]); on this service alone, and removed once it has joined |
 //! | `DROPPEN_A2A_PROXY_BASE` | optional: the proxy's own base as clients reach it (`https://a2a.example`), for the Agent Card's addresses; unset, the request's `Host` over `http` |
 //! | `DROPPEN_A2A_PROXY_ALIASES` | optional: `name=device,…`, names to reach devices by in `/a2a/<device>/…` besides their ids |
+//! | `DROPPEN_A2A_PROXY_RELAY_INSECURE` | `1`: relays on loopback, over plain `ws://` too (local testing only, as the agent's `DROPPEN_AGENT_RELAY_INSECURE`) |
 //! | `RUST_LOG` | the log filter (default `info`) |
 //!
 //! Every value is trimmed, and an empty one is unset. The token is never
@@ -37,6 +38,9 @@ pub struct Config {
     pub public_base: Option<String>,
     /// Name → device id.
     pub aliases: BTreeMap<String, String>,
+    /// Relays on loopback over plain `ws://` too: local testing only (a
+    /// self-run relay). Production relays are public `wss://` names.
+    pub relay_insecure: bool,
     /// The first start's enrollment code.
     pub enroll_code: Option<Zeroizing<String>>,
 }
@@ -49,6 +53,7 @@ impl std::fmt::Debug for Config {
             .field("bind", &self.bind)
             .field("public_base", &self.public_base)
             .field("aliases", &self.aliases)
+            .field("relay_insecure", &self.relay_insecure)
             .field("enroll_code", &self.enroll_code.as_ref().map(|_| "(set)"))
             .finish_non_exhaustive()
     }
@@ -77,6 +82,7 @@ impl Config {
         let port = port(var("PORT"))?;
         let public_base = var("DROPPEN_A2A_PROXY_BASE").map(|b| base_url(&b)).transpose()?;
         let aliases = var("DROPPEN_A2A_PROXY_ALIASES").map(|a| aliases(&a)).transpose()?.unwrap_or_default();
+        let relay_insecure = var("DROPPEN_A2A_PROXY_RELAY_INSECURE").as_deref() == Some("1");
         Ok(Config {
             data_dir,
             hub,
@@ -84,6 +90,7 @@ impl Config {
             bind: SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), port),
             public_base,
             aliases,
+            relay_insecure,
             enroll_code: read("DROPPEN_ENROLL_CODE")
                 .map(|c| Zeroizing::new(c.trim().to_string()))
                 .filter(|c| !c.is_empty()),
@@ -165,6 +172,7 @@ mod tests {
         assert_eq!(c.hub, "https://api.droppen.app");
         assert_eq!(c.bind.port(), 8080);
         assert!(c.public_base.is_none() && c.aliases.is_empty() && c.enroll_code.is_none());
+        assert!(!c.relay_insecure, "public relays only by default");
         assert!(!format!("{c:?}").contains(TOKEN), "no token in Debug");
 
         let c = config(&[
@@ -174,10 +182,12 @@ mod tests {
             ("PORT", "9000"),
             ("DROPPEN_A2A_PROXY_BASE", "https://a2a.example/"),
             ("DROPPEN_A2A_PROXY_ALIASES", "mac=host-1, linux = host-2"),
+            ("DROPPEN_A2A_PROXY_RELAY_INSECURE", "1"),
             ("DROPPEN_ENROLL_CODE", "RH1-x"),
         ])
         .unwrap();
         assert_eq!(c.hub, "https://hub.example:8443");
+        assert!(c.relay_insecure);
         assert_eq!(c.bind.port(), 9000);
         assert_eq!(c.public_base.as_deref(), Some("https://a2a.example"));
         assert_eq!(c.aliases.get("linux").map(String::as_str), Some("host-2"));
