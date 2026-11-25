@@ -10,8 +10,9 @@
 //! The real backend lives in the entry, on top of the provider registry, the
 //! `Alerts` hooks and the global feed: it decides which turn a task's message
 //! went into and when that turn ended (the task's own turn, §3.2), makes the
-//! worktree, and builds the artifacts. [`crate::testing::FakeBackend`] stands
-//! in for it in tests, and [`Unwired`] in a build that has none.
+//! worktree, and builds the artifacts. `crate::testing::FakeBackend` (built
+//! only for tests and with `test-support`) stands in for it in tests, and
+//! [`Unwired`] in a build that has none.
 //!
 //! Every call names the task it is for ([`TaskRef`]), and every event names
 //! the task (or, for a session-wide one, the context) it is about. The task's
