@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { CheckIcon, CircleNotchIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
 import type { components } from "@/api/schema";
@@ -22,7 +22,9 @@ import {
   type QuestionState,
   type SessionQuestion,
 } from "./session-questions";
-import { useApi } from "@/lib/machines/context";
+import { useApi, useMachine } from "@/lib/machines/context";
+import { clearQuestionDraft, questionDraftKey, readQuestionDraft, writeQuestionDraft } from "./question-draft";
+import type { DraftStorage } from "./session-draft";
 
 type TranscriptItem = components["schemas"]["TranscriptItem"];
 
@@ -51,11 +53,12 @@ type Settle = { kind: "answer"; body: AnswerQuestion } | { kind: "dismiss" };
  *   codex, a server too old to send `questions`: the call as the transcript
  *   wrote it, read-only. There is nobody holding it open to answer.
  *
- * Holds its own draft and its own request, so a row that is not this one never
- * re-renders for a tap here; and keeps what the server answered (`local`) so
- * the card settles the moment the route says so rather than a frame later —
- * which matters most for a `409`, where the alternative is buttons that can
- * only fail again.
+ * Keeps its draft in the browser (`question-draft.ts`), so a session switch or
+ * a window trim does not lose what was typed or ticked; and its own request, so
+ * a row that is not this one never re-renders for a tap here. It also keeps what
+ * the server answered (`local`) so the card settles the moment the route says so
+ * rather than a frame later — which matters most for a `409`, where the
+ * alternative is buttons that can only fail again.
  */
 export function QuestionCard({
   item,
@@ -69,7 +72,18 @@ export function QuestionCard({
   session?: QuestionSession;
 }) {
   const api = useApi();
-  const [draft, setDraft] = useState<QuestionDraft>(EMPTY_DRAFT);
+  const machine = useMachine();
+  const toolUseId = item.toolUseId;
+  const draftKey = session && toolUseId ? questionDraftKey(machine, session, toolUseId) : null;
+  const [draft, setDraft] = useState<QuestionDraft>(() => {
+    const storage = browserStorage();
+    return storage && draftKey ? readQuestionDraft(storage, draftKey) : EMPTY_DRAFT;
+  });
+  const setStoredDraft = (next: QuestionDraft) => {
+    setDraft(next);
+    const storage = browserStorage();
+    if (storage && draftKey) writeQuestionDraft(storage, draftKey, next);
+  };
   const [local, setLocal] = useState<SessionQuestion | null>(null);
   const settle = useMutation({
     mutationFn: async (action: Settle) => {
@@ -101,18 +115,36 @@ export function QuestionCard({
   // winner left, who and when included.
   const refusal = settle.error && !settledQuestionOf(settle.error) ? errorText(settle.error) : null;
   const answerable = session !== undefined && record !== undefined;
+  const question = effectiveQuestion(record, local);
+  // A settled question is never answered again, so its draft has nothing left
+  // to restore. `expired` stays answerable and keeps its own.
+  const settled = question !== null && !questionIsOpen(question.state);
+  useEffect(() => {
+    const storage = browserStorage();
+    if (!settled || !storage || !draftKey) return;
+    clearQuestionDraft(storage, draftKey);
+  }, [settled, draftKey]);
   return (
     <QuestionCardView
       item={item}
-      question={effectiveQuestion(record, local)}
+      question={question}
       draft={draft}
       busy={settle.isPending}
       error={refusal}
-      onDraft={setDraft}
+      onDraft={setStoredDraft}
       onSubmit={answerable ? (body) => settle.mutate({ kind: "answer", body }) : undefined}
       onDismiss={answerable ? () => settle.mutate({ kind: "dismiss" }) : undefined}
     />
   );
+}
+
+/** The page's storage, where there is one (a test drawing the card has none). */
+function browserStorage(): DraftStorage | null {
+  try {
+    return localStorage;
+  } catch {
+    return null;
+  }
 }
 
 /**
