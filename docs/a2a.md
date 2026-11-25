@@ -208,7 +208,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 - **「控制」与「调用 A2A」是两个关系。** 在这份代码里「可以控制」同时意味着「收到这台设备的 `MK`」（`hosts_admitting`、`admits`、`sealHostKeys` 等都按它选收件人）。所以：
   - `may_control`、`hosts_admitting`、TS 的 `mayControl`、`chain-policy.ts` 的 `could`/`admits`/`acceptNames` 对 a2a 设备**一律不成立**，`SetAccept` 的 `All` 不包括它；`Devices` 名单写了它就整条拒绝（`A2A_NOT_CONTROLLER`）。
   - 新条目 `SetA2aAccept { host, devices: [ids] }`（admin 签；名单升序、不重复，可以为空；只能列当前的 a2a 设备）：这台设备接受哪些 a2a 设备调用它的 A2A。新判断 `may_call_a2a(device, host)` 只用在通道准入和 bridge；设备身份续期的暂停同样暂停 A2A 调用（暂停结束即恢复）。
-  - a2a 设备不在 `extra_controllers` 里，也从不持 `MK`。但它发起的会话能读到这台设备磁盘上的钥文件，所以 `SetA2aAccept` 从名单里去掉任何设备时，下一条必须是这台设备的新 `KeyEpochs`（同 `SetAccept` 收窄的 `HOST_KEY_NEXT`）；移除一个仍在某些名单里的 a2a 设备时，这些设备的内容密钥同样轮换，界面说明它们暴露过，并建议轮换设备身份。
+  - a2a 设备不在 `extra_controllers` 里，也从不持 `MK`。但它发起的会话能读到这台设备磁盘上的钥文件，所以 `SetA2aAccept` 从名单里去掉任何设备时，下一条必须是这台设备的新 `KeyEpochs`（同 `SetAccept` 收窄的 `HOST_KEY_NEXT`）；移除一个仍在某些名单里的 a2a 设备时，这些设备的内容密钥同样轮换。去掉、移除、或这台设备停止运行 AI，都按「失去一个控制端」处理（§6）：这台设备与经它暴露的设备自动更新设备身份。
   - 互通向量断言：`hosts_admitting(a2a 设备)` 为空；任何封钥路径都不会选中 a2a 设备。
 - **失败即拒绝**：不认识 a2a 的代码看到的是 `may_control` 不成立，只会拒绝它。解码 bit 2 与 `SetA2aAccept`、准入、bridge 的 a2a 策略在**同一个版本**里一起发；准入结果是类型（`Full` / `A2aOnly`），bridge 必须按类型处理。
 - 未知位、未知条目已经失败即拒绝（`Flags::from_byte`、`chain.ts`、`merge_partial` 停在解不了的条目前）。旧版本的设备会停在这一条之前、链头落后、通道开不了，也收不到之后的移除。所以添加 a2a 设备前，账号里所有可运行 AI 的设备、桌面应用都要先升级；添加界面按设备声明的 `a2a/1` 列出还没升级的，全部升级前不让加。这只关可用性：设备声明可以被 Hub 伪造，但安全不依赖它。

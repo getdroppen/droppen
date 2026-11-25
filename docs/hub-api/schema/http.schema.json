@@ -2471,6 +2471,10 @@
                   "rotates": {
                     "type": "boolean",
                     "description": "Its agent last declared `rotate/1`: it can renew its identity key. Absent from hubs before renewals."
+                  },
+                  "a2a": {
+                    "type": "boolean",
+                    "description": "Its agent last declared `a2a/1`: it reads an A2A proxy in the chain (docs/a2a.md §7.3). Absent from hubs before A2A proxies."
                   }
                 }
               }

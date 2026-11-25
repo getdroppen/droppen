@@ -2601,7 +2601,13 @@
       "030006616363742d31000000000000001243850592e721ccebe9fca2f7a5ffee7f8a36c74399fb3f8133d22860adff8838000000000000ea710100056465762d300e0003682d3200ce6d84f876b72f2806293242ee31d2b47a0c68efd79aa39f6566712751ed1b4c0aa6a70fdd71f7e0380e713704b30301670b25ba4e757e7094cade94f2a2bb04",
       "030006616363742d310000000000000013aae3c755118be96a2ff763b970aef0a5092ff38e876f2f6880815a3b0e90f930000000000000ea720100056465762d300e0003682d32017ae44bf903e7966d64082818d184368673661c38fc245357efe77b22dcc38ac6c61b533697b7ea4eac38248b51197a572d35e5040d95fcc2a76120bee0d63504",
       "030006616363742d31000000000000001423fce596925b151288e843e7b3bc094ef3b2a5d44678f204232a2c91599784ae000000000000ea730100056465762d300a0000010003682d320000000148983d883ea26e0eeb3a3b732287fc4876f99002c5490f9adaa849ca8a15c18f14a82887655e1c8c56626bc8ff0d778468db91dbe19f7b6ef33f2966e610210ed7437cb6a31ad2e244be3e6f8735babec03d6421fd313b393332165d15eb960c",
-      "030006616363742d3100000000000000159b42877c37c7b325815773f06b4f6534abc97c2f1b4fcf5b77efe39d6a889378000000000000ea740100056465762d30170003682d3200010003612d31d09d7959c26faf15401549e2265bfa8dca12bcd6daecc99007fcf47ba9a7ce0da767e7545378ac1ff622687f958b4882ea23081c02b322086cac78e7d3f3ba00"
+      "030006616363742d3100000000000000159b42877c37c7b325815773f06b4f6534abc97c2f1b4fcf5b77efe39d6a889378000000000000ea740100056465762d30170003682d3200010003612d31d09d7959c26faf15401549e2265bfa8dca12bcd6daecc99007fcf47ba9a7ce0da767e7545378ac1ff622687f958b4882ea23081c02b322086cac78e7d3f3ba00",
+      "030006616363742d310000000000000016d355796ecb37904b01dc34c384e07f7ace984f7fb097d61dc09289905f28ba11000000000000ea750100056465762d300c0003612d33680ca874c6f5f35a5799519c88ba71daf58fde6c0da6d4cbd54b3dbe858e22b11f193d4d80fa7a96c27354725bbd2ac4cf348bcf3f5acba1df3306010382704004a74c94d9791aa3e6872bf3531210c225045c627401ff0143201cd4a372884090ec7f84b26066a4e56e314e42b5c835c15f3da1df244f479d94513210e75c6d08",
+      "030006616363742d310000000000000017470019c93d9e7e880650f8bdb27238a4bb352bd10138d80009852534ffbcc971000000000000ea760100056465762d30170003682d3200020003612d310003612d33e7f891606bb32212621c212321e00b5e61327afa82ce915805ced27dc3e432a3fedde9dbdf3f01e1e8936b59c8a4127bbae008358d096e463898d8487752380d",
+      "030006616363742d31000000000000001886e44678730d870f9e4417d90e97a93208066bd866195439ff4253bbc14d3308000000000000ea770100056465762d3016a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a202000087095efe5d4181d26fa48758a5e9f2be2aa9295bc92712bca773ff9bb5101dd89faeb596e1fc422e4a61d2a885ace40fb08f8b7c48be61bbc76dbc19ccf84d02",
+      "030006616363742d31000000000000001976590b6d5182af94aa5be4a544eb93d5e5df450185cb9b9926df86ef6f410fef000000000000ea780100056465762d300f0003612d31530bd4e10322906bbedbda5139492e4290a6fa301a5c02731c5ac4d24e6fff4a0efc0d50056c44a6c59c81b1e7451ee4078da4a49fd8f2c7772e63c9c3bfca0b",
+      "030006616363742d31000000000000001a6b43863c0d59a7c89a927d709d0b09eb38c31e17c65a15ad0ea9e44a966489ee000000000000ea790100056465762d300f0003682d32a2c729e2f2962af568646aab5275a1ac209e2ee76e38d05c0e8a84a062217dfa7ba60954dfb0de4414681726331a900681c1b43c0145be27359514c5fee66708",
+      "030006616363742d31000000000000001b50a4a8fe34fd1192c69aa644f4a6c5082fc50475f688a84012ca7556e5776959000000000000ea7a0100056465762d301700036d2d3100010003612d3302616e7b1d2296314b9437bf66e76ead3dc71e8956825be1192fc9facf9031e208488e048fae3e4b3b9daf498fe554df69733adaf5b1201f0de68f936fcfd907"
     ],
     "hashes": [
       "161fd71301b04fb9be0a12e4a6e231e1fe19c7cf93796435c453d40ab7e49fb7",
@@ -2625,7 +2631,13 @@
       "aae3c755118be96a2ff763b970aef0a5092ff38e876f2f6880815a3b0e90f930",
       "23fce596925b151288e843e7b3bc094ef3b2a5d44678f204232a2c91599784ae",
       "9b42877c37c7b325815773f06b4f6534abc97c2f1b4fcf5b77efe39d6a889378",
-      "d355796ecb37904b01dc34c384e07f7ace984f7fb097d61dc09289905f28ba11"
+      "d355796ecb37904b01dc34c384e07f7ace984f7fb097d61dc09289905f28ba11",
+      "470019c93d9e7e880650f8bdb27238a4bb352bd10138d80009852534ffbcc971",
+      "86e44678730d870f9e4417d90e97a93208066bd866195439ff4253bbc14d3308",
+      "76590b6d5182af94aa5be4a544eb93d5e5df450185cb9b9926df86ef6f410fef",
+      "6b43863c0d59a7c89a927d709d0b09eb38c31e17c65a15ad0ea9e44a966489ee",
+      "50a4a8fe34fd1192c69aa644f4a6c5082fc50475f688a84012ca7556e5776959",
+      "5514269962fec982a35ae3254a88f4fb83c92a78430c61665f000a84624ea09d"
     ],
     "versions": [
       2,
@@ -2633,6 +2645,12 @@
       2,
       2,
       2,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
       3,
       3,
       3,
@@ -4325,6 +4343,679 @@
             "m-1": 1
           }
         }
+      },
+      {
+        "label": "addA3",
+        "seq": 22,
+        "state": {
+          "seq": 22,
+          "head": "470019c93d9e7e880650f8bdb27238a4bb352bd10138d80009852534ffbcc971",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-3",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-1",
+            "a-3"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": [
+                "a-1"
+              ]
+            },
+            {
+              "host": "m-1",
+              "devices": [
+                "a-1"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "admins"
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": [
+                "a-1"
+              ]
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 2,
+            "m-1": 1
+          }
+        }
+      },
+      {
+        "label": "a2aA3H2",
+        "seq": 23,
+        "state": {
+          "seq": 23,
+          "head": "86e44678730d870f9e4417d90e97a93208066bd866195439ff4253bbc14d3308",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-3",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-1",
+            "a-3"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": [
+                "a-1",
+                "a-3"
+              ]
+            },
+            {
+              "host": "m-1",
+              "devices": [
+                "a-1"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "admins"
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": [
+                "a-1"
+              ]
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 2,
+            "m-1": 1
+          }
+        }
+      },
+      {
+        "label": "pauseEndM1",
+        "seq": 24,
+        "state": {
+          "seq": 24,
+          "head": "76590b6d5182af94aa5be4a544eb93d5e5df450185cb9b9926df86ef6f410fef",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-3",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-1",
+            "a-3"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": [
+                "a-1",
+                "a-3"
+              ]
+            },
+            {
+              "host": "m-1",
+              "devices": [
+                "a-1"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "admins"
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 2,
+            "m-1": 1
+          }
+        }
+      },
+      {
+        "label": "removeA1",
+        "seq": 25,
+        "state": {
+          "seq": 25,
+          "head": "6b43863c0d59a7c89a927d709d0b09eb38c31e17c65a15ad0ea9e44a966489ee",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-3",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-3"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": [
+                "a-3"
+              ]
+            },
+            {
+              "host": "m-1",
+              "devices": []
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "admins"
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 2,
+            "m-1": 1
+          }
+        }
+      },
+      {
+        "label": "removeH2",
+        "seq": 26,
+        "state": {
+          "seq": 26,
+          "head": "50a4a8fe34fd1192c69aa644f4a6c5082fc50475f688a84012ca7556e5776959",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-3",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-3"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": []
+            },
+            {
+              "host": "m-1",
+              "devices": []
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "admins"
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 2,
+            "m-1": 1
+          }
+        }
+      },
+      {
+        "label": "a2aA3M1",
+        "seq": 27,
+        "state": {
+          "seq": 27,
+          "head": "5514269962fec982a35ae3254a88f4fb83c92a78430c61665f000a84624ea09d",
+          "devices": [
+            {
+              "id": "a-1",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-2",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "removed"
+            },
+            {
+              "id": "a-3",
+              "host": false,
+              "admin": false,
+              "a2a": true,
+              "status": "active"
+            },
+            {
+              "id": "dev-0",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "dev-1",
+              "host": false,
+              "admin": true,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "dev-2",
+              "host": false,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            },
+            {
+              "id": "h-2",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "removed"
+            },
+            {
+              "id": "m-1",
+              "host": true,
+              "admin": false,
+              "a2a": false,
+              "status": "active"
+            }
+          ],
+          "a2aDevices": [
+            "a-3"
+          ],
+          "a2aAccept": [
+            {
+              "host": "h-2",
+              "devices": []
+            },
+            {
+              "host": "m-1",
+              "devices": [
+                "a-3"
+              ]
+            }
+          ],
+          "accept": [
+            {
+              "host": "h-2",
+              "from": {
+                "kind": "admins"
+              }
+            },
+            {
+              "host": "m-1",
+              "from": {
+                "kind": "all"
+              }
+            }
+          ],
+          "paused": [
+            {
+              "host": "h-2",
+              "ids": []
+            },
+            {
+              "host": "m-1",
+              "ids": []
+            }
+          ],
+          "hostKeyDue": null,
+          "machineKeyEpochs": {
+            "h-2": 2,
+            "m-1": 1
+          }
+        }
       }
     ],
     "extraDevices": [
@@ -4348,18 +5039,25 @@
         "signKey": "ca30e9b4505fd71b102e825b627f4a264e54a6fc55f6e88a70579de2c8a56b26",
         "dhSecret": "4d7d7efe5de2140f14551954ef66a8a9cef86c84dd42702f6a9b57128e017555",
         "dhKey": "ed7786f2729fc14475d05a6411db8002e523d5b96d76f286a8ed6fa89991fe03"
+      },
+      {
+        "id": "a-3",
+        "signSeed": "98d66eed0f1bdf6c62c777a15f16c2c96c751668a3c9c3f798163e03d6b20f8b",
+        "signKey": "680ca874c6f5f35a5799519c88ba71daf58fde6c0da6d4cbd54b3dbe858e22b1",
+        "dhSecret": "d99757b36a6e2ad8ee21337d4bd321a28593835ce85b0de61c11902bdb85aba5",
+        "dhKey": "1f193d4d80fa7a96c27354725bbd2ac4cf348bcf3f5acba1df33060103827040"
       }
     ],
     "state": {
-      "seq": 21,
-      "head": "d355796ecb37904b01dc34c384e07f7ace984f7fb097d61dc09289905f28ba11",
+      "seq": 27,
+      "head": "5514269962fec982a35ae3254a88f4fb83c92a78430c61665f000a84624ea09d",
       "devices": [
         {
           "id": "a-1",
           "host": false,
           "admin": false,
           "a2a": true,
-          "status": "active"
+          "status": "removed"
         },
         {
           "id": "a-2",
@@ -4367,6 +5065,13 @@
           "admin": false,
           "a2a": true,
           "status": "removed"
+        },
+        {
+          "id": "a-3",
+          "host": false,
+          "admin": false,
+          "a2a": true,
+          "status": "active"
         },
         {
           "id": "dev-0",
@@ -4394,7 +5099,7 @@
           "host": true,
           "admin": false,
           "a2a": false,
-          "status": "active"
+          "status": "removed"
         },
         {
           "id": "m-1",
@@ -4405,19 +5110,17 @@
         }
       ],
       "a2aDevices": [
-        "a-1"
+        "a-3"
       ],
       "a2aAccept": [
         {
           "host": "h-2",
-          "devices": [
-            "a-1"
-          ]
+          "devices": []
         },
         {
           "host": "m-1",
           "devices": [
-            "a-1"
+            "a-3"
           ]
         }
       ],
@@ -4442,9 +5145,7 @@
         },
         {
           "host": "m-1",
-          "ids": [
-            "a-1"
-          ]
+          "ids": []
         }
       ],
       "hostKeyDue": null,
@@ -4463,17 +5164,17 @@
       {
         "device": "dev-0",
         "host": "h-2",
-        "ok": true,
-        "error": null
-      },
-      {
-        "device": "dev-0",
-        "host": "dev-2",
         "ok": false,
         "error": "notAccepted"
       },
       {
         "device": "dev-0",
+        "host": "dev-2",
+        "ok": false,
+        "error": "notAccepted"
+      },
+      {
+        "device": "dev-0",
         "host": "a-1",
         "ok": false,
         "error": "notAccepted"
@@ -4553,8 +5254,8 @@
       {
         "device": "h-2",
         "host": "m-1",
-        "ok": true,
-        "error": null
+        "ok": false,
+        "error": "unknownDevice"
       },
       {
         "device": "h-2",
@@ -4566,31 +5267,31 @@
         "device": "h-2",
         "host": "dev-2",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "h-2",
         "host": "a-1",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "a-1",
         "host": "m-1",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "a-1",
         "host": "h-2",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "a-1",
         "host": "dev-2",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "a-1",
@@ -4621,6 +5322,30 @@
         "host": "a-1",
         "ok": false,
         "error": "unknownDevice"
+      },
+      {
+        "device": "a-3",
+        "host": "m-1",
+        "ok": false,
+        "error": "notAccepted"
+      },
+      {
+        "device": "a-3",
+        "host": "h-2",
+        "ok": false,
+        "error": "notAccepted"
+      },
+      {
+        "device": "a-3",
+        "host": "dev-2",
+        "ok": false,
+        "error": "notAccepted"
+      },
+      {
+        "device": "a-3",
+        "host": "a-1",
+        "ok": false,
+        "error": "notAccepted"
       },
       {
         "device": "nobody",
@@ -4748,7 +5473,7 @@
         "device": "h-2",
         "host": "m-1",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "h-2",
@@ -4760,61 +5485,85 @@
         "device": "h-2",
         "host": "dev-2",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "h-2",
         "host": "a-1",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "a-1",
         "host": "m-1",
         "ok": false,
-        "error": "notAccepted"
+        "error": "unknownDevice"
       },
       {
         "device": "a-1",
         "host": "h-2",
+        "ok": false,
+        "error": "unknownDevice"
+      },
+      {
+        "device": "a-1",
+        "host": "dev-2",
+        "ok": false,
+        "error": "unknownDevice"
+      },
+      {
+        "device": "a-1",
+        "host": "a-1",
+        "ok": false,
+        "error": "selfControl"
+      },
+      {
+        "device": "a-2",
+        "host": "m-1",
+        "ok": false,
+        "error": "unknownDevice"
+      },
+      {
+        "device": "a-2",
+        "host": "h-2",
+        "ok": false,
+        "error": "unknownDevice"
+      },
+      {
+        "device": "a-2",
+        "host": "dev-2",
+        "ok": false,
+        "error": "unknownDevice"
+      },
+      {
+        "device": "a-2",
+        "host": "a-1",
+        "ok": false,
+        "error": "unknownDevice"
+      },
+      {
+        "device": "a-3",
+        "host": "m-1",
         "ok": true,
         "error": null
       },
       {
-        "device": "a-1",
+        "device": "a-3",
+        "host": "h-2",
+        "ok": false,
+        "error": "notAccepted"
+      },
+      {
+        "device": "a-3",
         "host": "dev-2",
         "ok": false,
         "error": "notAccepted"
       },
       {
-        "device": "a-1",
+        "device": "a-3",
         "host": "a-1",
         "ok": false,
-        "error": "selfControl"
-      },
-      {
-        "device": "a-2",
-        "host": "m-1",
-        "ok": false,
-        "error": "unknownDevice"
-      },
-      {
-        "device": "a-2",
-        "host": "h-2",
-        "ok": false,
-        "error": "unknownDevice"
-      },
-      {
-        "device": "a-2",
-        "host": "dev-2",
-        "ok": false,
-        "error": "unknownDevice"
-      },
-      {
-        "device": "a-2",
-        "host": "a-1",
-        "ok": false,
-        "error": "unknownDevice"
+        "error": "notAccepted"
       },
       {
         "device": "nobody",
@@ -4851,9 +5600,12 @@
         "hosts": []
       },
       {
+        "device": "a-3",
+        "hosts": []
+      },
+      {
         "device": "dev-0",
         "hosts": [
-          "h-2",
           "m-1"
         ]
       },
@@ -4869,9 +5621,7 @@
       },
       {
         "device": "h-2",
-        "hosts": [
-          "m-1"
-        ]
+        "hosts": []
       },
       {
         "device": "m-1",
@@ -4885,13 +5635,17 @@
     "hostsAcceptingA2a": [
       {
         "device": "a-1",
-        "hosts": [
-          "h-2"
-        ]
+        "hosts": []
       },
       {
         "device": "a-2",
         "hosts": []
+      },
+      {
+        "device": "a-3",
+        "hosts": [
+          "m-1"
+        ]
       },
       {
         "device": "dev-0",

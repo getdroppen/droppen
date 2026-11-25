@@ -199,7 +199,6 @@ import {
   NO_COURIER,
   NO_DEVICE_ROLE_HINT,
   NothingToWrite,
-  a2aExposures,
   a2aHostsOf,
   acceptChange,
   acceptNames,
@@ -233,7 +232,6 @@ import {
 } from "./chain-policy";
 export {
   NO_DEVICE_ROLE_HINT,
-  a2aExposures,
   a2aHostsOf,
   acceptChange,
   admits,
@@ -3027,19 +3025,11 @@ export class CloudAccount {
   /**
    * The current hosts whose A2A list names A2A proxy `id` ({@link a2aHostsOf}, docs/a2a.md §7.1): each is exposed to
    * it — a session it starts there can read any file that host's user can, its identity key and content keys
-   * included — so removing it rotates the content keys whatever was asked, and the removal says which hosts.
+   * included — so removing it rotates the content keys whatever was asked, and those hosts (with every host that lets
+   * one of them control it) renew their identity key after it, as for a lost controller ({@link hostsToRotate}).
    */
   a2aHostsOf(id: string): string[] {
     return this.state ? a2aHostsOf(this.state, id) : [];
-  }
-
-  /**
-   * The current hosts an A2A proxy that could call them no longer can, each proxy with the seq it left at
-   * ({@link a2aExposures}): renewing the host's identity key (or removing and adding it again) is suggested on its
-   * row, never done by itself.
-   */
-  a2aExposures(): Map<string, Map<string, number>> {
-    return this.state ? a2aExposures(this.state) : new Map();
   }
 
   // ------------------------------------------------------------ identity key renewal (docs/host-identity-rotation.md)

@@ -116,9 +116,10 @@ export interface ChainAlert {
   kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy" | "renewalPause" | "a2aAccept";
   /**
    * `renewalPause` (host identity rotation §3.4 rule 10): which marker, and the control its start paused (per host, the
-   * ids it stopped accepting) — for `completed`, only what comes back (empty: none of it).
+   * ids it stopped accepting; `a2a`: the A2A proxies among them, whose calls it held — docs/a2a.md §7.1) — for
+   * `completed`, only what comes back (empty: none of it).
    */
-  pause?: { phase: "start" | "completed" | "cancelled"; removals: { host: string; ids: string[] }[] };
+  pause?: { phase: "start" | "completed" | "cancelled"; removals: { host: string; ids: string[]; a2a?: string[] }[] };
   /** The device that signed it, or `null` for the recovery words (a passkey slot's entries: the slot). */
   by: string | null;
   /** Chain v3's `addDevice3`: what the added device may do (「可运行 AI」, 「可管理账号」, or an A2A proxy: 「A2A 代理」). */
