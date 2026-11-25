@@ -36,6 +36,7 @@ import {
   lastContentBottom,
   pinAfterScroll,
   pinOnSettle,
+  rowStartAtTop,
   shouldTopUpHistory,
   showJumpToBottom,
   trackUnread,
@@ -148,6 +149,13 @@ const TASK_ID_SEP = "\u0000";
 /** The empty list handed out when a departed process took its children with it. */
 const NO_SUBTASKS: LiveSubtask[] = [];
 
+/**
+ * How long after a session opens its landings are still lined up on a row's
+ * start. Long enough for the first screenful's images and fonts to settle, and
+ * it ends at the first scroll of the reader's own either way.
+ */
+const LANDING_MS = 1200;
+
 /** The three numbers the scroll decisions are made from, off a live element. */
 function boxOf(el: HTMLElement): ScrollBox {
   return {
@@ -185,8 +193,9 @@ export function transcriptRowDeps(
   transcriptStyle: TranscriptStyle,
   data: Pick<FeedState, "items" | "startIndex"> | null,
   subagentSession: SubagentCtx | undefined,
+  live: boolean,
 ): readonly unknown[] {
-  return [chunks, transcriptStyle, data?.items, data?.startIndex, subagentSession];
+  return [chunks, transcriptStyle, data?.items, data?.startIndex, subagentSession, live];
 }
 
 export function SessionDetailInner({
@@ -250,6 +259,9 @@ export function SessionDetailInner({
   const jumpShownRef = useRef(false);
   const [jumpShown, setJumpShown] = useState(false);
   const [unread, setUnread] = useState(0);
+  // Until this moment, a landing is lined up on a row's start rather than left
+  // wherever the height put it. A reader's own scroll ends it early.
+  const landingUntil = useRef(0);
 
   const { data, drafts, isError, connection, opening, loadEarlier, isLoadingEarlier, historyError, refreshState } =
     useSessionFeed(source, id, stickToBottom);
@@ -428,6 +440,20 @@ export function SessionDetailInner({
    */
   const rows = useMemo(() => {
     const startIndex = data?.startIndex ?? 0;
+    // The run a live turn is still writing into: its newest fold, and only
+    // while the turn is in flight. It stays open so the steps can be watched
+    // land. The newest call is not in it — `chunkItems` keeps that one out of
+    // any fold — which is why this is the last fold rather than the last chunk.
+    let running: Chunk | undefined;
+    if (live) {
+      for (let i = chunks.length - 1; i >= 0; i--) {
+        const chunk = chunks[i]!;
+        if (chunk.kind === "group") {
+          running = chunk;
+          break;
+        }
+      }
+    }
     // Every row carries its absolute index (`data-ti`): the one thing the
     // in-session search needs to find the row a match is drawn in. A wrapper
     // rather than a prop, because a row is a dozen different components.
@@ -437,6 +463,7 @@ export function SessionDetailInner({
           key={`group:${startIndex + chunk.index}`}
           items={chunk.items}
           base={startIndex + chunk.index}
+          live={chunk === running}
         />
       ) : (
         <div key={`item:${startIndex + chunk.index}`} data-ti={startIndex + chunk.index}>
@@ -454,7 +481,7 @@ export function SessionDetailInner({
         </BubbleRun>
       );
     });
-  }, transcriptRowDeps(chunks, transcriptStyle, data, subagentSession));
+  }, transcriptRowDeps(chunks, transcriptStyle, data, subagentSession, live));
 
   /** Publish the pin and what arrived while it was off, without idle renders. */
   const publishPin = useCallback((pinned: boolean, box: ScrollBox) => {
@@ -578,6 +605,7 @@ export function SessionDetailInner({
     autoLoadedFrom.current = -1;
     unreadCursor.current = NO_UNREAD;
     jumpShownRef.current = false;
+    landingUntil.current = performance.now() + LANDING_MS;
     setJumpShown(false);
     setUnread(0);
   }, [source, id]);
@@ -609,6 +637,12 @@ export function SessionDetailInner({
     const observer = new ResizeObserver(() => {
       if (stickToBottom.current) {
         el.scrollTop = el.scrollHeight;
+        // An image decoding during the open is a re-landing too — see the
+        // landing window in the layout effect.
+        if (performance.now() < landingUntil.current) {
+          const up = rowStartAtTop(el);
+          if (up !== null) el.scrollTop = up;
+        }
         lastScrollTop.current = el.scrollTop;
       }
       publishPin(stickToBottom.current, boxOf(el));
@@ -617,7 +651,20 @@ export function SessionDetailInner({
     // composer growing a line, shortens the box without touching the rows.
     observer.observe(el);
     observer.observe(rows);
-    return () => observer.disconnect();
+    // A hand on the transcript ends the landing window; programmatic scrolls
+    // (the opening stick, a jump, the fixture's own) do not.
+    const stopLanding = () => {
+      landingUntil.current = 0;
+    };
+    el.addEventListener("wheel", stopLanding, { passive: true });
+    el.addEventListener("touchmove", stopLanding, { passive: true });
+    el.addEventListener("pointerdown", stopLanding);
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("wheel", stopLanding);
+      el.removeEventListener("touchmove", stopLanding);
+      el.removeEventListener("pointerdown", stopLanding);
+    };
   }, [hasFeed, publishPin]);
 
   useLayoutEffect(() => {
@@ -632,6 +679,16 @@ export function SessionDetailInner({
     if (stickToBottom.current) {
       prependAnchor.current = null;
       el.scrollTop = el.scrollHeight;
+      // A landing is brought to a row's start, so the top line is not a
+      // sentence continued from above the fold. Only while the open is still
+      // settling: later landings are the stream's, and lining those up too
+      // would shift the view under a reader watching it. Taken into
+      // `lastScrollTop` straight away, so the scroll event this queues reads
+      // as our own and the view stays pinned to what comes next.
+      if (performance.now() < landingUntil.current) {
+        const up = rowStartAtTop(el);
+        if (up !== null) el.scrollTop = up;
+      }
       lastScrollTop.current = el.scrollTop;
     } else if (anchor) {
       if (data.startIndex < anchor.startIndex) {

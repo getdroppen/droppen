@@ -17,7 +17,7 @@ import type { components } from "../src/api/schema.js";
 import { BubbleRun } from "../src/features/sessions/bubble-run.js";
 import { SystemLine } from "../src/features/sessions/system-line.js";
 import { ToolLine } from "../src/features/sessions/tool-line.js";
-import { SubagentTool } from "../src/features/sessions/transcript-rows.js";
+import { ItemBlock, StepGroup, SubagentTool } from "../src/features/sessions/transcript-rows.js";
 import {
   ModelFallbackNotice,
   modelFallbackOf,
@@ -547,4 +547,25 @@ test("a bubble the transcript named no model for reads as it always has", () => 
   );
   assert.equal(visibleText(html), "AGENTdone");
   assert.doesNotMatch(html, /·/, "no separator with nothing to separate");
+});
+
+/* ── folds a reader can see into ───────────────────────────────────────── */
+
+test("a thinking row wears the caret a step fold does", () => {
+  const html = draw(<ItemBlock item={item({ kind: "thinking", text: "the table will say which DCs still run 6.0.0" })} />);
+  const summary = /<summary\b[^>]*>([\s\S]*?)<\/summary>/.exec(html);
+  assert.ok(summary, "the thinking stays expandable");
+  assert.match(summary[1]!, /<svg/, "the caret says it opens rather than ending in an ellipsis");
+  assert.equal(visibleText(summary[1]!), "∴ thinkingthe table will say which DCs still run 6.0.0…");
+});
+
+const step = (i: number) => call({ toolUseId: `t${i}`, text: `step ${i}` });
+const steps = (n: number) => Array.from({ length: n }, (_, i) => step(i));
+
+test("the run a live turn is writing into stays open", () => {
+  assert.match(draw(<StepGroup items={steps(4)} base={0} live />), /<details[^>]*\bopen=/);
+});
+
+test("a run whose turn has ended is folded again", () => {
+  assert.doesNotMatch(draw(<StepGroup items={steps(4)} base={0} />), /<details[^>]*\bopen=/);
 });

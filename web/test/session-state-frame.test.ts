@@ -270,8 +270,8 @@ test("a frame that only moved the byte count leaves the transcript's memo inputs
   const chunksAfter = next.items === prev.items ? chunks : chunkItems(next.items, true);
   const session = { source: "claude", id: "s1" } as const;
 
-  const before = transcriptRowDeps(chunks, "flat", prev, session);
-  const after = transcriptRowDeps(chunksAfter, "flat", next, session);
+  const before = transcriptRowDeps(chunks, "flat", prev, session, false);
+  const after = transcriptRowDeps(chunksAfter, "flat", next, session, false);
   assert.equal(before.length, after.length);
   before.forEach((dep, index) => {
     assert.ok(Object.is(dep, after[index]), `row dependency ${index} was replaced`);
@@ -290,8 +290,8 @@ test("a window that grew replaces the inputs the row list is memoized on", () =>
   };
   const session = { source: "claude", id: "s1" } as const;
 
-  const before = transcriptRowDeps(chunkItems(prev.items, true), "flat", prev, session);
-  const after = transcriptRowDeps(chunkItems(grown.items, true), "flat", grown, session);
+  const before = transcriptRowDeps(chunkItems(prev.items, true), "flat", prev, session, false);
+  const after = transcriptRowDeps(chunkItems(grown.items, true), "flat", grown, session, false);
   assert.ok(
     before.some((dep, index) => !Object.is(dep, after[index])),
     "a delta has to reach the rows",
@@ -385,8 +385,8 @@ test("a question or a turn changing leaves the row list's memo inputs alone", ()
 
   const chunks = chunkItems(prev.items, true);
   const session = { source: "claude", id: "s1" } as const;
-  const before = transcriptRowDeps(chunks, "flat", prev, session);
-  const after = transcriptRowDeps(next.items === prev.items ? chunks : chunkItems(next.items, true), "flat", next, session);
+  const before = transcriptRowDeps(chunks, "flat", prev, session, false);
+  const after = transcriptRowDeps(next.items === prev.items ? chunks : chunkItems(next.items, true), "flat", next, session, false);
   before.forEach((dep, index) => {
     assert.ok(Object.is(dep, after[index]), `row dependency ${index} was replaced`);
   });

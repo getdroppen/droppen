@@ -4,7 +4,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { CaretRightIcon } from "@phosphor-icons/react";
-import { memo, useContext, useMemo, useRef, useState } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
 import { FileChip } from "@/components/file-chip";
@@ -39,10 +39,29 @@ import {
  * A folded run of steps. `base` is the absolute index of its first item: every
  * row is tagged with its own (`data-ti`), so a search can find the row an item
  * landed in even when it is folded away in here.
+ *
+ * `live` is the run a turn in flight is still writing into. It stays open while
+ * it is the newest thing, so the steps can be watched as they land instead of
+ * the whole turn reading as one growing `N steps` line; when the turn ends it
+ * folds, unless the reader opened it themselves.
  */
-export const StepGroup = memo(function StepGroup({ items, base }: { items: TranscriptItem[]; base: number }) {
+export const StepGroup = memo(function StepGroup({
+  items,
+  base,
+  live = false,
+}: {
+  items: TranscriptItem[];
+  base: number;
+  live?: boolean;
+}) {
   const { t } = useTranslation();
   const inBubble = useContext(InBubbleContext);
+  const [open, setOpen] = useState(live);
+  const openedByHand = useRef(false);
+  useEffect(() => {
+    if (live) setOpen(true);
+    else if (!openedByHand.current) setOpen(false);
+  }, [live]);
   const counts = new Map<string, number>();
   // The same rule the fold threshold used, so a group can no longer collapse on
   // one count and then announce another.
@@ -64,8 +83,15 @@ export const StepGroup = memo(function StepGroup({ items, base }: { items: Trans
   const stepNumbers = items.map((item) => (item.kind === "tool_use" || item.kind === "thinking" ? ++counter : null));
 
   return (
-    <details className={cn("group/steps", !inBubble && "border-b border-border")}>
+    <details
+      className={cn("group/steps", !inBubble && "border-b border-border")}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
       <summary
+        onClick={() => {
+          openedByHand.current = true;
+        }}
         className={cn(
           "flex h-6.5 cursor-pointer list-none items-center gap-2 font-mono text-2xs hover:bg-hover",
           inBubble ? "-mx-1 px-1" : "px-4",
@@ -406,10 +432,13 @@ const ItemRow = memo(function ItemRow({
 
   if (item.kind === "thinking") {
     return (
-      <details className={rowClass}>
-        <summary className="-mx-1 cursor-pointer list-none px-1 font-mono text-2xs text-faint italic hover:bg-hover">
-          ∴ {t("thinking")}
-          <span className="ml-2 not-italic text-faint/70">{item.text.slice(0, 90).replace(/\s+/g, " ")}…</span>
+      <details className={cn(rowClass, "group/thinking")}>
+        {/* The fold's caret, so a thinking row reads as something that opens
+            rather than as a line that ends in an ellipsis. */}
+        <summary className="-mx-1 flex cursor-pointer list-none items-center gap-1.5 px-1 font-mono text-2xs text-faint italic hover:bg-hover">
+          <CaretRightIcon className="size-3 shrink-0 not-italic group-open/thinking:rotate-90" />
+          <span className="shrink-0">∴ {t("thinking")}</span>
+          <span className="min-w-0 truncate not-italic text-faint/70">{item.text.slice(0, 90).replace(/\s+/g, " ")}…</span>
         </summary>
         <div className="mt-1 mb-1 text-2xs leading-4 whitespace-pre-wrap text-faint italic">{item.text}</div>
       </details>

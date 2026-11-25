@@ -164,6 +164,40 @@ export function lastContentBottom(scroller: RowSource, scrollTop: number, rows =
   return null;
 }
 
+/** The part of a scroller and of its rows that {@link rowStartAtTop} reads. */
+export interface SnapSource {
+  scrollTop: number;
+  getBoundingClientRect(): { top: number };
+  querySelectorAll(selector: string): ArrayLike<{
+    getClientRects(): ArrayLike<unknown>;
+    getBoundingClientRect(): { top: number; bottom: number; height: number };
+  }>;
+}
+
+/**
+ * The scroll position that brings the row cut by the top edge up to that edge,
+ * or `null` when the edge already falls on a row's start.
+ *
+ * A view pinned by assigning `scrollHeight` lands wherever the last screenful
+ * happens to begin, which is regularly mid-sentence: the first line on screen
+ * is then a continuation whose head and timestamp are above the fold. Rows with
+ * no box are passed over — a consumed tool result has nothing at the edge to
+ * align to.
+ */
+export function rowStartAtTop(scroller: SnapSource, minCut = 1): number | null {
+  const edge = scroller.getBoundingClientRect().top;
+  const rows = scroller.querySelectorAll("[data-ti]");
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    if (row.getClientRects().length === 0) continue;
+    const rect = row.getBoundingClientRect();
+    if (rect.height <= 0 || rect.bottom <= edge) continue;
+    const cut = edge - rect.top;
+    return cut >= minCut ? Math.max(0, scroller.scrollTop - cut) : null;
+  }
+  return null;
+}
+
 /**
  * Whether the transcript should go and fetch an earlier page by itself.
  *
