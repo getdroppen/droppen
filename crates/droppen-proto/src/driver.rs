@@ -16,8 +16,14 @@
 //! - **send budgets**: [`Stream::send`] waits while too much of what it queued
 //!   has not left yet, so a producer cannot buffer without bound behind a peer
 //!   that grants no credit.
+//!
+//! And under the hub credit, on a channel with paths, the **pace**
+//! ([`crate::pace`], [`ChannelOptions::pace`]): what is in flight on the path
+//! carrying new frames is kept near what that path delivers in a round trip,
+//! so on a slow link an answer waits behind a fraction of a second of bulk,
+//! not behind the whole window.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +35,7 @@ use crate::flow::{RecvWindow, SendWindow};
 use crate::frame::{Frame, MAX_PAYLOAD_LEN};
 use crate::mux::{MuxError, MuxEvent, StreamClass, MAX_CHUNK};
 use crate::noise::Transport;
+use crate::pace::PaceStats;
 use crate::path::DownReason;
 
 /// What one stream may have queued and not yet sent.
@@ -43,6 +50,27 @@ fn now_us() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_micros() as u64)
         .unwrap_or(0)
+}
+
+/// The clock a channel runs on: microseconds, the wall clock by default.
+pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+/// How a channel runs ([`Channel::spawn_with`]).
+#[derive(Clone)]
+pub struct ChannelOptions {
+    /// Keep what is in flight near what the path delivers in a round trip
+    /// ([`crate::pace`]; a channel with paths only). On by default; off, the
+    /// channel sends as the windows allow, as before.
+    pub pace: bool,
+    /// The clock its timers and measurements read (tests run it on tokio's
+    /// paused time); the wall clock when `None`.
+    pub clock: Option<Clock>,
+}
+
+impl Default for ChannelOptions {
+    fn default() -> Self {
+        Self { pace: true, clock: None }
+    }
 }
 
 /// A direct path's messages as the driver sees them, once the handshake on
@@ -105,6 +133,9 @@ enum Cmd {
     },
     DetachDirect {
         reason: DownReason,
+    },
+    Pace {
+        reply: oneshot::Sender<Option<PaceStats>>,
     },
 }
 
@@ -206,13 +237,25 @@ impl Channel {
         inbound: mpsc::UnboundedReceiver<Frame>,
         outbound: mpsc::UnboundedSender<Frame>,
     ) -> (Channel, mpsc::UnboundedReceiver<Incoming>) {
+        Self::spawn_with(session, inbound, outbound, ChannelOptions::default())
+    }
+
+    /// [`Channel::spawn`], with `options`.
+    pub fn spawn_with(
+        mut session: Session,
+        inbound: mpsc::UnboundedReceiver<Frame>,
+        outbound: mpsc::UnboundedSender<Frame>,
+        options: ChannelOptions,
+    ) -> (Channel, mpsc::UnboundedReceiver<Incoming>) {
+        session.set_pacing(options.pace);
+        let clock = options.clock.unwrap_or_else(|| Arc::new(now_us));
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (accept_tx, accept_rx) = mpsc::unbounded_channel();
         let (stats_tx, stats) = watch::channel(session.stats());
         let task = Task {
             session,
             cmd_tx: cmd_tx.clone(),
-            streams: HashMap::new(),
+            streams: BTreeMap::new(),
             send_window: SendWindow::new(),
             recv_window: RecvWindow::new(),
             outbound,
@@ -220,6 +263,7 @@ impl Channel {
             held: None,
             direct: None,
             stats: stats_tx,
+            clock,
         };
         tokio::spawn(task.run(inbound, cmd_rx));
         (Channel { cmd: cmd_tx, stats }, accept_rx)
@@ -246,6 +290,13 @@ impl Channel {
     /// The paths' state, updated as it changes.
     pub fn path_stats(&self) -> watch::Receiver<PathStats> {
         self.stats.clone()
+    }
+
+    /// The pace of the path carrying new frames now (`None`: not paced).
+    pub async fn pace(&self) -> Option<PaceStats> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd.send(Cmd::Pace { reply }).ok()?;
+        rx.await.ok().flatten()
     }
 
     /// Open a stream of `class` with `meta` (a [`crate::bridge::RequestHead`]
@@ -275,7 +326,9 @@ impl Channel {
 struct Task {
     session: Session,
     cmd_tx: mpsc::UnboundedSender<Cmd>,
-    streams: HashMap<u32, Slot>,
+    /// The streams open, by id: in order, so what happens to several at once
+    /// (a sweep's closes) happens the same way every time.
+    streams: BTreeMap<u32, Slot>,
     send_window: SendWindow,
     recv_window: RecvWindow,
     outbound: mpsc::UnboundedSender<Frame>,
@@ -284,6 +337,7 @@ struct Task {
     held: Option<Frame>,
     direct: Option<DirectPipe>,
     stats: watch::Sender<PathStats>,
+    clock: Clock,
 }
 
 /// The next message from the direct path, if one is attached (else never).
@@ -295,9 +349,9 @@ async fn recv_direct(direct: &mut Option<DirectPipe>) -> Option<Vec<u8>> {
 }
 
 /// Until the session's next timer, if it has one (else never).
-async fn until(deadline_us: Option<u64>) {
+async fn until(deadline_us: Option<u64>, now_us: u64) {
     match deadline_us {
-        Some(at) => tokio::time::sleep(Duration::from_micros(at.saturating_sub(now_us()))).await,
+        Some(at) => tokio::time::sleep(Duration::from_micros(at.saturating_sub(now_us))).await,
         None => std::future::pending().await,
     }
 }
@@ -327,6 +381,8 @@ impl Task {
     }
 
     async fn run(mut self, mut inbound: mpsc::UnboundedReceiver<Frame>, mut cmds: mpsc::UnboundedReceiver<Cmd>) {
+        let clock = self.clock.clone();
+        let now_us = move || clock();
         let end = loop {
             let room = self.room();
             let mut deadline = self.session.next_deadline_us(room);
@@ -336,7 +392,14 @@ impl Task {
                 let soon = now_us() + DRAIN_POLL_US;
                 deadline = Some(deadline.map_or(soon, |d| d.min(soon)));
             }
+            // In a fixed order, so the same inputs at the same moment are
+            // handled the same way every time (a random pick otherwise). Each
+            // source is bounded (the hub window, the peer's sending, the
+            // streams' send budgets), so none keeps the others waiting: a
+            // timer that is due first, then what came in, then the commands.
             tokio::select! {
+                biased;
+                () = until(deadline, now_us()) => self.session.tick(now_us()),
                 frame = inbound.recv() => match frame {
                     None => break End::Gone,
                     Some(Frame::Data { payload, .. }) => {
@@ -358,13 +421,6 @@ impl Task {
                     Some(Frame::Close { code, .. }) => break End::Peer(code),
                     Some(_) => {}
                 },
-                Some(cmd) = cmds.recv() => {
-                    if let Cmd::End { code, reason } = cmd {
-                        let _ = self.outbound.send(Frame::Close { ch: self.session.ch(), code, reason });
-                        break End::Local(code);
-                    }
-                    self.on_cmd(cmd);
-                }
                 message = recv_direct(&mut self.direct) => match message {
                     Some(message) => match self.session.receive_direct(&message, now_us()) {
                         Ok(events) => events.into_iter().for_each(|e| self.on_event(e)),
@@ -373,7 +429,13 @@ impl Task {
                     // The DataChannel is gone: fall back to the hub.
                     None => self.session.detach_direct(DownReason::Failed, true),
                 },
-                () = until(deadline) => self.session.tick(now_us()),
+                Some(cmd) = cmds.recv() => {
+                    if let Cmd::End { code, reason } = cmd {
+                        let _ = self.outbound.send(Frame::Close { ch: self.session.ch(), code, reason });
+                        break End::Local(code);
+                    }
+                    self.on_cmd(cmd);
+                }
             }
             self.paths_changed();
             self.sweep();
@@ -398,7 +460,7 @@ impl Task {
                 reason: "channel error".into(),
             });
         }
-        for (_, slot) in self.streams.drain() {
+        for (_, slot) in std::mem::take(&mut self.streams) {
             let _ = slot.tx.send(StreamEvent::Closed(code));
             slot.budget.close();
         }
@@ -428,7 +490,8 @@ impl Task {
         let stats = self.session.stats();
         for (reason, remote, why) in downs {
             // What a direct path's owner logs ("the owner let the peer go")
-            // does not say why; this does.
+            // does not say why; this does. The hub path's pace is what carries on.
+            let pace = self.session.pace_stats();
             tracing::info!(
                 ch = self.session.ch(),
                 ?reason,
@@ -436,6 +499,8 @@ impl Task {
                 why,
                 direct_rtt_ms = ?stats.direct_rtt_ms,
                 resent = stats.lanes.resent,
+                relay_cap = pace.map(|p| p.cap),
+                relay_rate = pace.and_then(|p| p.rate).map(|r| r as u64),
                 "the channel let its direct path go"
             );
         }
@@ -493,11 +558,14 @@ impl Task {
             }
             Cmd::Consumed { sid, n } => self.session.mux().consumed(sid, n),
             Cmd::AttachDirect { transport, pipe } => {
-                if self.session.attach_direct(*transport, now_us()).is_ok() {
+                if self.session.attach_direct(*transport, (self.clock)()).is_ok() {
                     self.direct = Some(pipe);
                 }
             }
             Cmd::DetachDirect { reason } => self.session.detach_direct(reason, true),
+            Cmd::Pace { reply } => {
+                let _ = reply.send(self.session.pace_stats());
+            }
             Cmd::End { .. } => unreachable!("handled by run"),
         }
     }
@@ -524,7 +592,7 @@ impl Task {
         }
     }
 
-    /// Send what the hub's credit and the direct path's budget allow.
+    /// Send what the hub's credit, the direct path's budget and the pace allow.
     fn pump(&mut self) -> Result<(), SessionError> {
         loop {
             if let Some(frame) = self.held.take() {
@@ -545,7 +613,7 @@ impl Task {
             if !room.relay && !room.direct {
                 return Ok(());
             }
-            let Some((wire, data)) = self.session.poll(now_us(), room)? else {
+            let Some((wire, data)) = self.session.poll((self.clock)(), room)? else {
                 return Ok(());
             };
             if let Some((sid, len)) = data {

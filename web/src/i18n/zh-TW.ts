@@ -151,6 +151,8 @@ export const zhTW: Record<string, string> = {
   "command output": "命令輸出",
   "composer send shortcut": "輸入框傳送快捷鍵",
   "contains a failed tool call": "包含失敗的工具呼叫",
+  "cross-session message": "來自其他工作階段的消息",
+  "cross-session message from {{name}}": "來自 {{name}} 的跨工作階段訊息",
   "context compacted": "上下文已壓縮",
   "copy session id": "複製工作階段 ID",
   "copy agent name": "複製 agent 名稱",
@@ -751,8 +753,10 @@ export const zhTW: Record<string, string> = {
   "dismissed — left to the agent": "已忽略 — 交給 agent 決定",
   "cancelled — the turn was stopped": "已取消 — 這一輪被停止了",
   "the agent is waiting for your answer — what you send now goes in as the answer": "agent 在等你回答 — 現在傳送的內容會作為回答",
+  "the agent is waiting for your answer — answer it in the card above": "agent 在等你回答 — 在上面的卡片裡回答",
   "type your answer…": "輸入你的回答…",
   "send as your answer": "作為回答傳送",
+  "answer the question above first": "先回答上面的問題",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
   // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.

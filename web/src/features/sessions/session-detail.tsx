@@ -33,8 +33,10 @@ import { scrollTopAfterPrepend } from "@/features/sessions/session-feed-state";
 import type { FeedState } from "@/features/sessions/session-feed-pool";
 import {
   NO_UNREAD,
+  lastContentBottom,
   pinAfterScroll,
   pinOnSettle,
+  rowStartAtTop,
   shouldTopUpHistory,
   showJumpToBottom,
   trackUnread,
@@ -78,7 +80,7 @@ import {
 import { useFeedSessionTitle } from "@/app/global-feed";
 import { MachineLink, useMachineNavigate } from "@/app/machine-route";
 import { cn } from "@/lib/cn";
-import { useApi, useEnsureLive, useInfoOf, useMachine, useSessionRef } from "@/lib/machines/context";
+import { useApi, useEnsureLive, useInfoOf, useMachine, useSessionRef, useViewSession } from "@/lib/machines/context";
 import { DeviceChip } from "@/features/machines/device-picker";
 import { sessionKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
@@ -147,6 +149,13 @@ const TASK_ID_SEP = "\u0000";
 /** The empty list handed out when a departed process took its children with it. */
 const NO_SUBTASKS: LiveSubtask[] = [];
 
+/**
+ * How long after a session opens its landings are still lined up on a row's
+ * start. Long enough for the first screenful's images and fonts to settle, and
+ * it ends at the first scroll of the reader's own either way.
+ */
+const LANDING_MS = 1200;
+
 /** The three numbers the scroll decisions are made from, off a live element. */
 function boxOf(el: HTMLElement): ScrollBox {
   return {
@@ -184,8 +193,9 @@ export function transcriptRowDeps(
   transcriptStyle: TranscriptStyle,
   data: Pick<FeedState, "items" | "startIndex"> | null,
   subagentSession: SubagentCtx | undefined,
+  live: boolean,
 ): readonly unknown[] {
-  return [chunks, transcriptStyle, data?.items, data?.startIndex, subagentSession];
+  return [chunks, transcriptStyle, data?.items, data?.startIndex, subagentSession, live];
 }
 
 export function SessionDetailInner({
@@ -220,6 +230,8 @@ export function SessionDetailInner({
   const readOnly = info.readOnly === true;
   // A transcript open is the machine itself in use: live, not only its copy.
   useEnsureLive();
+  // And this session looked at: shown from the copy, its copy comes first.
+  useViewSession(machine, source, id);
   const scrollRef = useRef<HTMLDivElement>(null);
   // The one box that holds every row, and the only thing whose height changing
   // means "the transcript got taller" — the panel and the load-earlier control
@@ -247,6 +259,9 @@ export function SessionDetailInner({
   const jumpShownRef = useRef(false);
   const [jumpShown, setJumpShown] = useState(false);
   const [unread, setUnread] = useState(0);
+  // Until this moment, a landing is lined up on a row's start rather than left
+  // wherever the height put it. A reader's own scroll ends it early.
+  const landingUntil = useRef(0);
 
   const { data, drafts, isError, connection, opening, loadEarlier, isLoadingEarlier, historyError, refreshState } =
     useSessionFeed(source, id, stickToBottom);
@@ -425,6 +440,20 @@ export function SessionDetailInner({
    */
   const rows = useMemo(() => {
     const startIndex = data?.startIndex ?? 0;
+    // The run a live turn is still writing into: its newest fold, and only
+    // while the turn is in flight. It stays open so the steps can be watched
+    // land. The newest call is not in it — `chunkItems` keeps that one out of
+    // any fold — which is why this is the last fold rather than the last chunk.
+    let running: Chunk | undefined;
+    if (live) {
+      for (let i = chunks.length - 1; i >= 0; i--) {
+        const chunk = chunks[i]!;
+        if (chunk.kind === "group") {
+          running = chunk;
+          break;
+        }
+      }
+    }
     // Every row carries its absolute index (`data-ti`): the one thing the
     // in-session search needs to find the row a match is drawn in. A wrapper
     // rather than a prop, because a row is a dozen different components.
@@ -434,6 +463,7 @@ export function SessionDetailInner({
           key={`group:${startIndex + chunk.index}`}
           items={chunk.items}
           base={startIndex + chunk.index}
+          live={chunk === running}
         />
       ) : (
         <div key={`item:${startIndex + chunk.index}`} data-ti={startIndex + chunk.index}>
@@ -451,7 +481,7 @@ export function SessionDetailInner({
         </BubbleRun>
       );
     });
-  }, transcriptRowDeps(chunks, transcriptStyle, data, subagentSession));
+  }, transcriptRowDeps(chunks, transcriptStyle, data, subagentSession, live));
 
   /** Publish the pin and what arrived while it was off, without idle renders. */
   const publishPin = useCallback((pinned: boolean, box: ScrollBox) => {
@@ -462,7 +492,8 @@ export function SessionDetailInner({
       atBottomRef.current = pinned;
       setAtBottom(pinned);
     }
-    const next = showJumpToBottom(pinned, box);
+    const el = scrollRef.current;
+    const next = showJumpToBottom(pinned, box, el && lastContentBottom(el, el.scrollTop));
     if (next !== jumpShownRef.current) {
       jumpShownRef.current = next;
       setJumpShown(next);
@@ -574,6 +605,7 @@ export function SessionDetailInner({
     autoLoadedFrom.current = -1;
     unreadCursor.current = NO_UNREAD;
     jumpShownRef.current = false;
+    landingUntil.current = performance.now() + LANDING_MS;
     setJumpShown(false);
     setUnread(0);
   }, [source, id]);
@@ -605,6 +637,12 @@ export function SessionDetailInner({
     const observer = new ResizeObserver(() => {
       if (stickToBottom.current) {
         el.scrollTop = el.scrollHeight;
+        // An image decoding during the open is a re-landing too — see the
+        // landing window in the layout effect.
+        if (performance.now() < landingUntil.current) {
+          const up = rowStartAtTop(el);
+          if (up !== null) el.scrollTop = up;
+        }
         lastScrollTop.current = el.scrollTop;
       }
       publishPin(stickToBottom.current, boxOf(el));
@@ -613,7 +651,20 @@ export function SessionDetailInner({
     // composer growing a line, shortens the box without touching the rows.
     observer.observe(el);
     observer.observe(rows);
-    return () => observer.disconnect();
+    // A hand on the transcript ends the landing window; programmatic scrolls
+    // (the opening stick, a jump, the fixture's own) do not.
+    const stopLanding = () => {
+      landingUntil.current = 0;
+    };
+    el.addEventListener("wheel", stopLanding, { passive: true });
+    el.addEventListener("touchmove", stopLanding, { passive: true });
+    el.addEventListener("pointerdown", stopLanding);
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("wheel", stopLanding);
+      el.removeEventListener("touchmove", stopLanding);
+      el.removeEventListener("pointerdown", stopLanding);
+    };
   }, [hasFeed, publishPin]);
 
   useLayoutEffect(() => {
@@ -628,6 +679,16 @@ export function SessionDetailInner({
     if (stickToBottom.current) {
       prependAnchor.current = null;
       el.scrollTop = el.scrollHeight;
+      // A landing is brought to a row's start, so the top line is not a
+      // sentence continued from above the fold. Only while the open is still
+      // settling: later landings are the stream's, and lining those up too
+      // would shift the view under a reader watching it. Taken into
+      // `lastScrollTop` straight away, so the scroll event this queues reads
+      // as our own and the view stays pinned to what comes next.
+      if (performance.now() < landingUntil.current) {
+        const up = rowStartAtTop(el);
+        if (up !== null) el.scrollTop = up;
+      }
       lastScrollTop.current = el.scrollTop;
     } else if (anchor) {
       if (data.startIndex < anchor.startIndex) {
@@ -974,37 +1035,41 @@ export function SessionDetailInner({
         </RunningTasksContext.Provider>
         </PairingContext.Provider>
       </div>
-      {/* Always rendered so it can fade both ways, and `inert` while hidden so
-          a button nobody can see is not in the tab order or read out. It only
-          appears once the newest row is properly off screen, so it never sits
-          over the message it would take you to. */}
-      <button
-        type="button"
-        inert={!jumpShown}
-        aria-label={t("jump to the newest messages")}
-        title={t("jump to the newest messages")}
-        onClick={() => glueToBottom(true)}
-        className={cn(
-          "absolute right-3 bottom-3 z-30 flex h-8 min-w-8 items-center justify-center gap-1 border border-border-strong bg-bg px-2 text-muted transition-opacity hover:bg-hover hover:text-fg",
-          jumpShown ? "opacity-100" : "pointer-events-none opacity-0",
-        )}
-      >
-        <ArrowDownIcon className="size-4 shrink-0" />
-        {/* What arrived while you were reading history — the reason to press it. */}
-        {unread > 0 && (
-          <span className="pr-0.5 font-mono text-2xs text-accent">{unreadLabel(unread)}</span>
-        )}
-      </button>
-      {/* Where this visit's unread messages begin, for a reader who arrived at
-          the newest of them. Centred, and narrow enough never to reach the
-          jump-to-bottom button in the corner. */}
-      <FirstUnreadButton
-        view={firstUnread.view}
-        paging={firstUnread.paging}
-        onJump={firstUnread.jump}
-        onCancel={firstUnread.cancel}
-        className="absolute bottom-3 left-1/2 z-30 max-w-[calc(100%-10rem)] -translate-x-1/2"
-      />
+      {/* A strip between the transcript and the composer, not a layer over the
+          transcript: both controls used to sit on top of the newest rows and
+          hide their text, timestamps and statuses. The strip only exists while
+          one of them does, so the reading pane keeps its height otherwise. */}
+      {(jumpShown || firstUnread.view !== null) && (
+        <div className="relative flex h-8 shrink-0 items-center border-t border-border bg-bg px-3">
+          {/* Where this visit's unread messages begin, for a reader who arrived
+              at the newest of them. Centred, and narrow enough to leave the
+              jump button its corner. */}
+          <FirstUnreadButton
+            view={firstUnread.view}
+            paging={firstUnread.paging}
+            onJump={firstUnread.jump}
+            onCancel={firstUnread.cancel}
+            className="mx-auto max-w-[calc(100%-5rem)]"
+          />
+          <button
+            type="button"
+            inert={!jumpShown}
+            aria-label={t("jump to the newest messages")}
+            title={t("jump to the newest messages")}
+            onClick={() => glueToBottom(true)}
+            className={cn(
+              "ml-auto flex h-6 min-w-6 shrink-0 items-center justify-center gap-1 border border-border-strong bg-bg px-1.5 text-muted hover:bg-hover hover:text-fg",
+              !jumpShown && "invisible",
+            )}
+          >
+            <ArrowDownIcon className="size-4 shrink-0" />
+            {/* What arrived while you were reading history — the reason to press it. */}
+            {unread > 0 && (
+              <span className="pr-0.5 font-mono text-2xs text-accent">{unreadLabel(unread)}</span>
+            )}
+          </button>
+        </div>
+      )}
       </div>
       <Composer
         key={`${source}/${id}`}

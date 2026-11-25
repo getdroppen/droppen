@@ -14,7 +14,9 @@ permission, a file, a terminal and a method nobody offers, waiting for each
 answer, and then write one file under each form a request id may take, and some
 it may not. A prompt containing "wait" holds
 its turn open until it is cancelled; one containing "fail" streams a little
-and is answered with an error. `FAKE_AGENT_SLOW=<method>=<seconds>,...`
+and is answered with an error. A prompt containing "terse" announces a tool
+call with only its tool name and sends the title and input in the first
+update, holding the call open half a second. `FAKE_AGENT_SLOW=<method>=<seconds>,...`
 makes it take that long over a request, after writing it down, so a test can
 act while the request is in flight; `FAKE_AGENT_DEAF` the same, but after
 answering, without reading what it is sent meanwhile. `FAKE_AGENT_TITLE` is
@@ -166,6 +168,18 @@ def run_turn(request):
         update(session, chunk("agent_message_chunk", "Working on it"))
         done.wait(30)
         answer(request, {"stopReason": "cancelled"})
+        return
+    if "terse" in text:
+        # The call says nothing but its tool name; the first update is the one
+        # that says what it is, and it runs for a moment before ending.
+        update(session, {"sessionUpdate": "tool_call", "toolCallId": "call-terse",
+                         "title": "exec", "kind": "execute", "rawInput": None})
+        update(session, {"sessionUpdate": "tool_call_update", "toolCallId": "call-terse", "status": "pending",
+                         "title": "List current directory", "rawInput": {"command": "ls -la"}})
+        time.sleep(0.5)
+        update(session, {"sessionUpdate": "tool_call_update", "toolCallId": "call-terse", "status": "completed",
+                         "content": [{"type": "content", "content": {"type": "text", "text": "ok"}}]})
+        answer(request, {"stopReason": "end_turn"})
         return
     if "fail" in text:
         update(session, chunk("agent_message_chunk", "Trying"))

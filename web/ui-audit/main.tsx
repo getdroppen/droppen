@@ -25,7 +25,10 @@
  * the app runs on: `welcome.tsx`) or `?fixture=updates` (the desktop app's
  * update page where it cannot update itself, `&place=`: `updates.tsx`),
  * `?fixture=a2a` (Settings → A2A over a device with entries, tokens and tasks:
- * `a2a.tsx`), plus `?theme=dark`.
+ * `a2a.tsx`), plus `?theme=dark`. `?fixture=session-audit` is a synthetic
+ * transcript for display audits (wide table and code, a failed step, statuses,
+ * a question, compaction, an interruption, a cross-session title) with
+ * `&phase=after` and `&state=working` for a folded run that grows.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -1105,7 +1108,8 @@ const OFFLINE_WORDS: OfflineOptions["messages"] = {
  * resumed from the copy's own marker with nothing new, and its state follows,
  * as it does on the wire.
  */
-function machineSocket() {
+function machineSocket(session = COPY_SESSION, items = COPY_ITEMS, state = COPY_LIVE_STATE, prefixFp = COPY_STATE.prefixFp) {
+  const isIt = (source: string, id: string) => source === "claude" && id === session;
   let greeted = false;
   const socket = {
     readyState: 0,
@@ -1122,10 +1126,10 @@ function machineSocket() {
         answer({ type: "hello" });
       }
       for (const feed of m.feeds ?? []) {
-        if (!isCopied(feed.source, feed.id)) continue;
-        const end = COPY_ITEMS.length;
-        answer({ sub: feed.sub, type: "delta", sig: "live:1", fromIndex: end, items: [], endIndex: end, totalItems: end, prefixFp: COPY_STATE.prefixFp });
-        answer({ sub: feed.sub, type: "state", ...COPY_LIVE_STATE });
+        if (!isIt(feed.source, feed.id)) continue;
+        const end = items.length;
+        answer({ sub: feed.sub, type: "delta", sig: "live:1", fromIndex: end, items: [], endIndex: end, totalItems: end, prefixFp });
+        answer({ sub: feed.sub, type: "state", ...state });
       }
     },
     close() {},
@@ -1144,9 +1148,16 @@ function machineSocket() {
  * model and effort the list leads with, the local login's quota and the
  * permission a CLI defaults to are all other than the session's own.
  */
-function copyDevice(live: boolean): Transport {
+function copyDevice(
+  live: boolean,
+  session = COPY_SESSION,
+  items = COPY_ITEMS,
+  state = COPY_LIVE_STATE,
+  extraAnswers: Record<string, unknown> = {},
+): Transport {
   const now = new Date().toISOString();
   const answers: Record<string, unknown> = {
+    ...extraAnswers,
     "/api/prefs": { composerSend: "enter", sessionGrouping: "flat", transcriptStyle: "flat", fontSize: "default", language: "en" },
     "/api/composer-prefs": { defaults: {}, sessions: {} },
     "/api/models": {
@@ -1169,13 +1180,14 @@ function copyDevice(live: boolean): Transport {
   };
   return {
     fetch: async (request: Request) => {
-      const answer = answers[new URL(request.url).pathname];
+      const path = new URL(request.url).pathname;
+      const answer = answers[path];
       return answer === undefined ? Response.json({ error: "not here" }, { status: 404 }) : Response.json(answer);
     },
     socketUrl: async (path: string) => path,
     openSocket: (url: string) =>
       live && url.startsWith("/api/events")
-        ? machineSocket()
+        ? machineSocket(session, items, state)
         : { readyState: 0, binaryType: "blob", send() {}, close() {}, onopen: null, onmessage: null, onclose: null },
   };
 }
@@ -1227,6 +1239,255 @@ async function mountSessionFromCopy(): Promise<void> {
   );
 }
 
+
+/*
+ * The display audit fixture (`?fixture=session-audit`): one synthetic session
+ * carrying the shapes a transcript audit has to look at — a wide table, long
+ * code and inline code, a failed step inside a folded group, completed /
+ * background / exit-code statuses, a question and its answered receipt, a
+ * compaction seam, an interruption, a system line filed as a user message and
+ * a cross-session wrapper as the title. Nothing here is real session data.
+ *
+ * `&phase=after` appends steps to the trailing group, to show a folded run
+ * growing while the view stays put; `&state=working` says a turn is in flight.
+ * The page is scrolled to the top after mounting so the offer, the jump button
+ * and the first rows are the subject.
+ */
+const auditPath = "/home/studio/projects/demo";
+const AUDIT_MACHINE = "studio-mac";
+const AUDIT_SESSION = "9f4c1d20-6a3b-4c7e-8d15-2b0a5e9f3c71";
+const AUDIT_ENVELOPE = `<cross-session-message from="uds:/tmp/droppen-ff.sock" from-name="droppen-ff" from-mode="prompting">`;
+/** What the server's `title_line` makes of that envelope: the sender's words. */
+const AUDIT_TITLE = "The cursor argument is agreed in #318; keep the blocked row until it lands.";
+const auditItem = (n: number, role: string, kind: string, text: string, more: Record<string, unknown> = {}) => ({
+  ...copyItem(n, role as never, kind as never, text, more),
+  ...more,
+});
+const AUDIT_BASE = [
+  auditItem(0, "user", "text", "[Droppen] This session switched from account a***@example.com to b***@example.com.\n\nThe weekly quota is used up; continue from the interruption."),
+  auditItem(1, "assistant", "thinking", "The status table is the widest thing on this page: three columns of prose, every cell a sentence. Read it before the release notes so the rows line up with what shipped."),
+  auditItem(2, "assistant", "text", "I will start from the release notes and then read the status table, without fetching it again."),
+  auditItem(3, "assistant", "tool_use", "List the release notes", {
+    toolName: "Bash",
+    toolUseId: "a-1",
+    detail: "gh release list --repo example/service --limit 20 --json tagName,publishedAt,isDraft",
+  }),
+  auditItem(4, "user", "tool_result", "v6.1.0 2026-11-24T09:10:00Z\nv6.0.3 2026-11-19T15:42:00Z\nv6.0.2 2026-11-12T08:03:00Z", { resultOf: "a-1" }),
+  auditItem(5, "assistant", "thinking", "The table will say which DCs still run 6.0.0; those are the rows that matter. Everything else is release housekeeping."),
+  auditItem(6, "assistant", "tool_use", "Open the status table", {
+    toolName: "Bash",
+    toolUseId: "a-2",
+    detail: "curl -sS --fail-with-body https://status.example.com/api/rows?limit=50",
+  }),
+  auditItem(7, "user", "tool_result", "Exit code: 1", { resultOf: "a-2", isError: true, detail: "curl: (22) the requested URL returned error: 502" }),
+  auditItem(8, "assistant", "text", "The endpoint answered 502, so I am reading the table from the previous answer instead of asking again."),
+  auditItem(9, "user", "text", "Use the rows from the last answer. Do not re-fetch the table."),
+  auditItem(10, "assistant", "text", "### 状态总览（发布、回滚、旁路）\n\n| Surface | What changed | State |\n| --- | --- | --- |\n| relay | the idle timeout follows the heartbeat; three missed beats instead of a fixed minute | merged into main, waiting for the release train |\n| control | the review state is recognised by its own name, and pausing a lane no longer drops the queue | in review; the reviewer asked for one more test |\n| dashboard | the status table is paged by the server, so a long history no longer loads every row | blocked on the API shape above |\n| ledger | the retry budget is derived from the RTT sample instead of a constant | merged; the nightly soak run is still green |"),
+  auditItem(11, "assistant", "text", "Run the audit before the table is regenerated:\n\n```sh\n./scripts/audit --check --with-a-very-long-flag=status-table --another-long-flag=every-row --output=/tmp/audit-report.jsonl\nssh deploy@host.example.com 'cd /srv/demo && ./scripts/audit --dry-run --with-a-very-long-flag=status-table --json'\n```\n"),
+  auditItem(12, "assistant", "text", "The same run inline: `./scripts/audit --check --with-a-very-long-flag=status-table --another-long-flag=every-row` is what CI calls."),
+  auditItem(13, "assistant", "tool_use", "How should the review state be recognised?", {
+    toolName: "AskUserQuestion",
+    toolUseId: "a-3",
+    question: [
+      {
+        header: "Review state",
+        multiSelect: false,
+        question: "How should the review state be recognised?",
+        options: [
+          { label: "By the state name, automatically", description: "The state's own name carries it; an unmapped name stays local." },
+          { label: "Chosen by hand per team", description: "One more setting, and a team that never sets it maps nothing." },
+        ],
+      },
+    ],
+  }),
+  auditItem(14, "user", "tool_result", "Your questions have been answered: \"How should the review state be recognised?\"=\"By the state name, automatically (recommended)\". You can now continue with these answers in mind.", { resultOf: "a-3" }),
+  auditItem(15, "assistant", "text", "Confirmed: the state name carries it, and an unmapped name stays local.\n\n| Field | Value |\n| --- | --- |\n| review | open |\n| unmapped | local only |"),
+  auditItem(15.5, "system", "compact", "", { meta: "auto · 42,000 → 17,000 tokens" }),
+  auditItem(16, "system", "text", "Interrupted"),
+  auditItem(17, "assistant", "thinking", "Resuming after the interruption. The remaining rows are the ledger and the release train, in that order."),
+  auditItem(18, "assistant", "tool_use", "Read the release train config", {
+    toolName: "Read",
+    toolUseId: "a-4",
+    detail: "config/release-train.toml",
+  }),
+  auditItem(19, "user", "tool_result", "1  [train]\n2  cadence = \"weekly\"\n3  freeze = [\"friday\"]\n4  lanes = [\"relay\", \"control\", \"dashboard\", \"ledger\"]\n5  soak = \"nightly\"", { resultOf: "a-4" }),
+  auditItem(20, "assistant", "tool_use", "Format the generated report", {
+    toolName: "Bash",
+    toolUseId: "a-5",
+    detail: "jq -r '.rows[] | [.surface, .state] | @tsv' /tmp/audit-report.jsonl",
+  }),
+  auditItem(21, "user", "tool_result", "relay\tmerged\ncontrol\tin review\ndashboard\tblocked\nledger\tmerged", { resultOf: "a-5" }),
+  auditItem(22, "assistant", "tool_use", "Re-run the soak for the ledger", {
+    toolName: "Bash",
+    toolUseId: "a-6",
+    background: true,
+    detail: "scripts/soak --lane ledger --minutes 30",
+  }),
+  auditItem(23, "assistant", "thinking", "The ledger soak is in the background; the rest can carry on. Nothing else is waiting on it."),
+  auditItem(24, "assistant", "tool_use", "Update the rollout notes", {
+    toolName: "Edit",
+    toolUseId: "a-7",
+    detail: "docs/rollout.md",
+  }),
+  auditItem(25, "user", "tool_result", "The file docs/rollout.md has been updated.", { resultOf: "a-7" }),
+  auditItem(26, "assistant", "text", "The table is the last thing that needs a decision. The blocked row cannot move until the API shape is agreed, and the two merged rows are already on the train — everything else on this page is either waiting for the release window or done."),
+  auditItem(27, "user", "text", "Fine. Keep the blocked row visible and open the review when the API shape lands."),
+  auditItem(28, "assistant", "text", "Understood. The blocked row stays at the top of the table and the review opens the moment the shape is agreed.\n\nThe release train already holds the two merged rows. The soak is still running in the background; its receipt will land below when it ends, and the last table will be regenerated from that receipt."),
+  auditItem(28.5, "assistant", "thinking", "The table can wait for the soak; start the dashboard doc now."),
+  auditItem(28.6, "assistant", "tool_use", "Open the dashboard doc", {
+    toolName: "Read",
+    toolUseId: "a-7b",
+    detail: "docs/status.md",
+  }),
+  auditItem(28.7, "user", "tool_result", "1  # Status\n2\n3  The table is generated from the soak.", { resultOf: "a-7b" }),
+  auditItem(29, "assistant", "thinking", "The soak receipt is still out; while it runs, check the blocked row for the shape the table needs."),
+  auditItem(30, "assistant", "tool_use", "Check the soak receipt", {
+    toolName: "Bash",
+    toolUseId: "a-8",
+    detail: "cat /tmp/soak-ledger.jsonl | tail -5",
+  }),
+  auditItem(31, "assistant", "tool_use", "Rewrite the blocked row", {
+    toolName: "Edit",
+    toolUseId: "a-9",
+    detail: "docs/status.md",
+  }),
+  auditItem(32, "user", "tool_result", "The file docs/status.md has been updated.", { resultOf: "a-9" }),
+];
+/** `&phase=after`: more steps in the same trailing run, so its counter grows. */
+const AUDIT_MORE = [
+  auditItem(33, "assistant", "thinking", "The receipt is late; read the paging branch for the shape the row needs instead of waiting."),
+  auditItem(34, "assistant", "tool_use", "Read the paging branch", {
+    toolName: "Bash",
+    toolUseId: "a-10",
+    detail: "git show origin/status-table-paging --stat",
+  }),
+  auditItem(35, "user", "tool_result", " docs/status.md | 12 +++++---\n 1 file changed, 7 insertions(+), 5 deletions(-)", { resultOf: "a-10" }),
+  auditItem(36, "assistant", "thinking", "The branch is small and only touches the doc; the shape itself is unchanged."),
+  auditItem(37, "assistant", "tool_use", "Compare the paging branch with main", {
+    toolName: "Bash",
+    toolUseId: "a-11",
+    detail: "git diff main...origin/status-table-paging -- docs/status.md",
+  }),
+  auditItem(38, "user", "tool_result", "the branch adds the cursor argument and leaves every existing caller alone", { resultOf: "a-11" }),
+  auditItem(38.5, "user", "text", `${AUDIT_ENVELOPE}\n\nThe cursor argument is agreed in #318; keep the blocked row until it lands.\n</cross-session-message>`),
+];
+const auditPhase = query.get("phase") === "after" ? [...AUDIT_BASE, ...AUDIT_MORE] : AUDIT_BASE;
+const auditWorking = query.get("state") === "working";
+const AUDIT_ROW = {
+  ...COPY_ROW,
+  id: AUDIT_SESSION,
+  title: AUDIT_TITLE,
+  cwd: auditPath,
+  filePath: `${auditPath}/.claude/projects/demo/${AUDIT_SESSION}.jsonl`,
+  gitBranch: "main",
+  sizeBytes: 61_004,
+  status: auditWorking ? "working" : "idle",
+  activity: auditWorking ? "working" : "idle",
+  agentName: "droppen-e1",
+  updatedAt: "2026-11-08T09:31:00Z",
+};
+const AUDIT_STATE: FeedCopy = {
+  started: true,
+  startIndex: 0,
+  endIndex: auditPhase.length,
+  items: auditPhase as FeedCopy["items"],
+  fp: "audit-fp",
+  prefixFp: "audit-prefix",
+};
+const AUDIT_QUESTION = {
+  requestId: "q-1",
+  toolUseId: "a-3",
+  state: "answered",
+  createdAt: "2026-11-08T09:25:00Z",
+  answeredAt: "2026-11-08T09:26:00Z",
+  answeredBy: null,
+  answers: { "How should the review state be recognised?": "By the state name, automatically (recommended)" },
+  response: null,
+  questions: [
+    {
+      header: "Review state",
+      multiSelect: false,
+      question: "How should the review state be recognised?",
+      options: [
+        { label: "By the state name, automatically", description: "The state's own name carries it; an unmapped name stays local." },
+        { label: "Chosen by hand per team", description: "One more setting, and a team that never sets it maps nothing." },
+      ],
+    },
+  ],
+};
+const AUDIT_LIVE_STATE = {
+  ...COPY_LIVE_STATE,
+  summary: { ...AUDIT_ROW },
+  injection: auditWorking ? { state: "running" } : null,
+  contextTokens: 42_000,
+  contextWindow: 200_000,
+  questions: [AUDIT_QUESTION],
+};
+const isAudit = (source: string, id: string) => source === "claude" && id === AUDIT_SESSION;
+const AUDIT_MIRROR = {
+  row: (source: string, id: string) => (isAudit(source, id) ? AUDIT_ROW : undefined),
+  sessionNow: (source: string, id: string) => (isAudit(source, id) ? { source, id, state: AUDIT_STATE, seq: 3, freshestMs: COPY_AS_OF } : null),
+  whenLoaded: async () => undefined,
+  sessionHeld: async (source: string, id: string) => AUDIT_MIRROR.sessionNow(source, id),
+};
+const AUDIT_SHELL = {
+  ...COPY_SHELL,
+  machine: (key: string | null | undefined) => (key === AUDIT_MACHINE ? { mirror: AUDIT_MIRROR, transport: { current: "live" } } : null),
+};
+
+async function mountSessionAudit(): Promise<void> {
+  const device = copyDevice(true, AUDIT_SESSION, auditPhase, AUDIT_LIVE_STATE, {
+    [`/api/sessions/claude/${AUDIT_SESSION}/first-unread`]: { index: 41, count: 13 },
+    [`/api/sessions/claude/${AUDIT_SESSION}/seen`]: { previousReadAt: "2026-11-08T09:10:00.000Z" },
+  });
+  openMachine(AUDIT_MACHINE, device, {
+    info: constantStore<readonly MachineInfo[]>([{ key: AUDIT_MACHINE, name: AUDIT_MACHINE, state: "online", since: 0, canManage: true, live: "live" }]),
+    ensureLive: noop,
+    hold: () => noop,
+    dispose: noop,
+  });
+  setShell("hub", AUDIT_MACHINE);
+  setCurrentShell(AUDIT_SHELL as unknown as AppShell);
+  try {
+    localStorage.clear();
+  } catch {
+    // storage unavailable: the fixture still draws
+  }
+  await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");
+
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const router = await import("@tanstack/react-router");
+  const rootRoute = router.createRootRoute({ component: () => <router.Outlet /> });
+  const detailRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "sessions/$source/$id", component: SessionDetail });
+  const listRoute = router.createRoute({ getParentRoute: () => rootRoute, path: "sessions", component: () => null });
+  const routes = router.createRouter({
+    routeTree: rootRoute.addChildren([detailRoute, listRoute]),
+    history: router.createMemoryHistory({ initialEntries: [`/sessions/claude/${AUDIT_SESSION}`] }),
+  });
+  await routes.load();
+
+  createRoot(document.getElementById("root")!).render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MachineProvider machine={AUDIT_MACHINE}>
+        <GlobalFeedProvider>
+          <div data-fixture-root="" data-session-view="" className="flex h-full min-h-0 min-w-0 flex-col">
+            <router.RouterProvider router={routes} />
+          </div>
+        </GlobalFeedProvider>
+      </MachineProvider>
+    </QueryClientProvider>,
+  );
+  // Open at the bottom so the visit's arrival report is made, then move to
+  // the top: that is where the audit's rows (and the first-unread offer) are.
+  setTimeout(() => {
+    const sc = document.querySelector<HTMLElement>(".transcript-scroll");
+    if (sc) sc.scrollTop = sc.scrollHeight;
+  }, 50);
+  for (const ms of [900, 1200, 1700]) {
+    setTimeout(() => document.querySelector<HTMLElement>(".transcript-scroll")?.scrollTo({ top: 0 }), ms);
+  }
+}
+
 // The agents, diagrams, images and session-opening fixtures' words go through
 // i18n (counts, "5 min ago", the diagram and picture controls' labels, what an
 // opening session waits for): English unless `&lang=` names another of the
@@ -1250,6 +1511,8 @@ if (fixture === "new-chat") {
   await mountNoCopy();
 } else if (fixture === "session-from-copy") {
   await mountSessionFromCopy();
+} else if (fixture === "session-audit") {
+  await mountSessionAudit();
 } else if (fixture === "welcome") {
   await mountWelcome(query);
 } else if (fixture === "desktop-app") {

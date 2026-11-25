@@ -4,7 +4,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { CaretRightIcon } from "@phosphor-icons/react";
-import { memo, useContext, useMemo, useRef, useState } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
 import { FileChip } from "@/components/file-chip";
@@ -16,6 +16,7 @@ import { asyncLaunchAckOf, latchOutcome, subagentOutcome, type AgentOutcome } fr
 import { QuestionCard } from "@/features/sessions/question-card";
 import type { SessionQuestion } from "@/features/sessions/session-questions";
 import { CommandChip, CompactDivider, ModelFallbackNotice, modelFallbackOf, SyntheticNotice } from "@/features/sessions/transcript-notices";
+import { crossSessionOf, droppenNoticeOf } from "@/features/sessions/cross-session";
 import { countSteps, foldClassOf, modelOf, pairToolResults } from "@/features/sessions/transcript-groups";
 import { cn } from "@/lib/cn";
 import { useApi, useMachine } from "@/lib/machines/context";
@@ -39,10 +40,29 @@ import {
  * A folded run of steps. `base` is the absolute index of its first item: every
  * row is tagged with its own (`data-ti`), so a search can find the row an item
  * landed in even when it is folded away in here.
+ *
+ * `live` is the run a turn in flight is still writing into. It stays open while
+ * it is the newest thing, so the steps can be watched as they land instead of
+ * the whole turn reading as one growing `N steps` line; when the turn ends it
+ * folds, unless the reader opened it themselves.
  */
-export const StepGroup = memo(function StepGroup({ items, base }: { items: TranscriptItem[]; base: number }) {
+export const StepGroup = memo(function StepGroup({
+  items,
+  base,
+  live = false,
+}: {
+  items: TranscriptItem[];
+  base: number;
+  live?: boolean;
+}) {
   const { t } = useTranslation();
   const inBubble = useContext(InBubbleContext);
+  const [open, setOpen] = useState(live);
+  const openedByHand = useRef(false);
+  useEffect(() => {
+    if (live) setOpen(true);
+    else if (!openedByHand.current) setOpen(false);
+  }, [live]);
   const counts = new Map<string, number>();
   // The same rule the fold threshold used, so a group can no longer collapse on
   // one count and then announce another.
@@ -64,8 +84,15 @@ export const StepGroup = memo(function StepGroup({ items, base }: { items: Trans
   const stepNumbers = items.map((item) => (item.kind === "tool_use" || item.kind === "thinking" ? ++counter : null));
 
   return (
-    <details className={cn("group/steps", !inBubble && "border-b border-border")}>
+    <details
+      className={cn("group/steps", !inBubble && "border-b border-border")}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
       <summary
+        onClick={() => {
+          openedByHand.current = true;
+        }}
         className={cn(
           "flex h-6.5 cursor-pointer list-none items-center gap-2 font-mono text-2xs hover:bg-hover",
           inBubble ? "-mx-1 px-1" : "px-4",
@@ -75,8 +102,8 @@ export const StepGroup = memo(function StepGroup({ items, base }: { items: Trans
         <span data-label="" className="label-caps shrink-0 text-[10px] text-fg">{t("{{n}} steps", { n: steps })}</span>
         <span className="truncate text-muted">{summary}</span>
         {hasError && (
-          <span data-signal="failed" className="shrink-0 text-danger" title={t("contains a failed tool call")}>
-            ×
+          <span data-signal="failed" className="shrink-0 text-danger" title={t("contains a failed tool call")} aria-label={t("contains a failed tool call")}>
+            ✗
           </span>
         )}
       </summary>
@@ -209,7 +236,7 @@ function AgentResultLine({ result }: { result: TranscriptItem }) {
     <span
       className={cn(
         "flex min-w-0 items-baseline gap-1.5 font-mono text-2xs",
-        result.isError ? "text-danger/90" : "text-faint",
+        result.isError ? "text-danger" : "text-faint",
       )}
     >
       <span className="shrink-0">↳</span>
@@ -406,10 +433,13 @@ const ItemRow = memo(function ItemRow({
 
   if (item.kind === "thinking") {
     return (
-      <details className={rowClass}>
-        <summary className="-mx-1 cursor-pointer list-none px-1 font-mono text-2xs text-faint italic hover:bg-hover">
-          ∴ {t("thinking")}
-          <span className="ml-2 not-italic text-faint/70">{item.text.slice(0, 90).replace(/\s+/g, " ")}…</span>
+      <details className={cn(rowClass, "group/thinking")}>
+        {/* The fold's caret, so a thinking row reads as something that opens
+            rather than as a line that ends in an ellipsis. */}
+        <summary className="-mx-1 flex cursor-pointer list-none items-center gap-1.5 px-1 font-mono text-2xs text-faint italic hover:bg-hover">
+          <CaretRightIcon className="size-3 shrink-0 not-italic group-open/thinking:rotate-90" />
+          <span className="shrink-0">∴ {t("thinking")}</span>
+          <span className="min-w-0 truncate not-italic text-faint/70">{item.text.slice(0, 90).replace(/\s+/g, " ")}…</span>
         </summary>
         <div className="mt-1 mb-1 text-2xs leading-4 whitespace-pre-wrap text-faint italic">{item.text}</div>
       </details>
@@ -443,6 +473,48 @@ const ItemRow = memo(function ItemRow({
   }
 
   const role = ROLE_STYLE[item.role] ?? ROLE_STYLE.system!;
+
+  // Two things arrive on the user side that the person did not type: Droppen's
+  // own notices, and another session's message in its envelope. Both keep the
+  // user role in the record, and both read as the user speaking until they are
+  // drawn for what they are.
+  if (item.role === "user" && item.kind === "text") {
+    const notice = droppenNoticeOf(item.text);
+    if (notice !== null) {
+      return <SystemLine item={{ ...item, text: notice }} rowClass={rowClass} />;
+    }
+    const cross = crossSessionOf(item.text);
+    if (cross) {
+      return (
+        <div className={cn(inBubble ? "py-1" : "border-b border-border px-4 pt-2 pb-2.5", !inBubble && "bg-raised")}>
+          {inBubble ? (
+            model &&
+            !modelSaidAbove && (
+              <div className="mb-0.5 min-w-0 font-mono text-[10px] break-words text-muted" title={model}>
+                {model}
+              </div>
+            )
+          ) : (
+            <MessageHead role={role} model={model} timestamp={item.timestamp} />
+          )}
+          {/* Who sent it, where the envelope used to be raw text. */}
+          <div className="mb-1 flex min-w-0">
+            <span
+              data-label=""
+              className="max-w-full truncate border border-border px-1.5 py-px font-mono text-[10px] text-muted"
+              title={cross.from ?? undefined}
+            >
+              {cross.from ? t("cross-session message from {{name}}", { name: cross.from }) : t("cross-session message")}
+            </span>
+          </div>
+          <Markdown
+            text={cross.body}
+            className={inBubble ? undefined : "max-w-none [&>*:not(div):not(pre)]:max-w-[48em]"}
+          />
+        </div>
+      );
+    }
+  }
   return (
     <div
       className={cn(
@@ -462,7 +534,13 @@ const ItemRow = memo(function ItemRow({
       ) : (
         <MessageHead role={role} model={model} timestamp={item.timestamp} />
       )}
-      <Markdown text={item.text} className={inBubble ? undefined : "max-w-[48em]"} lineBreaks={item.role === "user"} />
+      <Markdown
+        text={item.text}
+        // Prose keeps the 48em measure; tables and fences are the blocks allowed
+        // to use the pane, and pan inside themselves when even that is not enough.
+        className={inBubble ? undefined : "max-w-none [&>*:not(div):not(pre)]:max-w-[48em]"}
+        lineBreaks={item.role === "user"}
+      />
       {item.images && item.images.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {item.images.map((p) => (

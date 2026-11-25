@@ -337,6 +337,27 @@
   }
 }
 
+/* A table wider than its column: pan it, with a thin bar that shows while it
+   moves. macOS draws nothing at rest, so `MarkdownTable` also fades the right
+   edge while there is more table that way. */
+@utility table-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+
+  &::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
 html,
 body,
 #root {

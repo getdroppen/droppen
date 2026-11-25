@@ -7,9 +7,11 @@ import {
   bottomGap,
   holdBottomEdge,
   isAtBottom,
+  lastContentBottom,
   NO_UNREAD,
   pinAfterScroll,
   pinOnSettle,
+  rowStartAtTop,
   scrollTopForGap,
   shouldTopUpHistory,
   showJumpToBottom,
@@ -164,6 +166,38 @@ test("the jump button appears only while the newest row is off screen", () => {
   assert.ok(!showJumpToBottom(false, box(4180, 5000)));
 });
 
+/** A scroller with a fixed top edge and rows at given bottoms. */
+function scroller(top: number, rows: { text: string; bottom: number }[]) {
+  return {
+    getBoundingClientRect: () => ({ top }),
+    querySelectorAll: () =>
+      rows.map((row) => ({ textContent: row.text, getBoundingClientRect: () => ({ bottom: row.bottom }) })),
+  };
+}
+
+test("the empty rows a consumed result leaves are not something to jump to", () => {
+  // The viewport (scrollTop 1000, 800 tall) ends at 1800; 200px of empty rows
+  // sit below it, so the box alone would read a gap of 200 and park the button
+  // over a line that is already fully in view. The last row with text ends
+  // exactly on the bottom edge, which is a gap of none.
+  const trailing = box(1000, 2000);
+  assert.equal(bottomGap(trailing), 200);
+  const flush = lastContentBottom(scroller(0, [{ text: "a line", bottom: 800 }, { text: "  ", bottom: 900 }]), 1000);
+  assert.equal(flush, 1800);
+  assert.ok(!showJumpToBottom(false, trailing, flush));
+
+  // And a newest line properly below the edge still offers the button.
+  const below = lastContentBottom(scroller(0, [{ text: "a line", bottom: 900 }]), 1000);
+  assert.equal(below, 1900);
+  assert.ok(showJumpToBottom(false, trailing, below));
+});
+
+test("a window with nothing readable in its last rows falls back to the box", () => {
+  const empty = scroller(0, Array.from({ length: 20 }, () => ({ text: "", bottom: 500 })));
+  assert.equal(lastContentBottom(empty, 0), null);
+  assert.ok(showJumpToBottom(false, box(400, 5000), null));
+});
+
 test("unread counts what arrived below the viewport while the user was away", () => {
   // The first window seen is adopted, never counted.
   let cursor = trackUnread(NO_UNREAD, 200, false);
@@ -275,4 +309,44 @@ test("a search or a history page that settles at the bottom takes the pin back",
   assert.equal(pinOnSettle(false, box(1200, 2000)), true, "settled right at the bottom");
   assert.equal(pinOnSettle(false, box(400, 4000)), false, "a reader left in the middle stays there");
   assert.equal(pinOnSettle(true, box(400, 4000)), true, "and a pinned view is never unpinned by it");
+});
+
+/** A scroller whose top edge is at `edge`, with rows at the given tops. */
+function stack(edge: number, scrollTop: number, rows: { top: number; height: number }[]) {
+  return {
+    scrollTop,
+    getBoundingClientRect: () => ({ top: edge }),
+    querySelectorAll: () =>
+      rows.map((row) => ({
+        getClientRects: () => (row.height > 0 ? [{}] : []),
+        getBoundingClientRect: () => ({ top: row.top, bottom: row.top + row.height, height: row.height }),
+      })),
+  };
+}
+
+test("a landing part-way through a row is brought back to its start", () => {
+  // Rows 0 and 1 are above the edge, row 1 being the one it cuts through.
+  const view = stack(100, 700, [
+    { top: 40, height: 20 },
+    { top: 60, height: 90 },
+    { top: 150, height: 60 },
+  ]);
+  assert.equal(rowStartAtTop(view), 660, "the cut is taken off the scroll position");
+});
+
+test("a landing already on a row's start is left alone", () => {
+  assert.equal(rowStartAtTop(stack(100, 700, [{ top: 100, height: 40 }])), null);
+});
+
+test("the least sliver of a clipped line is still worth lining up", () => {
+  // Half a line's top edge is a clipped line, however few pixels that is.
+  assert.equal(rowStartAtTop(stack(100, 700, [{ top: 95, height: 40 }])), 695);
+});
+
+test("an empty row at the edge is passed over for the one below it", () => {
+  const view = stack(100, 700, [
+    { top: 80, height: 0 },
+    { top: 80, height: 90 },
+  ]);
+  assert.equal(rowStartAtTop(view), 680);
 });

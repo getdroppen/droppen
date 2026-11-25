@@ -20,6 +20,8 @@
 //! - `driver` (feature `runtime`) — a channel running on tokio, shared by the
 //!   agent and headless devices.
 //! - [`flow`] — hub-level credit on each channel, which the hub enforces.
+//! - [`pace`] — what a sender keeps in flight on a path, below that credit:
+//!   about what the path delivers in a round trip, which it measures.
 //! - [`path`] — the direct path next to the hub: signaling inside the channel,
 //!   DTLS fingerprints bound into a Noise handshake on the DataChannel, and
 //!   sequenced frames that move between the two paths with nothing lost.
@@ -64,6 +66,7 @@ pub mod mnemonic;
 pub mod mux;
 pub mod netpolicy;
 pub mod noise;
+pub mod pace;
 pub mod pairing;
 pub mod pake;
 pub mod path;
@@ -80,6 +83,8 @@ pub mod wrap;
 mod a2a_regressions;
 #[cfg(test)]
 mod attack_regressions;
+#[cfg(all(test, feature = "runtime"))]
+mod link_sim;
 #[cfg(test)]
 mod relay_test;
 #[cfg(test)]

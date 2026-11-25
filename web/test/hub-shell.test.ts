@@ -12,8 +12,10 @@ import test from "node:test";
 import { QueryClient } from "@tanstack/react-query";
 import { addressOn, endHubShell, HubShell, mainMachine, selectedMachine, switchPath } from "../src/features/cloud/hub-shell.js";
 import { type AccountMain, HubApiError } from "../src/lib/hub/api.js";
+import { connLog } from "../src/lib/connection-log.js";
+import { MuxError } from "../src/lib/e2e/mux.js";
 import type { PresenceState } from "../src/lib/hub/link.js";
-import type { MachineStatus } from "../src/lib/hub/machine.js";
+import { type MachineStatus, PIPE_REFUSED } from "../src/lib/hub/machine.js";
 import { mq } from "../src/lib/machines/query.js";
 import { hubShell, setHubShell } from "../src/features/machines/shells.js";
 import { renewalRunner, setRenewalRunner } from "../src/lib/hub/renewal.js";
@@ -511,6 +513,149 @@ test("a machine out of view keeps its channel while it still carries a download,
   abort.abort();
   await until(() => shell.machine("m-a")!.channel.status === "idle", 2000);
   assert.equal(shell.machine("m-a")!.transport.current, "offline", "on the copy at once, not after the channel has stayed down");
+});
+
+test("a live request on a machine's channel holds the page's background page downloads back until it ends; a socket does not; a channel opening pauses them", async (t) => {
+  const { link, shell } = world([{ id: "m-a" }]);
+  link.set("m-a", "online");
+  // What the machine asks of the page's queue (made before the machines, which are handed it).
+  const asked: string[] = [];
+  const pages = shell.pages;
+  const hold = pages.hold.bind(pages);
+  pages.hold = (cause = "live") => {
+    asked.push(`hold ${cause}`);
+    const release = hold(cause);
+    return () => {
+      asked.push(`release ${cause}`);
+      release();
+    };
+  };
+  const pauseFor = pages.pauseFor.bind(pages);
+  pages.pauseFor = (cause, ms) => {
+    asked.push(`pause ${cause}`);
+    pauseFor(cause, ms);
+  };
+  shell.start();
+  t.after(() => shell.stop());
+  dialer(shell, "m-a");
+  shell.select("m-a");
+  await until(() => shell.machine("m-a")!.transport.current === "live");
+  assert.ok(asked.includes("pause opened"), "the channel opened: its first requests come now");
+  assert.equal(pages.paused, "opened");
+  const holds = () => asked.filter((a) => !a.startsWith("pause"));
+  const transport = shell.machine("m-a")!.transport;
+  transport.openSocket(await transport.socketUrl("/api/events?v=2"));
+  await flush(5);
+  assert.deepEqual(holds(), [], "a socket stays open for as long as the page does: it holds nothing back");
+  const abort = new AbortController();
+  transport.fetch(new Request("http://machine.test/api/prefs", { signal: abort.signal })).catch(() => undefined);
+  await until(() => holds().length === 1);
+  assert.deepEqual(holds(), ["hold live"]);
+  assert.equal(pages.paused, "live");
+  abort.abort();
+  await until(() => holds().length === 2);
+  assert.deepEqual(holds(), ["hold live", "release live"], "let go of as the request ends");
+});
+
+test("a request whose pipe cannot be opened rejects, and holds the page's background page downloads back no longer than it lasts", async (t) => {
+  const { link, shell } = world([{ id: "m-a" }]);
+  link.set("m-a", "online");
+  const holds: string[] = [];
+  const pages = shell.pages;
+  const hold = pages.hold.bind(pages);
+  pages.hold = (cause = "live") => {
+    holds.push("hold");
+    const release = hold(cause);
+    let released = false;
+    return () => {
+      if (!released) holds.push("release");
+      released = true;
+      release();
+    };
+  };
+  shell.start();
+  t.after(() => shell.stop());
+  const channel = shell.machine("m-a")!.channel;
+  // The channel is up, but refuses the stream: a head over its limit, or every stream in use (`MuxError`).
+  channel.ensure = () => {
+    (channel as unknown as { setStatus(s: MachineStatus): void }).setStatus("open");
+    return Promise.resolve({
+      open: () => {
+        throw new MuxError("tooManyStreams", "too many open streams");
+      },
+    } as never);
+  };
+  shell.select("m-a");
+  await until(() => shell.machine("m-a")!.transport.current === "live");
+  const transport = shell.machine("m-a")!.transport;
+  const since = connLog.events().at(-1)?.seq ?? 0;
+  const refused = () => connLog.events().filter((e) => e.seq > since && e.name === "pipe.refused");
+  await assert.rejects(
+    transport.fetch(new Request("http://machine.test/api/prefs")),
+    { message: `tunnel: the pipe closed before the answer ended (${PIPE_REFUSED})` },
+    "it fails rather than waiting for ever, with its own code: not a channel gone (4502)",
+  );
+  await until(() => holds.length === 2);
+  assert.deepEqual(holds, ["hold", "release"]);
+  assert.deepEqual(
+    { error: refused()[0]?.fields.error, errName: refused()[0]?.fields.errName, errKind: refused()[0]?.fields.errKind, kind: refused()[0]?.fields.kind },
+    { error: "too many open streams", errName: "MuxError", errKind: "tooManyStreams", kind: "rpc" },
+  );
+  // A head that cannot even be written (a path over 64 KiB) throws as the pipe is opened: nothing is held for it.
+  await assert.rejects(transport.fetch(new Request(`http://machine.test/api/fs/list?path=${"a".repeat(70_000)}`)));
+  await flush(5);
+  assert.deepEqual(holds, ["hold", "release"]);
+  assert.equal(refused().length, 2);
+  assert.equal(refused()[1]!.fields.error, "string too long");
+});
+
+test("the sessions views show of a machine in use on its copy are what the copy is told: the main view's and a pane's; live, or let go of, nothing", async (t) => {
+  const { link, shell } = world([{ id: "m-a" }, { id: "m-b" }]);
+  link.set("m-a", "online");
+  shell.start();
+  t.after(() => shell.stop());
+  const view = (key: string) => {
+    const v = (shell.machine(key)!.mirror as unknown as { view: { onCopy: boolean; sessions: ReadonlySet<string> } }).view;
+    return { onCopy: v.onCopy, sessions: [...v.sessions].sort() };
+  };
+  // The channel opens when the test says.
+  const channel = shell.machine("m-a")!.channel;
+  let open: () => void = () => undefined;
+  channel.ensure = () => {
+    (channel as unknown as { setStatus(s: MachineStatus): void }).setStatus("connecting");
+    return new Promise((resolve) => {
+      open = () => {
+        (channel as unknown as { setStatus(s: MachineStatus): void }).setStatus("open");
+        resolve({ open: () => new FakeStream() } as never);
+      };
+    });
+  };
+  dialer(shell, "m-b", "hang");
+  shell.select("m-a");
+  // The main view, through the registry as a session view does it (`useViewSession`).
+  const main = runtimeFor("m-a").viewSession("claude", "abc");
+  assert.deepEqual(view("m-a"), { onCopy: true, sessions: ["claude/abc"] }, "in view, on its copy while the channel opens");
+  // Two views of one session are two.
+  const again = runtimeFor("m-a").viewSession("claude", "abc");
+  again();
+  assert.deepEqual(view("m-a").sessions, ["claude/abc"]);
+  // A pane of another machine, held, on its copy.
+  const pane = shell.machine("m-b")!.hold();
+  const paneView = runtimeFor("m-b").viewSession("codex", "x-1");
+  assert.deepEqual(view("m-b"), { onCopy: true, sessions: ["codex/x-1"] }, "a pane's session counts as well");
+  paneView();
+  assert.deepEqual(view("m-b"), { onCopy: true, sessions: [] }, "the pane moved on");
+  pane();
+  assert.deepEqual(view("m-b"), { onCopy: false, sessions: [] }, "let go of, out of view");
+  shell.select("m-b");
+  assert.deepEqual(view("m-a"), { onCopy: false, sessions: [] }, "out of view");
+  shell.select("m-a");
+  assert.deepEqual(view("m-a"), { onCopy: true, sessions: ["claude/abc"] }, "back in view: the view is still there");
+  await until(() => channel.status === "connecting");
+  open();
+  await until(() => shell.machine("m-a")!.transport.current === "live");
+  assert.deepEqual(view("m-a"), { onCopy: false, sessions: [] }, "live: the session comes from the machine itself");
+  main();
 });
 
 test("wanted again just after it was let go: dialled at once; open while unwanted: let go again", async (t) => {

@@ -17,7 +17,7 @@ import type { components } from "../src/api/schema.js";
 import { BubbleRun } from "../src/features/sessions/bubble-run.js";
 import { SystemLine } from "../src/features/sessions/system-line.js";
 import { ToolLine } from "../src/features/sessions/tool-line.js";
-import { SubagentTool } from "../src/features/sessions/transcript-rows.js";
+import { ItemBlock, StepGroup, SubagentTool } from "../src/features/sessions/transcript-rows.js";
 import {
   ModelFallbackNotice,
   modelFallbackOf,
@@ -69,10 +69,10 @@ test("a tool summary is only icon, description and exit code", () => {
     />,
   );
   const summary = summaryOf(html);
-  assert.equal(visibleText(summary), `⚙${description}exit 1`);
+  assert.equal(visibleText(summary), `⚙${description}failed · exit 1`);
   assert.doesNotMatch(summary, /umask|mkdir|Permission denied/);
   assert.match(summary, /min-w-0 flex-1 truncate/, "the description owns the remaining width");
-  assert.match(summary, /shrink-0 pl-2 tabular-nums[^>]*>exit 1</, "the exit code cannot be truncated");
+  assert.match(summary, /shrink-0 pl-2 tabular-nums[^>]*>failed · exit 1</, "the failure keeps a compact word and the exit code cannot be truncated");
   assert.match(html, /<pre[^>]*>umask 077; mkdir/);
   assert.match(html, /Permission denied/);
 });
@@ -91,7 +91,7 @@ test("Codex's exit metadata is used instead of its stdout preview", () => {
 
 test("a result without an exit code shows completion without inventing zero", () => {
   const html = draw(<ToolLine item={call({ text: "Run checks" })} result={answer({ text: "42 tests passed" })} />);
-  assert.equal(visibleText(summaryOf(html)), "⚙Run checkscompleted");
+  assert.equal(visibleText(summaryOf(html)), "⚙Run checks");
   assert.doesNotMatch(summaryOf(html), /exit 0/);
 });
 
@@ -108,7 +108,7 @@ test("a codex command that yielded reads as running in the background, not compl
       })}
     />,
   );
-  assert.equal(visibleText(summaryOf(html)), "⚙uv run long.pybg");
+  assert.equal(visibleText(summaryOf(html)), "⚙uv run long.pybackground");
   assert.doesNotMatch(summaryOf(html), /completed/);
   assert.match(html, /<pre[^>]*>Downloading torch<\/pre>/, "what it printed so far stays readable");
 });
@@ -117,7 +117,7 @@ test("an exit-code phrase inside output is not promoted to a status code", () =>
   const html = draw(
     <ToolLine item={call({ text: "Review a failure" })} result={answer({ text: "The old build had Exit code 1" })} />,
   );
-  assert.equal(visibleText(summaryOf(html)), "⚙Review a failurecompleted");
+  assert.equal(visibleText(summaryOf(html)), "⚙Review a failure");
 });
 
 test("a failed call without an exit code keeps a compact failure status", () => {
@@ -547,4 +547,51 @@ test("a bubble the transcript named no model for reads as it always has", () => 
   );
   assert.equal(visibleText(html), "AGENTdone");
   assert.doesNotMatch(html, /·/, "no separator with nothing to separate");
+});
+
+/* ── folds a reader can see into ───────────────────────────────────────── */
+
+test("a thinking row wears the caret a step fold does", () => {
+  const html = draw(<ItemBlock item={item({ kind: "thinking", text: "the table will say which DCs still run 6.0.0" })} />);
+  const summary = /<summary\b[^>]*>([\s\S]*?)<\/summary>/.exec(html);
+  assert.ok(summary, "the thinking stays expandable");
+  assert.match(summary[1]!, /<svg/, "the caret says it opens rather than ending in an ellipsis");
+  assert.equal(visibleText(summary[1]!), "∴ thinkingthe table will say which DCs still run 6.0.0…");
+});
+
+const step = (i: number) => call({ toolUseId: `t${i}`, text: `step ${i}` });
+const steps = (n: number) => Array.from({ length: n }, (_, i) => step(i));
+
+test("the run a live turn is writing into stays open", () => {
+  assert.match(draw(<StepGroup items={steps(4)} base={0} live />), /<details[^>]*\bopen=/);
+});
+
+test("a run whose turn has ended is folded again", () => {
+  assert.doesNotMatch(draw(<StepGroup items={steps(4)} base={0} />), /<details[^>]*\bopen=/);
+});
+
+/* ── words Droppen put in the user's place ─────────────────────────────── */
+
+test("a notice Droppen wrote is a system line, not the user speaking", () => {
+  const html = draw(
+    <ItemBlock item={item({ kind: "text", role: "user", text: "[Droppen] This session switched from account a to b.\n\nContinue from the interruption." })} />,
+  );
+  assert.doesNotMatch(html, /USER/);
+  assert.match(html, /This session switched from account a to b\./);
+  assert.doesNotMatch(html, /\[Droppen\]/, "the marker is the styling, not a word to read");
+});
+
+test("a cross-session message names its sender instead of showing its envelope", () => {
+  const html = draw(
+    <ItemBlock
+      item={item({
+        kind: "text",
+        role: "user",
+        text: '<cross-session-message from="uds:/tmp/ff.sock" from-name="droppen-ff">\n\nRun the soak again.\n</cross-session-message>',
+      })}
+    />,
+  );
+  assert.doesNotMatch(html, /&lt;cross-session-message/);
+  assert.match(html, /cross-session message from droppen-ff/);
+  assert.match(html, /Run the soak again\./);
 });

@@ -2,9 +2,11 @@
 // malicious, so the page is refused once it passes `MAX_PAGE_LEN` (the cap the
 // Rust device's `read_capped` applies) instead of being buffered whole first.
 // A `Content-Length` over the cap refuses it before the body, and a body that
-// streams past the cap is refused and cancelled as it passes.
+// streams past the cap is refused and cancelled as it passes. The page queue's
+// signal and priority reach the browser's fetch.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { connLog } from "../src/lib/connection-log.js";
 import { MAX_PAGE_LEN, RecordError } from "../src/lib/e2e/index.js";
 import { HubApi } from "../src/lib/hub/api.js";
 
@@ -72,4 +74,31 @@ test("a normal page comes back as the bytes the hub sent", async () => {
   const response = new Response(pageBody([body.subarray(0, 2), body.subarray(2)]), { status: 200 });
   const page = await apiReturning(response).streamPage("tok", STREAM, PAGE);
   assert.deepEqual([...page], [1, 2, 3, 4, 5]);
+});
+
+test("a page fetch hands the browser its signal and priority, says when the head is in, and is logged for what it is: time to head, declared length", async () => {
+  const seen: RequestInit[] = [];
+  const api = new HubApi("https://hub.test", async (_url, init) => {
+    seen.push(init ?? {});
+    return new Response(pageBody([new Uint8Array(5)]), { status: 200, headers: { "content-length": "5" } });
+  });
+  const abort = new AbortController();
+  let heads = 0;
+  const since = connLog.events().at(-1)?.seq ?? 0;
+  const page = await api.streamPage("tok", STREAM, PAGE, { signal: abort.signal, priority: "low", onHead: () => heads++ });
+  assert.equal(page.length, 5);
+  assert.equal(seen[0]!.signal, abort.signal);
+  assert.equal(seen[0]!.priority, "low");
+  assert.equal(heads, 1);
+  const req = connLog.events().find((e) => e.seq > since && e.name === "hub.req")!;
+  assert.equal(req.fields.route, "/v1/streams/{stream}/pages/{page}");
+  assert.equal(req.fields.declaredBytes, 5, "the Content-Length the answer declared, not bytes counted");
+  assert.equal(typeof req.fields.ttfbMs, "number", "the time to the answer's head, not to its body's end");
+  assert.equal(req.fields.ms, undefined);
+  assert.equal(req.fields.size, undefined);
+
+  // Without them, nothing is added: the browser's own defaults.
+  await api.streamPage("tok", STREAM, PAGE);
+  assert.equal("signal" in seen[1]!, false);
+  assert.equal("priority" in seen[1]!, false);
 });

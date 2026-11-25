@@ -258,7 +258,7 @@ for (const [name, diagrams] of [
     const [mermaidBlock, rustBlock] = [...container.querySelectorAll("pre")].map((pre) => pre.outerHTML);
     assert.ok(mermaidBlock && rustBlock);
     assert.equal(mermaidBlock.replaceAll("language-mermaid", "language-rust"), rustBlock, "only the info string differs");
-    assert.match(mermaidBlock, /^<pre class="my-1\.5 overflow-x-auto border border-border bg-raised px-2\.5 py-2"><code class="block font-mono text-2xs leading-\[18px\] language-mermaid">/);
+    assert.match(mermaidBlock, /^<pre class="my-1\.5 overflow-x-auto border border-border bg-raised px-2\.5 py-2 whitespace-pre-wrap break-words"><code class="block font-mono text-2xs leading-\[18px\] language-mermaid">/);
     assert.match(mermaidBlock, /flowchart TD/);
     assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
   });
@@ -912,7 +912,7 @@ test("inline code and other fenced languages stay exactly as they were, even wit
   await mount("`flowchart TD` and then\n\n```js\nconst x = 1;\n```\n");
 
   assert.equal(engine.workers.length, 0);
-  assert.match(container.innerHTML, /<code class="bg-raised px-1 py-px font-mono text-\[0\.9em\] text-fg shadow-\[inset_0_0_0_1px_var\(--color-border\)\]">flowchart TD<\/code>/);
+  assert.match(container.innerHTML, /<code class="[^"]*bg-fg\/10[^"]*font-mono[^"]*">flowchart TD<\/code>/);
   assert.match(container.innerHTML, /language-js/);
   assert.equal(container.querySelector("[data-mermaid-diagram]"), null);
 });

@@ -30,6 +30,8 @@ import {
   DIRECT_PROBE_MS,
   DIRECT_TIMEOUT_MS,
   type DirectLink,
+  encodeDcMessage,
+  encodeEnvelope,
   type DownReason,
   type Envelope,
   type Frame,
@@ -668,6 +670,26 @@ test("a probe is answered with any acknowledgement owed, on the path it came on"
   p.a.tick(p.now);
   assert.ok(p.a.directActive, "nothing waits for an acknowledgement any more");
   assert.notEqual(p.a.stats().directRttMs, null);
+});
+
+test("a direct path's probes, unanswered for long, push out only its own: the hub path's oldest stays, and so does its age", async () => {
+  const [it] = await transports();
+  const [direct, peer] = await transports();
+  const a = Session.withPaths(1, it, "initiator", { probeRelay: true }, 0);
+  a.attachDirect(direct, 0);
+  // The peer's probes keep the direct path up; nothing a sends is ever answered, on either path.
+  for (let at = 0; at <= 24_000; at += 1_000) {
+    a.tick(at);
+    for (let q = await a.poll({ relay: true, direct: true }, at, 1); q; q = await a.poll({ relay: true, direct: true }, at, 1)) {
+      // gone
+    }
+    const probe = encodeDcMessage({ type: "sealed", body: await peer.seal(1, encodeEnvelope({ type: "probe", nonce: 1_000 + at })) });
+    await a.receiveDirect(probe, at);
+  }
+  assert.ok(a.directActive, "the peer's probes kept it up");
+  assert.ok(a.diagnostics(24_000)!.probesOut > 16, "more than MAX_PROBES out, all told");
+  // The hub probe sent first (at 0) is still the one its age is measured from (as of the hub probe tick at 20 s).
+  assert.equal(a.stats().relayProbeAgeMs, 20_000);
 });
 
 test("a garbled direct message drops the direct path, not the channel", async () => {
