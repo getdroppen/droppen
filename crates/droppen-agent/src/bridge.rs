@@ -412,9 +412,9 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("POST", "/api/setup/practice-folder", Use),
         // The A2A server's settings: its entries decide what runs here and
         // how, and its tokens are credentials, so changing either is posture;
-        // its task list is no more than the session list shows
-        // (`docs/a2a.md` §2). `/a2a/*` itself is reached over an A2A proxy's
-        // channel only ([`A2A_ROUTES`], [`never_from_cloud`]).
+        // its task list and its open contexts are no more than the session
+        // list shows (`docs/a2a.md` §2). `/a2a/*` itself is reached over an
+        // A2A proxy's channel only ([`A2A_ROUTES`], [`never_from_cloud`]).
         ("GET", "/api/a2a/entries", Posture),
         ("POST", "/api/a2a/entries", Posture),
         ("GET", "/api/a2a/entries/{id}", Posture),
@@ -424,6 +424,7 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("POST", "/api/a2a/tokens", Posture),
         ("DELETE", "/api/a2a/tokens/{id}", Posture),
         ("GET", "/api/a2a/tasks", Use),
+        ("GET", "/api/a2a/contexts", Use),
         // Which A2A proxies this device takes calls from, for the entry
         // form: no more than "My devices" shows.
         ("GET", "/api/a2a/devices", Use),

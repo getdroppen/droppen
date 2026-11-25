@@ -187,8 +187,12 @@ export interface ReplayDevice {
 export interface ChainReplay {
   devs: Map<string, ReplayDevice>;
   accept: Map<string, Accept>;
+  /** Each host's A2A list now (`setA2aAccept`, docs/a2a.md §7.1), as written: none for a host it never named one. */
+  a2aLists: Map<string, string[]>;
   /** Whether `device` may control `host` now (never an A2A proxy). */
   could(device: string, host: string): boolean;
+  /** Whether `host`'s A2A list names A2A proxy `device` now (as written: a call a renewal pause holds counts). */
+  callsA2a(device: string, host: string): boolean;
   /** `host`'s accept list now (the admins', when it narrowed none). */
   policy(host: string): Accept;
 }
@@ -199,6 +203,14 @@ export interface ChainReplayHooks {
   recoveryJoin3Admin(flags: { admin: boolean }): boolean;
   /** `device` lost control of every host `who` names (the predicate was true at the loss). */
   lost(replay: ChainReplay, seq: number, device: string, who: (host: string) => boolean): void;
+  /**
+   * A2A proxy `proxy` can no longer call the A2A of `hosts`, whose lists named it (docs/a2a.md §7.1): it was removed,
+   * taken off a list, or a list went with its host's hosting. A session it started there could have read any file the
+   * host's user can, the identity key file included — the same exposure as a lost controller's (review D3). Only
+   * {@link hostsToRotate} hears it: the agent's controllers record does not list A2A callers, so {@link reEnrollCulprits}
+   * could not weigh it.
+   */
+  lostA2a?(replay: ChainReplay, seq: number, proxy: string, hosts: string[]): void;
   /** After each entry: what a later loss or admission makes no longer lost. */
   afterEntry?(replay: ChainReplay, seq: number): void;
   /** A `setAccept` entry, before the list is replaced (an admission may start here). */
@@ -222,15 +234,18 @@ export interface ChainReplayHooks {
 export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainReplay {
   const devs = new Map<string, ReplayDevice>();
   const accept = new Map<string, Accept>();
+  const a2aLists = new Map<string, string[]>();
   const policy = (host: string) => accept.get(host) ?? ({ type: "admins" } as Accept);
   const replay: ChainReplay = {
     devs,
     accept,
+    a2aLists,
     policy,
     could: (d, host) => {
       const r = devs.get(d);
       return !!r && r.active && !r.a2a && d !== host && (r.admin || acceptNames(policy(host), d, r.a2a));
     },
+    callsA2a: (d, host) => !!devs.get(d)?.active && !!a2aLists.get(host)?.includes(d),
   };
   for (const e of chain.allEntries()) {
     const seq = e.draft.seq;
@@ -280,10 +295,22 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
         else accept.set(a.host, a.from);
         break;
       }
+      case "setA2aAccept": {
+        // A proxy taken off the list: the host was exposed to it (as the chain rules, its next machine key comes next).
+        for (const p of a2aLists.get(a.host) ?? []) if (!a.devices.includes(p)) hooks.lostA2a?.(replay, seq, p, [a.host]);
+        if (a.devices.length) a2aLists.set(a.host, [...a.devices]);
+        else a2aLists.delete(a.host);
+        break;
+      }
       case "setHost": {
+        // Stopping running AI, its A2A list goes with it: the proxies on it leave it (its identity is the same if it runs AI again).
+        if (!a.host) for (const p of a2aLists.get(a.id) ?? []) hooks.lostA2a?.(replay, seq, p, [a.id]);
         const r = devs.get(a.id);
         if (r) r.host = a.host;
-        if (!a.host) accept.delete(a.id);
+        if (!a.host) {
+          accept.delete(a.id);
+          a2aLists.delete(a.id);
+        }
         hooks.setHost?.(seq, a.id, a.host);
         break;
       }
@@ -291,6 +318,15 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
       case "removeMachine":
       case "removeDevice3": {
         hooks.lost(replay, seq, a.id, (h) => replay.could(a.id, h));
+        // A proxy removed off lists: every host that named it was exposed to it. A host removed takes its own list along.
+        const named = [...a2aLists].filter(([, ids]) => ids.includes(a.id)).map(([h]) => h);
+        if (named.length) hooks.lostA2a?.(replay, seq, a.id, named);
+        a2aLists.delete(a.id);
+        for (const h of named) {
+          const kept = a2aLists.get(h)!.filter((p) => p !== a.id);
+          if (kept.length) a2aLists.set(h, kept);
+          else a2aLists.delete(h);
+        }
         const r = devs.get(a.id);
         if (r) r.active = false;
         hooks.removed?.(seq, a.id);
@@ -314,7 +350,11 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
 export interface Exposure {
   /** The entry it became exposed at: the earliest cause still standing. */
   sinceSeq: number;
-  /** Devices that could control it and no longer can (removed, demoted, shut out of its list), with the seq each lost that. */
+  /**
+   * Devices that could control it and no longer can (removed, demoted, shut out of its list), and A2A proxies that could
+   * call its A2A and no longer can (removed, taken off its A2A list, or the list gone with its hosting: docs/a2a.md
+   * §7.1), with the seq each lost that.
+   */
   lost: Map<string, number>;
   /** Exposed hosts it let control it while they were exposed (transitive, §4.1), with the seq it first did. */
   via: Map<string, number>;
@@ -505,6 +545,11 @@ export function renewalHelps(x: Exposure): boolean {
  *   device that could control it (an admin, or one its list named) was
  *   removed, demoted without being named, or shut out of its list; a device
  *   let back in is not lost any more;
+ * - the A2A losses (docs/a2a.md §7.1), which {@link reEnrollCulprits} does
+ *   not count: an A2A proxy its A2A list named was removed, taken off the
+ *   list, or the list went with its hosting — a session the proxy started
+ *   could have read the host's identity key file and handed it back; a proxy
+ *   named again is not lost any more;
  * - transitively: while a host E that can renew (`renews`) is exposed, a host
  *   that lets E control it is exposed too — E's copy is a pass to it (X → H →
  *   H2: H2 as well, through H);
@@ -555,6 +600,12 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
         entry(h, seq).lost.set(device, seq);
       }
     },
+    // An A2A proxy a host took calls from and no longer does: a session it started could have read the host's identity
+    // key file, so the host renews as for a lost controller (docs/a2a.md §7.1) — and, transitively, every host that lets
+    // it control them (below).
+    lostA2a: (_replay, seq, proxy, hosts) => {
+      for (const h of hosts) entry(h, seq).lost.set(proxy, seq);
+    },
     setAccept: (replay, seq, host, before, from) => {
       // Since when it lets each one in: kept for those it let in already, this entry for the rest.
       const was = admitted.get(host) ?? new Map<string, number>();
@@ -600,8 +651,8 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       exposed.delete(device);
     },
     afterEntry: (replay, seq) => {
-      // A device let back in is not lost any more.
-      for (const [host, x] of exposed) for (const d of [...x.lost.keys()]) if (replay.could(d, host)) x.lost.delete(d);
+      // A device let back in is not lost any more: a controller let control it again, a proxy named on its A2A list again.
+      for (const [host, x] of exposed) for (const d of [...x.lost.keys()]) if (replay.could(d, host) || replay.callsA2a(d, host)) x.lost.delete(d);
       for (const [host, x] of [...exposed]) if (x.lost.size === 0 && x.via.size === 0) exposed.delete(host);
       // Transitively, until nothing changes: a host that lets an exposed one that can renew control it (X → H → H2 …) —
       // unless it renewed after that one was exposed and let in already (§4.1: the copy cannot reach its new key).
@@ -660,15 +711,19 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
 
 /**
  * The hosts that would renew their identity key after device `device` stops
- * controlling the hosts `from` (all it may control now when not given) — a
- * removal, a demotion, a narrowed list — for the confirmation to say so
+ * controlling the hosts `from` (all it may control now when not given — and
+ * for an A2A proxy, every host whose A2A list names it) — a removal, a
+ * demotion, a narrowed list or A2A list — for the confirmation to say so
  * (§4.4): those hosts, every host that lets one of them (or one already
  * exposed) control it, and so on. Hosts already exposed are not counted.
  */
 export function hostsExposedBy(chain: ChainState, device: string, from?: readonly string[]): string[] {
   const already = hostsToRotate(chain);
   const hosts = chain.hosts().filter((h) => h.status.type === "active");
-  const out = new Set<string>(from ?? hosts.filter((h) => h.info.id !== device && admits(chain, h.info.id, device)).map((h) => h.info.id));
+  // By default, every host it may control — and, for an A2A proxy, every host whose A2A list names it (docs/a2a.md §7.1).
+  const out = new Set<string>(
+    from ?? hosts.filter((h) => h.info.id !== device && (admits(chain, h.info.id, device) || chain.a2aAccept(h.info.id).includes(device))).map((h) => h.info.id),
+  );
   // A host with no host key yet is no host to renew (it is the device itself, for a host removed).
   out.delete(device);
   for (let changed = true; changed; ) {
@@ -1010,7 +1065,8 @@ export interface A2aAcceptChange {
 /**
  * The current hosts whose A2A list names A2A proxy `id` (`setA2aAccept`, docs/a2a.md §7.1) — the list as written, a
  * call a renewal pause holds now included: each is exposed to it (a session it starts there can read any file the
- * host's user can, the identity key file included), so removing it turns their content keys over.
+ * host's user can, the identity key file included), so removing it turns their content keys over and they renew their
+ * identity key after it ({@link hostsToRotate}).
  */
 export function a2aHostsOf(chain: ChainState, id: string): string[] {
   return chain
@@ -1019,72 +1075,6 @@ export function a2aHostsOf(chain: ChainState, id: string): string[] {
     .map((h) => h.info.id);
 }
 
-/**
- * The current hosts an A2A proxy that could call them no longer can (docs/a2a.md §7.1; review D3, for A2A): per host,
- * each proxy its A2A list named that has left it since — removed, taken off the list, or the list gone with the host's
- * hosting — with the seq it left at. A session such a proxy started could read any file the host's user can, the
- * host's identity key file included, and hand it back in its result, whatever the entry's permission mode.
- *
- * A **suggestion** (renew the host's identity key, or remove and add it again), never acted on by itself: it is no part
- * of {@link hostsToRotate}, which the renewal runner acts on, nor of {@link reEnrollCulprits}, whose evidence (the
- * host's controllers record) does not list A2A callers. The list as written counts (a call a pause holds is still one).
- * A proxy named again is not lost any more; a renewal of the host's identity key staged after the loss clears it (as
- * `hostsToRotate`'s does); a host that stops running AI keeps what it was exposed to (its identity is the same when it
- * runs AI again); a removed host is gone.
- */
-export function a2aExposures(chain: ChainState): Map<string, Map<string, number>> {
-  const lists = new Map<string, string[]>();
-  const lost = new Map<string, Map<string, number>>();
-  const lose = (host: string, proxy: string, seq: number) => {
-    let m = lost.get(host);
-    if (!m) lost.set(host, (m = new Map()));
-    m.set(proxy, seq);
-  };
-  for (const e of chain.allEntries()) {
-    const seq = e.draft.seq;
-    const a = e.draft.action;
-    switch (a.type) {
-      case "setA2aAccept": {
-        for (const p of lists.get(a.host) ?? []) if (!a.devices.includes(p)) lose(a.host, p, seq);
-        for (const p of a.devices) lost.get(a.host)?.delete(p);
-        if (a.devices.length) lists.set(a.host, [...a.devices]);
-        else lists.delete(a.host);
-        break;
-      }
-      case "setHost":
-        if (!a.host) {
-          for (const p of lists.get(a.id) ?? []) lose(a.id, p, seq);
-          lists.delete(a.id);
-        }
-        break;
-      case "removeDevice":
-      case "removeDevice3":
-      case "removeMachine": {
-        lists.delete(a.id);
-        lost.delete(a.id);
-        for (const [host, ids] of [...lists]) {
-          if (!ids.includes(a.id)) continue;
-          lose(host, a.id, seq);
-          const kept = ids.filter((p) => p !== a.id);
-          if (kept.length) lists.set(host, kept);
-          else lists.delete(host);
-        }
-        break;
-      }
-      case "rotateHostKey": {
-        // A new identity: what a proxy could have copied up to the view its seed was staged on is no pass to it any more.
-        const upTo = Math.min(a.rotation.stagedSeq, seq);
-        const m = lost.get(a.rotation.host);
-        if (m) for (const [p, at] of [...m]) if (at <= upTo) m.delete(p);
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  for (const [host, m] of [...lost]) if (m.size === 0 || !chain.machine(host)) lost.delete(host);
-  return lost;
-}
 
 /**
  * Whether `from` lets device `id` control a host (besides admins, which every host accepts) — never when it is an A2A

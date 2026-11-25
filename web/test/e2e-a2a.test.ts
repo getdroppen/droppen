@@ -26,6 +26,8 @@ import {
   fromHex,
   genesis3Draft,
   hex,
+  type HostRotation,
+  hostRotationBody,
   importEd25519Private,
   isCurrentA2a,
   machineKeyCommit,
@@ -38,8 +40,10 @@ import {
   type Signer,
   sha256,
   signDraft,
+  signHostRotate,
   utf8,
 } from "../src/lib/e2e/index.js";
+import { hostsToRotate } from "../src/lib/hub/chain-policy.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
@@ -342,4 +346,37 @@ test("a removal drops the proxy from every A2A list; a host that stops running A
   await f.push({ type: "keyEpochs", user: null, machines: [{ machine: f.host.id, epoch: 1, hash: await machineKeyCommit("acct-a2a", f.host.id, 1, new Uint8Array(32).fill(2)) }] });
   assert.deepEqual(f.state.a2aAccept(f.host.id), [], "restarting starts from none, never silently from before");
   assert.throws(() => f.state.mayCallA2a(f.x.id, f.host.id), kind("notAccepted"));
+});
+
+test("an A2A loss exposes the host until a renewal of its identity key staged after the loss — one staged before does not clear it", async () => {
+  const { state, host, x, push } = await fixture();
+  const key = async (epoch: number): Promise<Action> => ({
+    type: "keyEpochs",
+    user: null,
+    machines: [{ machine: host.id, epoch, hash: await machineKeyCommit("acct-a2a", host.id, epoch, new Uint8Array(32).fill(epoch + 20)) }],
+  });
+  /** A renewal of `host` to `next`, proved against entry `stagedSeq` (its current key and the new one sign it). */
+  const renewal = async (st: ChainState, oldKey: CryptoKey, next: Member, stagedSeq: number): Promise<Action> => {
+    const cur = st.deviceRecord(host.id)!.info;
+    const r = { host: host.id, signKey: next.signKey, dhKey: next.dhKey, stagedSeq, stagedHead: st.hashAt(stagedSeq)!, nonce: new Uint8Array(16).fill(3), assurance: 0 as const };
+    const body = hostRotationBody(st.account, r, cur.signKey, cur.dhKey);
+    const rotation: HostRotation = { ...r, oldSig: await signHostRotate(oldKey, body), newSig: await signHostRotate(next.key, body) };
+    return { type: "rotateHostKey", rotation };
+  };
+  await push({ type: "setA2aAccept", host: host.id, devices: [x.id] });
+  const before = state.seq;
+  await push({ type: "removeDevice3", id: x.id });
+  const loss = state.seq;
+  assert.deepEqual([...(hostsToRotate(state).get(host.id)?.lost ?? [])], [[x.id, loss]], "removed off its list: exposed");
+  // A renewal proved against a view from before the loss: the old seed could have been read — still exposed.
+  const early = state.clone();
+  const next1 = await member("m-host-renewed-1", 50);
+  await push(await renewal(early, host.key, next1, before), undefined, early);
+  await push(await key(1), undefined, early);
+  assert.deepEqual([...(hostsToRotate(early).get(host.id)?.lost ?? [])], [[x.id, loss]]);
+  // One proved after it: a new identity the proxy never reached.
+  const next2 = await member("m-host-renewed-2", 60);
+  await push(await renewal(state, host.key, next2, state.seq), undefined, state);
+  await push(await key(1), undefined, state);
+  assert.equal(hostsToRotate(state).has(host.id), false);
 });

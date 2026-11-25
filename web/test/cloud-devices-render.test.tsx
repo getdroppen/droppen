@@ -727,6 +727,29 @@ test("control paused over hosts while identity keys are renewed is a note — pa
   );
 });
 
+test("an A2A proxy's calls a pause holds are said as A2A calls, never as control (review F3)", () => {
+  const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
+  const pause = (phase: "start" | "completed" | "cancelled", removals: { host: string; ids: string[]; a2a?: string[] }[]) =>
+    ({ seq: 16, by: "d-1", atMs: 0, remove: null, kind: "renewalPause", subject: null, pause: { phase, removals } }) as const;
+  const calls = [{ host: "m-1", ids: [], a2a: ["a-1"] }];
+  assert.equal(alertText(pause("start", calls), t), "A2A calls by a-1 to m-1 are paused while identity keys are renewed (by d-1)");
+  assert.equal(alertText(pause("completed", calls), t), "A2A calls by a-1 to m-1 resume (by d-1)");
+  assert.equal(alertText(pause("cancelled", calls), t), "the pause of A2A calls by a-1 to m-1 was ended (by d-1)");
+  const both = [{ host: "m-1", ids: ["m-2"], a2a: ["a-1"] }];
+  assert.equal(alertText(pause("start", both), t), "control by m-2 over m-1 and A2A calls by a-1 to m-1 are paused while identity keys are renewed (by d-1)");
+  assert.equal(alertText(pause("completed", both), t), "control by m-2 over m-1 and A2A calls by a-1 to m-1 resume (by d-1)");
+  assert.equal(alertText(pause("cancelled", both), t), "the pause of control by m-2 over m-1 and of A2A calls by a-1 to m-1 was ended (by d-1)");
+  for (const lang of ["zh-CN", "zh-TW", "ja"] as const) {
+    const account = { alerts: () => [pause("start", calls)], onChange: () => () => undefined } as unknown as CloudAccount;
+    assert.ok(draw(<ChainAlerts account={account} link={{} as HubLink} />, lang).includes("A2A"), lang);
+  }
+  assert.ok(
+    draw(<ChainAlerts account={{ alerts: () => [pause("start", calls)], onChange: () => () => undefined } as unknown as CloudAccount} link={{} as HubLink} />, "zh-CN").includes(
+      "a-1 对 m-1 的 A2A 调用已暂停，正在更换身份密钥（d-1）",
+    ),
+  );
+});
+
 test("14: stopping AI is asked first", () => {
   const stop = draw(<StopHost device="m-1" busy={false} onConfirm={() => undefined} onCancel={() => undefined} />);
   assert.match(stop, /role="alertdialog"[^>]*data-testid="stop-host"/);
@@ -1490,7 +1513,7 @@ test("removing an A2A proxy a device takes calls from names that device as expos
   assert.match(opened.html, /data-testid="remove-a2a-exposed"[^>]*data-signal="warn"|data-signal="warn"[^>]*data-testid="remove-a2a-exposed"/);
   assert.ok(
     opened.html.includes(
-      `${proxy} is an A2A proxy that could call the A2A of m-1. A session it started there could read any file the user can read on that device, its identity key included, so treat m-1 as exposed`,
+      `${proxy} is an A2A proxy that could call the A2A of m-1. A session it started there could read any file the user can read on that device, its identity key included, so it exposed m-1: their content keys are rotated now, and they renew their identity key after it`,
     ),
     opened.html,
   );
@@ -1507,17 +1530,19 @@ test("removing an A2A proxy a device takes calls from names that device as expos
   assert.doesNotMatch(box(none.html), /aria-disabled="true"/, "ticked by default, and a choice");
 });
 
-test("a device an A2A proxy that could call it no longer can says so on its row: renewing its identity key is suggested, never done", async () => {
+test("a device an A2A proxy that could call it no longer can says so on its row: it renews its identity key, or (one that cannot) should be added again", async () => {
   const { a, proxy } = await a2aAccount();
   await a.append({ type: "removeDevice3", id: proxy });
   const page = drive(DevicesPanel, { account: a, link: quietLink() }, []);
   assert.deepEqual((rowOf(page.tree, "m-1").props.view as DeviceRowView).a2aExposed, [proxy]);
+  // The same loss the renewal runner acts on: m-1 is due to renew (hostsToRotate), not merely told to.
+  assert.deepEqual([...(a.hostsToRotate().get("m-1")?.lost.keys() ?? [])], [proxy]);
   const host = row({ id: "m-1", kind: "computer", host: true, presence: "online", a2aExposed: ["a-1"] });
   const renews = list(<DeviceRow view={{ ...host, renewable: true }} viewerAdmin upgraded writable />);
   assert.match(renews, /data-testid="a2a-exposed-m-1"[^>]*data-signal="warn"/);
-  assert.ok(renews.includes("a-1, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Renewing its identity key is suggested."), renews);
+  assert.ok(renews.includes("a-1, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key, so it renews its identity key."), renews);
   const old = list(<DeviceRow view={host} viewerAdmin upgraded writable />);
-  assert.ok(old.includes("Removing it and adding it again is suggested."), "one that cannot renew: re-enrolling");
+  assert.ok(old.includes("and it cannot renew it here. Remove it and add it again."), "one that cannot renew: re-enrolling");
   assert.ok(!list(<DeviceRow view={host} viewerAdmin={false} upgraded writable />).includes("a2a-exposed-m-1"), "not on a read-only list");
   assert.ok(!list(<DeviceRow view={{ ...host, a2aExposed: [] }} viewerAdmin upgraded writable />).includes("a2a-exposed-m-1"));
   // Said in every language the page speaks.

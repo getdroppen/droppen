@@ -1,5 +1,6 @@
-//! `/api/a2a/*`: the entries, the tokens and the task list, for this
-//! device's own pages, behind the local login (`docs/a2a.md` §2).
+//! `/api/a2a/*`: the entries, the tokens, the task list and the open
+//! contexts, for this device's own pages, behind the local login
+//! (`docs/a2a.md` §2).
 //!
 //! A token's secret is in the answer to its creation and nowhere else, ever.
 //! Revoking a token, switching an entry off and taking a device out of its
@@ -19,7 +20,7 @@ use droppen_http::SendResult;
 
 use crate::backend::{EntrySource, Isolation};
 use crate::devices::A2aDeviceList;
-use crate::engine::{iso_ms, A2a};
+use crate::engine::{decode_page_token, encode_page_token, iso_ms, A2a};
 use crate::entry::{
     clean_account, clean_cwd, clean_description, clean_devices, clean_flag, clean_name, clean_origins, clean_template, is_bypass, valid_id, A2aEntry,
     A2aEntryCreate, A2aEntryUpdate, BYPASS_PERMISSIONS, DEFAULT_TEMPLATE, MAX_CONCURRENT,
@@ -33,6 +34,9 @@ const MAX_ENTRIES: usize = 50;
 const MAX_TOKENS: usize = 100;
 /// How many tasks the list answers with.
 const TASK_LIST_LIMIT: usize = 500;
+/// How many contexts a page of the context list holds at most, and by
+/// default.
+const CONTEXT_PAGE: usize = 500;
 
 /// What the management routes use of the server's state.
 #[derive(Clone)]
@@ -50,6 +54,9 @@ pub struct A2aEntryList {
     pub entries: Vec<A2aEntry>,
     /// The template an entry whose `template` is `null` uses.
     pub default_template: String,
+    /// The base of the Agent Cards' interface URLs (`[a2a] public_base`);
+    /// `null` when not set, and the card then uses the request's `Host`.
+    pub public_base: Nullable<String>,
 }
 
 /// A token, without its secret.
@@ -147,6 +154,45 @@ pub struct A2aTaskSummary {
 pub struct A2aTaskList {
     /// The most recently changed first, at most 500.
     pub tasks: Vec<A2aTaskSummary>,
+}
+
+/// An open context: a session an A2A client started, for the session list's
+/// "from A2A" mark.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct A2aContextSummary {
+    /// The context.
+    pub context_id: String,
+    /// The entry it came in through.
+    pub entry: String,
+    /// Who opened it: `a2a:token:<token id>`.
+    pub caller: String,
+    /// The name of the token it came with, while that token is on file.
+    pub caller_name: Nullable<String>,
+    /// Its session's CLI.
+    pub source: EntrySource,
+    /// Its session, once known.
+    pub session_id: Nullable<String>,
+}
+
+/// A page of the open contexts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct A2aContextList {
+    /// The newest first.
+    pub contexts: Vec<A2aContextSummary>,
+    /// The `pageToken` of the next page; `null` on the last.
+    pub next_page_token: Nullable<String>,
+}
+
+/// Query for `GET /api/a2a/contexts`.
+#[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct A2aContextQuery {
+    /// How many contexts a page holds: 1 to 500, 500 when not said.
+    pub page_size: Option<u32>,
+    /// Where to go on from: the previous page's `nextPageToken`.
+    pub page_token: Option<String>,
 }
 
 /// Query for `GET /api/a2a/tasks`.
@@ -290,7 +336,9 @@ impl A2a {
         let now = now_ms();
         entry.updated_at = iso_ms(now);
         let entry = self.checked(entry).await?;
-        self.store().replace_entry(&entry, now).map_err(write_failed)?;
+        // A change of where and how its sessions run closes the contexts it
+        // had (§6).
+        self.replace_entry(&before, &entry, now).await.map_err(write_failed)?;
         if before.enabled && !entry.enabled {
             self.revoke(None, Some(&entry.id)).await;
         }
@@ -369,6 +417,46 @@ impl A2a {
         Ok(())
     }
 
+    /// `GET /api/a2a/contexts`.
+    pub fn context_list(&self, query: &A2aContextQuery) -> Result<A2aContextList, ApiError> {
+        let size = match query.page_size {
+            None => CONTEXT_PAGE,
+            Some(n) if (1..=CONTEXT_PAGE as u32).contains(&n) => n as usize,
+            Some(_) => return Err(bad(format!("pageSize is 1 to {CONTEXT_PAGE}"))),
+        };
+        let after = match query.page_token.as_deref().filter(|token| !token.is_empty()) {
+            None => None,
+            Some(token) => Some(decode_page_token(token).ok_or_else(|| bad("pageToken is not one this server gave"))?),
+        };
+        let mut rows = self.store().open_contexts(after, size + 1);
+        let next_page_token = (rows.len() > size).then(|| {
+            rows.truncate(size);
+            rows.last()
+                .map(|last| encode_page_token(last.created_ms, &last.context_id))
+                .unwrap_or_default()
+        });
+        let contexts = rows
+            .into_iter()
+            .map(|row| A2aContextSummary {
+                caller_name: Nullable(
+                    row.caller
+                        .strip_prefix("a2a:token:")
+                        .and_then(|id| self.store().token(id))
+                        .map(|token| token.name),
+                ),
+                context_id: row.context_id,
+                entry: row.entry,
+                caller: row.caller,
+                source: row.session.source,
+                session_id: Nullable(row.session.session_id),
+            })
+            .collect();
+        Ok(A2aContextList {
+            contexts,
+            next_page_token: Nullable(next_page_token),
+        })
+    }
+
     /// `GET /api/a2a/tasks`.
     pub fn task_list(&self, query: &A2aTaskQuery) -> Result<A2aTaskList, ApiError> {
         let state = match query.state.as_deref().map(str::trim).filter(|state| !state.is_empty()) {
@@ -418,11 +506,17 @@ impl A2a {
 }
 
 /// Every A2A entry.
-#[api(id = "list_a2a_entries", group = "a2a", summary = "List A2A entries", responses(200 = "Every A2A entry, and the default template"))]
+#[api(
+    id = "list_a2a_entries",
+    group = "a2a",
+    summary = "List A2A entries",
+    responses(200 = "Every A2A entry, the default template and the cards' public base")
+)]
 pub async fn list_a2a_entries(State(state): State<A2aState>) -> Json<A2aEntryList> {
     Json(A2aEntryList {
         entries: state.a2a.store().entries(),
         default_template: DEFAULT_TEMPLATE.to_string(),
+        public_base: Nullable(state.a2a.settings().public_base.clone()),
     })
 }
 
@@ -449,8 +543,10 @@ pub async fn get_a2a_entry(State(state): State<A2aState>, ApiPath(id): ApiPath<S
         .ok_or_else(|| ApiError::not_found("A2A entry not found"))
 }
 
-/// Change an A2A entry. Switching it off cancels its unfinished tasks, and
-/// taking a device out of `allowedDevices` cancels that device's.
+/// Change an A2A entry. Switching it off cancels its unfinished tasks,
+/// taking a device out of `allowedDevices` cancels that device's, and a new
+/// source, directory, account, permission mode or isolation closes its
+/// contexts.
 #[api(
     id = "update_a2a_entry",
     group = "a2a",
@@ -514,6 +610,18 @@ pub async fn list_a2a_tasks(State(state): State<A2aState>, ApiQuery(query): ApiQ
     Ok(Json(state.a2a.task_list(&query)?))
 }
 
+/// The open A2A contexts: the sessions A2A clients started, newest first.
+#[api(
+    id = "list_a2a_contexts",
+    group = "a2a",
+    summary = "List open A2A contexts",
+    responses(200 = "A page of the open A2A contexts, the newest first"),
+    errors(400 = "A page size out of range, or a page token this server did not give")
+)]
+pub async fn list_a2a_contexts(State(state): State<A2aState>, ApiQuery(query): ApiQuery<A2aContextQuery>) -> Result<Json<A2aContextList>, ApiError> {
+    Ok(Json(state.a2a.context_list(&query)?))
+}
+
 /// The A2A proxies this device takes A2A calls from, as its device chain
 /// says now: what an entry's `allowedDevices` may usefully name. None on a
 /// device not linked to Droppen.
@@ -546,6 +654,7 @@ impl A2aState {
             .post("/api/a2a/tokens", create_a2a_token)
             .delete("/api/a2a/tokens/{id}", revoke_a2a_token)
             .get("/api/a2a/tasks", list_a2a_tasks)
+            .get("/api/a2a/contexts", list_a2a_contexts)
             .get("/api/a2a/devices", list_a2a_devices)
     }
 }

@@ -1790,9 +1790,11 @@ fn a2a_reach_json(state: &ChainState, nobody: &str) -> (Value, Value) {
 /// A2A calls from some; an accept list for a plain device (a list may never
 /// name a proxy); `m-1` accepting every device (still not a proxy); a list
 /// narrowed to none and set again; a removal that drops a proxy from every
-/// list; a renewal pause that holds a proxy's calls to `m-1` (left open); a
-/// host that stops running AI (its list goes with it), restarts and takes the
-/// proxy's calls again. With each
+/// list; a renewal pause that holds a proxy's calls to `m-1`; a host that
+/// stops running AI (its list goes with it), restarts and takes the proxy's
+/// calls again; a third proxy; the pause ended; a removal that empties a
+/// list; a host removed with its own list; a list for the third proxy. With
+/// each
 /// state, who may control whom, who may call whose A2A, whose machine keys
 /// each may be sealed (none for a proxy), how every flag byte reads, and the
 /// chains a verifier must refuse — by rule.
@@ -1856,6 +1858,21 @@ fn a2a_vectors() -> Value {
         ),
         ("restartKeyH2", Action::KeyEpochs(mk_commit("h-2", 1, &[0x24; 32]))),
         ("a2aAgainH2", a2a_accept("h-2", &["a-1"])),
+        ("addA3", Action::AddDevice3(device("a-3", &proxy_keys(4), Flags::A2A_DEVICE))),
+        ("a2aA3H2", a2a_accept("h-2", &["a-1", "a-3"])),
+        (
+            "pauseEndM1",
+            Action::RenewalPause {
+                op: [0xa2; 16],
+                phase: PausePhase::Cancelled,
+                removals: vec![],
+            },
+        ),
+        // A removal that empties a list (m-1's) and leaves another (h-2's) with a-3.
+        ("removeA1", Action::RemoveDevice3("a-1".into())),
+        // A host removed takes its own list along.
+        ("removeH2", Action::RemoveDevice3("h-2".into())),
+        ("a2aA3M1", a2a_accept("m-1", &["a-3"])),
     ] {
         let entry = state.draft(dev0(), action, 60_000 + state.seq()).sign(k0);
         state.apply(&entry, &mut ChainClock::history()).unwrap_or_else(|e| panic!("{label}: {e}"));
@@ -1871,10 +1888,16 @@ fn a2a_vectors() -> Value {
             .unwrap()
     };
     assert!(state.hosts_admitting("a-1").next().is_none() && state.host_key_due().is_none());
-    assert!(
-        state.may_call_a2a("a-1", "m-1").is_err() && state.a2a_accept("m-1") == ["a-1"],
-        "the pause holds the call"
-    );
+    {
+        let (_, paused) = at("pauseA1OnM1");
+        assert!(
+            paused.may_call_a2a("a-1", "m-1").is_err() && paused.a2a_accept("m-1") == ["a-1"],
+            "the pause holds the call"
+        );
+        let (_, ended) = at("pauseEndM1");
+        assert!(ended.may_call_a2a("a-1", "m-1").is_ok(), "its end gives it back");
+    }
+    assert!(state.a2a_accept("m-1") == ["a-3"] && state.a2a_accept("h-2").is_empty() && state.device("h-2").is_none());
 
     // The chains a verifier must refuse: a prefix and one more entry (bytes,
     // when the entry must not even decode).
@@ -2122,7 +2145,7 @@ fn a2a_vectors() -> Value {
     refuse("an A2A list in a v2 entry", &es, bytes, "decode");
 
     // Every pair: may control, may call A2A.
-    let devices = ["dev-0", "dev-1", "dev-2", "m-1", "h-2", "a-1", "a-2", "nobody"];
+    let devices = ["dev-0", "dev-1", "dev-2", "m-1", "h-2", "a-1", "a-2", "a-3", "nobody"];
     let targets = ["m-1", "h-2", "dev-2", "a-1"];
     let pairs = || devices.iter().flat_map(|d| targets.iter().map(move |t| (*d, *t)));
     let control: Vec<Value> = pairs().map(|(d, t)| relation_json(state.may_control(d, t), d, t)).collect();
@@ -2141,7 +2164,7 @@ fn a2a_vectors() -> Value {
         "hashes": entries.iter().map(|e| h(&e.hash())).collect::<Vec<_>>(),
         "versions": entries.iter().map(|e| e.draft.version).collect::<Vec<_>>(),
         "steps": steps.iter().map(|(label, seq, st)| json!({"label": label, "seq": seq, "state": st})).collect::<Vec<_>>(),
-        "extraDevices": [extra_json(extra(0), "h-2"), extra_json(proxy_keys(0), "a-1"), extra_json(proxy_keys(1), "a-2")],
+        "extraDevices": [extra_json(extra(0), "h-2"), extra_json(proxy_keys(0), "a-1"), extra_json(proxy_keys(1), "a-2"), extra_json(proxy_keys(4), "a-3")],
         "state": a2a_state_json(&state, &hosts),
         "control": control,
         "a2aCalls": calls,

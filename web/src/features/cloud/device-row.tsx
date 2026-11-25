@@ -90,9 +90,9 @@ export interface DeviceRowView {
    */
   reEnroll?: ReEnrollLine[];
   /**
-   * A host an A2A proxy that could call its A2A no longer can (`a2aExposures`, docs/a2a.md §7.1): a session such a
-   * proxy started could have read its identity key. Renewing it (or removing and adding the host again) is suggested
-   * on its row — never done by itself.
+   * The A2A proxies that could call this host's A2A and no longer can (docs/a2a.md §7.1; its `hostsToRotate` losses): a
+   * session such a proxy started could have read its identity key, so it renews it on its own — said here, with its
+   * renewal's line; one that cannot renew should be removed and added again.
    */
   a2aExposed?: string[];
   /** A host that renews its identity key here: where its renewal stands (docs/host-identity-rotation.md §4.4). */
@@ -774,10 +774,10 @@ export function DeviceRow({
       {view.a2aExposed && view.a2aExposed.length > 0 && viewerAdmin && status === "active" && (
         <span data-testid={`a2a-exposed-${id}`} data-signal="warn" className="text-xs leading-4 text-warn-fg">
           {view.renewable
-            ? t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Renewing its identity key is suggested.", {
+            ? t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key, so it renews its identity key.", {
                 ids: view.a2aExposed.join(", "),
               })
-            : t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key. Removing it and adding it again is suggested.", {
+            : t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key, and it cannot renew it here. Remove it and add it again.", {
                 ids: view.a2aExposed.join(", "),
               })}
         </span>

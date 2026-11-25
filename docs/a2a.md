@@ -36,7 +36,7 @@
   - 本机登录身份（本机账号、`local:owner`、`cloud:<设备>`）都不算 A2A 调用方；调用方只有 token 和 §7 的 a2a 设备。
 - **Agent Card**：`name`/`description` 取自入口；`version` 是 Droppen 版本；`supportedInterfaces` 依次是 JSONRPC、HTTP+JSON，`protocolVersion: "1.0"`；`capabilities {streaming: true, pushNotifications: true, extendedAgentCard: false}`；`securitySchemes {bearer: {httpAuthSecurityScheme: {scheme: "Bearer"}}}`；`defaultInputModes ["text/plain", "application/json", "image/png", "image/jpeg"]`；`defaultOutputModes ["text/plain", "text/markdown", "application/json"]`；一个 skill `coding_session`。卡里不写目录、仓库名。
   - 接口 URL 的基址：实例设置 `a2a.publicBase`（可选）；没设时用请求的 `Host`，协议 `http`。§7 的代理会改写成它自己的地址。
-- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务、给会话列表打「来自 A2A」的标记）、`GET /api/a2a/devices`（这台设备接受的 a2a 设备：`id`、指纹；没登录 Droppen 时为空，给入口的 `allowedDevices` 选择用）。进 OpenAPI。
+- **管理 API**（本机登录）：`GET/POST /api/a2a/entries`（列表另带 `publicBase`，即 `[a2a] public_base`，没设为 `null`）、`GET/PATCH/DELETE /api/a2a/entries/{id}`、`GET/POST /api/a2a/tokens`、`DELETE /api/a2a/tokens/{id}`、`GET /api/a2a/tasks`（筛选 `entry`、`state`；给界面列任务）、`GET /api/a2a/contexts`（未关闭的 context：`contextId`、`entry`、`caller`、`callerName`、`source`、`sessionId`，新的在前，`pageSize`（1–500，默认 500）/`pageToken` 分页，回 `nextPageToken`；给会话列表打「来自 A2A」的标记）、`GET /api/a2a/devices`（这台设备接受的 a2a 设备：`id`、指纹；没登录 Droppen 时为空，给入口的 `allowedDevices` 选择用）。进 OpenAPI。
 - **bridge 分类**（`crates/droppen-agent/src/bridge.rs`）：`/a2a/*` 为 `Never`（§7 之前，远端设备一律不能经通道碰 A2A 路由）；`/api/a2a/*` 为 `Posture`，只有 `GET /api/a2a/tasks`、`GET /api/a2a/devices`、`GET /api/a2a/contexts` 是 `Use`。
 
 ## 3. 映射
@@ -46,8 +46,8 @@
 | A2A 收到 | Droppen 做 |
 |---|---|
 | 无 `taskId`、无 `contextId` | 新会话：入口的 source/cwd/account/model/effort/permission + 模板包好的提示词，走与 `POST /api/sessions/new`、定时任务相同的 `providers.start_new_session`。`clientMessageId = a2a:<caller>:<messageId>`，客户端重试不会开两个会话 |
-| 无 `taskId`、带已知 `contextId` | 同一会话的新一轮（`…/message` 的路径）。会话正忙就排队，task 停在 `SUBMITTED` |
-| 带 `contextId` 但不认识 / 不属于这个入口和这个调用方 | 错误，不替换（spec §3.4） |
+| 无 `taskId`、带已知 `contextId` | 同一会话的新一轮（`…/message` 的路径）。会话正忙就排队，task 停在 `SUBMITTED`。会话还没开起来（第一个 task 在开会话前被取消或拒绝）就由它开；正在开时它等会话开好，别的 context 的 task 先走 |
+| 带 `contextId` 但不认识 / 不属于这个入口和这个调用方 | 错误 `droppen.context_not_found`，不替换（spec §3.4） |
 | `taskId` 指向 `INPUT_REQUIRED` 的 task | 回答提问（§3.4） |
 | `taskId` 指向 `SUBMITTED`/`WORKING` 的 task | 追加消息（与界面上「运行中追加」相同） |
 | `taskId` 指向终态 task | `UnsupportedOperationError` |
@@ -115,7 +115,7 @@
 
 - `reason` 是去掉 `droppen.` 前缀后的大写下划线形式；`metadata.code` 是下表的 code 原文。
 - JSON-RPC：放在 `error.data[]` 里；HTTP+JSON：放在 `google.rpc.Status` 的 `error.details[]` 里（`{"error": {"code": <HTTP 状态>, "status": "<google.rpc.Code>", "message": …, "details": [...]}}`，`Content-Type: application/a2a+json`）。两处都排在 spec 自己要求的那个 `ErrorInfo`（`domain: "a2a-protocol.org"`，`reason` 如 `UNSUPPORTED_OPERATION`）之后，两种绑定的 `data[]` 与 `details[]` 内容相同。
-- 它细化的 A2A 错误：`entry_disabled`、`remote_answers_disabled`、`quota_exceeded` 是 `UnsupportedOperationError`（-32004，HTTP 400）。
+- 它细化的 A2A 错误：`entry_disabled`、`remote_answers_disabled`、`quota_exceeded`、`revoked`、`context_closed` 是 `UnsupportedOperationError`（-32004，HTTP 400）；`context_not_found`、`push_origin_not_allowed` 是 `InvalidParamsError`（-32602，HTTP 400 `INVALID_ARGUMENT`，`data[]`/`details[]` 里只有这一个 `ErrorInfo`）。
 - task 因下表的原因结束时（worktree 建不出来而 `REJECTED`、吊销或入口停用而 `CANCELED`），同一个 `ErrorInfo` 放在它状态消息的 `metadata.errorInfo` 里。
 
 | code | 何时 |
@@ -135,16 +135,17 @@
 
 ## 4. 存储
 
-都在 `<instance>/state.db`（与 `scheduled_tasks` 同库，0600），是 `droppen-instance` 迁移链的第 12 步（`crates/droppen-instance/src/db/migrations.rs`，只增不删）。时间都是 epoch 毫秒（`*_ms`）。一个字段只在要按它查、排、约束时才是列，其余放 JSON。
+都在 `<instance>/state.db`（与 `scheduled_tasks` 同库，0600），是 `droppen-instance` 迁移链的第 12–14 步（`crates/droppen-instance/src/db/migrations.rs`，只增不删）。时间都是 epoch 毫秒（`*_ms`）。一个字段只在要按它查、排、约束时才是列，其余放 JSON。
 
 - `a2a_entries`：`id`（主键，`^[a-z0-9][a-z0-9-]{0,39}$`）、`payload`、`created_ms`、`updated_ms`。入口的设置整个是 `payload` 里的 JSON（管理 API 的 `A2aEntry`）：`name`、`description`、`enabled`（默认 false）、`source`（`claude|codex|acp|tck`）、`acpAgent`、`cwd`（绝对路径）、`account`（`{"kind": "default"}` 实例的默认账号，默认；`{"kind": "local"}` CLI 自己的登录；`{"kind": "id", "id": "…"}`）、`model`、`effort`、`permission`（同 `NewSession.permission`）、`isolation`（`none|worktree`，默认 `worktree`）、`maxConcurrent`（1–8，默认 1；同时占着名额的 task 数）、`template`（`null` 是默认模板）、`allowRemoteAnswers`（默认 true）、`pushOrigins`（`https://host[:port]`）、`allowedDevices`（§7 的 a2a 设备 id，默认空）、`createdAt`、`updatedAt`。
 - `a2a_tokens`：`id`（主键，十六进制）、`name`（只给人看，可重名）、`entries`（作用域，JSON 数组）、`secret_hash`（`sha256(secret)`）、`created_ms`、`last_used_ms`（最多每分钟写一次）、`revoked_ms`。调用方是 `a2a:token:<id>`。
-- `a2a_contexts`：`context_id`（主键）、`entry`、`caller`、`source`、`session_id`（会话有了 id 才填；Codex 在 `thread/start` 之后）、`cwd`（worktree 时是 worktree）、`branch`、`created_ms`。按 `(source, session_id)` 和 `(caller, created_ms)` 有索引。
-- `a2a_tasks`：`id`（主键）、`context_id`、`entry`、`caller`、`state`（`TASK_STATE_*`）、`status_message`（JSON Message）、`status_ms`（状态时间，列表按它倒序）、`artifacts`（JSON）、`history`（收到的消息，JSON，最多 50 条）、`client_message_id`（`a2a:<caller>:<messageId>`）、`dispatched`（第一条消息是否已交给 backend；没名额的 task 停在这里）、`seq`（最新事件的序号，流的开头快照取在这里）、`created_ms`、`updated_ms`。按 `(entry, caller, status_ms)`、`(context_id, created_ms)`、`(caller, state)` 有索引。
+- `a2a_contexts`：`context_id`（主键）、`entry`、`caller`、`source`、`session_id`（会话有了 id 才填；Codex 在 `thread/start` 之后）、`cwd`（worktree 时是 worktree）、`branch`、`created_ms`、`closed_ms`（§6「收紧要追溯」关闭它的时间；`NULL` 是开着，第 14 步加的列）。按 `(source, session_id)` 和 `(caller, created_ms)` 有索引。
+- `a2a_tasks`：`id`（主键）、`context_id`、`entry`、`caller`、`state`（`TASK_STATE_*`）、`status_message`（JSON Message）、`status_ms`（状态时间，列表按它倒序）、`artifacts`（JSON）、`history`（收到的消息，JSON：交给 backend 之后最多 50 条、1 MiB，超出丢最旧的；文件的字节交给会话后不再存，只留一个 `data` part `{"kind": "omitted_file", "mediaType": …, "size": <字节数>}`，文件名保留。`ListTasks` 不带 `historyLength` 时不回 history）、`client_message_id`（`a2a:<caller>:<messageId>`）、`dispatched`（第一条消息是否已交给 backend；没名额的 task 停在这里）、`seq`（最新事件的序号，流的开头快照取在这里）、`created_ms`、`updated_ms`。按 `(entry, caller, status_ms)`、`(context_id, created_ms)`、`(caller, state)` 有索引。
 - `a2a_messages`：`(caller, message_id)` 主键 → `task_id`、`created_ms`。每条收到的消息（新 task、回答、追加）都在这里占一行，所以同一个 `(caller, messageId)` 的重试找到第一次做成或改动的那个 task，不会做第二次。`tck` 入口不占（TCK 反复用同一个 message id）。
 - `a2a_task_events`：`(task_id, seq)` 主键、`kind`（`status`、`progress`（`WORKING` 的进度消息，不 push）、`artifact`）、`payload`（StreamResponse）、`created_ms`。给落后的流补读和 push 重试；已结束的 task 的事件 7 天后删。
 - `a2a_push_configs`：`(task_id, id)` 主键、`url`、`token`、`auth_scheme`、`auth_credentials`、`created_ms`。
 - 按调用方隔离：task、context 都按 `(entry, caller, id)` 查，push 配置经由它的 task 查。
+- 保留期：结束 30 天的 task 连同它的事件、`a2a_messages` 行、push 配置一起删，没有 task 了的 context 随之删；只有实例的 owner 做，启动时一次，之后每小时一次（`A2a::spawn_retention`）。
 
 ## 5. 内部结构
 
@@ -155,7 +156,7 @@
 - push：每次状态变化（不含 `WORKING` 的进度消息）和每个 artifact 各 POST 一次 `StreamResponse`，`Content-Type: application/a2a+json`，`Authorization: <scheme> <credentials>`，给了 `token` 时同时带 `A2A-Notification-Token` 与 `X-A2A-Notification-Token`。同一任务按序；重试 3 次（立即、10 秒、60 秒）。
 - 隔离：`worktree` 时每个新 context 在 `<cwd>/.worktrees/a2a-<contextId>` 建 worktree，分支 `a2a/<contextId>`（完整 UUID，不截断；已存在就拒绝），会话在里面跑。不自动删除 worktree。
 - 消息里的 `url` part（文件链接）一律不去取；part 的 `filename` 不当路径用；图片按大小上限收。
-- 限额（每个调用方）：排队中的 task 至多 20 个，每天新 context 至多 50 个，每个 task 的 push 配置至多 3 个；`/a2a/*` 请求体至多 10 MiB。超出回 `droppen.quota_exceeded`，不开会话。
+- 限额（每个调用方）：排队中的 task 至多 20 个，每天新 context 至多 50 个，每个 task 的 push 配置至多 3 个，同时开着的流（`SendStreamingMessage`、`SubscribeToTask`）至多 16 个；还在等名额的 task 追加的消息连同第一条至多 50 条、10 MiB；`/a2a/*` 请求体至多 10 MiB，60 秒内要收完（超时回 `InvalidRequestError`）。超出回 `droppen.quota_exceeded`，不开会话。排队数与新 context 数在建 task 时、在写锁下数。
 - 提示词模板（入口可改）默认：
 
 ```
@@ -183,8 +184,8 @@
   - 唯一的例外：实例以 `DROPPEN_A2A_TCK=1` 启动时，`source: "tck"` 的入口可以列 `http://127.0.0.1[:port]` 与 `http://localhost[:port]`（TCK 自己的 webhook）。别的入口一律不行；`tck` 入口改成别的类型时这些源不跟过去。
 - **按调用方隔离**：task、context、push 配置都按 `(调用方, id)` 查。同一个入口的两个调用方互相看不见、不能续、不能答、不能取消对方的任务；「不是你的」与「不存在」回同样的错误。
 - **收紧要追溯**：入口的 source、目录、账号、权限模式、隔离方式改了，它已有的 context 全部关闭（未结束的 task 取消，带 `droppen.context_closed`），之后对这些 context 的追问回 `droppen.context_closed`。
-- **吊销要彻底**：吊销 token、从入口的 `allowedDevices` 里去掉一台 a2a 设备、a2a 设备被移出链、入口停用时，这个调用方（在这个入口上）所有未结束的 task 都取消（排队的撤掉，在跑的打断），push 配置删掉，开着的流关掉；之后每个流事件、每次 push 都再验一次调用方。入口上的 `allowedDevices` 与停用，是不依赖 Hub 的紧急开关。
-- **审计**：每个 A2A 请求记一行本机日志（时间、调用方、入口、方法、task），不记内容和 token。
+- **吊销要彻底**：吊销 token、从入口的 `allowedDevices` 里去掉一台 a2a 设备、a2a 设备被移出链、入口停用时，这个调用方（在这个入口上）所有未结束的 task 都取消（排队的撤掉，在跑的打断），push 配置删掉，开着的流关掉；之后每个流事件、每次 push 都再验一次调用方。请求体收完后再验一次 token；建 task、把 task 交给 backend 都在写锁下先问调用方还能不能到入口（吊销取要取消的 task 也在同一把锁下），回答与追加在交给 backend 前再问一次，所以吊销前后在途的请求不会漏进会话。入口上的 `allowedDevices` 与停用，是不依赖 Hub 的紧急开关。
+- **审计**：每个 A2A 请求记一行本机日志（时间、调用方、入口、方法、task），不记内容和 token；入口、方法、task 来自请求，截短并去掉控制字符。
 
 ## 7. 远程：a2a 设备与 `droppen a2a-proxy`
 
@@ -207,7 +208,7 @@ A2A 客户端 ──标准 A2A over HTTP（私网 / 本机）──▶ droppen a
 - **「控制」与「调用 A2A」是两个关系。** 在这份代码里「可以控制」同时意味着「收到这台设备的 `MK`」（`hosts_admitting`、`admits`、`sealHostKeys` 等都按它选收件人）。所以：
   - `may_control`、`hosts_admitting`、TS 的 `mayControl`、`chain-policy.ts` 的 `could`/`admits`/`acceptNames` 对 a2a 设备**一律不成立**，`SetAccept` 的 `All` 不包括它；`Devices` 名单写了它就整条拒绝（`A2A_NOT_CONTROLLER`）。
   - 新条目 `SetA2aAccept { host, devices: [ids] }`（admin 签；名单升序、不重复，可以为空；只能列当前的 a2a 设备）：这台设备接受哪些 a2a 设备调用它的 A2A。新判断 `may_call_a2a(device, host)` 只用在通道准入和 bridge；设备身份续期的暂停同样暂停 A2A 调用（暂停结束即恢复）。
-  - a2a 设备不在 `extra_controllers` 里，也从不持 `MK`。但它发起的会话能读到这台设备磁盘上的钥文件，所以 `SetA2aAccept` 从名单里去掉任何设备时，下一条必须是这台设备的新 `KeyEpochs`（同 `SetAccept` 收窄的 `HOST_KEY_NEXT`）；移除一个仍在某些名单里的 a2a 设备时，这些设备的内容密钥同样轮换，界面说明它们暴露过，并建议轮换设备身份。
+  - a2a 设备不在 `extra_controllers` 里，也从不持 `MK`。但它发起的会话能读到这台设备磁盘上的钥文件，所以 `SetA2aAccept` 从名单里去掉任何设备时，下一条必须是这台设备的新 `KeyEpochs`（同 `SetAccept` 收窄的 `HOST_KEY_NEXT`）；移除一个仍在某些名单里的 a2a 设备时，这些设备的内容密钥同样轮换。去掉、移除、或这台设备停止运行 AI，都按「失去一个控制端」处理（§6）：这台设备与经它暴露的设备自动更新设备身份。
   - 互通向量断言：`hosts_admitting(a2a 设备)` 为空；任何封钥路径都不会选中 a2a 设备。
 - **失败即拒绝**：不认识 a2a 的代码看到的是 `may_control` 不成立，只会拒绝它。解码 bit 2 与 `SetA2aAccept`、准入、bridge 的 a2a 策略在**同一个版本**里一起发；准入结果是类型（`Full` / `A2aOnly`），bridge 必须按类型处理。
 - 未知位、未知条目已经失败即拒绝（`Flags::from_byte`、`chain.ts`、`merge_partial` 停在解不了的条目前）。旧版本的设备会停在这一条之前、链头落后、通道开不了，也收不到之后的移除。所以添加 a2a 设备前，账号里所有可运行 AI 的设备、桌面应用都要先升级；添加界面按设备声明的 `a2a/1` 列出还没升级的，全部升级前不让加。这只关可用性：设备声明可以被 Hub 伪造，但安全不依赖它。

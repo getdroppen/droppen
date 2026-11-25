@@ -71,7 +71,14 @@ impl ErrorKind {
         }
     }
 
-    /// The HTTP status of the HTTP+JSON binding.
+    /// The HTTP status of the HTTP+JSON binding: v1.0.1 §5.4 ("Error Code
+    /// Mappings"), the table this server is built to. Every A2A error but
+    /// `TaskNotFoundError` (404) is `400 Bad Request` there, and its
+    /// `google.rpc.Code` is [`Self::rpc_status`]'s. v1.0.0's table had
+    /// `409` for `TaskNotCancelableError`, `415` for
+    /// `ContentTypeNotSupportedError`, and `UNIMPLEMENTED` for
+    /// `UnsupportedOperationError` and `VersionNotSupportedError`; v1.0.1
+    /// changed them to these, and the TCK takes either.
     pub fn http_status(self) -> StatusCode {
         match self {
             ErrorKind::TaskNotFound | ErrorKind::MethodNotFound => StatusCode::NOT_FOUND,
@@ -80,7 +87,9 @@ impl ErrorKind {
         }
     }
 
-    /// The `google.rpc.Code` name the `Status` carries.
+    /// The `google.rpc.Code` name the `Status` carries (v1.0.1 §5.4; the
+    /// JSON-RPC errors that are not A2A's are `INVALID_ARGUMENT`,
+    /// `NOT_FOUND` and `INTERNAL` as their HTTP status says).
     fn rpc_status(self) -> &'static str {
         match self {
             ErrorKind::TaskNotFound | ErrorKind::MethodNotFound => "NOT_FOUND",
@@ -258,6 +267,25 @@ mod tests {
         assert_eq!(status["error"]["code"], 400);
         assert_eq!(status["error"]["status"], "FAILED_PRECONDITION");
         assert_eq!(status["error"]["details"], error.jsonrpc()["data"], "the same details in both bindings");
+    }
+
+    /// v1.0.1 §5.4, row by row: the JSON-RPC code, the HTTP status and the
+    /// `google.rpc.Code` of each A2A error this server answers with.
+    #[test]
+    fn every_a2a_error_is_mapped_as_the_spec_tables_it() {
+        for (kind, code, http, status) in [
+            (ErrorKind::TaskNotFound, -32001, 404, "NOT_FOUND"),
+            (ErrorKind::TaskNotCancelable, -32002, 400, "FAILED_PRECONDITION"),
+            (ErrorKind::UnsupportedOperation, -32004, 400, "FAILED_PRECONDITION"),
+            (ErrorKind::ContentTypeNotSupported, -32005, 400, "INVALID_ARGUMENT"),
+            (ErrorKind::VersionNotSupported, -32009, 400, "FAILED_PRECONDITION"),
+        ] {
+            let error = A2aError::new(kind, "x");
+            assert_eq!(error.jsonrpc()["code"], code, "{kind:?}");
+            assert_eq!(error.status_body()["error"]["code"], http, "{kind:?}");
+            assert_eq!(error.status_body()["error"]["status"], status, "{kind:?}");
+            assert_eq!(error.kind.http_status().as_u16(), http, "{kind:?}");
+        }
     }
 
     #[test]

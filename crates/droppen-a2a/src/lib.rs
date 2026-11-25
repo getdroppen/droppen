@@ -13,7 +13,8 @@
 //! * [`engine`] — [`A2a`]: what each operation and each event does to a task;
 //! * [`protocol`] — `/a2a/*`: the Agent Card and the JSON-RPC and HTTP+JSON
 //!   bindings;
-//! * [`manage`] — `/api/a2a/*`: entries, tokens and the task list;
+//! * [`manage`] — `/api/a2a/*`: entries, tokens, the task list and the open
+//!   contexts;
 //! * [`push`] — push delivery to the callers' webhooks, and where a push may
 //!   go;
 //! * `tck` — the A2A TCK's stand-in entry.
@@ -21,8 +22,8 @@
 //! The server builds [`A2a`] with a backend, a device gate
 //! ([`devices::DeviceGate`]) and an [`backend::EventInbox`], attaches a
 //! [`push::Pusher`], nests [`protocol::router`] at `/a2a`, registers
-//! [`manage::A2aState`]'s routes, and calls [`A2a::resume`] once it owns its
-//! instance.
+//! [`manage::A2aState`]'s routes, and calls [`A2a::resume`] and
+//! [`A2a::spawn_retention`] once it owns its instance.
 
 pub mod backend;
 pub mod devices;

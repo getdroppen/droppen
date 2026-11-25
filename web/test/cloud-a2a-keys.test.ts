@@ -6,16 +6,17 @@
 // reaches it is logged (`mailAttempts`), refused or not: none may be for the
 // proxy. The policy halves (`acceptChange`, `replayChain`, `hostsToRotate`,
 // `reEnrollCulprits`, `limitedDevice`) never count it as a controller either —
-// but a host that took its A2A calls is exposed to it (`a2aExposures`): its
-// removal rotates the content keys whatever was asked, and renewing the host's
-// identity key is suggested, never done by itself.
+// but a host that took its A2A calls is exposed to it, as to a lost controller
+// (`hostsToRotate`): its removal rotates the content keys whatever was asked,
+// and the host renews its identity key after it, with every host that lets it
+// control them.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { type Action, type ChainState, generateDeviceKeys, hex, PAUSE_START, RULES } from "../src/lib/e2e/index.js";
 import { AccountError, limitedDevice } from "../src/lib/hub/account.js";
 import { MAIL_HOST_KEY, MAIL_KEY_REQUEST, MAIL_USER_KEY } from "../src/lib/hub/api.js";
 import { type Candidate, completePairing } from "../src/lib/hub/pairing.js";
-import { a2aExposures, a2aHostsOf, acceptChange, acceptNames, acceptsA2a, admits, hostsToRotate, pauseReturns, reEnrollCulprits, replayChain } from "../src/lib/hub/chain-policy.js";
+import { a2aHostsOf, acceptChange, acceptNames, acceptsA2a, admits, hostsExposedBy, hostsToRotate, pauseReturns, reEnrollCulprits, replayChain } from "../src/lib/hub/chain-policy.js";
 import { createV2Genesis, FakeCourier, FakeKeysHub, pairBrowser } from "./fake-keys-hub.js";
 
 const PROXY = "a-1";
@@ -120,7 +121,11 @@ test("an A2A proxy stays one: never made a full device nor a device that runs AI
   assert.deepEqual(mailTo(hub, PROXY), []);
 });
 
-test("the policy halves never count an A2A proxy as a controller; removing it rotates the content keys of the hosts it could call, and suggests their renewal", async () => {
+/** What `hostsToRotate` says of each exposed host: the devices it lost (a lost controller, or an A2A proxy) and the exposed hosts it lets control it. */
+const exposure = (chain: ChainState, renews?: (host: string) => boolean) =>
+  [...hostsToRotate(chain, renews)].map(([h, x]) => [h, { lost: [...x.lost], via: [...x.via.keys()], blockedBy: [...x.blockedBy.keys()] }]);
+
+test("the policy halves never count an A2A proxy as a controller; removing it rotates the content keys, and the hosts it could call renew", async () => {
   const { hub, a } = await account();
   const chain = a.chain!;
   assert.equal(a.controlsAHost(PROXY), false);
@@ -129,26 +134,60 @@ test("the policy halves never count an A2A proxy as a controller; removing it ro
   const replay = replayChain(chain, { recoveryJoin3Admin: (f) => f.admin, lost: () => {} });
   assert.equal(replay.devs.get(PROXY)?.a2a, true);
   assert.ok(!replay.could(PROXY, "m-1") && !replay.could(PROXY, "m-2"));
+  assert.ok(replay.callsA2a(PROXY, "m-1") && !replay.callsA2a(PROXY, "m-2"));
   assert.ok(replay.could("m-2", "m-1"));
-  assert.equal(a2aExposures(chain).size, 0, "nothing lost while it still may call");
+  assert.equal(hostsToRotate(chain).size, 0, "nothing lost while it still may call");
+  // What its removal would make renew, for the dialog to say: m-1, whose A2A list names it.
+  assert.deepEqual(hostsExposedBy(chain, PROXY), ["m-1"]);
   // Removing it: m-1 took its calls, so a session it started there could have read m-1's keys off the disk — the
-  // content keys rotate even though the person asked not to.
+  // content keys rotate even though the person asked not to, and m-1 renews its identity key (as for a lost controller).
   const epochs = new Map(["m-1", "m-2"].map((h) => [h, chain.machineKeyEpochs(h)]));
   const removal = a.chain!.seq + 1;
   await a.removeDevice(PROXY, new FakeCourier(), false, { rotateMachineKeys: false });
   assert.equal(a.chain!.deviceRecord(PROXY)?.status.type, "removed");
   assert.deepEqual(a.chain!.a2aAccept("m-1"), [], "and it is off every A2A list");
   for (const [h, n] of epochs) assert.equal(a.chain!.machineKeyEpochs(h), n + 1, `${h}'s content key turned over`);
-  // m-1 is exposed to it: a suggestion, never an automatic renewal or a re-enroll warning.
-  assert.deepEqual([...a.a2aExposures()].map(([h, m]) => [h, [...m]]), [["m-1", [[PROXY, removal]]]]);
-  assert.equal(hostsToRotate(a.chain!).size, 0);
+  assert.deepEqual(exposure(a.chain!), [["m-1", { lost: [[PROXY, removal]], via: [], blockedBy: [] }]]);
+  // Never a re-enroll warning: the agent's record of who connected does not list A2A callers.
   assert.equal(reEnrollCulprits(a.chain!).size, 0);
   assert.deepEqual(mailTo(hub, PROXY), []);
+});
+
+test("an exposed host exposes every host that lets it control it, through the A2A loss too (review F1)", async () => {
+  // m-2 lets m-1 control it, so m-1 holds m-2's keys and offline copies on its disk; m-1 takes a-1's A2A calls.
+  const { a } = await account();
+  await a.setAccept("m-2", { type: "devices", ids: ["m-1"] });
+  // Before anything is lost, removing the proxy would have both renew.
+  assert.deepEqual(hostsExposedBy(a.chain!, PROXY), ["m-1", "m-2"]);
+  assert.deepEqual(hostsExposedBy(a.chain!, PROXY, a2aHostsOf(a.chain!, PROXY)), ["m-1", "m-2"]);
+  const off = a.chain!.seq + 1;
+  await a.setA2aAccept("m-1", [], new FakeCourier());
+  const exposed = new Map(exposure(a.chain!) as [string, { lost: [string, number][]; via: string[]; blockedBy: string[] }][]);
+  assert.deepEqual(exposed.get("m-1")?.lost, [[PROXY, off]]);
+  assert.deepEqual(exposed.get("m-2")?.via, ["m-1"], "m-2 through m-1, as for a plain controller");
+  assert.equal(reEnrollCulprits(a.chain!).size, 0);
+});
+
+test("a host that stops running AI with a proxy on its list stays exposed, and so does every host that still lets it control it", async () => {
+  const { a } = await account();
+  await a.setAccept("m-2", { type: "devices", ids: ["m-1"] });
+  const stop = a.chain!.seq + 1;
+  await a.setHost("m-1", false, new FakeCourier());
+  assert.deepEqual(a.chain!.a2aAccept("m-1"), [], "its list went with its hosting");
+  // m-1 is no current host (no row of its own to renew), but m-2 still lets it control it: m-2 is exposed through it —
+  // through a renewal of m-1's, could it renew; blocked on it, as it cannot now (narrow m-2's list, or add m-1 again).
+  assert.deepEqual(exposure(a.chain!), [["m-2", { lost: [], via: ["m-1"], blockedBy: [] }]]);
+  assert.deepEqual(exposure(a.chain!, (h) => h !== "m-1"), [["m-2", { lost: [], via: [], blockedBy: ["m-1"] }]]);
+  // Running AI again, it is a host whose identity a proxy may have copied (the same identity): it renews too.
+  await a.setHost("m-1", true, new FakeCourier(), { writable: true });
+  const back = new Map(exposure(a.chain!) as [string, { lost: [string, number][] }][]);
+  assert.deepEqual(back.get("m-1")?.lost, [[PROXY, stop]]);
 });
 
 test("a proxy no host takes calls from is removed with the content keys left as asked: taking it off the list rotated them already", async () => {
   const { a } = await account();
   const before = a.chain!.machineKeyEpochs("m-1");
+  const off = a.chain!.seq + 1;
   await a.setA2aAccept("m-1", [], new FakeCourier());
   assert.equal(a.chain!.machineKeyEpochs("m-1"), before + 1, "the narrowing turned m-1's content key over");
   assert.deepEqual(a.a2aHostsOf(PROXY), []);
@@ -156,7 +195,7 @@ test("a proxy no host takes calls from is removed with the content keys left as 
   await a.removeDevice(PROXY, new FakeCourier(), false, { rotateMachineKeys: false });
   assert.equal(a.chain!.machineKeyEpochs("m-1"), epochs);
   // It had left m-1's list before: m-1 was exposed to it then, and still is.
-  assert.deepEqual([...(a.a2aExposures().get("m-1")?.keys() ?? [])], [PROXY]);
+  assert.deepEqual(exposure(a.chain!), [["m-1", { lost: [[PROXY, off]], via: [], blockedBy: [] }]]);
 });
 
 /** `chain` with `entries` applied, each signed by `a` (the admin) — through the chain's own verifier. */
@@ -165,69 +204,45 @@ async function exposuresAfter(a: Awaited<ReturnType<typeof account>>["a"], actio
   return a.chain!;
 }
 
-test("a2aExposures: who leaves a host's A2A list, comes back, is renewed past, or goes with the host", async () => {
+test("hostsToRotate counts A2A losses: who leaves a host's A2A list, comes back, or goes with the host", async () => {
   const { hub, a } = await account();
   const keys = await generateDeviceKeys();
   hub.devices.set("a-2", { sign: hex(keys.signPublic), dh: hex(keys.dhPublic) });
   let chain = await exposuresAfter(a, [
     { type: "addDevice3", device: { id: "a-2", signKey: keys.signPublic, dhKey: keys.dhPublic, flags: { host: false, admin: false, a2a: true } } },
-    { type: "setA2aAccept", host: "m-1", devices: [PROXY, "a-2"] },
-    { type: "setA2aAccept", host: "m-2", devices: ["a-2"] },
   ]);
-  assert.equal(a2aExposures(chain).size, 0);
+  await a.setA2aAccept("m-1", [PROXY, "a-2"]);
+  await a.setA2aAccept("m-2", ["a-2"]);
+  chain = a.chain!;
+  const lostOf = (c: ChainState) => [...hostsToRotate(c)].map(([h, x]) => [h, [...x.lost]]);
+  assert.deepEqual(lostOf(chain), []);
   // Taken off m-1's list: m-1 is exposed to it.
   const off = chain.seq + 1;
   await a.setA2aAccept("m-1", ["a-2"], new FakeCourier());
   chain = a.chain!;
-  assert.deepEqual([...a2aExposures(chain)].map(([h, m]) => [h, [...m]]), [["m-1", [[PROXY, off]]]]);
+  assert.deepEqual(lostOf(chain), [["m-1", [[PROXY, off]]]]);
   // Named again: not lost any more.
-  chain = await exposuresAfter(a, [{ type: "setA2aAccept", host: "m-1", devices: [PROXY, "a-2"] }]);
-  assert.equal(a2aExposures(chain).size, 0);
+  await a.setA2aAccept("m-1", [PROXY, "a-2"]);
+  chain = a.chain!;
+  assert.deepEqual(lostOf(chain), []);
   // A pause that holds its call is no loss: the list still names it.
   chain = await exposuresAfter(a, [{ type: "renewalPause", op: new Uint8Array(16).fill(7), phase: PAUSE_START, removals: [{ host: "m-1", ids: [PROXY] }] }]);
   assert.ok(!acceptsA2a(chain, "m-1", PROXY), "the pause holds the call");
-  assert.equal(a2aExposures(chain).size, 0);
+  assert.deepEqual(lostOf(chain), []);
   assert.deepEqual(a2aHostsOf(chain, PROXY), ["m-1"], "the list as written: still exposed while paused");
-  // a-2 removed: both hosts that took its calls are exposed.
+  // a-2 removed: both hosts that took its calls are exposed (m-1 also through m-2, which it lets control it).
   const gone = chain.seq + 1;
   chain = await exposuresAfter(a, [{ type: "removeDevice3", id: "a-2" }]);
-  assert.deepEqual(
-    [...a2aExposures(chain)].map(([h, m]) => [h, [...m]]),
-    [
-      ["m-1", [["a-2", gone]]],
-      ["m-2", [["a-2", gone]]],
-    ],
-  );
-  // m-2 removed: it is gone from the list, with what it was exposed to.
+  assert.deepEqual(lostOf(chain), [
+    ["m-1", [["a-2", gone]]],
+    ["m-2", [["a-2", gone]]],
+  ]);
+  // m-2 removed: it is gone, with what it was exposed to.
   chain = await exposuresAfter(a, [{ type: "removeDevice3", id: "m-2" }]);
-  assert.deepEqual([...a2aExposures(chain).keys()], ["m-1"]);
-});
-
-test("a2aExposures: a renewal staged after the loss clears it, one staged before does not; a host that stops running AI keeps it", () => {
-  // Only the entries and which hosts are current are read: a chain of just the actions that matter here.
-  const chainOf = (actions: Action[], current: string[]) =>
-    ({
-      allEntries: () => actions.map((action, seq) => ({ draft: { seq, action } })),
-      machine: (id: string) => (current.includes(id) ? {} : undefined),
-    }) as unknown as ChainState;
-  const rotate = (host: string, stagedSeq: number): Action => ({
-    type: "rotateHostKey",
-    rotation: { host, stagedSeq, signKey: new Uint8Array(32), dhKey: new Uint8Array(32), stagedHead: new Uint8Array(32), nonce: new Uint8Array(16), assurance: 0, oldSig: new Uint8Array(64), newSig: new Uint8Array(64) },
-  });
-  const base: Action[] = [
-    { type: "keyEpochs", user: null, machines: [] },
-    { type: "setA2aAccept", host: "h", devices: ["p"] },
-    { type: "removeDevice3", id: "p" },
-  ];
-  const lost = (actions: Action[], current = ["h"]) => [...a2aExposures(chainOf(actions, current))].map(([h, m]) => [h, [...m]]);
-  assert.deepEqual(lost(base), [["h", [["p", 2]]]]);
-  assert.deepEqual(lost([...base, rotate("h", 3)]), [], "a renewal staged on a view past the loss");
-  assert.deepEqual(lost([...base, rotate("h", 1)]), [["h", [["p", 2]]]], "staged before it: the old seed could have been read");
-  assert.deepEqual(lost([...base, rotate("other", 3)]), [["h", [["p", 2]]]]);
-  // Stopping running AI: the list goes, its proxies leave it — shown once it is a host again.
-  const stopped: Action[] = [{ type: "keyEpochs", user: null, machines: [] }, { type: "setA2aAccept", host: "h", devices: ["p"] }, { type: "setHost", id: "h", host: false }];
-  assert.deepEqual(lost(stopped, []), [], "not a current host: nothing to say");
-  assert.deepEqual(lost(stopped), [["h", [["p", 2]]]]);
+  assert.deepEqual(
+    lostOf(chain).map(([h]) => h),
+    ["m-1"],
+  );
 });
 
 test("ending a pause gives an A2A proxy's held call back when the host's A2A list names it", async () => {
@@ -267,6 +282,13 @@ test("another full device is told of an A2A proxy's join and of whom a host take
       { kind: "a2aAccept", subject: "m-1", flags: undefined, a2a: [] },
     ],
   );
+  // A pause that holds its calls: the proxy is said apart from control, as A2A calls.
+  await a.setA2aAccept("m-1", [PROXY]);
+  const op = new Uint8Array(16).fill(5);
+  await a.append({ type: "renewalPause", op, phase: PAUSE_START, removals: [{ host: "m-1", ids: [PROXY] }] });
+  await c.sync();
+  const pause = c.alerts().find((x) => x.kind === "renewalPause");
+  assert.deepEqual(pause?.pause, { phase: "start", removals: [{ host: "m-1", ids: [], a2a: [PROXY] }] });
 });
 
 test("pairing again with an A2A proxy's id and keys is refused before anything is signed or mailed", async () => {
