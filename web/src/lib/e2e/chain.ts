@@ -2322,9 +2322,9 @@ export class ChainState {
 
   /**
    * Whether A2A proxy `device` may call host `host`'s A2A (Rust's `may_call_a2a`, docs/a2a.md §7.1) — a relation of
-   * its own, not control: only a current A2A proxy, only to a current host whose `setA2aAccept` list names it, and not
-   * while a renewal pause holds it (`pausedEdges`). What a channel's admission and the bridge check for an A2A proxy
-   * (`mayControl` never lets one in).
+   * its own, not control: a current A2A proxy to any current host, and not while a renewal pause holds it
+   * (`pausedEdges`). The host's `setA2aAccept` list is kept for display only. What a channel's admission and the bridge
+   * check for an A2A proxy (`mayControl` never lets one in).
    */
   mayCallA2a(device: string, host: string): void {
     if (device === host) throw new ChainError("selfControl", "a device does not control itself");
@@ -2336,7 +2336,6 @@ export class ChainState {
     // As in Rust (§3.4 rule 10, as for control): a pause is about who may reach a host whose identity key is renewed, not
     // about machine keys, and an A2A call reaches it as surely as control does.
     if (this.pausedEdges(host).includes(device)) throw refuse("A2A calls are paused while identity keys are renewed");
-    if (!(this.a2aLists.get(host) ?? []).includes(device)) throw refuse("the host does not accept A2A calls from this proxy");
   }
 
   /** `authorizeDevice` and `mayControl`: what an agent checks before it lets a device in. */

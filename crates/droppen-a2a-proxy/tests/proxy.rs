@@ -694,8 +694,8 @@ async fn end_to_end_each_failure_is_judged_by_the_proxys_own_chain() {
         .unwrap();
     assert_eq!(body["error"]["details"][0]["metadata"]["code"], "droppen.attestation_stale");
 
-    // The host stops accepting the proxy: not accepted — before anything is
-    // sent, by the chain the proxy syncs.
+    // The host's accept list no longer names the proxy: nothing gates on it
+    // any more, so the request still goes.
     let mut stand = support::Stand::new(support::echo()).await;
     let addr = proxy_for(&stand).await;
     let ok = client()
@@ -726,7 +726,7 @@ async fn end_to_end_each_failure_is_judged_by_the_proxys_own_chain() {
         .json()
         .await
         .unwrap();
-    assert_eq!(code_of(&body).as_deref(), Some("droppen.not_accepted"));
+    assert_eq!(body.get("error"), None, "{body}");
 
     // The proxy removed from the account: removed, whatever the far end says.
     stand.append(vec![Action::RemoveDevice3(support::PROXY.into())], true);

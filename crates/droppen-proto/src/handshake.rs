@@ -1309,10 +1309,7 @@ mod tests {
             matches!(open("a-1", &a1.1, false), Err(HandshakeError::NotAccepted(_))),
             "no A2A policy, no proxy"
         );
-        assert!(
-            matches!(open("a-2", &a2.1, true), Err(HandshakeError::NotAccepted(_))),
-            "m-1 does not list a-2"
-        );
+        assert_eq!(open("a-2", &a2.1, true), Ok(Some(Access::A2aOnly)), "no list is needed");
         assert_eq!(open("dev-0", &f.devices[0].1, true), Ok(Some(Access::Full)));
         assert_eq!(open("dev-0", &f.devices[0].1, false), Ok(Some(Access::Full)));
         // A direct path: never for a proxy, whoever asks.
@@ -1338,7 +1335,7 @@ mod tests {
         // What let each in, asked again.
         assert_eq!(Access::A2aOnly.check(&state, "a-1", "m-1"), Ok(()));
         assert!(Access::Full.check(&state, "a-1", "m-1").is_err(), "a proxy controls nothing");
-        assert!(Access::A2aOnly.check(&state, "a-2", "m-1").is_err());
+        assert_eq!(Access::A2aOnly.check(&state, "a-2", "m-1"), Ok(()), "no list is needed");
         assert!(Access::A2aOnly.check(&state, "dev-0", "m-1").is_err(), "an admin calls no A2A as a proxy");
         assert_eq!(Access::Full.check(&state, "dev-0", "m-1"), Ok(()));
     }

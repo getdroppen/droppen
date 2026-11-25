@@ -3115,19 +3115,19 @@ mod tests {
             .collect()
     }
 
-    /// An A2A proxy that m-1 takes A2A calls from (`SetA2aAccept`) is let
-    /// in `A2aOnly`, and recorded as any device that connects; without
-    /// `SetA2aAccept` it is refused (4401) — `SetAccept` letting every
-    /// device control m-1 does not let it in, an A2A proxy controls none. An
-    /// admin is let in `Full`, as before.
+    /// An A2A proxy of the account is let in `A2aOnly`, listed on a host or
+    /// not, and recorded as any device that connects; `SetAccept` letting
+    /// every device control m-1 does not make it a controller, an A2A proxy
+    /// controls none. An admin is let in `Full`, as before.
     #[tokio::test]
-    async fn an_a2a_proxy_is_let_in_a2a_only_and_only_when_this_machine_takes_its_calls() {
+    async fn an_a2a_proxy_is_let_in_a2a_only() {
         let mut a = with_proxy(account(), false);
         let mut routes = Routes::new();
-        assert_eq!(
-            connect(&a, &proxy(), "p-1", 1, &mut routes).await.err(),
-            Some(vec![(1, 4401)]),
-            "m-1 takes no A2A calls from it"
+        let _proxy = connect(&a, &proxy(), "p-1", 1, &mut routes).await.expect("A2aOnly, no list needed");
+        assert_eq!(routes[&1].3, Access::A2aOnly);
+        assert!(
+            controller_ids(&AgentState::load(&a.shared.files).unwrap().unwrap()).contains(&"p-1".to_string()),
+            "on the saved record of who connected"
         );
         take(
             &mut a,
@@ -3137,22 +3137,10 @@ mod tests {
             }],
         );
         attest(&a, "d-2", &d2(), 0);
-        assert_eq!(
-            connect(&a, &proxy(), "p-1", 2, &mut routes).await.err(),
-            Some(vec![(2, 4401)]),
-            "letting every device control m-1 lets no A2A proxy in"
-        );
-        assert!(!controller_ids(&a.shared.state.lock().unwrap()).contains(&"p-1".to_string()));
-        take(&mut a, vec![a2a_accept(&["p-1"])]);
-        attest(&a, "d-2", &d2(), 0);
-        let _proxy = connect(&a, &proxy(), "p-1", 3, &mut routes).await.expect("m-1 takes A2A calls from p-1");
-        assert_eq!(routes[&3].3, Access::A2aOnly);
-        assert!(
-            controller_ids(&AgentState::load(&a.shared.files).unwrap().unwrap()).contains(&"p-1".to_string()),
-            "on the saved record of who connected"
-        );
-        let _admin = connect(&a, &a.d1, "d-1", 4, &mut routes).await.expect("an admin");
-        assert_eq!(routes[&4].3, Access::Full);
+        let _again = connect(&a, &proxy(), "p-1", 2, &mut routes).await.expect("still A2aOnly");
+        assert_eq!(routes[&2].3, Access::A2aOnly);
+        let _admin = connect(&a, &a.d1, "d-1", 3, &mut routes).await.expect("an admin");
+        assert_eq!(routes[&3].3, Access::Full);
     }
 
     /// An A2A proxy has no direct path: with direct paths on, its channel
@@ -3360,12 +3348,11 @@ mod tests {
         assert_eq!(heads.lock().unwrap().len(), 1);
     }
 
-    /// "Who may call my A2A" holds for an open channel, as "who may control
-    /// me" does: once m-1 no longer takes A2A calls from p-1, its next stream
-    /// is not served, and the chain's change closes its channel (4403, said
-    /// as A2A) while an admin's stays.
+    /// An empty `SetA2aAccept` no longer closes an open channel: the list is
+    /// for display, and the proxy reaches the host anyway. (A removal's and a
+    /// pause's closing are their own tests.)
     #[tokio::test]
-    async fn taking_an_a2a_proxy_off_the_list_closes_its_channel() {
+    async fn an_empty_a2a_list_keeps_its_channel() {
         let (addr, heads) = loopback_server().await;
         let mut a = with_proxy(account_at(super::super::streams::Handle::detached(), addr), true);
         let mut routes = Routes::new();
@@ -3374,35 +3361,24 @@ mod tests {
         let card = "/a2a/agents/main/.well-known/agent-card.json";
         assert_eq!(rpc(&on_proxy, "GET", card, b"").await.map(|(status, _)| status), Some(200));
         take(&mut a, no_a2a_calls());
-        assert!(routes.contains_key(&4), "the channel is not swept yet");
+        assert!(routes.contains_key(&4), "the channel is not swept");
         assert_eq!(
-            rpc(&on_proxy, "GET", card, b"").await,
-            None,
-            "not served once m-1 takes no A2A calls from it"
+            rpc(&on_proxy, "GET", card, b"").await.map(|(status, _)| status),
+            Some(200),
+            "still served with an empty list"
         );
-        assert_eq!(heads.lock().unwrap().len(), 1, "only the first reached the server");
+        assert_eq!(heads.lock().unwrap().len(), 2);
         let (out_tx, mut out_rx) = mpsc::unbounded_channel();
         drop_removed(&a.shared, &mut routes, &out_tx);
-        match out_rx.try_recv() {
-            Ok(Frame::Close { ch, code, reason }) => {
-                assert_eq!((ch, code), (4, 4403));
-                assert_eq!(reason, "the device you reach no longer takes A2A calls from this A2A proxy");
-            }
-            other => panic!("{other:?}"),
-        }
-        assert!(out_rx.try_recv().is_err(), "the admin's channel stays");
-        assert_eq!(routes.keys().copied().collect::<Vec<_>>(), vec![5]);
-        attest(&a, "d-2", &d2(), 0);
-        assert_eq!(
-            connect(&a, &proxy(), "p-1", 6, &mut routes).await.err(),
-            Some(vec![(6, 4401)]),
-            "nor let in again"
-        );
+        assert!(out_rx.try_recv().is_err(), "no close frame");
+        let mut keys: Vec<u32> = routes.keys().copied().collect();
+        keys.sort();
+        assert_eq!(keys, vec![4, 5]);
     }
 
     /// A request that waits on its body is judged again when it is
-    /// dispatched: m-1 stopping taking A2A calls from p-1 meanwhile has it
-    /// refused (412 `lapsed`), not served.
+    /// dispatched: m-1's renewal pause naming p-1 meanwhile has it refused
+    /// (412 `lapsed`), not served.
     #[tokio::test]
     async fn an_a2a_proxys_request_is_judged_again_when_it_is_dispatched() {
         let (addr, heads) = loopback_server().await;
@@ -3412,7 +3388,14 @@ mod tests {
         let call = br#"{"jsonrpc":"2.0","id":1,"method":"ListTasks","params":{}}"#;
         let held = tokio::spawn(async move { rpc_held(&on_proxy, "POST", "/a2a/agents/main/jsonrpc", call, Duration::from_millis(300)).await });
         tokio::time::sleep(Duration::from_millis(100)).await;
-        take(&mut a, no_a2a_calls());
+        take(
+            &mut a,
+            vec![Action::RenewalPause {
+                op: [0x77; 16],
+                phase: droppen_proto::chain::PausePhase::Start,
+                removals: vec![("m-1".into(), vec!["p-1".into()])],
+            }],
+        );
         let (status, body) = held.await.unwrap().expect("answered");
         assert_eq!((status, body["reason"].as_str()), (412, Some("lapsed")));
         assert!(heads.lock().unwrap().is_empty(), "nothing reached the server");

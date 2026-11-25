@@ -471,11 +471,9 @@ async fn unenrolling_keeps_an_undelivered_dispute_statement() {
 
 /// `docs/a2a.md` §7.3, this server's side end to end short of the channel:
 /// the running link's verified chain decides which A2A proxies the A2A server
-/// takes (`a2a_backend::LinkDevices`), and lists them with their
-/// fingerprints; the chain moving so that this device no longer takes calls
-/// from one (`SetA2aAccept`, then its key epoch) takes back its tasks there,
-/// through the link's chain-change signal; with the link stopped, no proxy
-/// is taken at all.
+/// takes (`a2a_backend::LinkDevices`) — every current one, the host's old
+/// `SetA2aAccept` list notwithstanding — and lists them with their
+/// fingerprints; with the link stopped, no proxy is taken at all.
 #[tokio::test]
 async fn the_links_chain_decides_which_a2a_proxies_the_a2a_server_takes() {
     use droppen_a2a::backend::event_channel;
@@ -542,15 +540,21 @@ async fn the_links_chain_decides_which_a2a_proxies_the_a2a_server_takes() {
     control.attach(link_env(&paths));
     assert!(control.start_if_enrolled().await);
     assert!(control.takes_a2a_calls_from("p-1"));
-    assert!(!control.takes_a2a_calls_from("p-2"), "m-1 takes no calls from p-2");
+    assert!(control.takes_a2a_calls_from("p-2"), "no list is needed");
     assert!(!control.takes_a2a_calls_from("d-1"), "an admin is no A2A proxy");
-    let p1 = proxy(11);
+    let (p1, p2) = (proxy(11), proxy(12));
     assert_eq!(
         control.a2a_callers(),
-        [(
-            "p-1".to_string(),
-            droppen_proto::identity::device_fingerprint_text(&p1.sign_public(), &p1.dh_public())
-        )]
+        [
+            (
+                "p-1".to_string(),
+                droppen_proto::identity::device_fingerprint_text(&p1.sign_public(), &p1.dh_public())
+            ),
+            (
+                "p-2".to_string(),
+                droppen_proto::identity::device_fingerprint_text(&p2.sign_public(), &p2.dh_public())
+            ),
+        ]
     );
 
     // The A2A server, over a fake backend, asking the link.
@@ -566,9 +570,10 @@ async fn the_links_chain_decides_which_a2a_proxies_the_a2a_server_takes() {
         settings,
         tokio_util::sync::CancellationToken::new(),
     );
-    let entry = json!({"id": "main", "name": "Main", "source": "claude", "cwd": "/work", "enabled": true, "isolation": "none", "allowedDevices": ["p-1", "p-2"]});
+    // No allowedDevices: every proxy of the account.
+    let entry = json!({"id": "main", "name": "Main", "source": "claude", "cwd": "/work", "enabled": true, "isolation": "none"});
     a2a.create_entry(serde_json::from_value(entry).unwrap()).await.unwrap();
-    assert_eq!(a2a.admitted_devices().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["p-1"]);
+    assert_eq!(a2a.admitted_devices().iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["p-1", "p-2"]);
     let mut router = droppen_a2a::protocol::router(a2a.clone());
     /// One `SendMessage` from A2A proxy `device`, bridged in: the status and answer.
     async fn send_as(router: &mut gotcha::axum::Router, device: &str, id: &str) -> (u16, Value) {
@@ -594,9 +599,10 @@ async fn the_links_chain_decides_which_a2a_proxies_the_a2a_server_takes() {
     let (status, answer) = send_as(&mut router, "p-1", "m-1").await;
     assert_eq!(status, 200, "{answer}");
     let task = answer["result"]["task"]["id"].as_str().expect("a task").to_string();
-    assert_eq!(send_as(&mut router, "p-2", "m-2").await.0, 401, "the chain does not admit p-2");
+    assert_eq!(send_as(&mut router, "p-2", "m-2").await.0, 200, "an unlisted proxy is taken too");
 
-    // The chain moves: m-1 takes A2A calls from no proxy, and turns its key over.
+    // The chain moves: m-1's old accept list empties, and it turns its key
+    // over — the task goes on, calls do not depend on the list.
     let narrowed = vec![
         sign(
             &mut chain,
@@ -620,27 +626,11 @@ async fn the_links_chain_decides_which_a2a_proxies_the_a2a_server_takes() {
         ),
     ];
     assert!(control.running_link().as_ref().unwrap().take_entries(&narrowed));
-    assert!(!control.takes_a2a_calls_from("p-1"));
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while a2a.store().task(&task).unwrap().state != droppen_a2a::wire::TaskState::Canceled {
-        assert!(std::time::Instant::now() < deadline, "the chain change takes back p-1's task");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let code = a2a.store().task(&task).unwrap().status_message.unwrap().metadata.unwrap()["errorInfo"]["metadata"]["code"].clone();
-    assert_eq!(code, "droppen.revoked");
-    assert_eq!(send_as(&mut router, "p-1", "m-3").await.0, 401, "nor is it taken again");
-    assert!(a2a.admitted_devices().is_empty());
-
-    // Taken again, then the link stops: none.
-    let widened = vec![sign(
-        &mut chain,
-        Action::SetA2aAccept {
-            host: "m-1".into(),
-            devices: vec!["p-1".into()],
-        },
-    )];
-    assert!(control.running_link().as_ref().unwrap().take_entries(&widened));
     assert!(control.takes_a2a_calls_from("p-1"));
+    assert_eq!(send_as(&mut router, "p-1", "m-3").await.0, 200, "still taken with an empty list");
+    assert_eq!(a2a.store().task(&task).unwrap().state, droppen_a2a::wire::TaskState::Submitted);
+
+    // The link stops: none.
     control.stop().await;
     assert!(!control.takes_a2a_calls_from("p-1"), "no running link, no proxy");
     assert!(control.a2a_callers().is_empty());

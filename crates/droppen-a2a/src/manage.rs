@@ -233,10 +233,11 @@ impl A2a {
             return Err(bad(format!("maxConcurrent is 1 to {MAX_CONCURRENT}")));
         }
         // §6: an A2A proxy is somebody else's agent; it never drives a CLI
-        // whose guard rails are off.
-        if !entry.allowed_devices.is_empty() && is_bypass(entry.permission.0.as_deref()) {
+        // whose guard rails are off. An empty list is every proxy, so a
+        // bypass entry has to name the proxies it takes.
+        if is_bypass(entry.permission.0.as_deref()) && entry.allowed_devices.is_empty() {
             return Err(bad(format!(
-                "an entry with allowedDevices cannot run in a bypass permission mode ({})",
+                "a bypass permission mode ({}) must name its allowedDevices: an empty list is every A2A proxy",
                 BYPASS_PERMISSIONS.join(", ")
             )));
         }

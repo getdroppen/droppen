@@ -363,17 +363,18 @@ fn a4_set_a2a_accept_is_an_admins_for_a_host_naming_current_proxies() {
     }
 }
 
-/// `may_call_a2a`: a current A2A proxy, a current host, and the host's list
-/// names it. Nobody else — not an admin, not a host, not a plain device.
+/// `may_call_a2a`: a current A2A proxy calls any current host. Nobody else —
+/// not an admin, not a host, not a plain device — and the old accept lists
+/// no longer gate calls.
 #[test]
-fn a5_only_a_listed_proxy_may_call_a_hosts_a2a() {
+fn a5_an_a2a_proxy_may_call_every_current_host() {
     let f = fixture();
     let (state, _) = with_proxies(&f);
     state.may_call_a2a("a-1", "m-1").unwrap();
     state.may_call_a2a("a-1", "h-2").unwrap();
     state.may_call_a2a("a-2", "h-2").unwrap();
+    state.may_call_a2a("a-2", "m-1").unwrap();
     for (d, host) in [
-        ("a-2", "m-1"),
         ("dev-0", "m-1"),
         ("dev-2", "m-1"),
         ("h-2", "m-1"),
@@ -389,10 +390,10 @@ fn a5_only_a_listed_proxy_may_call_a_hosts_a2a() {
     assert!(matches!(state.may_call_a2a("nobody", "m-1"), Err(ChainError::UnknownDevice(_))));
     let ids = |it: Vec<&DeviceRecord>| it.into_iter().map(|d| d.info.id.clone()).collect::<Vec<_>>();
     assert_eq!(ids(state.hosts_accepting_a2a("a-1").collect()), ["h-2", "m-1"]);
-    assert_eq!(ids(state.hosts_accepting_a2a("a-2").collect()), ["h-2"]);
+    assert_eq!(ids(state.hosts_accepting_a2a("a-2").collect()), ["h-2", "m-1"]);
     assert!(state.hosts_accepting_a2a("dev-0").next().is_none());
-    // A host that stops running AI takes no A2A call, and its list goes with
-    // it: running AI again starts from none.
+    // A host that stops running AI takes no A2A call; running AI again takes
+    // calls at once, its list being empty notwithstanding.
     let k0 = &f.devices[0].0;
     let mut s = state.clone();
     push(
@@ -419,7 +420,7 @@ fn a5_only_a_listed_proxy_may_call_a_hosts_a2a() {
     .unwrap();
     push(&mut s, by0(), k0, Action::KeyEpochs(mk_commit("h-2", 1, &[0x23; 32]))).unwrap();
     assert!(s.a2a_accept("h-2").is_empty());
-    assert!(s.may_call_a2a("a-1", "h-2").is_err());
+    s.may_call_a2a("a-1", "h-2").unwrap();
     s.may_call_a2a("a-1", "m-1").unwrap();
 }
 
