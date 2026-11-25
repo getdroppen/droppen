@@ -40,6 +40,9 @@ use tokio_util::sync::CancellationToken;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef-e2e";
 const SECS: Duration = Duration::from_secs(10);
+/// The least time between two chain syncs the proxy's requests ask for
+/// (`droppen_a2a_proxy::upstream`).
+const SYNC_EVERY: Duration = Duration::from_secs(5);
 /// What [`Events::next`] says when nothing came within [`SECS`].
 const NO_EVENT: &str = "no event within 10 s";
 
@@ -585,10 +588,12 @@ async fn a_host_that_stops_taking_the_proxy_and_its_removal_are_answered_from_th
     assert_eq!(answer["id"], "rpc-2");
     assert_eq!(code_of(&answer), "droppen.not_accepted", "{answer}");
 
-    // Removed from the account: device_removed.
+    // Removed from the account: device_removed, once the proxy synced its
+    // chain again (a refused request syncs it, at most every 5 s).
     e2e.append(vec![Action::RemoveDevice3(support::PROXY.into())]);
+    let deadline = tokio::time::Instant::now() + SYNC_EVERY + SECS;
     let mut code = String::new();
-    for _ in 0..50 {
+    while tokio::time::Instant::now() < deadline {
         let response = e2e.rest(reqwest::Method::GET, "tasks", None).send().await.unwrap();
         code = code_of(&response.json::<Value>().await.unwrap());
         if code == "droppen.device_removed" {
