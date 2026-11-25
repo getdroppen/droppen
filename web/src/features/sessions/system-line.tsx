@@ -58,7 +58,9 @@ export function SystemLine({
   // grey because the transcript happened to still hold its launch would be the
   // interface hiding the one thing it is for.
   const tone = !item.background
-    ? "text-faint"
+    ? item.isError
+      ? "text-danger"
+      : "text-faint"
     : status === "failed"
       ? "text-danger"
       : status === "stopped"
