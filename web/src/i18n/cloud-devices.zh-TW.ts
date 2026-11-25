@@ -823,6 +823,7 @@ export const cloudDevicesZhTW: Record<string, string> = {
   "Now remove {{variable}} from the proxy's service: it has joined, and the code should not stay where others can read it.": "現在把 {{variable}} 從代理的服務裡刪掉：它已經加入，碼不該留在別人讀得到的地方。",
   "{{hosts}} take its calls. On each, allow it on an A2A entry in that device's A2A settings.": "{{hosts}} 接受它的呼叫。請在每台裝置的 A2A 設定裡，在一個 A2A 入口上允許它。",
   "No device takes its calls yet: choose them on its row.": "還沒有裝置接受它的呼叫：在它那一列裡選擇。",
+  "Every device of the account may call it. On the device you want to use, allow it on an A2A entry in that device's A2A settings.": "帳號裡的每台裝置都能呼叫它。在要用的那台裝置上，把它的 A2A 入口允許這台代理。",
   "Upgrade the account first: an A2A proxy needs chain v3.": "請先升級帳戶：A2A 代理需要鏈 v3。",
   "Not available yet: the hub does not take A2A proxies for this account yet — that is on Droppen's side, not your devices'.": "暫不可用：hub 還不接受這個帳戶的 A2A 代理——這是 Droppen 這邊的事，與你的裝置無關。",
   "Update Droppen on {{hosts}} first.": "請先更新 {{hosts}} 上的 Droppen。",

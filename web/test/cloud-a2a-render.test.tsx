@@ -10,7 +10,7 @@
 import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { A2aAcceptPanel, A2aStepView, type A2aAddState, A2A_PROXY_DOCS_URL } from "../src/features/cloud/add-a2a-proxy.js";
+import { A2aStepView, type A2aAddState, A2A_PROXY_DOCS_URL } from "../src/features/cloud/add-a2a-proxy.js";
 import { DeviceRow, type DeviceRowView, rowMenuItems } from "../src/features/cloud/device-row.js";
 import { AddChooser, DevicesPanel, HostControl } from "../src/features/cloud/devices.js";
 import { deviceFingerprint, type CloudAccount } from "../src/lib/hub/account.js";
@@ -64,7 +64,7 @@ const rowOf = (tree: El[], id: string): El => {
 };
 const itemsOf = (row: El) => rowMenuItems(row.props.view as DeviceRowView, { ...(row.props as Parameters<typeof rowMenuItems>[1]), t: i18n.getFixedT("en") });
 
-test("an A2A proxy's row: its badge, never “make it a full device” nor keys to re-send; its menu changes who takes its calls", async () => {
+test("an A2A proxy's row: its badge, never “make it a full device” nor keys to re-send", async () => {
   const { props, calls } = await withProxy();
   const page = drive(DevicesPanel, props, []);
   const row = rowOf(page.tree, "a-1");
@@ -73,30 +73,16 @@ test("an A2A proxy's row: its badge, never “make it a full device” nor keys 
   assert.equal(view.limited, null, "never a limited device to promote");
   assert.equal(view.full, false);
   assert.equal(view.host, false);
-  assert.deepEqual(view.a2aHosts, ["m-1"]);
+  assert.deepEqual(view.a2aHosts, ["m-1", "m-2"], "every device: the lists no longer gate");
   assert.equal(view.name, "A2A proxy a-1");
   assert.match(page.html, /data-testid="a2a-a-1"[^>]*>A2A proxy</);
   assert.doesNotMatch(page.html, /data-testid="limited-a-1"|data-testid="full-a-1"/);
   const ids = itemsOf(row).map((i) => i.id);
-  assert.deepEqual(ids, ["a2a-accept-a-1", "remove-a-1"]);
+  assert.deepEqual(ids, ["remove-a-1"]);
   assert.ok(!ids.includes("promote-a-1") && !ids.includes("resend-a-1") && !ids.includes("control-a-1"));
   // A host's details say which A2A proxies may call it.
   assert.deepEqual((rowOf(page.tree, "m-1").props.view as DeviceRowView).a2aProxies, ["a-1"]);
-  assert.deepEqual((rowOf(page.tree, "m-2").props.view as DeviceRowView).a2aProxies, []);
-  // Its menu opens the panel; saving changes the hosts through the account (narrowing with a courier).
-  const open = (tree: El[]) => (rowOf(tree, "a-1").props.onA2aAccept as () => void)();
-  const opened = drive(DevicesPanel, props, [open]);
-  assert.match(opened.html, /data-testid="a2a-accept-a-1"/);
-  const panel = opened.tree.find((e) => e.type === A2aAcceptPanel);
-  assert.ok(panel);
-  assert.deepEqual(panel.props.accepted, ["m-1"]);
-  assert.deepEqual(
-    (panel.props.hosts as { id: string }[]).map((h) => h.id),
-    ["m-1", "m-2"],
-  );
-  drive(DevicesPanel, props, [open, (tree) => (tree.find((e) => e.type === A2aAcceptPanel)!.props.onSave as (p: string[]) => void)(["m-2"])]);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(calls, [["setA2aHosts", "a-1", ["m-2"]]]);
+  assert.deepEqual((rowOf(page.tree, "m-2").props.view as DeviceRowView).a2aProxies, ["a-1"]);
   // Its removal is the row's usual one, with the exposure it leaves said: m-1 took its calls.
   const removing = drive(DevicesPanel, props, [(tree) => (rowOf(tree, "a-1").props.onRemove as () => void)()]);
   assert.match(removing.html, /data-testid="remove-a2a-exposed"/);
@@ -110,7 +96,7 @@ test("an A2A proxy's row: its badge, never “make it a full device” nor keys 
 
 test("a row and its details, as drawn: the badge, what an A2A proxy is, and who takes its calls; a host's A2A proxies", () => {
   const base: DeviceRowView = { id: "a-1", fingerprint: "ABCD-EFGH-IJKL-MNOP", name: "A2A proxy a-1", self: false, kind: "a2a", status: "active", host: false, stoppedHost: false, presence: null, path: null, copyAsOf: null, lastSeenMs: null, limited: null, accept: null };
-  const html = draw(<DeviceRow view={{ ...base, a2aHosts: ["m-1", "m-2"] }} viewerAdmin upgraded writable onRemove={noop} onA2aAccept={noop} onResend={noop} onPromote={noop} />);
+  const html = draw(<DeviceRow view={{ ...base, a2aHosts: ["m-1", "m-2"] }} viewerAdmin upgraded writable onRemove={noop} onResend={noop} onPromote={noop} />);
   assert.match(html, /data-testid="a2a-a-1"/);
   assert.ok(html.includes("It controls no device and holds none of your keys."));
   assert.ok(html.includes("devices that take its calls") && html.includes("m-1, m-2"));
@@ -120,9 +106,6 @@ test("a row and its details, as drawn: the badge, what an A2A proxy is, and who 
   assert.doesNotMatch(zh, /机器|电脑/);
   const host = draw(<DeviceRow view={{ ...base, id: "m-1", name: "Mac mini", kind: "computer", host: true, a2aProxies: ["a-1"] }} viewerAdmin upgraded writable />);
   assert.ok(host.includes("A2A proxies") && host.includes(">a-1<"));
-  // Not upgraded: the menu item says why it cannot move.
-  const blocked = rowMenuItems({ ...base, a2aHosts: [] }, { viewerAdmin: true, upgraded: false, writable: false, t: i18n.getFixedT("en"), onA2aAccept: noop });
-  assert.equal(blocked.find((i) => i.id === "a2a-accept-a-1")?.blocked, "upgrade the account first");
 });
 
 test("「添加设备」 offers an A2A proxy, below the two kinds of device", () => {
@@ -134,7 +117,7 @@ test("「添加设备」 offers an A2A proxy, below the two kinds of device", ()
 });
 
 const steps = (state: A2aAddState, extra: Partial<Parameters<typeof A2aStepView>[0]> = {}, lng = "en") =>
-  draw(<A2aStepView state={state} hosts={[{ id: "m-1", name: "Mac mini" }, { id: "m-2", name: null }]} onCheck={noop} onAdd={noop} onNewCode={noop} onDone={noop} {...extra} />, lng);
+  draw(<A2aStepView state={state} onCheck={noop} onNewCode={noop} onDone={noop} {...extra} />, lng);
 
 test("the code step: DROPPEN_ENROLL_CODE on the proxy's own service only, gone once it joined, the docs, and the time left", () => {
   const code = generateA2aEnrollCode(new Uint8Array(16).fill(7));
@@ -167,16 +150,10 @@ test("the fingerprint is asked for, never shown; what is no fingerprint is said;
   assert.match(aborted, /data-testid="a2a-new-code"/);
 });
 
-test("choosing the devices: none picked to start with, what a call can do, and the add", () => {
-  const code = generateA2aEnrollCode(new Uint8Array(16).fill(7));
-  const html = steps({ kind: "choose", claim: { code, device: "a-1", signKey: new Uint8Array(32), dhKey: new Uint8Array(32) }, pasted: "x" });
-  assert.match(html, /data-testid="a2a-choose"/);
-  assert.ok(html.includes("Mac mini") && html.includes("m-2"));
-  assert.doesNotMatch(html, /aria-checked="true"|data-checked=""/, "nothing picked for the person");
-  assert.ok(html.includes("can read any file that user can"));
-  assert.match(html, /data-testid="a2a-add"/);
-  const done = steps({ kind: "done", device: "a-1", hosts: ["m-1"] });
+test("added: the code is removed again, and every device of the account may call it", () => {
+  const done = steps({ kind: "done", device: "a-1" });
   assert.match(done, /data-testid="a2a-remove-code"[^>]*>Now remove DROPPEN_ENROLL_CODE from the proxy&#x27;s service/);
+  assert.ok(done.includes("Every device of the account may call it"));
 });
 
 test("the upgrade gate: the devices that run AI to update first are named, with why — and no code is made", () => {
@@ -189,29 +166,4 @@ test("the upgrade gate: the devices that run AI to update first are named, with 
   assert.ok(steps({ kind: "blocked", block: { kind: "hub" } }).includes("the hub does not take A2A proxies for this account yet"));
   assert.ok(steps({ kind: "blocked", block: { kind: "notUpgraded" } }).includes("an A2A proxy needs chain v3"));
   assert.ok(steps({ kind: "blocked", block: { kind: "devices", hosts: ["m-1"] } }, {}, "ja").includes("先に m-1 の Droppen を更新してください"));
-});
-
-test("changing who takes its calls: a device taken off is said to get a new content key, before it is saved", () => {
-  const hosts = [
-    { id: "m-1", name: null },
-    { id: "m-2", name: null },
-  ];
-  const same = draw(<A2aAcceptPanel proxy="a-1" hosts={hosts} accepted={["m-1"]} busy={false} onSave={noop} onCancel={noop} />);
-  assert.match(same, /data-testid="a2a-accept-save-a-1"[^>]*disabled=""/, "nothing changed: nothing to save");
-  assert.doesNotMatch(same, /a2a-accept-narrowing/);
-  // m-2 taken off (its box cleared): said before the save, whose label says the keys turn over.
-  const pick = (next: string[]) => (tree: El[]) => (tree.find((e) => "picked" in e.props && "onChange" in e.props)!.props.onChange as (s: Set<string>) => void)(new Set(next));
-  const props = { proxy: "a-1", hosts, accepted: ["m-1", "m-2"], busy: false, onSave: noop, onCancel: noop };
-  const narrowed = drive(A2aAcceptPanel, props, [pick(["m-1"])]);
-  assert.match(narrowed.html, /data-testid="a2a-accept-narrowing"[^>]*>m-2 stop taking its calls and are treated as exposed/);
-  assert.ok(narrowed.html.includes("They get a new content key now and renew their identity key after it"));
-  assert.ok(narrowed.html.includes("save and rotate their keys"));
-  // Which devices then renew their identity key on their own, as the account works it out.
-  const renewing = drive(A2aAcceptPanel, { ...props, renewsIfNarrowed: (dropped: string[]) => [...dropped, "m-3"] }, [pick(["m-1"])]);
-  assert.match(renewing.html, /data-testid="renewals-ahead"[^>]*>2 devices that run AI will renew their identity key automatically/);
-  assert.ok(renewing.html.includes("m-2, m-3"));
-  const widened = drive(A2aAcceptPanel, props, [pick(["m-1", "m-2", "m-3"])]);
-  assert.doesNotMatch(widened.html, /a2a-accept-narrowing/, "adding one hands nothing over");
-  const zh = drive(A2aAcceptPanel, props, [pick([])], "zh-CN");
-  assert.ok(zh.html.includes("m-1, m-2 不再接受它的调用，并被当作已暴露"));
 });

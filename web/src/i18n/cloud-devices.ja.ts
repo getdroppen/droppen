@@ -823,6 +823,7 @@ export const cloudDevicesJa: Record<string, string> = {
   "Now remove {{variable}} from the proxy's service: it has joined, and the code should not stay where others can read it.": "プロキシのサービスから {{variable}} を削除してください：参加は済んでおり、コードをほかの人が読める場所に残すべきではありません。",
   "{{hosts}} take its calls. On each, allow it on an A2A entry in that device's A2A settings.": "{{hosts}} がこのプロキシからの呼び出しを受け付けます。各デバイスの A2A 設定で、A2A エントリにこのプロキシを許可してください。",
   "No device takes its calls yet: choose them on its row.": "まだどのデバイスも呼び出しを受け付けていません：このプロキシの行で選んでください。",
+  "Every device of the account may call it. On the device you want to use, allow it on an A2A entry in that device's A2A settings.": "アカウントのどのデバイスもこれを呼び出せます。使うデバイスで、そのデバイスの A2A エントリでこのプロキシを許可してください。",
   "Upgrade the account first: an A2A proxy needs chain v3.": "先にアカウントをアップグレードしてください：A2A プロキシにはチェーン v3 が必要です。",
   "Not available yet: the hub does not take A2A proxies for this account yet — that is on Droppen's side, not your devices'.": "まだ使えません：hub がこのアカウントの A2A プロキシをまだ受け付けていません。原因は Droppen 側にあり、あなたのデバイスではありません。",
   "Update Droppen on {{hosts}} first.": "先に {{hosts}} の Droppen を更新してください。",

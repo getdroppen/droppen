@@ -245,7 +245,7 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
       const r = devs.get(d);
       return !!r && r.active && !r.a2a && d !== host && (r.admin || acceptNames(policy(host), d, r.a2a));
     },
-    callsA2a: (d, host) => !!devs.get(d)?.active && !!a2aLists.get(host)?.includes(d),
+    callsA2a: (d, host) => { const r = devs.get(d); const h = devs.get(host); return !!r?.active && !!r.a2a && !!h?.active && !!h.host; },
   };
   for (const e of chain.allEntries()) {
     const seq = e.draft.seq;
@@ -296,15 +296,14 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
         break;
       }
       case "setA2aAccept": {
-        // A proxy taken off the list: the host was exposed to it (as the chain rules, its next machine key comes next).
-        for (const p of a2aLists.get(a.host) ?? []) if (!a.devices.includes(p)) hooks.lostA2a?.(replay, seq, p, [a.host]);
+        // A list no longer decides who may call (docs/a2a.md §7.1): moving one loses nothing.
         if (a.devices.length) a2aLists.set(a.host, [...a.devices]);
         else a2aLists.delete(a.host);
         break;
       }
       case "setHost": {
-        // Stopping running AI, its A2A list goes with it: the proxies on it leave it (its identity is the same if it runs AI again).
-        if (!a.host) for (const p of a2aLists.get(a.id) ?? []) hooks.lostA2a?.(replay, seq, p, [a.id]);
+        // Stopping running AI, every proxy leaves it (its identity is the same if it runs AI again).
+        if (!a.host) for (const [p, r] of replay.devs) if (r.active && r.a2a) hooks.lostA2a?.(replay, seq, p, [a.id]);
         const r = devs.get(a.id);
         if (r) r.host = a.host;
         if (!a.host) {
@@ -318,12 +317,15 @@ export function replayChain(chain: ChainState, hooks: ChainReplayHooks): ChainRe
       case "removeMachine":
       case "removeDevice3": {
         hooks.lost(replay, seq, a.id, (h) => replay.could(a.id, h));
-        // A proxy removed off lists: every host that named it was exposed to it. A host removed takes its own list along.
-        const named = [...a2aLists].filter(([, ids]) => ids.includes(a.id)).map(([h]) => h);
-        if (named.length) hooks.lostA2a?.(replay, seq, a.id, named);
+        // A proxy removed: every current host was exposed to it — a list no longer narrows that (docs/a2a.md §7.1).
+        const proxy = replay.devs.get(a.id)?.a2a === true;
+        const lostTo = proxy
+          ? [...replay.devs].filter(([h, r]) => h !== a.id && r.active && r.host).map(([h]) => h)
+          : [...a2aLists].filter(([, ids]) => ids.includes(a.id)).map(([h]) => h);
+        if (lostTo.length) hooks.lostA2a?.(replay, seq, a.id, lostTo);
         a2aLists.delete(a.id);
-        for (const h of named) {
-          const kept = a2aLists.get(h)!.filter((p) => p !== a.id);
+        for (const [h, ids] of [...a2aLists]) {
+          const kept = ids.filter((p) => p !== a.id);
           if (kept.length) a2aLists.set(h, kept);
           else a2aLists.delete(h);
         }

@@ -176,8 +176,6 @@ export interface RowHandlers {
   onRenew?: () => void;
   /** "Remove it, then add it again": the way to a new identity (review D3; for a host that cannot renew, §7 decision 7). */
   onReEnroll?: () => void;
-  /** An A2A proxy: change which devices take its calls (docs/a2a.md §7.2). */
-  onA2aAccept?: () => void;
 }
 
 /**
@@ -224,10 +222,6 @@ export function rowMenuItems(
     if (view.host) add({ id: `rename-${id}`, label: t("rename device"), blocked: offline, onSelect: ctx.onRename });
     if (view.host) {
       add({ id: `control-${id}`, label: t("who can control it"), blocked: upgraded ? held : t("upgrade the account first"), busy, onSelect: ctx.onControl });
-    }
-    // An A2A proxy: which devices take its calls — it controls none, and is never made a full device (no `limited`).
-    if (view.kind === "a2a") {
-      add({ id: `a2a-accept-${id}`, label: t("which devices take its calls"), blocked: upgraded ? held : t("upgrade the account first"), busy, onSelect: ctx.onA2aAccept });
     }
     // Its identity key, renewed now (§4.4) — never ahead of an exposed host it lets control it (§4.1): that one first, said why.
     if (view.host && view.renewable) {
@@ -671,7 +665,6 @@ export function DeviceRow({
   onEndPause,
   onRenewRetry,
   onAddComputer,
-  onA2aAccept,
   notes,
   keys,
   children,
@@ -714,7 +707,7 @@ export function DeviceRow({
   const { t } = useTranslation();
   const { id, status } = view;
   const Icon = ICONS[view.kind];
-  const items = rowMenuItems(view, { viewerAdmin, upgraded, writable, busy, held, resending, t, onPromote, onRemove, onHost, onControl, onRename, onTerminal, onResend, onRenew, onReEnroll, onA2aAccept });
+  const items = rowMenuItems(view, { viewerAdmin, upgraded, writable, busy, held, resending, t, onPromote, onRemove, onHost, onControl, onRename, onTerminal, onResend, onRenew, onReEnroll });
   const lines = view.reEnroll && view.reEnroll.length > 0 && viewerAdmin && status === "active" ? view.reEnroll : null;
   const openWarnings = !!lines?.some((l) => !l.dismissed);
   const removed = status === "removed";

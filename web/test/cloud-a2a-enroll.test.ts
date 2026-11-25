@@ -68,7 +68,7 @@ test("only a full device of an upgraded account makes one: refused before anythi
   );
 });
 
-test("a claim with a valid proof, and the right fingerprint pasted: one batch adds the proxy and the hosts that take its calls, with no key", async () => {
+test("a claim with a valid proof, and the right fingerprint pasted: one append adds the proxy, with no key and no host list", async () => {
   const { hub, a } = await account({ other: true });
   const { code } = await a.startA2aEnrollment();
   const proxy = await hub.claimA2a(a, code, { id: "a-1" });
@@ -79,28 +79,16 @@ test("a claim with a valid proof, and the right fingerprint pasted: one batch ad
   const posts = hub.chainPosts;
   const keyring = hub.keys.size;
   // Pasted as the log line says it, lower case: read the same.
-  const added = await a.addA2aProxy(claim, `INFO waiting to be added to the account device=a-1 fingerprint=${fp.toLowerCase()}`, ["m-2", "m-1", "m-1"]);
-  assert.deepEqual(added, { device: "a-1", hosts: ["m-1", "m-2"] });
+  const added = await a.addA2aProxy(claim, `INFO waiting to be added to the account device=a-1 fingerprint=${fp.toLowerCase()}`);
+  assert.deepEqual(added, { device: "a-1" });
   assert.equal(hub.chainPosts, posts + 1, "one append");
   const entries = a.chain!.allEntries().slice(seq + 1).map((e) => e.draft.action);
-  assert.deepEqual(
-    entries.map((x) => x.type),
-    ["addDevice3", "setA2aAccept", "setA2aAccept"],
-    "no keyEpochs: a host that takes more A2A calls owes no key epoch",
-  );
+  assert.deepEqual(entries.map((x) => x.type), ["addDevice3"], "no list, no keyEpochs: every host may call it");
   const join = entries[0]!;
   assert.ok(join.type === "addDevice3");
   assert.deepEqual(join.device.flags, { host: false, admin: false, a2a: true }, "an A2A proxy, by this page's own record of the code");
   assert.equal(hex(join.device.signKey), hex(proxy.signKey));
   assert.equal(hex(join.device.dhKey), hex(proxy.dhKey));
-  assert.deepEqual(
-    entries.slice(1).map((x) => (x.type === "setA2aAccept" ? [x.host, x.devices] : null)),
-    [
-      ["m-1", ["a-1"]],
-      ["m-2", ["a-0", "a-1"]],
-    ],
-    "each host's list as it was, and the proxy, ascending",
-  );
   const chain = a.chain!;
   assert.equal(chain.device("a-1")?.a2a, true);
   assert.deepEqual(a2aHostsOf(chain, "a-1").sort(), ["m-1", "m-2"]);
@@ -114,7 +102,7 @@ test("a claim with a valid proof, and the right fingerprint pasted: one batch ad
   assert.ok(!hub.mailLog.some((m) => m.recipient === "a-1"));
   assert.equal(hub.keys.size, keyring, "no keyring blob was written");
   // The code is spent here: it adds nothing again.
-  await assert.rejects(a.addA2aProxy(claim, fp, []), refused("proof"));
+  await assert.rejects(a.addA2aProxy(claim, fp), refused("proof"));
 });
 
 test("a fingerprint that is not the claimer's adds nothing, and the code is given up on", async () => {
@@ -126,9 +114,9 @@ test("a fingerprint that is not the claimer's adds nothing, and the code is give
   const wrong = await deviceFingerprint(other.signPublic, other.dhPublic);
   const seq = a.chain!.seq;
   const posts = hub.chainPosts;
-  await assert.rejects(a.addA2aProxy(claim, wrong, ["m-1"]), refused("fingerprintMismatch"));
+  await assert.rejects(a.addA2aProxy(claim, wrong), refused("fingerprintMismatch"));
   // Not a retry with another paste either: the right one is refused now too.
-  await assert.rejects(a.addA2aProxy(claim, await deviceFingerprint(proxy.signKey, proxy.dhKey), ["m-1"]), refused("proof"));
+  await assert.rejects(a.addA2aProxy(claim, await deviceFingerprint(proxy.signKey, proxy.dhKey)), refused("proof"));
   assert.equal(a.chain!.seq, seq, "nothing signed");
   assert.equal(hub.chainPosts, posts, "nothing posted");
   assert.equal(a.chain!.device(proxy.id), undefined);
@@ -198,7 +186,7 @@ test("editing who takes its calls: a widening is setA2aAccept alone; a narrowing
   const { hub, a } = await account();
   const { code } = await a.startA2aEnrollment();
   const proxy = await hub.claimA2a(a, code, { id: "a-1" });
-  await a.addA2aProxy(await a.awaitA2aClaim(code, undefined, 1), await deviceFingerprint(proxy.signKey, proxy.dhKey), ["m-1"]);
+  await a.addA2aProxy(await a.awaitA2aClaim(code, undefined, 1), await deviceFingerprint(proxy.signKey, proxy.dhKey));
   const courier = new FakeCourier();
   const entriesOf = async (work: () => Promise<unknown>) => {
     const seq = a.chain!.seq;
@@ -206,15 +194,19 @@ test("editing who takes its calls: a widening is setA2aAccept alone; a narrowing
     await work();
     return { actions: a.chain!.allEntries().slice(seq + 1).map((e) => e.draft.action), posts: hub.chainPosts - posts };
   };
-  // Widening: m-2 takes its calls too — one entry, no key epoch, nothing handed over.
-  const wide = await entriesOf(async () => assert.deepEqual(await a.setA2aHosts("a-1", ["m-1", "m-2"], courier), { widened: ["m-2"], narrowed: [] }));
-  assert.equal(wide.posts, 1);
+  // Widening: both lists get the proxy (the add writes none) — no key epoch, nothing handed over.
+  const wide = await entriesOf(async () => assert.deepEqual(await a.setA2aHosts("a-1", ["m-1", "m-2"], courier), { widened: ["m-1", "m-2"], narrowed: [] }));
+  assert.equal(wide.posts, 2, "a list per host");
   assert.deepEqual(
     wide.actions.map((x) => (x.type === "setA2aAccept" ? [x.type, x.host, x.devices] : [x.type])),
-    [["setA2aAccept", "m-2", ["a-1"]]],
+    [
+      ["setA2aAccept", "m-1", ["a-1"]],
+      ["setA2aAccept", "m-2", ["a-1"]],
+    ],
   );
   assert.deepEqual(courier.posted.concat(courier.mailed as never[]), []);
   // Narrowing: m-1 stops — its list without the proxy, then m-1's next machine key epoch, in one append, the key handed to m-1.
+  console.log("lists after widen", a.chain!.a2aAccept("m-1"), a.chain!.a2aAccept("m-2"));
   const epoch = a.chain!.latestMachineEpoch("m-1")!;
   let change: Awaited<ReturnType<typeof a.setA2aHosts>> | null = null;
   const narrow = await entriesOf(async () => void (change = await a.setA2aHosts("a-1", ["m-2"], courier)));
@@ -230,7 +222,7 @@ test("editing who takes its calls: a widening is setA2aAccept alone; a narrowing
   assert.equal(change!.narrowed[0]?.mkEpoch, epoch + 1);
   assert.deepEqual(change!.widened, []);
   assert.ok([...courier.posted, ...courier.mailed].some((k) => k.machine === "m-1" && k.epoch === epoch + 1), "the new key reached m-1");
-  assert.throws(() => a.chain!.mayCallA2a("a-1", "m-1"));
+  assert.doesNotThrow(() => a.chain!.mayCallA2a("a-1", "m-1"), "the list no longer gates");
   assert.doesNotThrow(() => a.chain!.mayCallA2a("a-1", "m-2"));
   // Still never a key for the proxy.
   assert.ok(!hub.mailLog.some((m) => m.recipient === "a-1"));

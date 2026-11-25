@@ -2003,7 +2003,7 @@ export class CloudAccount {
    * added as — an A2A proxy — is this page's own record of the code, whatever
    * the hub said the enrollment was.
    */
-  async addA2aProxy(claim: A2aClaim, pasted: string, hosts: readonly string[]): Promise<{ device: string; hosts: string[] }> {
+  async addA2aProxy(claim: A2aClaim, pasted: string): Promise<{ device: string }> {
     const chain = this.requireAdmin();
     this.requireUpgraded(chain);
     const key = await this.a2aRecord(claim.code);
@@ -2014,20 +2014,15 @@ export class CloudAccount {
         "the fingerprint you pasted is not the one of the device that claimed the code: it was not added. Someone else may hold the code; make a new one",
       );
     }
-    const named = [...new Set(hosts)].sort((a, b) => compareBytes(utf8(a), utf8(b)));
-    for (const host of named) {
-      if (!chain.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
-    }
     const device = claim.device;
-    await this.appendBatch(async (base) => [
+    // No `setA2aAccept`: a proxy in the account calls every host (docs/a2a.md
+    // §7.1); the old lists are only what the page shows.
+    await this.appendBatch(async () => [
       { type: "addDevice3", device: { id: device, signKey: claim.signKey, dhKey: claim.dhKey, flags: { host: false, admin: false, a2a: true } } },
-      ...named.map(
-        (host): Action => ({ type: "setA2aAccept", host, devices: [...new Set([...base.a2aAccept(host), device])].sort((a, b) => compareBytes(utf8(a), utf8(b))) }),
-      ),
     ]);
     this.a2aCodes.delete(key);
     this.emit();
-    return { device, hosts: named };
+    return { device };
   }
 
   /**
@@ -2047,15 +2042,18 @@ export class CloudAccount {
     for (const host of wanted) {
       if (!chain.machine(host)) throw new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host });
     }
-    const now = a2aHostsOf(chain, id);
+    const now = chain
+      .allDevices()
+      .filter((d) => d.host && chain.a2aAccept(d.info.id).includes(id))
+      .map((d) => d.info.id);
     const change: A2aHostsChange = { widened: [], narrowed: [] };
     for (const host of now.filter((h) => !wanted.has(h))) {
-      const list = (this.state ?? chain).a2aAccept(host).filter((p) => p !== id);
+      const list = chain.a2aAccept(host).filter((p) => p !== id);
       const done = await this.setA2aAccept(host, list, courier);
       change.narrowed.push({ host, mkEpoch: done.mkEpoch, result: done.result, hostKeysTo: done.hostKeysTo, ...(done.userKey ? { userKey: done.userKey } : {}) });
     }
     for (const host of [...wanted].filter((h) => !now.includes(h)).sort()) {
-      await this.setA2aAccept(host, [...(this.state ?? chain).a2aAccept(host), id], courier);
+      await this.setA2aAccept(host, [...chain.a2aAccept(host), id], courier);
       change.widened.push(host);
     }
     return change;

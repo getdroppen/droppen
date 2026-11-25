@@ -2,7 +2,6 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowSquareOutIcon, ArrowsClockwiseIcon, CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { CapsLabel } from "@/components/ui/caps-label";
-import { CheckboxField } from "@/components/ui/checkbox-field";
 import { cn } from "@/lib/cn";
 import { type A2aEnrollCode, formatA2aEnrollCode } from "@/lib/e2e";
 import { type A2aClaim, AccountError, type A2aUpgradeGate, a2aUpgradeGate, type CloudAccount, deviceFingerprint, fingerprintDigits, sameFingerprint } from "@/lib/hub/account";
@@ -13,7 +12,6 @@ import { DEVICES_KEY, type LimitHit, limitOf } from "@/lib/hub/plan";
 import { useTicker } from "@/lib/ticker";
 import { codeDeadline, codeTimeLeft } from "./add-computer";
 import { LimitNote, useMe } from "./plan";
-import { RenewalsAhead } from "./renewal";
 import { CopyButton, ErrorLine, errorText, field, Note, primary, quiet, secondary } from "./ui";
 
 /*
@@ -28,11 +26,12 @@ import { CopyButton, ErrorLine, errorText, field, Note, primary, quiet, secondar
  * 2. Once a proxy claimed it (the claim checked: `awaitA2aClaim`), the person
  *    pastes the fingerprint from the proxy's log; any other than the
  *    claimer's ends the round — someone else used the code.
- * 3. The devices that take its calls are picked, and one batch adds it
- *    (`addA2aProxy`): no key epoch, no key.
+ * 3. The matching fingerprint adds it (`addA2aProxy`): no key epoch, no key,
+ *    and nothing to choose — every device of the account may call it; an A2A
+ *    entry narrows that where wanted.
  *
- * The A2A proxy's own row then carries its badge and the way to change who
- * takes its calls (`A2aAcceptPanel`); its removal is the row's usual one.
+ * The A2A proxy's own row then carries its badge; its removal is the row's
+ * usual one.
  */
 
 /** How to run and join the proxy (`docs/a2a-proxy.md`). */
@@ -44,12 +43,6 @@ export const ENROLL_CODE_VARIABLE = "DROPPEN_ENROLL_CODE";
 /** Why no code is made: the account is not on chain v3 yet, or the upgrade gate ({@link a2aUpgradeGate}). */
 export type A2aBlock = { kind: "notUpgraded" } | Exclude<A2aUpgradeGate, null>;
 
-/** A device that runs AI, as the steps name it. */
-export interface HostChoice {
-  id: string;
-  name: string | null;
-}
-
 export type A2aAddState =
   | { kind: "starting" }
   | { kind: "blocked"; block: A2aBlock }
@@ -58,9 +51,7 @@ export type A2aAddState =
   | { kind: "waiting"; code: A2aEnrollCode; deadline: number }
   /** A proxy claimed the code and its claim checks out: its fingerprint is asked for. */
   | { kind: "claimed"; claim: A2aClaim }
-  /** The fingerprint matched: the devices that take its calls are picked. */
-  | { kind: "choose"; claim: A2aClaim; pasted: string }
-  | { kind: "done"; device: string; hosts: string[] }
+  | { kind: "done"; device: string }
   | { kind: "expired" }
   /** The round is over and nothing was added: the fingerprint did not match, the code was claimed twice, or its proof failed. */
   | { kind: "aborted"; why: "fingerprint" | "claims" | "proof"; message: string }
@@ -72,12 +63,12 @@ const pad = "px-6 py-5 max-md:px-4";
  * Adding an A2A proxy (see the module docs). Each round is one code; a new
  * one starts everything again.
  */
-export function AddA2aProxy(props: { account: CloudAccount; link: HubLink; hosts: HostChoice[]; onDone: () => void }) {
+export function AddA2aProxy(props: { account: CloudAccount; link: HubLink; onDone: () => void }) {
   const [round, setRound] = useState(0);
   return <AddA2aRound key={round} {...props} onNewCode={() => setRound((n) => n + 1)} />;
 }
 
-function AddA2aRound({ account, link, hosts, onDone, onNewCode }: { account: CloudAccount; link: HubLink; hosts: HostChoice[]; onDone: () => void; onNewCode: () => void }) {
+function AddA2aRound({ account, link, onDone, onNewCode }: { account: CloudAccount; link: HubLink; onDone: () => void; onNewCode: () => void }) {
   const [state, setState] = useState<A2aAddState>({ kind: "starting" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,16 +115,15 @@ function AddA2aRound({ account, link, hosts, onDone, onNewCode }: { account: Clo
       await account.dropA2aCode(state.claim.code);
       return setState({ kind: "aborted", why: "fingerprint", message: "" });
     }
-    setState({ kind: "choose", claim: state.claim, pasted });
+    await add(state.claim, pasted);
   };
-  const add = async (picked: string[]) => {
-    if (state.kind !== "choose") return;
+  const add = async (claim: A2aClaim, pasted: string) => {
     setBusy(true);
     setError(null);
     try {
-      const added = await account.addA2aProxy(state.claim, state.pasted, picked);
+      const added = await account.addA2aProxy(claim, pasted);
       issued.current = null;
-      setState({ kind: "done", device: added.device, hosts: added.hosts });
+      setState({ kind: "done", device: added.device });
       me?.soon();
     } catch (err) {
       const end = endOf(err);
@@ -147,11 +137,9 @@ function AddA2aRound({ account, link, hosts, onDone, onNewCode }: { account: Clo
   return (
     <A2aStepView
       state={state}
-      hosts={hosts}
       busy={busy}
       error={error}
       onCheck={(pasted) => void check(pasted)}
-      onAdd={(picked) => void add(picked)}
       onNewCode={onNewCode}
       onDone={onDone}
     />
@@ -176,23 +164,19 @@ function endOf(err: unknown): Extract<A2aAddState, { kind: "blocked" | "expired"
  */
 export function A2aStepView({
   state,
-  hosts,
   busy = false,
   error = null,
   now,
   onCheck,
-  onAdd,
   onNewCode,
   onDone,
 }: {
   state: A2aAddState;
-  hosts: HostChoice[];
   busy?: boolean;
   /** The step's own failure: `format` (what was pasted is no fingerprint), or a message. */
   error?: string | null;
   now?: number;
   onCheck: (pasted: string) => void;
-  onAdd: (picked: string[]) => void;
   onNewCode: () => void;
   onDone: () => void;
 }) {
@@ -223,8 +207,6 @@ export function A2aStepView({
       return <A2aCodeView state={state} now={now} onNewCode={onNewCode} onCancel={onDone} />;
     case "claimed":
       return <A2aFingerprintStep device={state.claim.device} error={error} onCheck={onCheck} onCancel={onDone} />;
-    case "choose":
-      return <A2aChooseStep hosts={hosts} busy={busy} error={error} onAdd={onAdd} onCancel={onDone} />;
     case "aborted":
       return (
         <div data-testid="a2a-aborted" data-why={state.why} className={pad}>
@@ -261,9 +243,7 @@ export function A2aStepView({
               {t("Now remove {{variable}} from the proxy's service: it has joined, and the code should not stay where others can read it.", { variable: ENROLL_CODE_VARIABLE })}
             </p>
             <p className="text-xs leading-5 text-muted">
-              {state.hosts.length
-                ? t("{{hosts}} take its calls. On each, allow it on an A2A entry in that device's A2A settings.", { hosts: state.hosts.join(", ") })
-                : t("No device takes its calls yet: choose them on its row.")}
+              {t("Every device of the account may call it. On the device you want to use, allow it on an A2A entry in that device's A2A settings.")}
             </p>
             <button type="button" className={cn(quiet, "self-start")} onClick={onDone}>
               {t("done")}
@@ -439,147 +419,5 @@ export function A2aFingerprintStep({ device, error, onCheck, onCancel }: { devic
         </button>
       </div>
     </form>
-  );
-}
-
-/** Which devices that run AI take the proxy's calls: none picked to start with, and what taking them means. */
-export function A2aChooseStep({ hosts, busy, error, onAdd, onCancel }: { hosts: HostChoice[]; busy: boolean; error: string | null; onAdd: (picked: string[]) => void; onCancel: () => void }) {
-  const { t } = useTranslation();
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  return (
-    <div data-testid="a2a-choose" className={cn(pad, "flex max-w-xl flex-col gap-3")}>
-      <span data-signal="ok" className="flex items-center gap-2 font-mono text-xs text-ok">
-        <CheckIcon className="size-3 shrink-0" />
-        {t("the fingerprint matches")}
-      </span>
-      <CapsLabel>{t("03 · which devices take its calls")}</CapsLabel>
-      <A2aHostPicks hosts={hosts} picked={picked} disabled={busy} onChange={setPicked} />
-      <A2aCallsNote />
-      <ErrorLine message={error} />
-      <div className="flex flex-wrap gap-2">
-        <button type="button" data-variant="primary" data-testid="a2a-add" className={primary} disabled={busy} onClick={() => onAdd([...picked])}>
-          {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
-          {t("add the A2A proxy")}
-        </button>
-        <button type="button" className={quiet} disabled={busy} onClick={onCancel}>
-          {t("cancel")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** What taking an A2A proxy's calls means for a device (docs/a2a.md §6), said where it is chosen. */
-function A2aCallsNote() {
-  const { t } = useTranslation();
-  return (
-    <p data-testid="a2a-calls-note" className="text-2xs leading-4 text-fg">
-      {t("An A2A call starts a session on that device as its user: what the session runs can read any file that user can. Each device also needs an A2A entry that allows the proxy, in its own A2A settings.")}
-    </p>
-  );
-}
-
-/** The devices that run AI, each a checkbox. */
-function A2aHostPicks({ hosts, picked, disabled, onChange }: { hosts: HostChoice[]; picked: ReadonlySet<string>; disabled: boolean; onChange: (next: Set<string>) => void }) {
-  const { t } = useTranslation();
-  if (!hosts.length) return <p className="text-2xs text-faint">{t("no device that runs AI in the account yet")}</p>;
-  return (
-    <ul className="flex flex-col gap-1">
-      {hosts.map((h) => (
-        <li key={h.id}>
-          <CheckboxField
-            data-testid={`a2a-host-${h.id}`}
-            disabled={disabled}
-            checked={picked.has(h.id)}
-            onCheckedChange={(checked) => {
-              const next = new Set(picked);
-              if (checked) next.add(h.id);
-              else next.delete(h.id);
-              onChange(next);
-            }}
-            className="items-center text-xs text-fg"
-            label={
-              <>
-                {h.name ?? h.id}
-                {h.name && <span className="ms-1.5 font-mono text-2xs text-faint">{h.id}</span>}
-              </>
-            }
-          />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/**
- * Which devices that run AI take A2A proxy `proxy`'s calls, changed from its
- * row. A device taken off is exposed, as to a lost controller (docs/a2a.md
- * §6, §7.1): a session the proxy started there could have read its keys, its
- * identity key included — so it gets a new content key in the same change,
- * and renews its identity key after it, with the devices that let it control
- * them (`renewsIfNarrowed`). Said before it is saved. Adding one hands
- * nothing over.
- */
-export function A2aAcceptPanel({
-  proxy,
-  hosts,
-  accepted,
-  busy,
-  error,
-  renewsIfNarrowed,
-  onSave,
-  onCancel,
-}: {
-  proxy: string;
-  hosts: HostChoice[];
-  /** The devices that take its calls now. */
-  accepted: string[];
-  busy: boolean;
-  error?: string | null;
-  /** The devices that run AI that would renew their identity key after these stop taking its calls (`hostsExposedBy`). */
-  renewsIfNarrowed?: (dropped: string[]) => string[];
-  onSave: (picked: string[]) => void;
-  onCancel: () => void;
-}) {
-  const { t } = useTranslation();
-  const [picked, setPicked] = useState<Set<string>>(new Set(accepted));
-  const dropped = accepted.filter((id) => !picked.has(id));
-  const added = [...picked].filter((id) => !accepted.includes(id));
-  return (
-    <div data-testid={`a2a-accept-${proxy}`} className="border-b border-border px-6 py-4 max-md:px-4">
-      <div className="flex max-w-xl flex-col gap-2">
-        <CapsLabel>{t("which devices take its calls")}</CapsLabel>
-        <A2aHostPicks hosts={hosts} picked={picked} disabled={busy} onChange={setPicked} />
-        <A2aCallsNote />
-        {dropped.length > 0 && (
-          <>
-            <p data-testid="a2a-accept-narrowing" data-signal="warn" className="text-2xs leading-4 text-warn-fg">
-              {t(
-                "{{ids}} stop taking its calls and are treated as exposed: a session the proxy started there could have read their keys, the identity key included. They get a new content key now and renew their identity key after it; one that cannot renew should be removed and added again.",
-                { ids: dropped.join(", ") },
-              )}
-            </p>
-            <RenewalsAhead ids={renewsIfNarrowed?.(dropped) ?? []} />
-          </>
-        )}
-        <ErrorLine message={error} />
-        <div className="flex gap-2">
-          <button
-            type="button"
-            data-variant="primary"
-            data-testid={`a2a-accept-save-${proxy}`}
-            className={primary}
-            disabled={busy || (dropped.length === 0 && added.length === 0)}
-            onClick={() => onSave([...picked])}
-          >
-            {busy && <CircleNotchIcon className="size-3.5 animate-spin" />}
-            {dropped.length ? t("save and rotate their keys") : t("save")}
-          </button>
-          <button type="button" className={quiet} disabled={busy} onClick={onCancel}>
-            {t("cancel")}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
