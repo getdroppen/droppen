@@ -303,6 +303,38 @@ async fn an_acp_session_is_created_streamed_interrupted_reopened_and_archived() 
     server.stop().await;
 }
 
+#[tokio::test]
+async fn a_calls_later_title_and_input_reach_the_line_already_drawn() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let program = install_fake(home.path());
+    let workdir = home.path().join("work");
+    std::fs::create_dir_all(&workdir).expect("workdir");
+
+    let server = TestServer::start_at(home.path(), None).await;
+    configure(&server, &program).await;
+
+    let id = start(&server, "fake", &workdir, "terse").await;
+    // While the call runs, the update's title has taken the tool name's place
+    // on the line, and the call still has only the one line.
+    let detail = wait_for(&server, &id, "the refined call", |detail| {
+        texts(detail).iter().any(|(_, _, text)| text == "List current directory")
+    })
+    .await;
+    assert_eq!(tool_uses(&detail).len(), 1, "{detail:#}");
+
+    let detail = wait_for(&server, &id, "the turn", finished).await;
+    let calls = tool_uses(&detail);
+    assert_eq!(calls.len(), 1, "{detail:#}");
+    assert_eq!(calls[0]["text"], "List current directory");
+    assert_eq!(calls[0]["detail"], json!("{\n  \"command\": \"ls -la\"\n}"));
+    server.stop().await;
+}
+
+/// The `tool_use` items of a session detail.
+fn tool_uses(detail: &Value) -> Vec<&Value> {
+    detail["items"].as_array().expect("items").iter().filter(|item| item["kind"] == "tool_use").collect()
+}
+
 /// What this client answers an agent's own requests, line for line: a
 /// permission is declined, files and terminals are served, and a method nobody
 /// offers is an error. Each answer echoes a string, number or null id as it
