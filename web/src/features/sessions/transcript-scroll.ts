@@ -122,9 +122,80 @@ export function pinOnSettle(pinned: boolean, box: ScrollBox): boolean {
  *
  * Pinned views never show it, even while they are catching up with a height
  * that just changed, or it would blink on every streamed token.
+ *
+ * `contentBottom` is the scroller-coordinate bottom of the last row with
+ * anything in it, when the caller measured one. A turn that ends on consumed
+ * tool results leaves rows with no text in them; measured against the
+ * scroller's own end, those rows keep the button up while every line on screen
+ * is readable. Without a measurement, the end of the box is the end.
  */
-export function showJumpToBottom(pinned: boolean, box: ScrollBox): boolean {
-  return !pinned && bottomGap(box) > BOTTOM_SLACK_PX;
+export function showJumpToBottom(pinned: boolean, box: ScrollBox, contentBottom?: number | null): boolean {
+  if (pinned) return false;
+  const gap =
+    contentBottom == null
+      ? bottomGap(box)
+      : Math.max(0, contentBottom - box.scrollTop - box.clientHeight);
+  return gap > BOTTOM_SLACK_PX;
+}
+
+/** The part of a scroller and of its rows that {@link lastContentBottom} reads. */
+export interface RowSource {
+  getBoundingClientRect(): { top: number };
+  querySelectorAll(selector: string): ArrayLike<{ textContent: string | null; getBoundingClientRect(): { bottom: number } }>;
+}
+
+/**
+ * The bottom of the last row that has anything to read, in the scroller's own
+ * coordinates, or `null` when the last `rows` of them all say nothing.
+ *
+ * Bounded rather than a full walk: this runs on every frame the reader
+ * scrolls, and a run of empty rows longer than the bound is not a shape a
+ * transcript produces.
+ */
+export function lastContentBottom(scroller: RowSource, scrollTop: number, rows = 12): number | null {
+  const all = scroller.querySelectorAll("[data-ti]");
+  const top = scroller.getBoundingClientRect().top;
+  for (let i = all.length - 1; i >= 0 && i >= all.length - rows; i--) {
+    const row = all[i]!;
+    if (row.textContent?.trim()) {
+      return row.getBoundingClientRect().bottom - top + scrollTop;
+    }
+  }
+  return null;
+}
+
+/** The part of a scroller and of its rows that {@link rowStartAtTop} reads. */
+export interface SnapSource {
+  scrollTop: number;
+  getBoundingClientRect(): { top: number };
+  querySelectorAll(selector: string): ArrayLike<{
+    getClientRects(): ArrayLike<unknown>;
+    getBoundingClientRect(): { top: number; bottom: number; height: number };
+  }>;
+}
+
+/**
+ * The scroll position that brings the row cut by the top edge up to that edge,
+ * or `null` when the edge already falls on a row's start.
+ *
+ * A view pinned by assigning `scrollHeight` lands wherever the last screenful
+ * happens to begin, which is regularly mid-sentence: the first line on screen
+ * is then a continuation whose head and timestamp are above the fold. Rows with
+ * no box are passed over — a consumed tool result has nothing at the edge to
+ * align to.
+ */
+export function rowStartAtTop(scroller: SnapSource, minCut = 1): number | null {
+  const edge = scroller.getBoundingClientRect().top;
+  const rows = scroller.querySelectorAll("[data-ti]");
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    if (row.getClientRects().length === 0) continue;
+    const rect = row.getBoundingClientRect();
+    if (rect.height <= 0 || rect.bottom <= edge) continue;
+    const cut = edge - rect.top;
+    return cut >= minCut ? Math.max(0, scroller.scrollTop - cut) : null;
+  }
+  return null;
 }
 
 /**

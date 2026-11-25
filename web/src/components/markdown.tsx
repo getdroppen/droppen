@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -118,16 +118,57 @@ function mermaidSourceOf(node: unknown): string | null {
 function MarkdownPre({ children, node }: React.ComponentProps<"pre"> & { node?: unknown }) {
   const renderDiagrams = useContext(DiagramRendering);
   const source = mermaidSourceOf(node);
-  const code = <pre className="my-1.5 overflow-x-auto border border-border bg-raised px-2.5 py-2">{children}</pre>;
+  const code = <pre className="my-1.5 overflow-x-auto border border-border bg-raised px-2.5 py-2 whitespace-pre-wrap break-words">{children}</pre>;
   if (!renderDiagrams || source === null) return code;
   return <MermaidBlock code={source} fallback={code} />;
 }
 
+/**
+ * A table wider than the column pans sideways, and macOS draws no scrollbar
+ * until the trackpad moves (and then only over the bottom edge, which on a
+ * long table is below the fold). The fade at the right edge is what says
+ * there is more to the right: it is there only while the table does overflow,
+ * and goes once the end of it is in view.
+ */
+function MarkdownTable({ children }: React.ComponentProps<"table">) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = scroller.current;
+    const table = el?.firstElementChild;
+    // jsdom lays nothing out, so the render tests keep this false.
+    if (!el || !table || typeof ResizeObserver === "undefined") return;
+    const read = () => setMore(el.scrollWidth > el.clientWidth + 1 && el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    observer.observe(table);
+    el.addEventListener("scroll", read, { passive: true });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("scroll", read);
+    };
+  }, []);
+  return (
+    <div className="relative my-1.5">
+      <div ref={scroller} className="table-scroll">
+        <table className="w-max min-w-full border-collapse text-2xs">{children}</table>
+      </div>
+      {more && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-fg/20 to-transparent"
+        />
+      )}
+    </div>
+  );
+}
+
 const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
-  h1: ({ children }) => <h1 className="mt-3 mb-1 text-sm font-semibold first:mt-0">{children}</h1>,
-  h2: ({ children }) => <h2 className="mt-3 mb-1 text-[13px] font-semibold first:mt-0">{children}</h2>,
-  h3: ({ children }) => <h3 className="mt-2 mb-1 text-xs font-semibold first:mt-0">{children}</h3>,
-  h4: ({ children }) => <h4 className="mt-2 mb-0.5 text-xs font-semibold first:mt-0">{children}</h4>,
+  h1: ({ children }) => <h1 className="mt-3 mb-1 text-sm font-semibold first:mt-0 text-pretty">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-3 mb-1 text-[13px] font-semibold first:mt-0 text-pretty">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-2 mb-1 text-xs font-semibold first:mt-0 text-pretty">{children}</h3>,
+  h4: ({ children }) => <h4 className="mt-2 mb-0.5 text-xs font-semibold first:mt-0 text-pretty">{children}</h4>,
   p: ({ children }) => <p className="my-1 first:mt-0 last:mb-0">{children}</p>,
   ul: ({ children }) => <ul className="my-1 list-[square] space-y-0.5 pl-4 marker:text-faint">{children}</ul>,
   ol: ({ children }) => <ol className="my-1 list-decimal space-y-0.5 pl-5 marker:font-mono marker:text-faint">{children}</ol>,
@@ -152,21 +193,20 @@ const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
     <blockquote className="my-1 border-l border-border-strong pl-3 text-muted">{children}</blockquote>
   ),
   hr: () => <hr className="my-2 border-border" />,
-  table: ({ children }) => (
-    <div className="my-1.5 overflow-x-auto">
-      <table className="w-max min-w-48 border-collapse text-2xs">{children}</table>
-    </div>
-  ),
+  table: ({ children }) => <MarkdownTable>{children}</MarkdownTable>,
   th: ({ children }) => (
-    <th className="border border-border bg-raised px-1.5 py-0.5 text-left font-semibold">{children}</th>
+    <th className="min-w-24 border border-border bg-raised px-1.5 py-0.5 text-left font-semibold">{children}</th>
   ),
-  td: ({ children }) => <td className="border border-border px-1.5 py-0.5 align-top">{children}</td>,
+  td: ({ children }) => <td className="min-w-24 border border-border px-1.5 py-0.5 align-top">{children}</td>,
   code: ({ className, children }) => {
     const block = /language-/.test(className ?? "");
     if (block) {
       return <code className={cn("block font-mono text-2xs leading-[18px]", className)}>{children}</code>;
     }
-    return <code className="bg-raised px-1 py-px font-mono text-[0.9em] text-fg shadow-[inset_0_0_0_1px_var(--color-border)]">{children}</code>;
+    // A tint rather than an inset border: a border draws a fresh box around
+    // every line an inline code span wraps onto, which reads as several chips
+    // rather than one word. `slice` keeps the padding to the two ends.
+    return <code className="rounded-[2px] bg-fg/10 px-1 py-px font-mono text-[0.9em] text-fg [box-decoration-break:slice]">{children}</code>;
   },
   pre: MarkdownPre,
 };

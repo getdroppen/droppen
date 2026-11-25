@@ -22,6 +22,7 @@ import type { components } from "@/api/hub-schema";
 import { type Bytes, fromHex, hex, MAX_PAGE_LEN, RecordError, sha256, utf8 } from "@/lib/e2e";
 import { connLog, errorFields, routeTemplate } from "@/lib/connection-log";
 import { hubHttpOrigin } from "./config";
+import type { PageFetch } from "./streams";
 import type { AuthenticationResponseJSON, CreationOptionsJSON, PasskeyChallenge, RegistrationResponseJSON, RequestOptionsJSON } from "./passkey";
 import type { RelayDirectory } from "./relays";
 import {
@@ -264,10 +265,15 @@ export function clearSession(storage: Storage | undefined = globalThis.localStor
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
- * `fetch`, each request said in the connection log (`hub.req`): its method,
- * its route as a template (`/v1/streams/{stream}/pages/{page}`: no ids, no
- * query values, no origin), the status, how long until the answer's head,
- * and its size when it says one. Never a header or a body.
+ * `fetch`, each request said in the connection log (`hub.req`) as its
+ * answer's head comes in: its method, its route as a template
+ * (`/v1/streams/{stream}/pages/{page}`: no ids, no query values, no origin),
+ * the status, `ttfbMs` — how long until the head, not until the body ended —
+ * and `declaredBytes`, the `Content-Length` the answer declared, if any: not
+ * bytes received, and the same for an answer the browser's cache served
+ * (`fetch` cannot tell). A checkpoint download says its pages' real bytes
+ * and time itself (`stream.done`). A request that gets no answer says `ms`,
+ * how long until it failed, and why. Never a header or a body.
  */
 function loggedFetch(fetchImpl: Fetch): Fetch {
   return async (input, init) => {
@@ -281,13 +287,13 @@ function loggedFetch(fetchImpl: Fetch): Fetch {
       connLog.emit("hub.req", { method, route, ms: performance.now() - startedAt, ...errorFields(error) }, "warn");
       throw error;
     }
-    let size: number | null = null;
+    let declaredBytes: number | null = null;
     try {
-      size = Number(res.headers?.get?.("content-length") ?? "") || null;
+      declaredBytes = Number(res.headers?.get?.("content-length") ?? "") || null;
     } catch {
-      size = null;
+      declaredBytes = null;
     }
-    connLog.emit("hub.req", { method, route, status: res.status, ms: performance.now() - startedAt, size }, res.status >= 400 ? "warn" : undefined);
+    connLog.emit("hub.req", { method, route, status: res.status, ttfbMs: performance.now() - startedAt, declaredBytes }, res.status >= 400 ? "warn" : undefined);
     return res;
   };
 }
@@ -370,12 +376,22 @@ export class HubApi {
   }
 
   /** Send with `token`, and once more with a renewed device session if the hub said 401. */
-  private async send(method: string, path: string, opts: { token?: string; body?: unknown; noRenew?: boolean }): Promise<Response> {
+  private async send(
+    method: string,
+    path: string,
+    opts: { token?: string; body?: unknown; noRenew?: boolean; signal?: AbortSignal; priority?: RequestPriority },
+  ): Promise<Response> {
     const go = (token: string | undefined) => {
       const headers: Record<string, string> = {};
       if (opts.body !== undefined) headers["content-type"] = "application/json";
       if (token) headers.authorization = `Bearer ${token}`;
-      return this.fetchImpl(`${this.base}${path}`, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) });
+      return this.fetchImpl(`${this.base}${path}`, {
+        method,
+        headers,
+        body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(opts.priority ? { priority: opts.priority } : {}),
+      });
     };
     const res = await go(opts.token);
     if (res.status !== 401 || !opts.token || opts.noRenew || !this.renew) return res;
@@ -1025,10 +1041,16 @@ export class HubApi {
    * cancelled as the bytes come in — never buffered whole first. Refused as a
    * `tooLarge` page, which a stream reader handles like any other page it
    * cannot use.
+   *
+   * `opts` (the page queue's, `PageFetch`): `signal` aborts the request and
+   * its body, `priority` is the browser's (`low` for a background download),
+   * `onHead` hears when the answer's head is in, and `onBytes` each piece of
+   * the body as it comes.
    */
-  async streamPage(token: string, stream: Uint8Array, page: Uint8Array): Promise<Bytes> {
-    const res = await this.send("GET", `/v1/streams/${hex(stream)}/pages/${hex(page)}`, { token });
+  async streamPage(token: string, stream: Uint8Array, page: Uint8Array, opts: PageFetch = {}): Promise<Bytes> {
+    const res = await this.send("GET", `/v1/streams/${hex(stream)}/pages/${hex(page)}`, { token, signal: opts.signal, priority: opts.priority });
     if (!res.ok) return HubApi.fail(res);
+    opts.onHead?.();
     const tooLarge = () => new RecordError("tooLarge", `a page larger than ${MAX_PAGE_LEN} bytes`);
     const declared = res.headers.get("content-length");
     if (declared !== null && Number(declared) > MAX_PAGE_LEN) throw tooLarge();
@@ -1041,6 +1063,7 @@ export class HubApi {
         const { done, value } = await reader.read();
         if (done) break;
         total += value.length;
+        opts.onBytes?.(value.length);
         if (total > MAX_PAGE_LEN) {
           await reader.cancel().catch(() => undefined);
           throw tooLarge();

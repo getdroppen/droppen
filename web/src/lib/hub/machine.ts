@@ -117,6 +117,14 @@ export type ChannelRefusal = { kind: "notAccepted"; by: "hub" | "relay"; why: st
  * take it. Retrying does not help until that is fixed there.
  */
 export const AGENT_UNSAVED = 4507;
+/**
+ * A pipe the channel could not open a stream for: its request head does not
+ * fit (over 64 KiB to write, over the channel's `MAX_META` to send) or every
+ * stream of the channel is in use. Refused here, never sent, and said in the
+ * connection log (`pipe.refused`). Not `CHANNEL_GONE` (4502): the channel
+ * itself is fine, and nothing reconnects for it.
+ */
+export const PIPE_REFUSED = 4499;
 
 /**
  * The agent's close for a hello it could not take (`refuse(.., 4401, "handshake
@@ -172,6 +180,37 @@ export function relayGone(driver: ChannelDriver, stats: PathStats): boolean {
 /** How long since anything came in on `driver`'s channel, over either path (ms); never anything: as long as it can be. */
 function channelQuietMs(driver: ChannelDriver): number {
   return driver.diagnostics().lastRxAgoMs ?? Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The connection log's `timeout` for a direct path given up on a deadline
+ * (`null` for any other way it went): which, after how long, and what the
+ * deadline was made of — the limit it came to, its floor and what the load
+ * added, the bytes that stood ahead and the rate they were timed at (whole
+ * bytes a second; `rateMeasured`: false while the path had shown none and
+ * `ASSUMED_BYTES_PER_MS` stood in), the round trip, and which bulk was
+ * reckoned with. Numbers and flags only.
+ */
+export function directTimeoutFields(on: string, event: Extract<PathEvent, { type: "directDown" }>): ConnFields | null {
+  if (!event.timer) return null;
+  const d = event.deadline;
+  const load = event.load;
+  return {
+    timer: event.timer,
+    limitMs: d?.limitMs ?? (event.timer === "DIRECT_TIMEOUT_MS" ? DIRECT_TIMEOUT_MS : UNACKED_TIMEOUT_MS),
+    elapsedMs: event.elapsedMs,
+    floorMs: d?.floorMs,
+    loadMs: d?.loadMs,
+    aheadBytes: d?.aheadBytes,
+    rateBytesPerSec: d ? Math.round(d.bytesPerMs * 1000) : undefined,
+    rateMeasured: load ? load.bytesPerMs !== null : undefined,
+    unackedBytes: load?.unackedBytes ?? event.unackedBytes,
+    rttMs: load?.rttMs,
+    relayBulkSent: load?.relayBulkSent,
+    relayBulkReceived: load?.relayBulkReceived,
+    directBulkReceived: load?.directBulkReceived,
+    on: `${on}.direct`,
+  };
 }
 
 /** A relay's close for a refused `OPEN`: not a machine this ticket names (`droppen-relay-core/src/route.rs`). */
@@ -363,6 +402,12 @@ function channelSampler(driver: ChannelDriver, pipes: () => number) {
         ...moved,
         // Bytes sent and not yet credited back by the carrier (`INITIAL_CREDIT` less what is left), and a sealed frame waiting for credit.
         inflight: d.inflight,
+        // This page's pace on the path carrying its frames (`lib/e2e/pace.ts`): what may be in flight, what it counts as out, the delivery rate (bytes/s) and the minimum round trip it measured.
+        cap: d.cap,
+        capInflight: d.capInflight,
+        rate: d.rate,
+        minRttMs: d.minRttMs,
+        capDefers: d.capDefers,
         heldTx: d.heldTx,
         queued: d.queued,
         dcBuf: d.dcBuffered,
@@ -692,6 +737,9 @@ export class MachineChannel implements PipeOpener {
       decision: rule === "relay_silent" ? "gone" : undefined,
       sendCreditLeft: d.credit,
       inflight: d.inflight,
+      cap: d.cap,
+      rate: d.rate,
+      minRttMs: d.minRttMs,
       recvUnacked: d.recvUnacked,
       queued: d.queued + d.heldTx,
       unacked: d.unackedBytes,
@@ -728,7 +776,8 @@ export class MachineChannel implements PipeOpener {
         return;
       case "directDown": {
         const stats = driver.paths;
-        if (event.timer) this.log("timeout", { timer: event.timer, limitMs: event.timer === "DIRECT_TIMEOUT_MS" ? DIRECT_TIMEOUT_MS : UNACKED_TIMEOUT_MS, elapsedMs: event.elapsedMs, on: `${on}.direct` });
+        const timeout = directTimeoutFields(on, event);
+        if (timeout) this.log("timeout", timeout);
         this.log("path.switch", {
           on,
           to: "carrier",
@@ -741,6 +790,12 @@ export class MachineChannel implements PipeOpener {
         }, event.reason === "closed" ? "info" : "warn");
         return;
       }
+      case "peerDown":
+        // The agent let the direct path go after this page had: its
+        // DataChannel's closing came first (`direct.down … why="the data
+        // channel closed"`), and this is the agent's reason for it.
+        this.log("path.peerDown", { on, cause: event.reason }, event.reason === "closed" ? "info" : "warn");
+        return;
     }
   }
 
@@ -810,13 +865,31 @@ export class MachineChannel implements PipeOpener {
   }
 
   open(kind: PipeKind, meta: PipeMeta): Pipe {
+    // A head that cannot be written (a path over 64 KiB) throws here, before anything is counted.
+    let head: Uint8Array;
+    try {
+      head = encodeRequestHead({ method: meta.method ?? "GET", path: meta.path, headers: (meta.headers ?? []).slice(0, 48) });
+    } catch (error) {
+      this.log("pipe.refused", { kind, ...errorFields(error) }, "warn");
+      throw error;
+    }
     const pipe = new BridgePipe(kind, meta, () => {
       this.pipesOpen = Math.max(0, this.pipesOpen - 1);
     });
     this.pipesOpen += 1;
-    const head = encodeRequestHead({ method: meta.method ?? "GET", path: meta.path, headers: (meta.headers ?? []).slice(0, 48) });
     this.ensure().then(
-      (driver) => pipe.attach(driver.open(kind, head)),
+      (driver) => {
+        // The channel refusing the stream (a head over `MAX_META`, every stream in use) fails the pipe: never one left waiting.
+        let stream: ReturnType<ChannelDriver["open"]>;
+        try {
+          stream = driver.open(kind, head);
+        } catch (error) {
+          this.log("pipe.refused", { kind, ...errorFields(error) }, "warn");
+          queueMicrotask(() => pipe.fail(PIPE_REFUSED));
+          return;
+        }
+        pipe.attach(stream);
+      },
       () => queueMicrotask(() => pipe.fail(4502)),
     );
     return pipe;

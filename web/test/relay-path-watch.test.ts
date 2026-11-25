@@ -15,6 +15,13 @@
 // The link is one FIFO per direction letting so many bytes a second through,
 // with 40 ms each way: what a channel queues on a slow link (the relay's
 // queue and the sockets' buffers) as the protocol's windows bound it.
+//
+// A sender that paces (`lib/e2e/pace.ts`) keeps that queue to a fraction of
+// a second, and its peer's probes are answered in time; an old agent does
+// not, nor did a page before its pace. The rule is pinned where the probes
+// do go unanswered that long — with the sender that fills the window
+// unpaced — and the last test shows the same download, paced, with no probe
+// late at all.
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import {
@@ -118,14 +125,29 @@ async function settle(drivers: ChannelDriver[]): Promise<void> {
  * A device's channel to an agent, as `MachineChannel` runs it (probing the hub
  * path, watched by `watchRelayPath`), over `down` (agent → device) and `up`.
  */
-async function slowChannel(t: TestContext, downBytesPerSec: number, upBytesPerSec: number, onGone?: (stats: PathStats) => void) {
+async function slowChannel(
+  t: TestContext,
+  downBytesPerSec: number,
+  upBytesPerSec: number,
+  onGone?: (stats: PathStats) => void,
+  /** Which ends pace: by default both, as this page and a current agent do. */
+  paced: { device?: boolean; agent?: boolean } = {},
+) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const clock = { now: 0 };
   const down = new Lane(downBytesPerSec);
   const up = new Lane(upBytesPerSec);
   const [it, rt] = await transports();
-  const device = new ChannelDriver(1, it, "initiator", (f) => up.put(clock.now, f), Date.now, { paths: { probeRelay: true }, clock: () => clock.now });
-  const agent = new ChannelDriver(1, rt, "responder", (f) => down.put(clock.now, f), Date.now, { paths: { probeRelay: false }, clock: () => clock.now });
+  const device = new ChannelDriver(1, it, "initiator", (f) => up.put(clock.now, f), Date.now, {
+    paths: { probeRelay: true },
+    pace: paced.device ?? true,
+    clock: () => clock.now,
+  });
+  const agent = new ChannelDriver(1, rt, "responder", (f) => down.put(clock.now, f), Date.now, {
+    paths: { probeRelay: false },
+    pace: paced.agent ?? true,
+    clock: () => clock.now,
+  });
   const state = {
     closed: null as { atMs: number; code: number; reason: string } | null,
     wakes: 0,
@@ -184,9 +206,14 @@ function upload(c: Awaited<ReturnType<typeof slowChannel>>, streams: number, byt
   return got;
 }
 
+/** An agent from before the pace: what it sends fills the channel's window. */
+const OLD_AGENT = { agent: false };
+/** A page from before its pace: its upload fills the window its own probes wait behind. */
+const OLD_PAGE = { device: false };
+
 test("a slow download over the hub path is never taken for gone, however late its probes are answered", async (t) => {
-  // 240 kbps: two history ranges fill the channel's window, ~15 s of it.
-  const c = await slowChannel(t, 30_000, 30_000);
+  // 240 kbps: two history ranges fill an old agent's window, ~15 s of it.
+  const c = await slowChannel(t, 30_000, 30_000, undefined, OLD_AGENT);
   const got = download(c, 2, 640 * 1024);
   await c.advance(60_000);
   assert.equal(got.read, 2 * 640 * 1024, "all of it arrived");
@@ -270,7 +297,7 @@ test("the watch's hook hears the rule's decision once, with its numbers, before 
 });
 
 test("a download whose agent goes away while the relay drains a backlog is replaced within 15 s of the backlog's end", async (t) => {
-  const c = await slowChannel(t, 30_000, 30_000);
+  const c = await slowChannel(t, 30_000, 30_000, undefined, OLD_AGENT);
   download(c, 2, 640 * 1024);
   await c.advance(20_000);
   // The agent's side goes: nothing more gets on, what the relay holds for the device still drains (~15 s of it).
@@ -287,7 +314,7 @@ test("a download whose agent goes away while the relay drains a backlog is repla
 
 test("a slow upload is never taken for gone: the agent's window updates and CREDITs are the hub path carrying", async (t) => {
   // 240 kbps up: the page's probes wait behind its own upload.
-  const c = await slowChannel(t, 30_000, 30_000);
+  const c = await slowChannel(t, 30_000, 30_000, undefined, OLD_PAGE);
   const got = upload(c, 2, 512 * 1024);
   await c.advance(50_000);
   assert.equal(got.read, 2 * 512 * 1024, "all of it arrived");
@@ -298,7 +325,8 @@ test("a slow upload is never taken for gone: the agent's window updates and CRED
 test("a CREDIT the driver reads counts as the hub path carrying", async (t) => {
   // Only the agent's CREDITs reach the device (its probe answers and window
   // updates are held back here): what is pinned is that a CREDIT alone counts.
-  const c = await slowChannel(t, 100_000, 100_000);
+  // (A page that paces would wait for its markers' answers, held back too.)
+  const c = await slowChannel(t, 100_000, 100_000, undefined, OLD_PAGE);
   c.down.only = (f) => f.type === "credit";
   upload(c, 8, 256 * 1024);
   await c.advance(20_000);
@@ -331,3 +359,28 @@ test("a page uploading when its relay dies is replaced within 15 s, though its n
   assert.ok(after >= RELAY_SILENT_MS && after <= GONE_WITHIN_MS, `replaced ${after} ms after the last frame`);
 });
 
+test("the same slow download from an agent that paces: no probe is ever late, and it takes as long", async (t) => {
+  /** The download over a fresh channel: when it ended, the late probes, the oldest probe out. */
+  const run = async (paced: { agent?: boolean }) => {
+    const c = await slowChannel(t, 30_000, 30_000, undefined, paced);
+    const late: Extract<PathEvent, { type: "late" }>[] = [];
+    c.device.onpathevent = (e) => {
+      if (e.type === "late") late.push(e);
+    };
+    const got = download(c, 2, 640 * 1024);
+    let done: number | null = null;
+    for (let at = 500; at <= 70_000 && done === null; at += 500) {
+      await c.advance(at);
+      if (got.read >= 2 * 640 * 1024) done = c.clock.now;
+    }
+    assert.equal(c.state.closed, null);
+    t.mock.timers.reset();
+    return { done: done!, late: late.length, oldest: c.state.maxProbeAgeMs };
+  };
+  const old = await run(OLD_AGENT);
+  const paced = await run({});
+  assert.ok(old.late > 0 && old.oldest >= RELAY_SILENT_MS, `unpaced: ${JSON.stringify(old)}`);
+  assert.equal(paced.late, 0, "no probe went a probe interval unanswered");
+  assert.ok(paced.oldest < 2_000, `the oldest probe out was ${paced.oldest} ms old, against ${old.oldest} ms unpaced`);
+  assert.ok(paced.done <= old.done * 1.05, `done at ${paced.done} ms, against ${old.done} ms`);
+});

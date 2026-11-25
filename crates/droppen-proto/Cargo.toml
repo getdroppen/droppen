@@ -46,7 +46,8 @@ runtime = ["dep:tokio", "dep:tracing"]
 rtc = ["runtime", "dep:str0m", "dep:tracing", "tokio/net"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["sync", "rt", "macros", "rt-multi-thread", "time"] }
+# `test-util`: the slow-link simulations (`link_sim`) run on tokio's paused clock.
+tokio = { version = "1", features = ["sync", "rt", "macros", "rt-multi-thread", "time", "test-util"] }
 # The canonical encodings of the eight small-order Edwards points, exported to
 # the TypeScript half so both sides refuse the same weak keys.
 curve25519-dalek = "4"

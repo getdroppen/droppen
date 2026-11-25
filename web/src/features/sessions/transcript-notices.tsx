@@ -73,13 +73,23 @@ export function CommandChip({ item }: { item: TranscriptItem }) {
   if (!item.detail) {
     return <div className="flex items-baseline gap-2 px-3 py-1">{head}</div>;
   }
+  // A command that failed says so where the output would have been read: a
+  // `/compact` over the image limit writes its reason to stderr, and without
+  // this the chip looked exactly like one that did nothing.
   return (
     <details className="px-3 py-1">
       <summary className="-mx-1 flex cursor-pointer list-none items-baseline gap-2 rounded px-1 hover:bg-hover">
         {head}
-        <span className="shrink-0 font-mono text-2xs text-faint/70">{t("command output")}</span>
+        <span className={cn("shrink-0 font-mono text-2xs", item.isError ? "text-danger" : "text-faint/70")}>
+          {t(item.isError ? "failed" : "command output")}
+        </span>
       </summary>
-      <div className="mt-1 ml-1 border-l border-border pl-2 text-2xs leading-4 whitespace-pre-wrap text-faint">
+      <div
+        className={cn(
+          "mt-1 ml-1 border-l pl-2 text-2xs leading-4 whitespace-pre-wrap",
+          item.isError ? "border-danger/40 text-danger" : "border-border text-faint",
+        )}
+      >
         {item.detail}
       </div>
     </details>

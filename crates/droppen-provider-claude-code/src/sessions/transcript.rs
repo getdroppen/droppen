@@ -328,16 +328,49 @@ enum UserLine {
     CommandOutput(String),
 }
 
-/// Hang a command's stdout off the command it answers.
+/// Hang a command's output off the command it answers.
 ///
 /// Two items would put the output on a row that never says which command
 /// printed it; folded into the command's own chip it reads as one event.
-fn attach_command_output(items: &mut ItemLog, body: &str, timestamp: Option<&str>) -> Option<TranscriptItem> {
+/// `failed` marks stderr: a `/compact` that hit a wall has to look like one,
+/// not like a command whose answer happened to be the error sentence.
+fn attach_command_output(items: &mut ItemLog, body: &str, failed: bool, timestamp: Option<&str>) -> Option<TranscriptItem> {
     if items.attach_detail(ItemKind::Command, body) {
+        if failed {
+            if let Some(last) = items.last_mut() {
+                last.is_error = true;
+            }
+        }
         return None;
     }
     // Output whose command fell outside this window still has to show up.
-    Some(make_item(Role::System, ItemKind::Text, body, timestamp))
+    let mut item = make_item(Role::System, ItemKind::Text, body, timestamp);
+    item.is_error = failed;
+    Some(item)
+}
+
+/// The text of a `system` `local_command` entry, and whether it is stderr.
+///
+/// The CLI answers a local command this way — `/compact` above all, whose
+/// failure it writes as `<local-command-stderr>`. stdout is the command's own
+/// answer; stderr is why it did nothing, and both belong on the command's chip.
+fn local_command_output(content: &str) -> Option<(String, bool)> {
+    static STDOUT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static STDERR: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let stdout = STDOUT.get_or_init(|| {
+        regex::Regex::new(r"(?s)^<local-command-stdout>(.*?)</local-command-stdout>\s*$").expect("valid stdout pattern")
+    });
+    let stderr = STDERR.get_or_init(|| {
+        regex::Regex::new(r"(?s)^<local-command-stderr>(.*?)</local-command-stderr>\s*$").expect("valid stderr pattern")
+    });
+    let text = content.trim();
+    if let Some(caps) = stdout.captures(text) {
+        let body = caps[1].trim();
+        return (!body.is_empty()).then(|| (body.to_string(), false));
+    }
+    let caps = stderr.captures(text)?;
+    let body = caps[1].trim();
+    (!body.is_empty()).then(|| (body.to_string(), true))
 }
 
 /// The text of a message that was sitting in the CLI's input queue.
@@ -954,11 +987,22 @@ impl ClaudeParse {
         let entry_type = entry.get("type").and_then(Value::as_str).unwrap_or("");
 
         if entry_type == "system" {
-            // The one `system` subtype with anything to show; the rest is
+            // The two `system` subtypes with anything to show; the rest is
             // routing chatter the CLI keeps for itself.
-            if entry.get("subtype").and_then(Value::as_str) == Some("compact_boundary") {
+            let subtype = entry.get("subtype").and_then(Value::as_str);
+            if subtype == Some("compact_boundary") {
                 let at = clamped_timestamp(items, timestamp);
                 items.push(compact_boundary_item(&entry, at.as_deref()));
+            } else if subtype == Some("local_command") {
+                // A local command's own answer, or the reason it did not work
+                // (a `/compact` over the image limit says so only here).
+                let content = entry.get("content").and_then(Value::as_str).unwrap_or("");
+                if let Some((body, failed)) = local_command_output(content) {
+                    let at = clamped_timestamp(items, timestamp);
+                    if let Some(item) = attach_command_output(items, &body, failed, at.as_deref()) {
+                        items.push(item);
+                    }
+                }
             }
         } else if entry_type == "assistant" {
             // `<synthetic>` is the CLI writing in the model's voice: a rate-limit
@@ -1084,7 +1128,7 @@ impl ClaudeParse {
                     Some("text") => match claude_user_item(&block_text(&block), timestamp, delivery.as_ref()) {
                         Some(UserLine::Item(item)) => items.push(*item),
                         Some(UserLine::CommandOutput(body)) => {
-                            if let Some(item) = attach_command_output(items, &body, timestamp) {
+                            if let Some(item) = attach_command_output(items, &body, false, timestamp) {
                                 items.push(item);
                             }
                         }
@@ -1122,7 +1166,7 @@ impl ClaudeParse {
             match queued_command_line(&entry, self.deliveries.as_mut(), timestamp) {
                 Some(UserLine::Item(item)) => items.push(*item),
                 Some(UserLine::CommandOutput(body)) => {
-                    if let Some(item) = attach_command_output(items, &body, timestamp) {
+                    if let Some(item) = attach_command_output(items, &body, false, timestamp) {
                         items.push(item);
                     }
                 }
@@ -1530,6 +1574,56 @@ mod tests {
             .expect("parse");
         assert_eq!((items[0].role, items[0].kind), (Role::System, ItemKind::Text));
         assert_eq!(items[0].text, "Goal set: ship the PWA");
+    }
+
+    /// A failed local command: the CLI writes the reason as a `system` entry of
+    /// its own. It has to reach the command's chip, marked as a failure — a
+    /// `/compact` over the image limit used to vanish without a word.
+    #[tokio::test]
+    async fn a_commands_stderr_folds_into_the_command_as_a_failure() {
+        let (dir, path) = write_jsonl(&[
+            r#"{"type":"user","timestamp":"2026-11-25T12:42:34.530Z","message":{"role":"user","content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"}}"#,
+            r#"{"type":"system","subtype":"local_command","timestamp":"2026-11-25T12:42:54.433Z","content":"<local-command-stderr>Error during compaction: API Error: 400 too many images</local-command-stderr>"}"#,
+        ]);
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+            .await
+            .expect("parse");
+        assert_eq!(items.len(), 1, "the command and its failure are one event");
+        assert_eq!(items[0].kind, ItemKind::Command);
+        assert_eq!(items[0].tool_name.as_ref().map(String::as_str), Some("/compact"));
+        assert!(items[0].is_error, "stderr is a failure, not an answer");
+        assert_eq!(
+            items[0].detail.as_ref().map(String::as_str),
+            Some("Error during compaction: API Error: 400 too many images")
+        );
+    }
+
+    /// Whatever the command's output says is not a failure.
+    #[tokio::test]
+    async fn a_system_commands_stdout_is_not_marked_failed() {
+        let (dir, path) = write_jsonl(&[
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/compact</command-name>"}}"#,
+            r#"{"type":"system","subtype":"local_command","content":"<local-command-stdout>Compacted </local-command-stdout>"}"#,
+        ]);
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+            .await
+            .expect("parse");
+        assert_eq!(items[0].detail.as_ref().map(String::as_str), Some("Compacted"));
+        assert!(!items[0].is_error);
+    }
+
+    /// The stderr outlives the loaded window's command, and stays red.
+    #[tokio::test]
+    async fn an_orphaned_stderr_is_still_marked_failed() {
+        let (dir, path) = write_jsonl(&[
+            r#"{"type":"system","subtype":"local_command","content":"<local-command-stderr>Error during compaction: no room</local-command-stderr>"}"#,
+        ]);
+        let items = parse_claude_transcript(&droppen_instance::paths::Paths::new(dir.path().to_path_buf()), &path, false)
+            .await
+            .expect("parse");
+        assert_eq!((items[0].role, items[0].kind), (Role::System, ItemKind::Text));
+        assert_eq!(items[0].text, "Error during compaction: no room");
+        assert!(items[0].is_error);
     }
 
     #[tokio::test]

@@ -146,14 +146,16 @@ export const ToolLine = memo(function ToolLine({
   const description = (commandOnly ? item.toolName : item.text) || item.toolName || t("tool");
   const callDetail = item.detail ?? (commandOnly ? item.text : item.meta?.startsWith("$ ") ? item.meta : null);
   const status = exitCode !== undefined
-    ? `exit ${exitCode}`
+    ? isError
+      ? `${t("failed")} · exit ${exitCode}`
+      : `exit ${exitCode}`
     : isError
       ? t("failed")
       : ack || (item.background && !result)
-        ? t("bg")
-        : result
-          ? t("completed")
-          : null;
+        ? t("background")
+        : // A plain success says nothing: the row is finished and the next one
+          // speaks. Failures and background work keep a word of their own.
+          null;
   // Flat mode draws no per-turn header, so a run of fifty steps carries no time
   // anchor anywhere on screen; the row's own hover is the cheapest place to put
   // one back, and it goes on the row rather than on one span inside it so that
@@ -181,14 +183,22 @@ export const ToolLine = memo(function ToolLine({
         {isUse ? "⚙" : "↳"}
       </span>
       <span
-        className={cn("min-w-0 flex-1 truncate", isError ? "text-danger/90" : isUse ? "text-fg/80" : "text-faint")}
+        // A result gets two lines: the answer to a question the agent asked
+        // used to be cut off right after the question, and a phone has no
+        // hover to read the rest from. A call stays one line — it is a label,
+        // and its detail is in the fold.
+        className={cn(
+          "min-w-0 flex-1",
+          isUse ? "truncate" : "line-clamp-2 break-words",
+          isError ? "text-danger" : isUse ? "text-fg/80" : "text-faint",
+        )}
         title={description}
       >
         {description}
       </span>
       {status && (
         <span
-          className={cn("shrink-0 pl-2 tabular-nums", isError ? "text-danger/90" : "text-faint/70")}
+          className={cn("shrink-0 pl-2 tabular-nums", isError ? "text-danger" : "text-faint/70")}
           title={resultText ?? undefined}
         >
           {status}

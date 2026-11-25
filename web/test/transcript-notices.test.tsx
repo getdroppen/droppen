@@ -16,6 +16,7 @@ import * as React from "react";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CommandChip, CompactDivider } from "../src/features/sessions/transcript-notices.js";
+import { SystemLine } from "../src/features/sessions/system-line.js";
 import type { components } from "../src/api/schema.js";
 import { transcriptItem } from "./session-fixtures.js";
 import { makeI18n, pageDraw } from "./render.js";
@@ -84,4 +85,32 @@ test("an argument-less command with no output is one line", () => {
   const html = draw(<CommandChip item={item({ kind: "command", toolName: "/compact", text: "" })} />);
   assert.match(html, /\/compact/);
   assert.doesNotMatch(html, /<details/, "nothing to expand into");
+});
+
+test("a command that failed says so instead of calling stderr its output", () => {
+  // A `/compact` over the image limit: the reason is stderr, and calling it
+  // "command output" made it read like an answer.
+  const html = draw(
+    <CommandChip
+      item={item({
+        kind: "command",
+        toolName: "/compact",
+        text: "",
+        detail: "Error during compaction: API Error: 400 too many images",
+        isError: true,
+      })}
+    />,
+  );
+  assert.match(html, /failed/, "the label names the failure");
+  assert.match(html, /text-danger/, "and it is the failure colour");
+  assert.match(html, /Error during compaction: API Error: 400 too many images/);
+  assert.doesNotMatch(html, /command output/);
+});
+
+test("an orphaned failure line keeps the failure colour", () => {
+  // The command is outside the loaded window, so the reason stands alone — and
+  // must still not read as routine chatter.
+  const html = draw(<SystemLine item={item({ text: "Error during compaction: no room", isError: true })} rowClass="px-4" />);
+  assert.match(html, /Error during compaction: no room/);
+  assert.match(html, /text-danger/);
 });
