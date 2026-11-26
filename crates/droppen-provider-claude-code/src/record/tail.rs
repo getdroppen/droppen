@@ -326,25 +326,37 @@ impl State {
     }
 
     /// Record every complete line `path` has gained since the last sweep.
+    ///
+    /// Only a cursor that is new or that moves marks the state dirty. A sweep
+    /// that finds a file exactly as long as the last one has nothing to write
+    /// down, and must leave the cursor file — and its modification time — alone:
+    /// marking it dirty regardless rewrote one file per recorded session per
+    /// second, with identical content, for as long as the session sat idle.
     async fn follow_lines(&mut self, root: ClaudeRoot, path: &Path, label: &str) -> Result<(), Gone> {
         let Some(rel) = self.relative(root, path) else { return Ok(()) };
         let key = format!("{}/{rel}", root.as_str());
         let mut offset = match self.cursors.lines.get(&key).copied() {
             Some(offset) => offset,
-            None => self.start_of(path).await,
+            None => {
+                let offset = self.start_of(path).await;
+                // A file met for the first time is checkpointed before anything
+                // is read, and whether or not it has anything to read: leaving a
+                // resolved offset unstored is how a file deliberately picked up
+                // at its *end* gets picked up from the start on the very next
+                // sweep — recording the history the cursor existed to skip,
+                // twice. The checkpoint is also what a restart resumes from, so
+                // it is written even when this file's length leaves nothing to
+                // consume.
+                self.cursors.lines.insert(key.clone(), offset);
+                self.dirty = true;
+                offset
+            }
         };
 
         let Ok(mut file) = tokio::fs::File::open(path).await else {
             return Ok(());
         };
         let len = file.metadata().await.map(|meta| meta.len()).unwrap_or(0);
-        // Written down before anything is read, and on every path out of this
-        // function. Leaving a resolved offset unstored is how a file that was
-        // deliberately picked up at its *end* gets picked up from the start on
-        // the very next sweep — recording the history the cursor existed to
-        // skip, twice.
-        self.cursors.lines.insert(key.clone(), offset);
-        self.dirty = true;
         if len < offset {
             // Shorter than it was: the file was replaced or truncated, which no
             // CLI does to a transcript but a restore or a manual edit will.
@@ -355,6 +367,7 @@ impl State {
             })?;
             offset = 0;
             self.cursors.lines.insert(key.clone(), offset);
+            self.dirty = true;
         }
         if len == offset {
             return Ok(());
@@ -601,6 +614,19 @@ mod tests {
             self.dirs.session_logs().join(format!("{}.ndjson", self.id))
         }
 
+        fn cursor(&self) -> PathBuf {
+            self.dirs.session_logs().join(format!("{}.offsets.json", self.id))
+        }
+
+        /// The cursor the file on disk currently holds for the transcript, read
+        /// the way a restarted recorder would read it.
+        fn saved_offset(&self) -> Option<u64> {
+            let raw = std::fs::read(self.cursor()).ok()?;
+            let cursors: Cursors = serde_json::from_slice(&raw).ok()?;
+            let suffix = format!("{}.jsonl", self.id);
+            cursors.lines.iter().find(|(key, _)| key.ends_with(&suffix)).map(|(_, offset)| *offset)
+        }
+
         fn recorded(&self) -> Vec<Event> {
             read_log(&self.log()).unwrap_or_default().into_iter().map(|line| line.event).collect()
         }
@@ -712,7 +738,8 @@ mod tests {
     }
 
     /// The reason the cursor file exists: a second recorder over the same
-    /// recording must not copy the transcript again.
+    /// recording must not copy the transcript again — and must not skip what
+    /// was written after the first one let go either.
     #[tokio::test]
     async fn a_second_run_over_one_recording_does_not_repeat_the_transcript() {
         let session = session("22222222-2222-4222-8222-222222222222");
@@ -720,21 +747,24 @@ mod tests {
 
         let first = recorders.open(&session.id);
         session.append(r#"{"n":1}"#);
-        until("the first run to record", || {
+        until("the first run to record and checkpoint", || {
             session
                 .recorded()
                 .iter()
                 .filter(|event| matches!(event, Event::Transcript { .. }))
                 .count()
                 == 1
+                && session.saved_offset() == std::fs::metadata(&session.transcript).map(|meta| meta.len()).ok()
         })
         .await;
         drop(first);
         // The tailer stops with the last handle; give it the sweep it is owed.
         tokio::time::sleep(Duration::from_millis(200)).await;
+        // Written while nothing is recording, so only the saved checkpoint can
+        // tell the next run where to begin.
+        session.append(r#"{"n":2}"#);
 
         let _second = recorders.open(&session.id);
-        session.append(r#"{"n":2}"#);
         until("the second run to record", || {
             session
                 .recorded()
@@ -756,6 +786,94 @@ mod tests {
             .collect();
         assert_eq!(lines.len(), 2, "the second run carried on rather than starting again: {lines:?}");
         assert!(lines[0].contains("\"n\":1") && lines[1].contains("\"n\":2"), "{lines:?}");
+        drop(session.home);
+    }
+
+    /// The reported bug: an idle session rewrote its cursor file once a second,
+    /// over and over, with byte-identical content. Once a recorder has caught
+    /// up there is nothing to persist, so an idle sweep must leave both the file
+    /// and its modification time alone.
+    #[tokio::test]
+    async fn idle_sweeps_leave_the_saved_cursor_untouched() {
+        let session = session("55555555-5555-4555-8555-555555555555");
+        let recorders = Recorders::new_at(session.dirs.session_logs(), None, session.paths.clone());
+        let _recorder = recorders.open(&session.id);
+
+        session.append(r#"{"n":1}"#);
+        until("the line and its checkpoint", || {
+            let len = std::fs::metadata(&session.transcript).map(|meta| meta.len()).ok();
+            session
+                .recorded()
+                .iter()
+                .any(|event| matches!(event, Event::Transcript { line, .. } if line.contains("\"n\":1")))
+                && len.is_some()
+                && session.saved_offset() == len
+        })
+        .await;
+        // Let anything trailing the sweep that consumed the line settle; the
+        // checkpoint write is the last thing it does.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let before = std::fs::metadata(session.cursor()).expect("the cursor file").modified().expect("mtime");
+        // Several polls with nothing to read.
+        tokio::time::sleep(POLL * 3).await;
+        let after = std::fs::metadata(session.cursor()).expect("the cursor file").modified().expect("mtime");
+        assert_eq!(before, after, "idle sweeps rewrote an unchanged cursor file");
+        drop(session.home);
+    }
+
+    /// A line the CLI appends moves the cursor, and the new position reaches
+    /// the file rather than only memory.
+    #[tokio::test]
+    async fn a_new_line_advances_and_persists_the_cursor() {
+        let session = session("66666666-6666-4666-8666-666666666666");
+        let recorders = Recorders::new_at(session.dirs.session_logs(), None, session.paths.clone());
+        let _recorder = recorders.open(&session.id);
+
+        session.append(r#"{"n":1}"#);
+        session.append(r#"{"n":2}"#);
+        let expected = std::fs::metadata(&session.transcript).expect("stat").len();
+        until("the cursor to reach the end of the transcript", || {
+            session.saved_offset() == Some(expected)
+        })
+        .await;
+
+        let lines: Vec<String> = session
+            .recorded()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Transcript { line, .. } => Some(line),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lines.len(), 2, "both lines are recorded: {lines:?}");
+        assert_eq!(session.saved_offset(), Some(expected), "the advanced position is on disk");
+        drop(session.home);
+    }
+
+    /// A transcript that shrinks is followed from the start again, and the
+    /// reset position is written down rather than only held in memory.
+    #[tokio::test]
+    async fn truncating_the_transcript_persists_the_reset() {
+        let session = session("77777777-7777-4777-8777-777777777777");
+        let recorders = Recorders::new_at(session.dirs.session_logs(), None, session.paths.clone());
+        let _recorder = recorders.open(&session.id);
+
+        session.append(r#"{"n":1}"#);
+        let len = std::fs::metadata(&session.transcript).expect("stat").len();
+        until("the first checkpoint", || session.saved_offset() == Some(len)).await;
+
+        std::fs::write(&session.transcript, b"").expect("truncate");
+        until("the reset checkpoint", || session.saved_offset() == Some(0)).await;
+
+        assert!(
+            session
+                .recorded()
+                .iter()
+                .any(|event| matches!(event, Event::Note { text } if text.contains("shrank"))),
+            "the truncation is announced"
+        );
+        assert_eq!(session.saved_offset(), Some(0), "the reset position is persisted");
         drop(session.home);
     }
 
@@ -895,5 +1013,55 @@ mod tests {
             "and the history that could not be placed is not recorded twice"
         );
         drop(session.home);
+    }
+
+    /// The issue's own metric, as a harness rather than a pass/fail test: how
+    /// many modification-time changes the cursor files take while their
+    /// sessions sit idle. Run before and after a change with
+    /// `--run-ignored ignored`, and report the pair.
+    ///
+    /// The reproduction was 31 cursor files over an eight-second idle window on
+    /// one desktop server: 252 modification-time changes, with the content hash
+    /// identical before and after every one. The initial checkpoint each file
+    /// takes when the recorder first meets it is excluded by the warm-up; the
+    /// steady state this measures is the bug.
+    #[tokio::test]
+    #[ignore = "measurement harness: run with --run-ignored ignored"]
+    async fn measure_idle_cursor_writes() {
+        const SESSIONS: usize = 31;
+        const WINDOW: Duration = Duration::from_secs(8);
+
+        let sessions: Vec<Session> = (0..SESSIONS).map(|n| session(&format!("{n:08x}-0000-4000-8000-{n:012x}"))).collect();
+        let mut held = Vec::new();
+        for session in &sessions {
+            let recorders = Recorders::new_at(session.dirs.session_logs(), None, session.paths.clone());
+            held.push(recorders.open(&session.id));
+        }
+        // The first sweep writes every initial checkpoint. Only what happens
+        // after it settles is the idle cost.
+        until("every initial checkpoint", || sessions.iter().all(|session| session.cursor().exists())).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let stamp = |session: &Session| std::fs::metadata(session.cursor()).ok().and_then(|meta| meta.modified().ok());
+        let mut last: Vec<_> = sessions.iter().map(stamp).collect();
+        let mut changes = 0usize;
+        let end = std::time::Instant::now() + WINDOW;
+        while std::time::Instant::now() < end {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            for (index, session) in sessions.iter().enumerate() {
+                let now = stamp(session);
+                if now != last[index] {
+                    changes += 1;
+                    last[index] = now;
+                }
+            }
+        }
+        println!(
+            "MEASURE idle cursor writes: {changes} modification-time changes across {SESSIONS} sessions in {}s",
+            WINDOW.as_secs()
+        );
+        assert_eq!(changes, 0, "an idle sweep had nothing to persist");
+        drop(held);
+        drop(sessions);
     }
 }
