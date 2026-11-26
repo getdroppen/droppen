@@ -56,7 +56,7 @@ FROM_AARCH64=${4:?$USAGE}
 die() { printf 'sources-tar: %s\n' "$*" >&2; exit 1; }
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "$VERSION is not a version"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "$VERSION is not a version"
 REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
 TAR=${TAR:-tar}
 "$TAR" --version 2>/dev/null | grep '^tar (GNU tar)' >/dev/null || die "needs GNU tar (set TAR, e.g. TAR=gtar)"
