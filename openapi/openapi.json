@@ -1676,6 +1676,18 @@
         ],
         "type": "string"
       },
+      "ArchivedRetention": {
+        "description": "How long archived sessions are kept before their data is deleted.\n\nThe transcripts of an archived session stay on disk after it leaves the\nlist. This is the window after which the hourly retention pass\n(`droppen_server::archived_retention`) deletes them: the transcript or\nthread, and the metadata this server keeps about it. [`ArchivedRetention::Never`]\nis the default, so nothing is deleted until the user asks for it.",
+        "enum": [
+          "never",
+          "1d",
+          "3d",
+          "5d",
+          "7d",
+          "30d"
+        ],
+        "type": "string"
+      },
       "Attachment": {
         "description": "A file parked in the uploads directory, ready to attach to a message.",
         "properties": {
@@ -4534,6 +4546,10 @@
       "Prefs": {
         "description": "The stored UI preferences.",
         "properties": {
+          "archivedRetention": {
+            "$ref": "#/components/schemas/ArchivedRetention",
+            "description": "How long archived sessions are kept before their data is deleted; a\nbody without it means `never`."
+          },
           "composerSend": {
             "$ref": "#/components/schemas/ComposerSend",
             "description": "What sends a composer message."

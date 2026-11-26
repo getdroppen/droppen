@@ -13,6 +13,8 @@
 //!   settings, which read several subsystems' state at once;
 //! * [`a2a_backend`] — the sessions behind the A2A server, its
 //!   `SessionBackend` over the providers;
+//! * [`archived_retention`] — the hourly pass that deletes archived session
+//!   data once its window has passed;
 //! * [`stream_source`] — what the link copies of this machine's sessions, the
 //!   agent's [`droppen_agent::streams::source::StreamSource`] over the
 //!   sessions and the drive's live state;
@@ -57,6 +59,7 @@ mod a2a_proxy_e2e;
 mod accounts_tests;
 pub mod api;
 pub mod app;
+pub mod archived_retention;
 pub mod cli;
 pub mod desktop_app;
 pub mod export;

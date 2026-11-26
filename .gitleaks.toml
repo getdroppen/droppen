@@ -50,11 +50,12 @@ paths = ['''^web/test/setup-tools-live\.test\.tsx$''']
 regexTarget = "secret"
 regexes = ['''^sk-test-0123456789abcdef$''']
 
-# The proxy's own token fixtures: `0123…cdef` is a made-up hex token in the
-# config and device-option tests, and the two `dpa_…` strings are the shape
-# of an A2A secret for the audit fixture and the settings DOM test.
+# A2A's fixtures: a made-up proxy token and two synthetic `dpa_…` secrets. The
+# branch is not merged yet, but the history scan reads every fetched head, so
+# these keep every new pull request's scan green until it is. A real value in
+# the same file is still a finding (`condition = "AND"`).
 [[allowlists]]
-description = "a made-up proxy token in the proxy's tests"
+description = "the made-up A2A proxy token in its tests"
 condition = "AND"
 targetRules = ["generic-api-key"]
 paths = ['''^crates/droppen-a2a-proxy/src/config\.rs$''', '''^crates/droppen-a2a-proxy/src/lib\.rs$''']
@@ -62,9 +63,17 @@ regexTarget = "secret"
 regexes = ['''^0123456789abcdef0123456789abcdef$''']
 
 [[allowlists]]
-description = "the shape of an A2A secret in the web fixtures"
+description = "synthetic A2A secrets in the settings fixture and its DOM test"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''^web/ui-audit/a2a\.tsx$''', '''^web/test/a2a-settings-dom\.test\.tsx$''']
+paths = ['''^web/ui-audit/a2a\.tsx$''']
 regexTarget = "secret"
-regexes = ['''^dpa_n4x8w2_[A-Za-z0-9_-]+$''']
+regexes = ['''^dpa_n4x8w2_Zm9yLXRoZS1maXh0dXJlLW9ubHktbm90LWEtcmVhbC1zZWNyZXQ$''']
+
+[[allowlists]]
+description = "the synthetic A2A secret in its DOM test"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^web/test/a2a-settings-dom\.test\.tsx$''']
+regexTarget = "secret"
+regexes = ['''^dpa_n4x8w2_c3ludGhldGljLW5vdC1hLXJlYWwtc2VjcmV0LWF0LWFsbA$''']

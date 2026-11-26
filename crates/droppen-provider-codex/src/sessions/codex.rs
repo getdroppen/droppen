@@ -371,7 +371,7 @@ fn read_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadRow> {
 }
 
 /// Open the state database read-only, or `None` when there is not one.
-fn open_state_db(db: &Path) -> Option<rusqlite::Connection> {
+pub(crate) fn open_state_db(db: &Path) -> Option<rusqlite::Connection> {
     rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI).ok()
 }
 

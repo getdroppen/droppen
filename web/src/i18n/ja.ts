@@ -570,6 +570,14 @@ export const ja: Record<string, string> = {
   /* the file browser hides dot-files; the switch is a per-browser setting */
   "show hidden files": "隠しファイルを表示",
   "dot-files in the file browser · this device only": "ファイルブラウザーの . で始まる項目 · このデバイスのみ",
+  "delete archived data after": "アーカイブしたデータを削除するまで",
+  "archived sessions and their transcripts · checked hourly": "アーカイブしたセッションとその記録 · 1時間ごとに確認",
+  never: "削除しない",
+  "1 day": "1日",
+  "3 days": "3日",
+  "5 days": "5日",
+  "7 days": "7日",
+  "30 days": "30日",
   hide: "非表示",
   show: "表示",
   /* the login page, drawn only by a server that has accounts */
