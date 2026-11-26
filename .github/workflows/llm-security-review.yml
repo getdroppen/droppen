@@ -138,9 +138,12 @@ jobs:
            (a file moved into a new crate, say), read the diff first, open only the code that
            bears on the points above, and return the structured output in time; say in the
            summary what you did not open.
+      # A review reads a diff and the code it touches: 60 turns ran out on a
+      # 178-file change and returned no verdict twice. The retry step has the
+      # same budget.
       REVIEW_ARGS: |
         --model ${{ vars.LLM_REVIEW_MODEL || 'claude-sonnet-5-5' }}
-        --max-turns 60
+        --max-turns 150
         --tools "Read,Grep,Glob"
         --allowedTools "Read,Grep,Glob"
         --disallowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,Task,Agent,Skill,Read(//proc/**),Read(//sys/**),Read(//dev/**),Read(//home/runner/work/_temp/**)"

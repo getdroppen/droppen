@@ -171,6 +171,20 @@ function SettingsFixture() {
             <Button variant="primary">Save</Button>
           </div>
         </Row>
+        <Row id="archived-retention" label="Delete archived data after" hint="Archived sessions and their transcripts · checked hourly">
+          <SelectField
+            value="never"
+            options={[
+              { value: "never", label: "Never" },
+              { value: "1d", label: "1 day" },
+              { value: "3d", label: "3 days" },
+              { value: "5d", label: "5 days" },
+              { value: "7d", label: "7 days" },
+              { value: "30d", label: "30 days" },
+            ]}
+            onValueChange={() => undefined}
+          />
+        </Row>
       </SettingsSection>
     </div>
   );
