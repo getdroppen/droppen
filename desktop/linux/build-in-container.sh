@@ -96,7 +96,12 @@ if [ "$MODE" = sources ]; then
   say "the source packages of LIBRARIES-$ARCH.txt: $(wc -l <"$OUT/SOURCES")"
   NAMES=$(mktemp)
   while IFS=$'\t' read -r src ver; do
-    (cd "$OUT/ubuntu" && apt-get source --download-only -qq "$src=$ver" >/dev/null) || die "apt cannot fetch the source of $src $ver"
+    # A mirror can be mid-sync on one file: retry a few times, then fail.
+    for attempt in 1 2 3 4; do
+      (cd "$OUT/ubuntu" && apt-get source --download-only -qq "$src=$ver" >/dev/null) && break
+      [ "$attempt" -lt 4 ] || die "apt cannot fetch the source of $src $ver"
+      sleep 10
+    done
     dsc=${src}_${ver#*:}.dsc
     [ -f "$OUT/ubuntu/$dsc" ] || die "apt fetched no $dsc for $src $ver"
     [ "$(sed -n 's/^Source: //p' "$OUT/ubuntu/$dsc")" = "$src" ] && [ "$(sed -n 's/^Version: //p' "$OUT/ubuntu/$dsc")" = "$ver" ] \
