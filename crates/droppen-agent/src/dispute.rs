@@ -120,8 +120,7 @@ impl AgentFiles {
             id.update(part);
         }
         let id = id.finalize();
-        self.machine_key()
-            .with_file_name(format!("rotation-dispute-{seq}-{}.json", hex(&id[..12])))
+        self.machine_key().with_file_name(format!("rotation-dispute-{seq}-{}.json", hex(&id[..12])))
     }
 }
 
@@ -196,11 +195,7 @@ impl AgentFiles {
         };
         let mut out: Vec<(PathBuf, Statement)> = entries
             .filter_map(Result::ok)
-            .filter(|e| {
-                e.file_name()
-                    .to_str()
-                    .is_some_and(|n| n.starts_with("rotation-dispute-") && n.ends_with(".json"))
-            })
+            .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("rotation-dispute-") && n.ends_with(".json")))
             .filter_map(|e| {
                 let read = std::fs::read(e.path()).ok().and_then(|b| serde_json::from_slice::<Statement>(&b).ok());
                 if read.is_none() {
@@ -239,7 +234,11 @@ fn segment(id: &str) -> String {
 }
 
 async fn post(http: &reqwest::Client, s: &Statement) -> Delivery {
-    let url = format!("{}/v1/rotations/{}/disputes", s.hub.http_base().trim_end_matches('/'), segment(&s.host));
+    let url = format!(
+        "{}/v1/rotations/{}/disputes",
+        s.hub.http_base().trim_end_matches('/'),
+        segment(&s.host)
+    );
     let body = DisputePost {
         seq: s.seq,
         entry_hash: s.entry_hash.clone(),
@@ -353,19 +352,13 @@ impl AgentFiles {
                 match post(&http, &s).await {
                     Delivery::Acked => {
                         let at = now_ms_u64();
-                        tracing::warn!(
-                            seq = s.seq,
-                            "the hub took this device's dispute statement against the renewal that replaced its key"
-                        );
+                        tracing::warn!(seq = s.seq, "the hub took this device's dispute statement against the renewal that replaced its key");
                         s.acked_ms = Some(at);
                         self.note_dispute_evidence(&s, at);
                         done(&path, &s);
                     }
                     Delivery::Removed => {
-                        tracing::info!(
-                            seq = s.seq,
-                            "the hub says this device was removed: its dispute statement is not delivered any more"
-                        );
+                        tracing::info!(seq = s.seq, "the hub says this device was removed: its dispute statement is not delivered any more");
                         s.stopped = Some("host_removed".into());
                         done(&path, &s);
                     }
@@ -436,9 +429,9 @@ mod tests {
     use droppen_proto::chain::{Action, Assurance, ChainClock, ChainState, DeviceInfo, DeviceV3, Flags, HostRotation, KeyCommit, KeyCommits, Signer};
 
     use super::*;
-    use crate::{FileSeedStore, StoredSeed};
     use droppen_instance::paths::Paths;
     use serde_json::json;
+    use crate::{FileSeedStore, StoredSeed};
 
     /// m-1's state: a chain that added it with `keys[0]` and renewed it to
     /// each of the others in turn (whoever held the key before signing).
@@ -466,22 +459,14 @@ mod tests {
         let mut chain = ChainState::verify(std::slice::from_ref(&genesis), None, &mut ChainClock::history()).unwrap();
         let mut entries = vec![genesis];
         let mut push = |chain: &mut ChainState, action: Action| {
-            let e = chain
-                .draft(Signer::Device("d-1".into()), action, 2_000 + chain.seq())
-                .sign(d1.signing_key());
+            let e = chain.draft(Signer::Device("d-1".into()), action, 2_000 + chain.seq()).sign(d1.signing_key());
             chain.apply(&e, &mut ChainClock::history()).unwrap();
             entries.push(e);
         };
         let epoch = |e: u32| {
             Action::KeyEpochs(KeyCommits {
                 user: None,
-                machines: vec![(
-                    "m-1".into(),
-                    KeyCommit {
-                        epoch: e,
-                        hash: [e as u8; 32],
-                    },
-                )],
+                machines: vec![("m-1".into(), KeyCommit { epoch: e, hash: [e as u8; 32] })],
             })
         };
         push(
@@ -490,11 +475,7 @@ mod tests {
                 id: "m-1".into(),
                 sign_key: keys[0].sign_public(),
                 dh_key: keys[0].dh_public(),
-                flags: Flags {
-                    host: true,
-                    admin: false,
-                    a2a: false,
-                },
+                flags: Flags { host: true, admin: false },
             }),
         );
         push(&mut chain, epoch(0));
@@ -581,11 +562,7 @@ mod tests {
                                 200
                             }
                         };
-                        let body = if status == 200 {
-                            json!({"ok": true})
-                        } else {
-                            json!({"error": "unavailable"})
-                        };
+                        let body = if status == 200 { json!({"ok": true}) } else { json!({"error": "unavailable"}) };
                         (StatusCode::from_u16(status).unwrap(), Json(body))
                     },
                 ),
@@ -608,11 +585,7 @@ mod tests {
     /// key the chain did not retire.
     #[test]
     fn the_statement_disputes_the_renewal_that_retired_the_key_held() {
-        let (k0, k1, k2) = (
-            MachineIdentity::from_seed(&[4; 32]),
-            MachineIdentity::from_seed(&[5; 32]),
-            MachineIdentity::from_seed(&[6; 32]),
-        );
+        let (k0, k1, k2) = (MachineIdentity::from_seed(&[4; 32]), MachineIdentity::from_seed(&[5; 32]), MachineIdentity::from_seed(&[6; 32]));
         let st = renewed(&[&k0, &k1, &k2], "wss://hub.example");
         let chain = st.chain.as_ref().unwrap();
         let retired = &chain.device_record("m-1").unwrap().retired;
@@ -622,10 +595,7 @@ mod tests {
         assert_eq!(s.entry_hash, hex(&chain.hash_at(first).unwrap()));
         assert_eq!(s.new_sign, hex(&k1.sign_public()), "the key that renewal installed, not the latest");
         let sig: [u8; 64] = droppen_base::text::unhex(&s.sig).unwrap().try_into().unwrap();
-        assert!(
-            chain.verify_rotate_dispute("m-1", first, &sig),
-            "it verifies with droppen-proto on the chain"
-        );
+        assert!(chain.verify_rotate_dispute("m-1", first, &sig), "it verifies with droppen-proto on the chain");
         assert!(!chain.verify_rotate_dispute("m-1", later, &sig));
         // The holder of K1 disputes the second renewal.
         let second = statement(&st, &k1, 77).unwrap();
@@ -655,10 +625,7 @@ mod tests {
         assert_ne!(a.entry_hash, b.entry_hash);
         assert!(files.keep_dispute(&a).unwrap());
         assert!(files.keep_dispute(&b).unwrap(), "another statement with the same seq: kept too");
-        assert!(
-            !files.keep_dispute(&a).unwrap() && !files.keep_dispute(&b).unwrap(),
-            "the very same ones again: duplicates"
-        );
+        assert!(!files.keep_dispute(&a).unwrap() && !files.keep_dispute(&b).unwrap(), "the very same ones again: duplicates");
         assert_eq!(files.kept_disputes().len(), 2);
         // Something in its place that is not it (damaged here) gives way.
         droppen_base::fsutil::write_private_reporting_path(&a.path(&files), b"{}").unwrap();
@@ -666,13 +633,7 @@ mod tests {
         assert_eq!(files.kept_disputes().len(), 2);
         files.deliver_disputes();
         until("both delivered", || files.kept_disputes().is_empty()).await;
-        let sigs: Vec<String> = fake
-            .lock()
-            .unwrap()
-            .posts
-            .iter()
-            .map(|(_, b, _)| b["sig"].as_str().unwrap().to_string())
-            .collect();
+        let sigs: Vec<String> = fake.lock().unwrap().posts.iter().map(|(_, b, _)| b["sig"].as_str().unwrap().to_string()).collect();
         assert!(sigs.contains(&a.sig) && sigs.contains(&b.sig), "{sigs:?}");
     }
 

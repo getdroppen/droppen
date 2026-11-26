@@ -4,9 +4,9 @@ use droppen_proto::chain::ChainError;
 use serde_json::Value;
 
 use super::bridge;
+use crate::answers::{AnswerBody, DisplayName, Info, KeyRefused, MachineKeyTaken, Refused};
 use super::lapse::{still_controls, ChannelLapse};
 use super::Shared;
-use crate::answers::{AnswerBody, DisplayName, Info, KeyRefused, MachineKeyTaken, Refused};
 use droppen_base::text::unhex;
 
 /// The agent's own routes over a channel ([`bridge::LOCAL_PREFIX`]): what a
@@ -62,12 +62,7 @@ pub(crate) fn standing_with(shared: &Shared, device: &str, controls: bool) -> br
         };
     };
     use droppen_proto::chain::Freshness;
-    let view = match chain.freshness(
-        device,
-        &st.attestation_list(),
-        shared.clock.now_ms(),
-        droppen_proto::chain::MANAGE_FRESHNESS_MS,
-    ) {
+    let view = match chain.freshness(device, &st.attestation_list(), shared.clock.now_ms(), droppen_proto::chain::MANAGE_FRESHNESS_MS) {
         Ok(Freshness::Fresh) => bridge::View::Fresh,
         Ok(Freshness::Stale { .. }) => bridge::View::Stale,
         Ok(Freshness::Behind { .. }) => bridge::View::Behind,
@@ -111,16 +106,7 @@ impl AgentLocal {
             let st = shared.state.lock().expect("agent state");
             st.chain.as_ref().and_then(|c| c.admin(device)).is_some()
         };
-        let bad = |message: &str| {
-            (
-                400,
-                Refused {
-                    error: "bad_request",
-                    message,
-                }
-                .body(),
-            )
-        };
+        let bad = |message: &str| (400, Refused { error: "bad_request", message }.body());
         match (method, path) {
             ("GET", "/rh/info") => {
                 let st = shared.state.lock().expect("agent state");
@@ -206,14 +192,7 @@ impl AgentLocal {
                 };
                 if let Err(error) = shared.files.store_machine_key(epoch, key.as_ref()) {
                     tracing::error!(%error, "cannot store a machine key");
-                    return (
-                        500,
-                        Refused {
-                            error: "unavailable",
-                            message: "cannot store the key",
-                        }
-                        .body(),
-                    );
+                    return (500, Refused { error: "unavailable", message: "cannot store the key" }.body());
                 }
                 let newer = current.is_none_or(|c| epoch > c);
                 if newer {
@@ -242,14 +221,7 @@ impl AgentLocal {
                 };
                 (200, held.body())
             }
-            _ => (
-                404,
-                Refused {
-                    error: "not_found",
-                    message: "no such agent route",
-                }
-                .body(),
-            ),
+            _ => (404, Refused { error: "not_found", message: "no such agent route" }.body()),
         }
     }
 }

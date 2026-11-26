@@ -430,11 +430,7 @@ impl AgentState {
             from_ms: self.controllers_from_ms,
         };
         while self.controllers.len() >= MAX_CONTROLLERS {
-            let first = self
-                .controllers
-                .iter()
-                .min_by_key(|(id, at)| (**at, (*id).clone()))
-                .map(|(id, at)| (id.clone(), *at));
+            let first = self.controllers.iter().min_by_key(|(id, at)| (**at, (*id).clone())).map(|(id, at)| (id.clone(), *at));
             let Some(first) = first else { break };
             self.controllers.remove(&first.0);
             noted.evicted.push(first);
@@ -842,11 +838,7 @@ impl AgentFiles {
                 kept += 1;
                 continue;
             }
-            let removed = if is_dir {
-                std::fs::remove_dir_all(&path)
-            } else {
-                std::fs::remove_file(&path)
-            };
+            let removed = if is_dir { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
             match removed {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -1055,7 +1047,7 @@ mod tests {
             id: id.into(),
             sign_key: k.sign_public(),
             dh_key: k.dh_public(),
-            flags: Flags { host, admin, a2a: false },
+            flags: Flags { host, admin },
         };
         let genesis = genesis3_draft("a-1", ak.sign_public(), device("d-1", &admin, false, true), None, 1_000).sign(ak.signing_key());
         let mut hub = ChainState::verify(std::slice::from_ref(&genesis), None, &mut ChainClock::history()).unwrap();
@@ -1254,15 +1246,7 @@ mod tests {
         assert!(matches!(st.record_controller(&files, "d-1", 4_000), Recorded::KnownUnsaved(_)));
         std::fs::remove_dir_all(&path).unwrap();
         assert_eq!(st.record_controller(&files, "d-2", 5_000), Recorded::New, "saved this time");
-        let ids: Vec<String> = AgentState::load(&files)
-            .unwrap()
-            .unwrap()
-            .controllers()
-            .unwrap()
-            .devices
-            .into_iter()
-            .map(|d| d.id)
-            .collect();
+        let ids: Vec<String> = AgentState::load(&files).unwrap().unwrap().controllers().unwrap().devices.into_iter().map(|d| d.id).collect();
         assert_eq!(ids, vec!["d-1".to_string(), "d-2".to_string()]);
     }
 

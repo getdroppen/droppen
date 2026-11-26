@@ -54,7 +54,7 @@ fn account() -> Account {
         id: id.into(),
         sign_key: sign.verifying_key().to_bytes(),
         dh_key: dh,
-        flags: Flags { host, admin, a2a: false },
+        flags: Flags { host, admin },
     };
     let genesis = droppen_proto::chain::genesis3_draft(
         "a-1",
@@ -182,10 +182,7 @@ async fn fake_hub(sign_key: [u8; 32]) -> (Hub, String) {
                     return (StatusCode::UNAUTHORIZED, Json(json!({"error": "denied"})));
                 }
                 h.sessions += 1;
-                (
-                    StatusCode::OK,
-                    Json(json!({"token": "tok", "expires_ms": droppen_base::time::now_ms_u64() + 3_600_000})),
-                )
+                (StatusCode::OK, Json(json!({"token": "tok", "expires_ms": droppen_base::time::now_ms_u64() + 3_600_000})))
             }),
         )
         .route(
@@ -660,10 +657,7 @@ async fn a_suspended_device_role_is_parked_until_the_chain_moves() {
     assert_eq!(hub.lock().unwrap().attempts, 1, "parked: no sign-in on a wake-up");
     // The chain moved: it tries again (and parks again while suspended)…
     r.bump.send_modify(|v| *v += 1);
-    until(Duration::from_secs(10), "a sign-in once the chain moved", || {
-        hub.lock().unwrap().attempts == 2
-    })
-    .await;
+    until(Duration::from_secs(10), "a sign-in once the chain moved", || hub.lock().unwrap().attempts == 2).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(hub.lock().unwrap().attempts, 2);
     // …and signs in once the hub lets it.

@@ -261,10 +261,7 @@ impl ChannelLapse {
 
     /// When control lapses, as last worked out (`None`: nothing counts).
     pub(crate) fn at(&self) -> Option<u64> {
-        self.words
-            .values()
-            .max()
-            .map(|t| t.saturating_add(droppen_proto::chain::CONTROL_FRESHNESS_MS))
+        self.words.values().max().map(|t| t.saturating_add(droppen_proto::chain::CONTROL_FRESHNESS_MS))
     }
 
     /// Work it out again on `st` at `now`.
@@ -335,10 +332,7 @@ pub(crate) fn lapse_wait(lapses_at: Option<u64>, now: u64) -> Duration {
 /// vouches for this machine's view again.
 pub(crate) fn close_lapsed(channel: &Channel, device: &str, ch: u32) {
     tracing::warn!(%device, ch, "closing a channel: no admin device vouched for this machine's view of the account in seven days");
-    channel.close(
-        CHANNEL_STALE,
-        "stale chain view: no admin device vouched for it in seven days; attest and reconnect",
-    );
+    channel.close(CHANNEL_STALE, "stale chain view: no admin device vouched for it in seven days; attest and reconnect");
 }
 
 /// Forget the routes of channels that ended here (a lapse, a protocol
@@ -358,4 +352,6 @@ pub(crate) enum Gone {
 }
 
 /// The close reason of a channel whose control a renewal pause took away.
-pub(crate) const PAUSED_REASON: &str = "control is paused while identity keys are renewed: connect again once the renewal is done";
+pub(crate) const PAUSED_REASON: &str =
+    "control is paused while identity keys are renewed: connect again once the renewal is done";
+

@@ -72,11 +72,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rand::RngCore;
 use droppen_proto::chain::{self, Assurance};
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::sig;
 use droppen_proto::wire::agent::AgentToHub;
-use rand::RngCore;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -88,9 +88,9 @@ use super::hub::WireText;
 use super::link::Shared;
 use super::state::AgentState;
 use super::{AgentFiles, FileSeedStore, StagedSeed};
+use droppen_instance::paths::Paths;
 use droppen_base::text::{hex, unhex32};
 use droppen_base::time::now_ms_u64;
-use droppen_instance::paths::Paths;
 
 /// How long `POST /rh/rotate` waits for the hub to stage the proof.
 #[cfg(not(test))]
@@ -521,16 +521,7 @@ impl AgentFiles {
 pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (u16, Value) {
     let req = match Request::parse(body) {
         Ok(req) => req,
-        Err(message) => {
-            return (
-                400,
-                Refused {
-                    error: "bad_request",
-                    message,
-                }
-                .body(),
-            )
-        }
+        Err(message) => return (400, Refused { error: "bad_request", message }.body()),
     };
     let _one = shared.rotation.gate.lock().await;
     // The bridge refused already; the chain (and who vouched for it) may
@@ -594,14 +585,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     let new = staged.identity();
     let body = proof(&account, &machine, &staged, &shared.identity, &new);
     let Some(mac) = chain::host_rotate_confirm(new.dh(), &req.eph, &body) else {
-        return (
-            400,
-            Refused {
-                error: "bad_request",
-                message: "eph is not a usable X25519 key",
-            }
-            .body(),
-        );
+        return (400, Refused { error: "bad_request", message: "eph is not a usable X25519 key" }.body());
     };
     let old_sig = sig::sign(shared.identity.signing_key(), sig::HOST_ROTATE, &body);
     let new_sig = sig::sign(new.signing_key(), sig::HOST_ROTATE, &body);
@@ -630,14 +614,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     // this device can always finish.
     if let Err(error) = store.stage(&staged) {
         tracing::error!(%error, "cannot stage a new identity key");
-        return (
-            500,
-            Refused {
-                error: "unavailable",
-                message: "cannot store the new identity key",
-            }
-            .body(),
-        );
+        return (500, Refused { error: "unavailable", message: "cannot store the new identity key" }.body());
     }
     let hash = hex(&nonce_hash(&req.nonce));
     let (tx, rx) = oneshot::channel();
@@ -654,14 +631,7 @@ pub(super) async fn rotate(shared: &Arc<Shared>, device: &str, body: &[u8]) -> (
     };
     if text.send(stage.text()).is_err() {
         shared.rotation.lock().waiting.remove(&hash);
-        return (
-            409,
-            Refused {
-                error: "hub_not_ready",
-                message: "this device's hub connection went",
-            }
-            .body(),
-        );
+        return (409, Refused { error: "hub_not_ready", message: "this device's hub connection went" }.body());
     }
     tracing::info!(%device, assurance = staged.assurance.to_byte(), "staged a new identity key; the hub is staging the renewal");
     let heard = tokio::time::timeout(STAGE_WAIT, rx).await;
@@ -736,9 +706,7 @@ fn log_code(code: &str) {
 pub(super) fn late_answer(shared: &Shared, value: &Value) {
     let hash = value["nonce_hash"].as_str().and_then(unhex32);
     let staged = hash.and_then(|hash| {
-        shared
-            .files
-            .staged_seeds(&shared.identity)
+        shared.files.staged_seeds(&shared.identity)
             .into_iter()
             .find(|s| nonce_hash(&s.nonce) == hash && s.accepted_ms.is_none())
     });
@@ -807,16 +775,7 @@ fn make_room(store: &FileSeedStore, stagings: &[StagedSeed], since: u64, now: u6
 /// a current host whose chain names the keys it runs with, asked about a
 /// view on that chain.
 fn check_chain(shared: &Shared, req: &Request) -> Result<(String, String), (u16, Value)> {
-    let not_host = |message: &str| {
-        (
-            409,
-            Refused {
-                error: "not_current_host",
-                message,
-            }
-            .body(),
-        )
-    };
+    let not_host = |message: &str| (409, Refused { error: "not_current_host", message }.body());
     let st = shared.state.lock().expect("agent state");
     let Some(chain) = st.chain.as_ref() else {
         return Err(not_host("this device is not in the account yet"));
@@ -1007,10 +966,7 @@ fn foreign(shared: &Arc<Shared>, seq: u64, fingerprint: &str) {
     match statement {
         Ok(Some(statement)) => {
             match shared.files.keep_dispute(&statement) {
-                Ok(true) => tracing::warn!(
-                    seq = statement.seq,
-                    "signed a dispute of that renewal with the retired key; delivering it to the hub"
-                ),
+                Ok(true) => tracing::warn!(seq = statement.seq, "signed a dispute of that renewal with the retired key; delivering it to the hub"),
                 Ok(false) => {}
                 Err(error) => tracing::error!(%error, "cannot keep the dispute statement"),
             }
@@ -1118,13 +1074,10 @@ impl AgentFiles {
     /// Whether `identity`'s seed is one [`re_enroll_fresh`] archived.
     pub(crate) fn seed_archived(&self, identity: &MachineIdentity) -> bool {
         let key = self.machine_key();
-        let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else {
-            return false;
-        };
+        let Some(Ok(entries)) = key.parent().map(std::fs::read_dir) else { return false };
         entries.filter_map(Result::ok).any(|e| {
             let name = e.file_name();
-            name.to_str()
-                .is_some_and(|n| n.starts_with("machine-key.retired-") && n.ends_with(".json"))
+            name.to_str().is_some_and(|n| n.starts_with("machine-key.retired-") && n.ends_with(".json"))
                 && FileSeedStore::at(e.path())
                     .load()
                     .ok()
@@ -1193,11 +1146,15 @@ pub fn re_enroll_fresh(paths: &Paths, now: u64) -> Result<MachineIdentity, Strin
     if let (Ok(Some(seed)), Ok(Some(st))) = (store.load(), AgentState::load(&files)) {
         match files.stored_verdict(&st, &MachineIdentity::from_seed(&seed.seed)) {
             Verdict::Renewed => {
-                return Err("this device's own chain renewed it to an identity key it staged: it takes that key, and is not added again".into())
+                return Err(
+                    "this device's own chain renewed it to an identity key it staged: it takes that key, and is not added again"
+                        .into(),
+                )
             }
             Verdict::Unreadable => {
                 return Err(
-                    "a staged identity key of this device does not read, and may be the one its chain renewed it to: put the file right first".into(),
+                    "a staged identity key of this device does not read, and may be the one its chain renewed it to: put the file right first"
+                        .into(),
                 )
             }
             Verdict::Unchanged | Verdict::Foreign { .. } => {}
@@ -1325,9 +1282,7 @@ pub(super) fn promote(shared: &Arc<Shared>, signed_in: &MachineIdentity) -> Resu
     // tries again.
     if let Err(error) = shared.try_save() {
         shared.state.lock().expect("agent state").rotation.push_renew = push_renew;
-        return Err(format!(
-            "cannot save the agent state, so the renewed identity key is not taken yet: {error}"
-        ));
+        return Err(format!("cannot save the agent state, so the renewed identity key is not taken yet: {error}"));
     }
     #[cfg(test)]
     if let Some(between) = BETWEEN_SAVE_AND_SWAP.with(|b| b.borrow_mut().take()) {
@@ -1522,17 +1477,10 @@ mod tests {
         store.stage(&at(13, 4, now - ATTEMPT_MS - 1, None)).unwrap(); // never answered, its attempt over
         store.stage(&at(12, 3, now - 2 * STAGED_FOR_MS, Some(now - 2 * STAGED_FOR_MS))).unwrap(); // taken, expired
         make_room(&store, &files.staged_seeds(&current), now, now);
-        assert_eq!(
-            nonces(&store),
-            vec![1, 2],
-            "the expired ones make room; the taken one and the young unanswered one stay"
-        );
+        assert_eq!(nonces(&store), vec![1, 2], "the expired ones make room; the taken one and the young unanswered one stay");
         assert_eq!(aside(&store), vec![3, 4], "set aside, not deleted");
         assert!(store.expired_path(&[3; 16]).exists() && !store.staging_path(&[3; 16]).exists());
-        assert!(
-            files.staged_seeds(&current).iter().all(|s| s.nonce[0] != 3),
-            "never tried at sign-in again"
-        );
+        assert!(files.staged_seeds(&current).iter().all(|s| s.nonce[0] != 3), "never tried at sign-in again");
         // The unanswered one goes once its attempt is over.
         files.set_aside_expired_stagings(named_keys(&st), &current, now - 8 + ATTEMPT_MS + 1);
         assert_eq!(nonces(&store), vec![1]);
@@ -1555,18 +1503,8 @@ mod tests {
         assert!(aside(&store).contains(&1), "set aside too");
         // A staging of the key in use, or of another instance, is not one.
         let in_use = store.load().unwrap().unwrap().seed;
-        store
-            .stage(&StagedSeed {
-                seed: in_use,
-                ..at(0, 9, now, None)
-            })
-            .unwrap();
-        store
-            .stage(&StagedSeed {
-                uuid: "another".into(),
-                ..at(30, 8, now, None)
-            })
-            .unwrap();
+        store.stage(&StagedSeed { seed: in_use, ..at(0, 9, now, None) }).unwrap();
+        store.stage(&StagedSeed { uuid: "another".into(), ..at(30, 8, now, None) }).unwrap();
         assert_eq!(files.staged_seeds(&current).len(), 3);
         assert_eq!(nonces(&store), vec![4, 5, 6]);
     }
@@ -1585,19 +1523,11 @@ mod tests {
         FileSeedStore::for_instance(&files).stage(&staged(&paths, 8, Assurance::Auto, 5)).unwrap();
         let fresh = re_enroll_fresh(&paths, 1234).unwrap();
         assert_ne!(fresh.sign_public(), old.sign_public(), "a fresh seed");
-        assert_ne!(
-            fresh.sign_public(),
-            MachineIdentity::from_seed(&[8; 32]).sign_public(),
-            "not the staged one"
-        );
+        assert_ne!(fresh.sign_public(), MachineIdentity::from_seed(&[8; 32]).sign_public(), "not the staged one");
         let archived = files.archived_key(1234);
         assert!(archived.ends_with("agent/machine-key.retired-1234.json"));
         let kept = FileSeedStore::at(archived).load().unwrap().unwrap();
-        assert_eq!(
-            MachineIdentity::from_seed(&kept.seed).sign_public(),
-            old.sign_public(),
-            "the old seed is kept, archived"
-        );
+        assert_eq!(MachineIdentity::from_seed(&kept.seed).sign_public(), old.sign_public(), "the old seed is kept, archived");
         // Never used again: the seed in use is the fresh one, for good.
         let (now, created) = super::super::load_or_create(&paths).unwrap();
         assert!(!created);
@@ -1648,11 +1578,7 @@ mod tests {
         assert_ne!(fresh.sign_public(), current.sign_public());
         assert!(files.seed_archived(&current), "the retired seed is archived, kept");
         assert!(AgentState::load(&files).unwrap().is_none(), "the old enrollment is forgotten");
-        assert_eq!(
-            identity_for_enrolling(&paths).unwrap().sign_public(),
-            fresh.sign_public(),
-            "and the fresh one stays"
-        );
+        assert_eq!(identity_for_enrolling(&paths).unwrap().sign_public(), fresh.sign_public(), "and the fresh one stays");
     }
 
     /// m-1's state with a v3 chain that added it with `current`'s keys, then
@@ -1676,22 +1602,14 @@ mod tests {
         let mut hub = chain::ChainState::verify(std::slice::from_ref(&genesis), None, &mut chain::ChainClock::history()).unwrap();
         let mut entries = vec![genesis];
         let mut push = |hub: &mut chain::ChainState, action: chain::Action| {
-            let e = hub
-                .draft(chain::Signer::Device("d-1".into()), action, 2_000 + hub.seq())
-                .sign(d1.signing_key());
+            let e = hub.draft(chain::Signer::Device("d-1".into()), action, 2_000 + hub.seq()).sign(d1.signing_key());
             hub.apply(&e, &mut chain::ChainClock::history()).unwrap();
             entries.push(e);
         };
         let epoch = |e: u32| {
             chain::Action::KeyEpochs(chain::KeyCommits {
                 user: None,
-                machines: vec![(
-                    "m-1".into(),
-                    chain::KeyCommit {
-                        epoch: e,
-                        hash: [e as u8; 32],
-                    },
-                )],
+                machines: vec![("m-1".into(), chain::KeyCommit { epoch: e, hash: [e as u8; 32] })],
             })
         };
         push(
@@ -1700,11 +1618,7 @@ mod tests {
                 id: "m-1".into(),
                 sign_key: current.sign_public(),
                 dh_key: current.dh_public(),
-                flags: chain::Flags {
-                    host: true,
-                    admin: false,
-                    a2a: false,
-                },
+                flags: chain::Flags { host: true, admin: false },
             }),
         );
         push(&mut hub, epoch(0));
@@ -1724,13 +1638,7 @@ mod tests {
         r.new_sig = sig::sign(to.signing_key(), sig::HOST_ROTATE, &body);
         push(&mut hub, chain::Action::RotateHostKey(r));
         push(&mut hub, epoch(1));
-        let mut st = AgentState::enrolling(
-            "wss://hub.example",
-            "a-1",
-            "m-1",
-            droppen_proto::identity::fingerprint(&ak.sign_public()),
-            5,
-        );
+        let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", droppen_proto::identity::fingerprint(&ak.sign_public()), 5);
         assert!(st.absorb(&entries, now_ms_u64()).error.is_none());
         st
     }
@@ -1854,10 +1762,7 @@ mod tests {
         let again = identity_for_enrolling(&paths).unwrap();
         assert!(again.sign_public() != fresh.sign_public() && again.sign_public() != old.sign_public());
         assert!(!files.has_state() && !files.re_enroll_marker().exists());
-        assert!(
-            files.seed_archived(&old) && files.seed_archived(&fresh),
-            "both archived, neither written over"
-        );
+        assert!(files.seed_archived(&old) && files.seed_archived(&fresh), "both archived, neither written over");
     }
 
     /// A log line, kept for a test.
@@ -1911,11 +1816,7 @@ mod tests {
         let store = FileSeedStore::for_instance(&files);
         store.stage(&staged(&paths, 8, Assurance::Auto, now - 1_000)).unwrap();
         let shown = files.rotation_status(Some(&st), now);
-        assert_eq!(
-            (shown.state.as_str(), shown.code.as_ref()),
-            ("staged", None),
-            "no code without high assurance"
-        );
+        assert_eq!((shown.state.as_str(), shown.code.as_ref()), ("staged", None), "no code without high assurance");
         let high = staged(&paths, 8, Assurance::OnDevice, now - 1_000);
         store.stage(&high).unwrap();
         let shown = files.rotation_status(Some(&st), now);
@@ -1949,10 +1850,7 @@ mod tests {
         st.rotation.foreign_ms = Some(now);
         st.rotation.foreign_reason = Some(FOREIGN_RENEWED_ELSEWHERE.into());
         let shown = files.rotation_status(Some(&st), now + 1);
-        assert_eq!(
-            (shown.state.as_str(), shown.reason.as_deref()),
-            ("foreign", Some(FOREIGN_RENEWED_ELSEWHERE))
-        );
+        assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(FOREIGN_RENEWED_ELSEWHERE)));
         // A staged seed of another instance is not this device's.
         let mut other = staged(&paths, 8, Assurance::Auto, now);
         other.uuid = "someone-else".into();

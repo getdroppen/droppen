@@ -291,7 +291,6 @@ async function chainV3Vectors() {
   // Write gate: words a device came back with (rk4), and newer ones it never knew (rk5).
   const [rk4, rk5] = [await recoveryKeys((await seed(199)).slice(0, 16)), await recoveryKeys((await seed(200)).slice(0, 16))];
   const [devS, devT] = [await member("ts-dev-s", 201), await member("ts-dev-t", 203)];
-  const devA = await member("ts-dev-a", 205);
   const rk = await recoveryKeys((await seed(183)).slice(0, 16));
   const pakSeed = await seed(171);
   const pak = await importEd25519Private(pakSeed);
@@ -323,7 +322,7 @@ async function chainV3Vectors() {
     selfActivate: false,
   };
   const byDev = (m: { id: string }) => ({ type: "device", id: m.id }) as const;
-  const v3 = (m: typeof dev0, host: boolean, admin: boolean, a2a = false) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host, admin, a2a } });
+  const v3 = (m: typeof dev0, host: boolean, admin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host, admin } });
   const entries: Entry[] = [
     await signDraft(genesisDraft(account, akPublic, { id: dev0.id, signKey: dev0.signKey, dhKey: dev0.dhKey, full: true }, await recoveryKeyFor(rk, account, akPublic), 1_000), ak),
   ];
@@ -379,10 +378,6 @@ async function chainV3Vectors() {
     ["recoveryJoinT", { type: "recovery" }, rk5.signing, { type: "recoveryJoin3", device: v3(devT, false, true) }],
     ["approveT", byDev(dev0), dev0.key, { type: "approveDevice", id: devT.id }],
     ["removeT", byDev(dev0), dev0.key, { type: "removeDevice3", id: devT.id }],
-    // The removed A2A bits rc.1 wrote: an A2A device and the host's list for it. (The empty list stays in the unit
-    // tests: it narrows, so the host's next machine key would owe an entry of its own.)
-    ["addA2a", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(devA, false, false, true) }],
-    ["a2aAccept", byDev(dev0), dev0.key, { type: "setA2aAccept", host: m1.id, devices: [devA.id] }],
   ];
   const labels: { label: string; seq: number }[] = [];
   for (const [label, signer, key, action] of steps) {
@@ -627,7 +622,7 @@ async function hostRotationVectors() {
   const thief = await member("ts-r-host", 239);
   const fresh = await member("ts-r-host", 241);
   const rk = await recoveryKeys((await seed(243)).slice(0, 16));
-  const v3 = (m: Member, isHost: boolean, isAdmin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host: isHost, admin: isAdmin, a2a: false } });
+  const v3 = (m: Member, isHost: boolean, isAdmin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host: isHost, admin: isAdmin } });
   const byAdmin = { type: "device", id: admin.id } as const;
   const mk = async (id: string, epoch: number): Promise<Action> => ({
     type: "keyEpochs",

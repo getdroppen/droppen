@@ -3,10 +3,10 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use futures_util::{SinkExt, StreamExt};
 use droppen_proto::frame::Frame;
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::wire::agent::AgentToHub;
-use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::{mpsc, Semaphore};
 use tokio_tungstenite::tungstenite::Message;
@@ -21,8 +21,8 @@ use super::mail::{defer, evicted_message, open_mail, MailVerdict};
 use super::state::AgentState;
 use super::{Health, Pending, Routes, Shared, ROTATED};
 use crate::AgentFiles;
-use droppen_base::time::now_ms_u64;
 use droppen_instance::paths::Paths;
+use droppen_base::time::now_ms_u64;
 
 /// What the link needs from the server it runs in: where its own loopback
 /// API listens, the per-boot credential the bridge presents there, what the
@@ -927,3 +927,4 @@ pub(crate) fn on_control(shared: &Arc<Shared>, value: &Value, text: &mpsc::Unbou
         _ => {}
     }
 }
+

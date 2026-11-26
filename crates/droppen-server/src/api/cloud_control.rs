@@ -78,11 +78,7 @@ async fn a_new_enrollment_never_reopens_the_old_streams_store() {
     let file = AgentFiles::of(&paths).streams_db();
     assert!(!file.exists(), "agent/ is gone on disk");
     let _ = control.identity().unwrap(); // a new machine key, as a new sign-in makes
-    assert_eq!(
-        AgentFiles::of(&paths).streams_kv("plan"),
-        None,
-        "the new enrollment starts from an empty store"
-    );
+    assert_eq!(AgentFiles::of(&paths).streams_kv("plan"), None, "the new enrollment starts from an empty store");
     AgentFiles::of(&paths).set_streams_kv("plan", "new-account-plan");
     assert!(file.exists(), "and it is the file on disk");
 
@@ -94,31 +90,13 @@ async fn a_new_enrollment_never_reopens_the_old_streams_store() {
 /// What a link needs, for a server of these paths that listens nowhere.
 fn link_env(paths: &Paths) -> LinkEnv {
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
-    let auth = droppen_auth::Auth::new(
-        paths,
-        &instance,
-        &droppen_http::config::AuthSettings::default(),
-        false,
-        std::sync::Arc::new(crate::app::NotifyTokens),
-    );
+    let auth = droppen_auth::Auth::new(paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
     LinkEnv {
         addr: "127.0.0.1:9".parse().unwrap(),
         credential: "test".into(),
         streams: {
-            let drive = droppen_drive::Drive::new(
-                std::sync::Arc::new(paths.clone()),
-                &instance,
-                auth,
-                crate::app::transcript_sources(),
-                crate::app::register_providers,
-                crate::app::logins(),
-                crate::app::NotifyDecoration::new(std::sync::Arc::new(paths.clone()), instance.clone()),
-            );
-            std::sync::Arc::new(crate::stream_source::SessionStreams::new(
-                drive.paths.clone(),
-                drive.transcripts.clone(),
-                drive,
-            ))
+            let drive = droppen_drive::Drive::new(std::sync::Arc::new(paths.clone()), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins(), crate::app::NotifyDecoration::new(std::sync::Arc::new(paths.clone()), instance.clone()));
+            std::sync::Arc::new(crate::stream_source::SessionStreams::new(drive.paths.clone(), drive.transcripts.clone(), drive))
         },
         host: std::sync::Arc::new(crate::app::PushLinkHost),
         cancel: tokio_util::sync::CancellationToken::new(),
@@ -164,9 +142,7 @@ async fn a_sign_in_that_cannot_begin_leaves_the_link_as_it_was() {
     let control = Control::new(paths.clone());
     let _ = control.identity().unwrap();
     let hub = format!("ws://127.0.0.1:{}", closed_port());
-    AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000)
-        .save(&AgentFiles::of(&paths))
-        .unwrap();
+    AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
     control.attach(link_env(&paths));
     assert!(control.start_if_enrolled().await);
     assert!(control.status().running);
@@ -243,9 +219,7 @@ async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alon
     let control = Control::new(paths.clone());
     let old = control.identity().unwrap();
     let hub = format!("ws://127.0.0.1:{}", closed_port());
-    AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000)
-        .save(&AgentFiles::of(&paths))
-        .unwrap();
+    AgentState::enrolling(&hub, "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
     let env = link_env(&paths);
     let server = env.cancel.clone();
     let session = server.child_token();
@@ -280,15 +254,9 @@ async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alon
         let device = p256::SecretKey::random(&mut rand::rngs::OsRng);
         droppen_notify::push::ece::b64url(device.public_key().to_encoded_point(false).as_bytes())
     };
-    droppen_notify::push::store::upsert(
-        &paths,
-        "https://push.example/a".into(),
-        point,
-        droppen_notify::push::ece::b64url(&[9; 16]),
-        None,
-    )
-    .await
-    .unwrap();
+    droppen_notify::push::store::upsert(&paths, "https://push.example/a".into(), point, droppen_notify::push::ece::b64url(&[9; 16]), None)
+        .await
+        .unwrap();
     control.running_link().as_ref().unwrap().ask_push_renew();
     (control.link_restart_hook())();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -301,20 +269,10 @@ async fn a_restart_runs_the_link_with_the_renewed_key_and_leaves_the_server_alon
         assert!(std::time::Instant::now() < deadline, "the restarted link renews the push keys");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(
-        droppen_notify::push::store::subscriptions(&paths).await.is_empty(),
-        "every push subscription forgotten"
-    );
-    assert_ne!(
-        droppen_notify::push::store::vapid_public(&paths).await.unwrap(),
-        old_vapid,
-        "a new VAPID keypair"
-    );
+    assert!(droppen_notify::push::store::subscriptions(&paths).await.is_empty(), "every push subscription forgotten");
+    assert_ne!(droppen_notify::push::store::vapid_public(&paths).await.unwrap(), old_vapid, "a new VAPID keypair");
     assert!(control.status().running);
-    assert!(
-        !server.is_cancelled() && !session.is_cancelled(),
-        "the server and what runs under it go on"
-    );
+    assert!(!server.is_cancelled() && !session.is_cancelled(), "the server and what runs under it go on");
     control.restart().await.unwrap();
     assert_eq!(key_in_use(&control), Some(new.sign_public()));
     control.stop().await;
@@ -331,9 +289,7 @@ async fn adding_again_cut_short_by_a_crash_is_finished_when_the_control_comes_up
     let paths = Paths::for_instance(dir.path().to_path_buf(), "ctlfresh");
     let control = Control::new(paths.clone());
     let old = control.identity().unwrap();
-    AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000)
-        .save(&AgentFiles::of(&paths))
-        .unwrap();
+    AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&AgentFiles::of(&paths)).unwrap();
     // What the crash left: the marker, the seed archived, the state kept.
     let agent = AgentFiles::of(&paths).machine_key().parent().unwrap().to_path_buf();
     droppen_base::fsutil::write_private_reporting_path(&agent.join("re-enroll-fresh.json"), b"{}").unwrap();
@@ -384,22 +340,14 @@ fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
     let mut hub = chain::ChainState::verify(std::slice::from_ref(&genesis), None, &mut chain::ChainClock::history()).unwrap();
     let mut entries = vec![genesis];
     let mut push = |hub: &mut chain::ChainState, action: chain::Action| {
-        let e = hub
-            .draft(chain::Signer::Device("d-1".into()), action, 2_000 + hub.seq())
-            .sign(d1.signing_key());
+        let e = hub.draft(chain::Signer::Device("d-1".into()), action, 2_000 + hub.seq()).sign(d1.signing_key());
         hub.apply(&e, &mut chain::ChainClock::history()).unwrap();
         entries.push(e);
     };
     let epoch = |e: u32| {
         chain::Action::KeyEpochs(chain::KeyCommits {
             user: None,
-            machines: vec![(
-                "m-1".into(),
-                chain::KeyCommit {
-                    epoch: e,
-                    hash: [e as u8; 32],
-                },
-            )],
+            machines: vec![("m-1".into(), chain::KeyCommit { epoch: e, hash: [e as u8; 32] })],
         })
     };
     push(
@@ -408,11 +356,7 @@ fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
             id: "m-1".into(),
             sign_key: current.sign_public(),
             dh_key: current.dh_public(),
-            flags: chain::Flags {
-                host: true,
-                admin: false,
-                a2a: false,
-            },
+            flags: chain::Flags { host: true, admin: false },
         }),
     );
     push(&mut hub, epoch(0));
@@ -432,13 +376,7 @@ fn renewed_to(current: &MachineIdentity, to: &MachineIdentity) -> AgentState {
     r.new_sig = sig::sign(to.signing_key(), sig::HOST_ROTATE, &body);
     push(&mut hub, chain::Action::RotateHostKey(r));
     push(&mut hub, epoch(1));
-    let mut st = AgentState::enrolling(
-        "wss://hub.example",
-        "a-1",
-        "m-1",
-        droppen_proto::identity::fingerprint(&ak.sign_public()),
-        5,
-    );
+    let mut st = AgentState::enrolling("wss://hub.example", "a-1", "m-1", droppen_proto::identity::fingerprint(&ak.sign_public()), 5);
     assert!(st.absorb(&entries, droppen_base::time::now_ms_u64()).error.is_none());
     st
 }
@@ -475,11 +413,7 @@ async fn the_sign_in_renews_only_a_retired_seed() {
         assert!(!files.seed_retired(&current), "{why}: its own renewal");
         assert!(!files.seed_archived(&current), "{why}: nothing archived");
         assert!(files.has_state(), "{why}: the enrollment stays");
-        assert_eq!(
-            control.identity().unwrap().sign_public(),
-            current.sign_public(),
-            "{why}: the seed in use stays"
-        );
+        assert_eq!(control.identity().unwrap().sign_public(), current.sign_public(), "{why}: the seed in use stays");
         assert_eq!(files.kept_staged_seeds(), 1, "{why}: the staged seed stays");
     };
     assert!(!control.renew_retired_seed().await.unwrap(), "its own renewal: left alone");
@@ -508,9 +442,7 @@ async fn unenrolling_keeps_an_undelivered_dispute_statement() {
     let control = Control::new(paths.clone());
     let _ = control.identity().unwrap();
     let files = AgentFiles::of(&paths);
-    AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000)
-        .save(&files)
-        .unwrap();
+    AgentState::enrolling("wss://hub.example", "a-1", "m-1", [9; 16], 5_000).save(&files).unwrap();
     let pending = droppen_agent::dispute::Statement {
         version: 1,
         hub: "wss://hub.example".into(),
@@ -528,14 +460,7 @@ async fn unenrolling_keeps_an_undelivered_dispute_statement() {
     std::fs::write(&statement, serde_json::to_vec(&pending).unwrap()).unwrap();
     control.unenroll().await.unwrap();
     assert!(statement.exists(), "the statement survives");
-    let left: Vec<std::ffi::OsString> = std::fs::read_dir(statement.parent().unwrap())
-        .unwrap()
-        .map(|e| e.unwrap().file_name())
-        .collect();
-    assert_eq!(
-        left,
-        vec![statement.file_name().unwrap().to_os_string()],
-        "everything else in agent/ is gone"
-    );
+    let left: Vec<std::ffi::OsString> = std::fs::read_dir(statement.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(left, vec![statement.file_name().unwrap().to_os_string()], "everything else in agent/ is gone");
     assert!(!files.has_state());
 }

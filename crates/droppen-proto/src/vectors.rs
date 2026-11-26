@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 
 use crate::chain::tests::{device_info, fixture, machine_info, recovered_device, sample_chain};
 use crate::chain::{
-    genesis_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainError, ChainState, DeviceStatus, DeviceV3, Entry,
-    KeyCommit, KeyCommits, PausePhase, RecoveryKey, Signer, RECOVERY_DELAY_MS,
+    genesis_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainError, ChainState, DeviceStatus, Entry, KeyCommit,
+    KeyCommits, PausePhase, RecoveryKey, Signer, RECOVERY_DELAY_MS,
 };
 use crate::frame::Frame;
 use crate::handshake::{HelloBody, ReplyBody, ReplyStatus};
@@ -1213,40 +1213,6 @@ fn chain_v3_vectors() -> Value {
     );
     push(&mut state, &mut entries, dev0(), k0, Action::ApproveDevice("d-t".into()), "approveT");
     push(&mut state, &mut entries, dev0(), k0, Action::RemoveDevice3("d-t".into()), "removeT");
-    // The removed A2A bits a v0.3.0-rc.1 chain carries (PR #669): an A2A
-    // device, then the host's accept list for it. Both implementations read
-    // and sign the same kind 23 entry. (The empty list is tested in chain.rs
-    // and its TS mirror, not here: it narrows, and the host's next machine key
-    // would owe an entry of its own.)
-    let a1 = extra(20);
-    push(
-        &mut state,
-        &mut entries,
-        dev0(),
-        k0,
-        Action::AddDevice3(DeviceV3 {
-            id: "a-1".into(),
-            sign_key: a1.0.verifying_key().to_bytes(),
-            dh_key: a1.1.public(),
-            flags: Flags {
-                host: false,
-                admin: false,
-                a2a: true,
-            },
-        }),
-        "addA2a",
-    );
-    push(
-        &mut state,
-        &mut entries,
-        dev0(),
-        k0,
-        Action::SetA2aAccept {
-            host: "m-1".into(),
-            devices: vec!["a-1".into()],
-        },
-        "a2aAccept",
-    );
     assert!(
         state.recovery_key().is_none(),
         "removing the device that came back with the current words voids them"
@@ -1698,9 +1664,7 @@ fn chain_v3_vectors() -> Value {
             .sign(k0);
         let mut bytes = add.encode();
         let at = bytes.len() - 65;
-        // Bit 2 (a2a) is known since the revert keeps it for old chains; an
-        // unknown one is bit 3 and up.
-        bytes[at] = 0b1000;
+        bytes[at] = 0b100;
         invalid.push(("unknown device flag bits".into(), [base_json.clone(), vec![h(&bytes)]].concat(), "decode"));
         let mut bytes = add.encode();
         bytes[0] = VERSION;
@@ -1866,7 +1830,7 @@ fn chain_v3_vectors() -> Value {
         "hashes": entries.iter().map(|e| h(&e.hash())).collect::<Vec<_>>(),
         "versions": entries.iter().map(|e| e.draft.version).collect::<Vec<_>>(),
         "steps": prefixes.iter().map(|(l, es, _)| json!({"label": l, "seq": es.len() - 1})).collect::<Vec<_>>(),
-        "extraDevices": [extra_json(0, "h-2"), extra_json(2, "d-p"), extra_json(4, "dev-r"), extra_json(5, "d-x"), extra_json(6, "dev-g"), extra_json(7, "d-first"), extra_json(8, "d-y"), extra_json(10, "d-w"), extra_json(15, "d-s"), extra_json(16, "d-t"), extra_json(20, "a-1")],
+        "extraDevices": [extra_json(0, "h-2"), extra_json(2, "d-p"), extra_json(4, "dev-r"), extra_json(5, "d-x"), extra_json(6, "dev-g"), extra_json(7, "d-first"), extra_json(8, "d-y"), extra_json(10, "d-w"), extra_json(15, "d-s"), extra_json(16, "d-t")],
         "passkeys": passkeys,
         "recoverySigners": recovery_signers,
         // Write gate: the v2 removal rule, untouched — a device that came back
@@ -1974,7 +1938,10 @@ fn host_rotation_vectors() -> Value {
     let before = |seq: u64| ChainState::verify(&entries[..seq as usize], None, &mut hist()).unwrap();
     let rotate = seq_of(&steps, "rotate");
     let again = seq_of(&steps, "rotateAgain");
-    let renewals: Vec<Value> = [rotate, again].iter().map(|&s| renewal_json(&before(s), &entries[s as usize])).collect();
+    let renewals: Vec<Value> = [rotate, again]
+        .iter()
+        .map(|&s| renewal_json(&before(s), &entries[s as usize]))
+        .collect();
 
     // The confirmation, the code and the ack of the first renewal.
     let Action::RotateHostKey(first) = &entries[rotate as usize].draft.action else {
@@ -2029,13 +1996,7 @@ fn host_rotation_vectors() -> Value {
     let mut invalid: Vec<(String, Vec<Value>, &'static str)> = Vec::new();
     let mut rule_of: Vec<(String, &'static str)> = Vec::new();
     let prefix = |label: &str| entries[..=seq_of(&steps, label) as usize].to_vec();
-    let mut bad = |name: &str,
-                   prefix: Vec<Entry>,
-                   signer: Signer,
-                   key: &SigningKey,
-                   action: &dyn Fn(&ChainState) -> Action,
-                   error: &'static str,
-                   rule: Option<&'static str>| {
+    let mut bad = |name: &str, prefix: Vec<Entry>, signer: Signer, key: &SigningKey, action: &dyn Fn(&ChainState) -> Action, error: &'static str, rule: Option<&'static str>| {
         let st = ChainState::verify(&prefix, None, &mut hist()).unwrap();
         let e = st.draft(signer, action(&st), 30_000 + st.seq()).sign(key);
         invalid.push((name.into(), entries_json(&[prefix, vec![e]].concat()).as_array().unwrap().clone(), error));
@@ -2044,22 +2005,13 @@ fn host_rotation_vectors() -> Value {
         }
     };
     let o = extra(0);
-    let ok =
-        |st: &ChainState, host: &str, old: &SigningKey| Action::RotateHostKey(renewal(st, host, old, &extra(21), st.seq(), [9; 16], Assurance::Auto));
+    let ok = |st: &ChainState, host: &str, old: &SigningKey| Action::RotateHostKey(renewal(st, host, old, &extra(21), st.seq(), [9; 16], Assurance::Auto));
     let to = |st: &ChainState, old: &SigningKey, new: (SigningKey, DhKeypair)| {
         Action::RotateHostKey(renewal(st, "h-2", old, &new, st.seq(), [9; 16], Assurance::Auto))
     };
     let base = prefix("removalKeys");
     let not_allowed = "notAllowed";
-    bad(
-        "a renewal of a browser or phone",
-        base.clone(),
-        dev0(),
-        k0,
-        &|st| ok(st, "dev-2", &f.devices[2].0),
-        not_allowed,
-        Some(rules::ROTATE_NOT_HOST),
-    );
+    bad("a renewal of a browser or phone", base.clone(), dev0(), k0, &|st| ok(st, "dev-2", &f.devices[2].0), not_allowed, Some(rules::ROTATE_NOT_HOST));
     {
         let mut st = ChainState::verify(&base, None, &mut hist()).unwrap();
         let join = st
@@ -2067,47 +2019,15 @@ fn host_rotation_vectors() -> Value {
             .sign(&f.recovery.signing);
         st.apply(&join, &mut hist()).unwrap();
         let pending = [base.clone(), vec![join]].concat();
-        bad(
-            "a renewal of a pending device",
-            pending,
-            dev0(),
-            k0,
-            &|st| ok(st, "dev-r", &extra(4).0),
-            not_allowed,
-            Some(rules::ROTATE_NOT_HOST),
-        );
+        bad("a renewal of a pending device", pending, dev0(), k0, &|st| ok(st, "dev-r", &extra(4).0), not_allowed, Some(rules::ROTATE_NOT_HOST));
         let mut st = ChainState::verify(&base, None, &mut hist()).unwrap();
         let rm = st.draft(dev0(), Action::RemoveDevice3("m-1".into()), 30_000).sign(k0);
         st.apply(&rm, &mut hist()).unwrap();
         let removed = [base.clone(), vec![rm]].concat();
-        bad(
-            "a renewal of a removed host",
-            removed,
-            dev0(),
-            k0,
-            &|st| ok(st, "m-1", &f.machine.0),
-            not_allowed,
-            Some(rules::ROTATE_NOT_HOST),
-        );
+        bad("a renewal of a removed host", removed, dev0(), k0, &|st| ok(st, "m-1", &f.machine.0), not_allowed, Some(rules::ROTATE_NOT_HOST));
     }
-    bad(
-        "a renewal to the host's current keys",
-        base.clone(),
-        dev0(),
-        k0,
-        &|st| to(st, &o.0, extra(0)),
-        not_allowed,
-        Some(rules::ROTATE_KEY_REUSED),
-    );
-    bad(
-        "a renewal back to a retired key",
-        prefix("rotateKey"),
-        dev0(),
-        k0,
-        &|st| to(st, &extra(21).0, extra(0)),
-        not_allowed,
-        Some(rules::ROTATE_KEY_REUSED),
-    );
+    bad("a renewal to the host's current keys", base.clone(), dev0(), k0, &|st| to(st, &o.0, extra(0)), not_allowed, Some(rules::ROTATE_KEY_REUSED));
+    bad("a renewal back to a retired key", prefix("rotateKey"), dev0(), k0, &|st| to(st, &extra(21).0, extra(0)), not_allowed, Some(rules::ROTATE_KEY_REUSED));
     bad(
         "a renewal onto another device's key",
         base.clone(),
@@ -2130,15 +2050,7 @@ fn host_rotation_vectors() -> Value {
         let Action::RotateHostKey(used) = entries[rotate as usize].draft.action.clone() else {
             panic!("a renewal")
         };
-        bad(
-            "a renewal replayed",
-            prefix("rotateKey"),
-            dev0(),
-            k0,
-            &|_| Action::RotateHostKey(used.clone()),
-            not_allowed,
-            Some(rules::ROTATE_KEY_REUSED),
-        );
+        bad("a renewal replayed", prefix("rotateKey"), dev0(), k0, &|_| Action::RotateHostKey(used.clone()), not_allowed, Some(rules::ROTATE_KEY_REUSED));
     }
     bad(
         "a renewal proved against a view ahead of it",
@@ -2236,9 +2148,7 @@ fn host_rotation_vectors() -> Value {
     );
     {
         let mut st = ChainState::verify(&base, None, &mut hist()).unwrap();
-        let add = st
-            .draft(dev0(), Action::AddDevice3(dev3("h-3", &extra(24), true, false)), 30_000)
-            .sign(k0);
+        let add = st.draft(dev0(), Action::AddDevice3(dev3("h-3", &extra(24), true, false)), 30_000).sign(k0);
         st.apply(&add, &mut hist()).unwrap();
         let owing = [base.clone(), vec![add]].concat();
         bad(
@@ -2316,14 +2226,10 @@ fn host_rotation_vectors() -> Value {
             let chain = extend(chain, dev0(), k0, &|st| {
                 Action::RotateHostKey(renewal(st, "h-2", &o.0, &extra(21), st.seq(), [9; 16], Assurance::Auto))
             });
-            extend(chain, dev0(), k0, &|st| {
-                Action::KeyEpochs(crate::v3_regressions::mk_commit("h-2", st.machine_key_epochs("h-2"), &[0x26; 32]))
-            })
+            extend(chain, dev0(), k0, &|st| Action::KeyEpochs(crate::v3_regressions::mk_commit("h-2", st.machine_key_epochs("h-2"), &[0x26; 32])))
         };
         let rsk = &f.recovery.signing;
-        let joined = extend(base.clone(), Signer::Recovery, rsk, &|_| {
-            Action::RecoveryJoin3(dev3("d-k0", &extra(0), false, true))
-        });
+        let joined = extend(base.clone(), Signer::Recovery, rsk, &|_| Action::RecoveryJoin3(dev3("d-k0", &extra(0), false, true)));
         let joined = renewed_after(joined);
         bad(
             "a pending device with a key retired since approved",
@@ -2346,9 +2252,7 @@ fn host_rotation_vectors() -> Value {
         let p = crate::v3_regressions::pak(&f, "p-1", 800, 1, true);
         let slotted = extend(base.clone(), dev0(), k0, &|_| Action::PasskeySlotSet(p.slot.clone()));
         let by_pk = || Signer::Passkey("p-1".into());
-        let pk_joined = extend(slotted, by_pk(), &p.signing, &|_| {
-            Action::AddDevice3(dev3("d-k0", &extra(0), false, false))
-        });
+        let pk_joined = extend(slotted, by_pk(), &p.signing, &|_| Action::AddDevice3(dev3("d-k0", &extra(0), false, false)));
         bad(
             "a passkey device with a key retired since activating itself",
             renewed_after(pk_joined),
@@ -2379,15 +2283,7 @@ fn host_rotation_vectors() -> Value {
         let k = key(&st, 0x27);
         step(&mut st, &mut es, "assuredRenewalKey", k);
         step(&mut st, &mut es, "policyOff", Action::SetRenewalPolicy { always_assured: false });
-        let r = renewal(
-            &st,
-            "h-2",
-            &extra(RENEWED[0]).0,
-            &extra(RENEWED[1]),
-            st.seq(),
-            [0x52; 16],
-            Assurance::Auto,
-        );
+        let r = renewal(&st, "h-2", &extra(RENEWED[0]).0, &extra(RENEWED[1]), st.seq(), [0x52; 16], Assurance::Auto);
         step(&mut st, &mut es, "autoRenewal", Action::RotateHostKey(r));
         let k = key(&st, 0x28);
         step(&mut st, &mut es, "autoRenewalKey", k);
@@ -2421,19 +2317,9 @@ fn host_rotation_vectors() -> Value {
     // the second is open, m-1 stops hosting and dev-2 is removed; ending it gives back only what the base still holds.
     let (op_a, op_b) = ([0xa1u8; 16], [0xb2u8; 16]);
     let pause_hosts = ["m-1", "h-2"];
-    let pairs = [
-        ("h-2", "m-1"),
-        ("m-1", "h-2"),
-        ("dev-2", "m-1"),
-        ("dev-2", "h-2"),
-        ("dev-0", "m-1"),
-        ("dev-0", "h-2"),
-    ];
+    let pairs = [("h-2", "m-1"), ("m-1", "h-2"), ("dev-2", "m-1"), ("dev-2", "h-2"), ("dev-0", "m-1"), ("dev-0", "h-2")];
     let removal = |hosts: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
-        hosts
-            .iter()
-            .map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect()))
-            .collect()
+        hosts.iter().map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect())).collect()
     };
     let marker = |op: [u8; 16], phase: PausePhase, removals: Vec<(String, Vec<String>)>| Action::RenewalPause { op, phase, removals };
     let (pause_entries, pause_steps) = {
@@ -2450,24 +2336,11 @@ fn host_rotation_vectors() -> Value {
         };
         let accept = |host: &str, from: crate::chain::Accept| Action::SetAccept { host: host.into(), from };
         let ids = |ids: &[&str]| crate::chain::Accept::Devices(ids.iter().map(|i| i.to_string()).collect());
-        let key =
-            |st: &ChainState, host: &str, k: u8| Action::KeyEpochs(crate::v3_regressions::mk_commit(host, st.machine_key_epochs(host), &[k; 32]));
+        let key = |st: &ChainState, host: &str, k: u8| Action::KeyEpochs(crate::v3_regressions::mk_commit(host, st.machine_key_epochs(host), &[k; 32]));
         step(&mut st, &mut es, "acceptAll", "dev-0", accept("m-1", crate::chain::Accept::All));
         step(&mut st, &mut es, "acceptH2", "dev-0", accept("h-2", ids(&["dev-2", "m-1"])));
-        step(
-            &mut st,
-            &mut es,
-            "addAdmin",
-            "dev-0",
-            Action::AddDevice3(dev3("d-a", &extra(26), false, true)),
-        );
-        step(
-            &mut st,
-            &mut es,
-            "pauseStart",
-            "dev-0",
-            marker(op_a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["dev-2", "h-2"])])),
-        );
+        step(&mut st, &mut es, "addAdmin", "dev-0", Action::AddDevice3(dev3("d-a", &extra(26), false, true)));
+        step(&mut st, &mut es, "pauseStart", "dev-0", marker(op_a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["dev-2", "h-2"])])));
         step(&mut st, &mut es, "handM1", "dev-0", accept("m-1", ids(&["dev-2"])));
         let k = key(&st, "m-1", 0x35);
         step(&mut st, &mut es, "handM1Key", "dev-0", k);
@@ -2476,38 +2349,13 @@ fn host_rotation_vectors() -> Value {
         let k = key(&st, "h-2", 0x36);
         step(&mut st, &mut es, "renewKey", "dev-0", k);
         step(&mut st, &mut es, "pauseCompleted", "d-a", marker(op_a, PausePhase::Completed, vec![]));
-        step(
-            &mut st,
-            &mut es,
-            "pause2Start",
-            "d-a",
-            marker(op_b, PausePhase::Start, removal(&[("m-1", &["dev-2"])])),
-        );
-        step(
-            &mut st,
-            &mut es,
-            "demoteStarter",
-            "dev-0",
-            Action::SetAdmin {
-                id: "d-a".into(),
-                admin: false,
-            },
-        );
-        assert_eq!(
-            st.paused_edges("m-1"),
-            vec!["dev-2".to_string()],
-            "a demoted starter's pause stays in force"
-        );
+        step(&mut st, &mut es, "pause2Start", "d-a", marker(op_b, PausePhase::Start, removal(&[("m-1", &["dev-2"])])));
+        step(&mut st, &mut es, "demoteStarter", "dev-0", Action::SetAdmin { id: "d-a".into(), admin: false });
+        assert_eq!(st.paused_edges("m-1"), vec!["dev-2".to_string()], "a demoted starter's pause stays in force");
         step(&mut st, &mut es, "pause2Cancelled", "dev-0", marker(op_b, PausePhase::Cancelled, vec![]));
         assert!(st.open_pauses().is_empty() && st.paused_edges("m-1").is_empty() && st.paused_edges("h-2").is_empty());
         let (op_d, op_e) = ([0xd1u8; 16], [0xe2u8; 16]);
-        step(
-            &mut st,
-            &mut es,
-            "overlapStart",
-            "dev-0",
-            marker(op_d, PausePhase::Start, removal(&[("m-1", &["dev-2"])])),
-        );
+        step(&mut st, &mut es, "overlapStart", "dev-0", marker(op_d, PausePhase::Start, removal(&[("m-1", &["dev-2"])])));
         step(
             &mut st,
             &mut es,
@@ -2517,24 +2365,9 @@ fn host_rotation_vectors() -> Value {
         );
         step(&mut st, &mut es, "overlapCompleted", "dev-0", marker(op_d, PausePhase::Completed, vec![]));
         assert_eq!(st.paused_edges("m-1"), vec!["dev-2".to_string()], "still paused by the other pause");
-        step(
-            &mut st,
-            &mut es,
-            "pausedHostStops",
-            "dev-0",
-            Action::SetHost {
-                id: "m-1".into(),
-                host: false,
-            },
-        );
+        step(&mut st, &mut es, "pausedHostStops", "dev-0", Action::SetHost { id: "m-1".into(), host: false });
         step(&mut st, &mut es, "pausedDeviceRemoved", "dev-0", Action::RemoveDevice3("dev-2".into()));
-        step(
-            &mut st,
-            &mut es,
-            "overlap2Completed",
-            "dev-0",
-            marker(op_e, PausePhase::Completed, vec![]),
-        );
+        step(&mut st, &mut es, "overlap2Completed", "dev-0", marker(op_e, PausePhase::Completed, vec![]));
         assert!(st.open_pauses().is_empty() && st.paused_edges("h-2").is_empty() && st.paused_edges("m-1").is_empty());
         assert!(st.may_control("m-1", "h-2").is_ok(), "h-2's base still names m-1");
         assert!(st.may_control("dev-2", "h-2").is_err() && st.may_control("dev-0", "m-1").is_err());
@@ -2560,10 +2393,7 @@ fn host_rotation_vectors() -> Value {
     for (name, (chain, action), rule) in [
         (
             "a renewal pause that starts under a used op",
-            (
-                pause_upto("pauseCompleted"),
-                marker(op_a, PausePhase::Start, removal(&[("m-1", &["dev-2"])])),
-            ),
+            (pause_upto("pauseCompleted"), marker(op_a, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))),
             rules::PAUSE_OP_REUSED,
         ),
         (
@@ -2591,11 +2421,7 @@ fn host_rotation_vectors() -> Value {
             at_base(marker(c, PausePhase::Start, removal(&[("m-1", &["dev-2"]), ("m-1", &["h-2"])]))),
             rules::PAUSE_HOSTS,
         ),
-        (
-            "a renewal pause with no removals",
-            at_base(marker(c, PausePhase::Start, vec![])),
-            rules::PAUSE_HOSTS,
-        ),
+        ("a renewal pause with no removals", at_base(marker(c, PausePhase::Start, vec![])), rules::PAUSE_HOSTS),
         (
             "a renewal pause removing nothing from a host",
             at_base(marker(c, PausePhase::Start, removal(&[("m-1", &[])]))),
@@ -2643,10 +2469,7 @@ fn host_rotation_vectors() -> Value {
         ),
         (
             "a renewal pause that ends naming removals",
-            (
-                pause_upto("pauseStart"),
-                marker(op_a, PausePhase::Completed, removal(&[("h-2", &["m-1"])])),
-            ),
+            (pause_upto("pauseStart"), marker(op_a, PausePhase::Completed, removal(&[("h-2", &["m-1"])]))),
             rules::PAUSE_END_REMOVALS,
         ),
     ] {
@@ -2685,10 +2508,7 @@ fn host_rotation_vectors() -> Value {
     // The size bound (大小上限): one byte past it is refused for that alone; at it, the ids' own rule speaks (they
     // name no devices).
     let sized = |st: &ChainState, len: usize| {
-        let entry = |ids: &[String]| {
-            st.draft(dev0(), marker(c, PausePhase::Start, vec![("m-1".into(), ids.to_vec())]), 0)
-                .sign(k0)
-        };
+        let entry = |ids: &[String]| st.draft(dev0(), marker(c, PausePhase::Start, vec![("m-1".into(), ids.to_vec())]), 0).sign(k0);
         let mut ids: Vec<String> = Vec::new();
         while entry(&ids).encode().len() + 2 * 66 <= len {
             ids.push(format!("x{:063}", ids.len()));
@@ -2723,13 +2543,7 @@ fn host_rotation_vectors() -> Value {
         base.clone(),
         dev0(),
         k0,
-        &|_| {
-            marker(
-                c,
-                PausePhase::Start,
-                (0..257).map(|i| (format!("h-{i}"), vec!["dev-2".to_string()])).collect(),
-            )
-        },
+        &|_| marker(c, PausePhase::Start, (0..257).map(|i| (format!("h-{i}"), vec!["dev-2".to_string()])).collect()),
         "decode",
         None,
     );
@@ -2772,11 +2586,7 @@ fn host_rotation_vectors() -> Value {
     // Kind 22 with a phase other than 0, 1 or 2, and under version 2: neither decodes.
     let completed_bytes = pause_entries[pause_seq("pauseCompleted")].encode();
     let phase_at = completed_bytes.len() - 64 - 2 - 1;
-    assert_eq!(
-        (completed_bytes[phase_at - 17], completed_bytes[phase_at]),
-        (22, 1),
-        "kind 22, op, then the phase"
-    );
+    assert_eq!((completed_bytes[phase_at - 17], completed_bytes[phase_at]), (22, 1), "kind 22, op, then the phase");
     for (name, at, value) in [
         ("a renewal pause with an unknown phase", phase_at, 3),
         ("a renewal pause inside a v2 entry", 0, crate::chain::VERSION),
@@ -2827,36 +2637,11 @@ fn host_rotation_vectors() -> Value {
                 not_renewal,
                 statement(&new.0, "h-2", not_renewal, hash(not_renewal), new_sign_of(rotate)),
             ),
-            (
-                "signed by the new key",
-                "h-2",
-                rotate,
-                statement(&new.0, "h-2", rotate, hash(rotate), new_sign_of(rotate)),
-            ),
-            (
-                "signed by another device",
-                "h-2",
-                rotate,
-                statement(k0, "h-2", rotate, hash(rotate), new_sign_of(rotate)),
-            ),
-            (
-                "for another host",
-                "m-1",
-                rotate,
-                statement(&old.0, "m-1", rotate, hash(rotate), new_sign_of(rotate)),
-            ),
-            (
-                "over a hash that is not the entry's",
-                "h-2",
-                rotate,
-                statement(&old.0, "h-2", rotate, [7; 32], new_sign_of(rotate)),
-            ),
-            (
-                "over another new key",
-                "h-2",
-                rotate,
-                statement(&old.0, "h-2", rotate, hash(rotate), [7; 32]),
-            ),
+            ("signed by the new key", "h-2", rotate, statement(&new.0, "h-2", rotate, hash(rotate), new_sign_of(rotate))),
+            ("signed by another device", "h-2", rotate, statement(k0, "h-2", rotate, hash(rotate), new_sign_of(rotate))),
+            ("for another host", "m-1", rotate, statement(&old.0, "m-1", rotate, hash(rotate), new_sign_of(rotate))),
+            ("over a hash that is not the entry's", "h-2", rotate, statement(&old.0, "h-2", rotate, [7; 32], new_sign_of(rotate))),
+            ("over another new key", "h-2", rotate, statement(&old.0, "h-2", rotate, hash(rotate), [7; 32])),
             ("past this view", "h-2", state.seq() + 1, first),
             ("the genesis", "h-2", 0, first),
         ];
@@ -3563,12 +3348,7 @@ fn rust_vector_utf8_strings_read_as_labelled() {
     let invalid = v["invalid"].as_array().unwrap();
     assert!(invalid.len() >= 12);
     for case in invalid {
-        assert_eq!(
-            Reader::new(&prefixed(&hexv(&case["hex"]))).str16("text", 64),
-            Err(DecodeError::BadUtf8),
-            "{}",
-            case["name"]
-        );
+        assert_eq!(Reader::new(&prefixed(&hexv(&case["hex"]))).str16("text", 64), Err(DecodeError::BadUtf8), "{}", case["name"]);
     }
 }
 
@@ -3783,12 +3563,9 @@ fn ts_vectors_verify_in_rust() {
 
     // Host identity renewals built and signed in WebCrypto: required (a ts.json without them is out of date).
     {
-        let r = v.get("hostRotation").unwrap_or_else(|| {
-            panic!(
-                "{} has no hostRotation section; regenerate it with `npx tsx web/scripts/e2e-vectors.ts`",
-                path.display()
-            )
-        });
+        let r = v
+            .get("hostRotation")
+            .unwrap_or_else(|| panic!("{} has no hostRotation section; regenerate it with `npx tsx web/scripts/e2e-vectors.ts`", path.display()));
         let entries: Vec<Entry> = r["entries"]
             .as_array()
             .unwrap()
@@ -3830,10 +3607,7 @@ fn ts_vectors_verify_in_rust() {
         let body = hexv(&c["body"]);
         let new_dh = DhKeypair::from_secret(arr32(&c["newDhSecret"]));
         let eph = DhKeypair::from_secret(arr32(&c["ephSecret"]));
-        assert_eq!(
-            (h(&new_dh.public()), h(&eph.public())),
-            (c["newDhPublic"].clone(), c["ephPublic"].clone())
-        );
+        assert_eq!((h(&new_dh.public()), h(&eph.public())), (c["newDhPublic"].clone(), c["ephPublic"].clone()));
         let mac = crate::chain::host_rotate_confirm(&new_dh, &eph.public(), &body).unwrap();
         assert_eq!(h(&mac), c["mac"]);
         assert!(crate::chain::check_rotate_confirm(&eph, &new_dh.public(), &body, &arr32(&c["mac"])));
@@ -3878,10 +3652,7 @@ fn ts_vectors_verify_in_rust() {
             let (host, seq) = (case["host"].as_str().unwrap(), case["seq"].as_u64().unwrap());
             let (entry_hash, new_sign) = (arr32(&case["entryHash"]), arr32(&case["newSign"]));
             assert_eq!(state.hash_at(seq), Some(entry_hash), "the entry's hash");
-            assert_eq!(
-                h(&crate::chain::rotate_dispute_body(&account, host, seq, &entry_hash, &new_sign)),
-                case["body"]
-            );
+            assert_eq!(h(&crate::chain::rotate_dispute_body(&account, host, seq, &entry_hash, &new_sign)), case["body"]);
             let key = SigningKey::from_bytes(&arr32(&case["signerSeed"]));
             let sig = crate::chain::sign_rotate_dispute(&key, &account, host, seq, &entry_hash, &new_sign);
             assert_eq!(h(&sig), case["signature"], "Ed25519 is deterministic");
@@ -3924,28 +3695,13 @@ fn ts_vectors_verify_in_rust() {
             assert_eq!(pause_state_json(&st, &names, &pairs), step["state"], "{}", step["label"]);
         }
         let labels: Vec<&str> = p["steps"].as_array().unwrap().iter().map(|s| s["label"].as_str().unwrap()).collect();
-        for label in [
-            "pauseStart",
-            "pauseCompleted",
-            "pause2Cancelled",
-            "overlapCompleted",
-            "pausedHostStops",
-            "pausedDeviceRemoved",
-            "overlap2Completed",
-        ] {
+        for label in ["pauseStart", "pauseCompleted", "pause2Cancelled", "overlapCompleted", "pausedHostStops", "pausedDeviceRemoved", "overlap2Completed"] {
             assert!(labels.contains(&label), "TS's pause chain has {label}");
         }
         assert_eq!(p["maxEntryLen"], json!(crate::chain::MAX_PAUSE_ENTRY_LEN), "one size bound on both sides");
-        for (which, phase) in [
-            ("start", PausePhase::Start),
-            ("completed", PausePhase::Completed),
-            ("cancelled", PausePhase::Cancelled),
-        ] {
+        for (which, phase) in [("start", PausePhase::Start), ("completed", PausePhase::Completed), ("cancelled", PausePhase::Cancelled)] {
             let e = Entry::decode(&hexv(&p["encoding"][which])).unwrap();
-            assert!(
-                matches!(e.draft.action, Action::RenewalPause { phase: got, .. } if got == phase),
-                "{which}"
-            );
+            assert!(matches!(e.draft.action, Action::RenewalPause { phase: got, .. } if got == phase), "{which}");
         }
         // The renewal policy TS wrote: every step verifies, and says what the policy is.
         let p = &r["policy"];

@@ -46,8 +46,7 @@
  *   (another device added or removed, a recovery join, new recovery words) is
  *   an alert until it is acknowledged here.
  * - **Chain v3** (docs/local-aggregator.md §3): every endpoint is a device;
- *   「可运行 AI」(host) and 「可管理账号」(admin) are its two flags, and bit 2
- *   is the removed A2A proxy's, carried through untouched. A new
+ *   「可运行 AI」(host) and 「可管理账号」(admin) are its two flags. A new
  *   account is v3 from its genesis (`createGenesis`, only while the hub
  *   takes v3 entries: `/v1/me`'s `chain_v3.writable`). What is written
  *   follows the chain itself (review D4): on an account made before chain
@@ -1542,7 +1541,7 @@ export class CloudAccount {
     const draft = genesis3Draft(
       this.account,
       akPublic,
-      { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true, a2a: false } },
+      { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } },
       recoveryKey,
       now,
     );
@@ -4258,7 +4257,7 @@ export class CloudAccount {
     if (!epochs.length) throw new AccountError("noPackages", "no recovery package opens with these words");
     // A v3 chain takes v3 joins only: an admin, never a host (review D1, D4).
     const join: Action = chain.isV3
-      ? { type: "recoveryJoin3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true, a2a: false } } }
+      ? { type: "recoveryJoin3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } } }
       : { type: "recoveryJoin", device: this.info() };
     const entry = await signDraft(chain.draft({ type: "recovery" }, join, Date.now()), keys.signing);
     // Refused here, by the chain's own rule, before it is posted (review 13).
@@ -4398,7 +4397,7 @@ export class CloudAccount {
       const pinned = await this.trust.pinnedGenesis();
       if (pinned && pinned !== hex(chain.hashAt(0)!)) throw new AccountError("fork", "the hub served a different genesis than this device pinned");
       await this.trust.pin();
-      const join: Action = { type: "addDevice3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: false, a2a: false } } };
+      const join: Action = { type: "addDevice3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: false } } };
       const entry = await signDraft(chain.draft({ type: "passkey", slot }, join, Date.now()), signing);
       // Refused here, by the chain's own rule, before it is posted.
       await verifyBatch(chain, [entry]);

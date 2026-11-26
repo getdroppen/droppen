@@ -38,10 +38,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use gotcha_core::Schematic;
 use droppen_proto::chain::{ChainError, ChainState};
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::wrap::{self, HostKeyContext, WrapError};
-use gotcha_core::Schematic;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -445,10 +445,7 @@ impl Controller {
                 // link then restarts with the new key) — or REFUSED_EVERY:
                 // not retried on the back-off meanwhile (R6 review).
                 tracing::info!(device = %view.me, "the hub suspends the device role while this computer's identity renewal is pending: parked until the chain moves");
-                self.suspended = Some((
-                    *self.env.chain.borrow(),
-                    droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64,
-                ));
+                self.suspended = Some((*self.env.chain.borrow(), droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64));
                 self.report(&view, Some(HubError::Suspended.to_string()));
                 REFUSED_EVERY
             }
@@ -811,7 +808,7 @@ mod tests {
             id: id.into(),
             sign_key: sign.verifying_key().to_bytes(),
             dh_key: dh,
-            flags: Flags { host, admin, a2a: false },
+            flags: Flags { host, admin },
         };
         let genesis = droppen_proto::chain::genesis3_draft(
             "a-1",

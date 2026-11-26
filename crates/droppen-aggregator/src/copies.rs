@@ -35,6 +35,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+use gotcha_core::Schematic;
+use rand::Rng;
 use droppen_client::follow::{check_page, Floor, FollowError, Follower, Step};
 use droppen_client::http::HttpError;
 use droppen_client::link::{ConnectError, Link};
@@ -44,8 +46,6 @@ use droppen_proto::frame::Frame;
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::record::{SignedHead, StreamId, FMT_FEED_V1, FMT_INDEX_V1, FMT_STATUS_V1};
 use droppen_proto::wire::client::DeviceToHub;
-use gotcha_core::Schematic;
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, watch, Notify};
@@ -391,9 +391,7 @@ impl PageSource {
 /// How a stream's task starts: from the start (never below the copy's
 /// floor, when it had one), or from a stored cursor.
 enum Start {
-    Fresh {
-        floor: Option<Floor>,
-    },
+    Fresh { floor: Option<Floor> },
     /// `head_key`: the host's key the cursor was verified under when it was
     /// stored ([`resume_key`]: for a row older than renewals, the key the
     /// host joined with).
@@ -1276,7 +1274,9 @@ impl Live {
     /// theirs, not the new ones'.
     fn admits(&self, want: &Want, signer: Option<[u8; 32]>) -> bool {
         self.subs.get(&want.stream).is_some_and(|s| &s.want == want)
-            && self.host(&want.host).is_some_and(|h| signer.is_none_or(|k| k == h.machine_key))
+            && self
+                .host(&want.host)
+                .is_some_and(|h| signer.is_none_or(|k| k == h.machine_key))
     }
 
     /// The chain or the keys changed: the same enrollment carries on with
@@ -1596,8 +1596,7 @@ impl Live {
                     }
                 }
                 let wait = (REBUILD_MIN * 2u32.saturating_pow(tries.min(10))).min(REBUILD_MAX);
-                c.failures
-                    .insert(want.stream, (droppen_base::time::now_ms_u64() + wait.as_millis() as u64, tries + 1));
+                c.failures.insert(want.stream, (droppen_base::time::now_ms_u64() + wait.as_millis() as u64, tries + 1));
                 tracing::warn!(host = %want.host, kind = want.kind.as_str(), %error, "a copy stopped; reading it again in {wait:?}");
                 if unauthorized {
                     return Err(Ended::Unauthorized);
@@ -1824,11 +1823,7 @@ mod tests {
                 id: "d-a".into(),
                 sign_key: admin.verifying_key().to_bytes(),
                 dh_key: [3; 32],
-                flags: Flags {
-                    host: false,
-                    admin: true,
-                    a2a: false,
-                },
+                flags: Flags { host: false, admin: true },
             },
             None,
             1,
@@ -1922,21 +1917,11 @@ mod tests {
         let wait = c.refused(&live.view, "rotation_pending");
         assert!(wait <= IDLE_EVERY, "{wait:?}");
         let quiet = c.quiet_until.expect("parked");
-        assert!(
-            quiet > droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64 - 60_000
-                && quiet < droppen_base::time::now_ms_u64() + REMOVED_EVERY.as_millis() as u64
-        );
+        assert!(quiet > droppen_base::time::now_ms_u64() + REFUSED_EVERY.as_millis() as u64 - 60_000 && quiet < droppen_base::time::now_ms_u64() + REMOVED_EVERY.as_millis() as u64);
         assert_eq!(c.parked, Some(3));
         assert!(super::super::store::path(&paths).exists(), "the copies stay");
         assert!(c.store.is_some());
-        assert!(c
-            .env
-            .status
-            .lock()
-            .unwrap()
-            .error
-            .as_deref()
-            .is_some_and(|e| e.contains("rotation_pending")));
+        assert!(c.env.status.lock().unwrap().error.as_deref().is_some_and(|e| e.contains("rotation_pending")));
         // Woken, the chain where it was: still parked.
         c.unpark_if_moved();
         assert!(c.quiet_until.is_some() && c.parked.is_some());
@@ -1952,10 +1937,7 @@ mod tests {
     /// from the start (under its floor only when that key signed it).
     #[test]
     fn a_stored_cursor_resumes_only_under_the_key_it_was_stored_under() {
-        let (old, new) = (
-            ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
-            ed25519_dalek::SigningKey::from_bytes(&[8; 32]),
-        );
+        let (old, new) = (ed25519_dalek::SigningKey::from_bytes(&[7; 32]), ed25519_dalek::SigningKey::from_bytes(&[8; 32]));
         let (old_key, new_key) = (old.verifying_key().to_bytes(), new.verifying_key().to_bytes());
         let want = want("m-2", "s");
         let head = droppen_proto::record::StreamHead {
@@ -2035,13 +2017,7 @@ mod tests {
         assert_eq!((f.from_seq(), f.floor()), (0, None), "not under a later retired key");
         assert!(matches!(fold, Fold::Feed(ref copy, _) if copy.items.is_empty()));
         // …while the same head, recorded with its key, resumes.
-        let (f, _) = started(
-            &want,
-            new_key,
-            &twice.retired,
-            &keys,
-            resume(&by_later, resume_key(&twice, Some(later_key))),
-        );
+        let (f, _) = started(&want, new_key, &twice.retired, &keys, resume(&by_later, resume_key(&twice, Some(later_key))));
         assert_eq!(f.from_seq(), 6);
     }
 
@@ -2057,10 +2033,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::for_instance(dir.path().to_path_buf(), "resumekey");
         let (mut c, mut live) = live(&paths, &["m-2"]);
-        let (old, new) = (
-            ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
-            ed25519_dalek::SigningKey::from_bytes(&[8; 32]),
-        );
+        let (old, new) = (ed25519_dalek::SigningKey::from_bytes(&[7; 32]), ed25519_dalek::SigningKey::from_bytes(&[8; 32]));
         let (old_key, new_key) = (old.verifying_key().to_bytes(), new.verifying_key().to_bytes());
         // m-2 renewed old → new since its position was stored.
         live.hosts[0].machine_key = new_key;
@@ -2108,11 +2081,7 @@ mod tests {
             updated_ms: 1,
         };
         let (f, fold) = start(&live, stored);
-        assert_eq!(
-            (f.from_seq(), f.floor().map(|fl| fl.next_seq)),
-            (4, Some(4)),
-            "resumed from the stored position"
-        );
+        assert_eq!((f.from_seq(), f.floor().map(|fl| fl.next_seq)), (4, Some(4)), "resumed from the stored position");
         // Caught up at once: the task tells the copy, at the stored position,
         // under the host's key now — and it is written.
         live.on_update_from(&mut c, Some(new_key), Update::State(Box::new(copied(&w, &f, fold.to_json(), None))))
@@ -2151,11 +2120,7 @@ mod tests {
                 id: "d-a".into(),
                 sign_key: admin.sign_public(),
                 dh_key: admin.dh_public(),
-                flags: Flags {
-                    host: false,
-                    admin: true,
-                    a2a: false,
-                },
+                flags: Flags { host: false, admin: true },
             },
             None,
             1,
@@ -2163,9 +2128,7 @@ mod tests {
         .sign(&ak);
         let mut chain = ChainState::genesis(&genesis, None).unwrap();
         let push = |chain: &mut ChainState, action: Action| {
-            let e = chain
-                .draft(Signer::Device("d-a".into()), action, 100 + chain.seq())
-                .sign(admin.signing_key());
+            let e = chain.draft(Signer::Device("d-a".into()), action, 100 + chain.seq()).sign(admin.signing_key());
             chain.apply(&e, &mut ChainClock::history()).unwrap();
         };
         for (id, seed) in [("m-me", 19u8), ("m-2", 20u8)] {
@@ -2176,11 +2139,7 @@ mod tests {
                     id: id.into(),
                     sign_key: k.sign_public(),
                     dh_key: k.dh_public(),
-                    flags: Flags {
-                        host: true,
-                        admin: false,
-                        a2a: false,
-                    },
+                    flags: Flags { host: true, admin: false },
                 }),
             );
             push(
@@ -2250,11 +2209,7 @@ mod tests {
                 id: "d-a".into(),
                 sign_key: admin.sign_public(),
                 dh_key: admin.dh_public(),
-                flags: Flags {
-                    host: false,
-                    admin: true,
-                    a2a: false,
-                },
+                flags: Flags { host: false, admin: true },
             },
             None,
             1,
@@ -2262,21 +2217,13 @@ mod tests {
         .sign(&ak);
         let mut chain = ChainState::genesis(&genesis, None).unwrap();
         let push = |chain: &mut ChainState, action: Action| {
-            let e = chain
-                .draft(Signer::Device("d-a".into()), action, 100 + chain.seq())
-                .sign(admin.signing_key());
+            let e = chain.draft(Signer::Device("d-a".into()), action, 100 + chain.seq()).sign(admin.signing_key());
             chain.apply(&e, &mut ChainClock::history()).unwrap();
         };
         let host_epoch = |host: &str, e: u32| {
             Action::KeyEpochs(KeyCommits {
                 user: None,
-                machines: vec![(
-                    host.into(),
-                    KeyCommit {
-                        epoch: e,
-                        hash: [e as u8; 32],
-                    },
-                )],
+                machines: vec![(host.into(), KeyCommit { epoch: e, hash: [e as u8; 32] })],
             })
         };
         let epoch = |e: u32| host_epoch("m-2", e);
@@ -2288,11 +2235,7 @@ mod tests {
                 id: "m-me".into(),
                 sign_key: me.sign_public(),
                 dh_key: me.dh_public(),
-                flags: Flags {
-                    host: true,
-                    admin: false,
-                    a2a: false,
-                },
+                flags: Flags { host: true, admin: false },
             }),
         );
         push(&mut chain, host_epoch("m-me", 0));
@@ -2303,11 +2246,7 @@ mod tests {
                 id: "m-2".into(),
                 sign_key: joined.sign_public(),
                 dh_key: joined.dh_public(),
-                flags: Flags {
-                    host: true,
-                    admin: false,
-                    a2a: false,
-                },
+                flags: Flags { host: true, admin: false },
             }),
         );
         push(&mut chain, epoch(0));

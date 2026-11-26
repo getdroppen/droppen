@@ -49,7 +49,7 @@ const by = (id: string): Signer => ({ type: "device", id });
 const sign = (seed: string) => importEd25519Private(h(seed));
 const k0 = () => sign(V.chain.devices[0].signSeed);
 const k2 = () => sign(V.chain.devices[2].signSeed);
-const dev3 = (id: string, host: boolean, admin: boolean) => ({ id, signKey: h(extra(id).signKey), dhKey: h(extra(id).dhKey), flags: { host, admin, a2a: false } });
+const dev3 = (id: string, host: boolean, admin: boolean) => ({ id, signKey: h(extra(id).signKey), dhKey: h(extra(id).dhKey), flags: { host, admin } });
 const slotOf = (i: number): { slot: PasskeySlot; key: Promise<CryptoKey> } => {
   const p = V.chainV3.passkeys[i];
   return {
@@ -305,45 +305,4 @@ test("item 8: only admins vouch, and management needs a fresher word than contro
     await assert.rejects(state.checkAttestation(by), kind("badAttestation"));
     assert.deepEqual(await state.freshness("dev-0", [by], t, operationMaxAgeMs("control")), { type: "stale", newestMs: null });
   }
-});
-
-// The removed A2A feature's chain bits (PR #669): an entry a v0.3.0-rc.1 wrote — a device with flag bit 2, and a
-// `setA2aAccept` (kind 23) — decodes, comes back byte for byte (the signature covers both), replays and keeps its
-// flag. This is what keeps a chain some rc.1 already wrote readable after the revert.
-test("an a2a entry a v0.3.0-rc.1 wrote still decodes and replays", async () => {
-  const state = await sampleChain();
-  const h2 = extra("h-2");
-  const add = await push(state, by("dev-0"), k0(), {
-    type: "addDevice3",
-    device: { id: "a-1", signKey: h(h2.signKey), dhKey: h(h2.dhKey), flags: { host: false, admin: false, a2a: true } },
-  });
-  const accept = await push(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["a-1"] });
-  for (const entry of [add, accept]) {
-    const decoded = decodeEntry(encodeEntry(entry));
-    assert.deepEqual(decoded, entry);
-    assert.deepEqual(encodeEntry(decoded), encodeEntry(entry), "the signed bytes come back");
-  }
-  assert.equal(state.device("a-1")?.a2a, true);
-  // Bit 3 and up are still refused: the flag byte is right before the 64-byte signature.
-  const bytes = encodeEntry(add);
-  bytes[bytes.length - 65] = 0b1000 | 0b100;
-  assert.throws(() => decodeEntry(bytes), kind("decode"));
-  // Kind 23 names a host and current a2a devices only.
-  await assert.rejects(tryPush(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "dev-2", devices: [] }), kind("notAllowed"));
-  await assert.rejects(tryPush(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["dev-2"] }), kind("notAllowed"));
-  // As in rc.1, a list equal to the one now is a no-op; the empty list clears.
-  await assert.rejects(tryPush(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["a-1"] }), kind("notAllowed"));
-  await push(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: [] });
-  assert.deepEqual(state.a2aAccept("m-1"), []);
-  // The list is canonical, and kind 23 exists only in v3: unsorted, repeated and
-  // v2-labelled encodings, and a cut one, do not decode.
-  const unsorted = await entryFor(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["a-2", "a-1"] });
-  assert.throws(() => decodeEntry(encodeEntry(unsorted)), kind("decode"));
-  const repeated = await entryFor(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["a-1", "a-1"] });
-  assert.throws(() => decodeEntry(encodeEntry(repeated)), kind("decode"));
-  const v2 = encodeEntry(await entryFor(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: [] }));
-  v2[0] = CHAIN_VERSION;
-  assert.throws(() => decodeEntry(v2), kind("decode"));
-  const cut = encodeEntry(unsorted);
-  assert.throws(() => decodeEntry(cut.slice(0, cut.length - 1)), kind("decode"));
 });

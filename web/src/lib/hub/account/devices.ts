@@ -36,7 +36,7 @@ export interface JoinKeys {
 export function joinAction(device: JoinKeys, opts: { host: boolean; admin: boolean }, chain: Pick<ChainState, "isV3">): Action {
   const keys = { id: device.id, signKey: device.signKey, dhKey: device.dhKey };
   if (opts.host && opts.admin) throw hostAdminRefused();
-  if (chain.isV3) return { type: "addDevice3", device: { ...keys, flags: { host: opts.host, admin: opts.admin, a2a: false } } };
+  if (chain.isV3) return { type: "addDevice3", device: { ...keys, flags: { host: opts.host, admin: opts.admin } } };
   if (opts.host) return { type: "addMachine", machine: keys };
   if (!opts.admin) throw notUpgraded();
   return { type: "addDevice", device: { ...keys, full: true } };

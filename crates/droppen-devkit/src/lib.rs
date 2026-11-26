@@ -17,6 +17,9 @@
 
 use std::time::Duration;
 
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use droppen_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead};
 use droppen_proto::chain::{genesis_draft, Action, Attestation, ChainClock, ChainState, DeviceInfo, Entry, MachineInfo, Signer};
 use droppen_proto::channel::Session;
@@ -28,9 +31,6 @@ use droppen_proto::keys::DhKeypair;
 use droppen_proto::mux::{Role, StreamClass};
 use droppen_proto::noise::RekeyPolicy;
 use droppen_proto::wrap::{self, Purpose, SealContext};
-use ed25519_dalek::SigningKey;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use serde_json::{json, Value};
 
 pub mod agent;
@@ -175,7 +175,7 @@ impl Device {
             id: self.id.clone(),
             sign_key: self.sign.verifying_key().to_bytes(),
             dh_key: self.dh.public(),
-            flags: droppen_proto::chain::Flags { host, admin, a2a: false },
+            flags: droppen_proto::chain::Flags { host, admin },
         }
     }
 
@@ -197,9 +197,7 @@ impl Device {
     /// fresh `AK` signs a v2 genesis naming this device, and is dropped.
     /// Returns the account-key fingerprint machines pin. (The web app makes
     /// every new account on v3: [`Device::create_genesis3`].)
-    #[deprecated(
-        note = "chain v2: every new account is v3 from its genesis — use Device::create_genesis3(false); this stands only for an account made before chain v3"
-    )]
+    #[deprecated(note = "chain v2: every new account is v3 from its genesis — use Device::create_genesis3(false); this stands only for an account made before chain v3")]
     pub async fn create_genesis(&mut self) -> Result<[u8; 16]> {
         let ak = SigningKey::generate(&mut OsRng);
         let entry = genesis_draft(&self.account, ak.verifying_key().to_bytes(), self.info(), None, now_ms()).sign(&ak);
@@ -285,9 +283,7 @@ impl Device {
     /// with exactly the keys the proof covers — as chain v2's `AddMachine`,
     /// which a v3 chain refuses ([`Device::complete_enrollment_v3`] is what
     /// the web writes there).
-    #[deprecated(
-        note = "chain v2's AddMachine: on a chain v3 account use Device::complete_enrollment_v3 (the host joins with its first machine key epoch in the same batch); this stands only for an account made before chain v3"
-    )]
+    #[deprecated(note = "chain v2's AddMachine: on a chain v3 account use Device::complete_enrollment_v3 (the host joins with its first machine key epoch in the same batch); this stands only for an account made before chain v3")]
     pub async fn complete_enrollment(&mut self, code: &EnrollCode, timeout: Duration) -> Result<MachineInfo> {
         let machine = self.await_proof(code, timeout).await?;
         self.append(Action::AddMachine(machine.clone())).await?;
@@ -331,11 +327,7 @@ impl Device {
             id: machine.id.clone(),
             sign_key: machine.sign_key,
             dh_key: machine.dh_key,
-            flags: droppen_proto::chain::Flags {
-                host: true,
-                admin,
-                a2a: false,
-            },
+            flags: droppen_proto::chain::Flags { host: true, admin },
         };
         let commit = droppen_proto::chain::KeyCommits {
             user: None,
@@ -700,9 +692,5 @@ pub fn random_key() -> [u8; 32] {
 /// What the headless device's hello says it speaks: sequenced frames, and
 /// streams named per key epoch (so an agent it talks to names them so).
 fn client_info() -> String {
-    format!(
-        "droppen-devkit {} {}",
-        droppen_proto::path::CLIENT_FEATURE,
-        droppen_proto::stream::STREAMS_FEATURE
-    )
+    format!("droppen-devkit {} {}", droppen_proto::path::CLIENT_FEATURE, droppen_proto::stream::STREAMS_FEATURE)
 }

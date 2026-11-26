@@ -11,8 +11,7 @@
 //! # One kind of member: the device (chain v3)
 //!
 //! Every endpoint is a **device** with one identity (an Ed25519 signing key and
-//! an X25519 key) and two flags (`docs/local-aggregator.md` §3), plus a third,
-//! carried-only bit for the removed A2A proxy ([`Flags::A2A`]):
+//! an X25519 key) and two flags (`docs/local-aggregator.md` §3):
 //!
 //! - **host** (可运行 AI): it runs an agent, can be connected to, and has a
 //!   machine key `MK` per epoch for its streams. Declared when it joins and
@@ -440,12 +439,7 @@ pub fn sign_rotate_ack(new_key: &SigningKey, account: &str, host: &str, proof_bo
 
 /// Whether `signature` is `new_sign`'s [`rotate_ack_body`] signature.
 pub fn verify_rotate_ack(new_sign: &[u8; 32], account: &str, host: &str, proof_body: &[u8], login_nonce: &[u8; 32], signature: &[u8; 64]) -> bool {
-    sig::verify(
-        new_sign,
-        sig::ROTATE_ACK,
-        &rotate_ack_body(account, host, proof_body, login_nonce),
-        signature,
-    )
+    sig::verify(new_sign, sig::ROTATE_ACK, &rotate_ack_body(account, host, proof_body, login_nonce), signature)
 }
 
 /// What a host's retired sign key signs to dispute the renewal that retired
@@ -537,49 +531,33 @@ pub struct MachineInfo {
     pub dh_key: [u8; 32],
 }
 
-/// A device's flags (`DeviceV3`'s last byte: bit 0 host, bit 1 admin, bit 2
-/// A2A proxy; every other bit must be 0). Bit 2 is kept only for chains a
-/// v0.3.0-rc.1 already wrote (PR #669): the A2A server is gone, so the device
-/// decodes, verifies and is taken for an ordinary non-admin device.
+/// A device's two flags (`DeviceV3`'s last byte: bit 0 host, bit 1 admin;
+/// every other bit must be 0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Flags {
     /// 可运行 AI: runs an agent, can be controlled, has machine keys.
     pub host: bool,
     /// 可管理账号: signs entries, holds `UK`, attests.
     pub admin: bool,
-    /// An A2A proxy: bit 2, carried only (no behaviour hangs on it now).
-    pub a2a: bool,
 }
 
 impl Flags {
     pub const HOST: u8 = 0b01;
     pub const ADMIN: u8 = 0b10;
-    /// Bit 2: the A2A proxy flag of the removed feature (PR #669). It is
-    /// carried, not acted on: a chain some v0.3.0-rc.1 already wrote still
-    /// decodes and its entries still verify (the signature covers this byte,
-    /// so [`Flags::to_byte`] must give it back), and the device is taken for
-    /// an ordinary non-admin one.
-    pub const A2A: u8 = 0b100;
-    pub const NONE: Flags = Flags {
-        host: false,
-        admin: false,
-        a2a: false,
-    };
+    pub const NONE: Flags = Flags { host: false, admin: false };
 
     pub fn to_byte(self) -> u8 {
-        (if self.host { Self::HOST } else { 0 }) | (if self.admin { Self::ADMIN } else { 0 }) | (if self.a2a { Self::A2A } else { 0 })
+        (if self.host { Self::HOST } else { 0 }) | (if self.admin { Self::ADMIN } else { 0 })
     }
 
-    /// Unknown bits are refused: one byte, one meaning. Bit 2 is known (it is
-    /// preserved, not interpreted), so a v0.3.0-rc.1 chain decodes.
+    /// Unknown bits are refused: one byte, one meaning.
     pub fn from_byte(b: u8) -> Result<Self, DecodeError> {
-        if b & !(Self::HOST | Self::ADMIN | Self::A2A) != 0 {
+        if b & !(Self::HOST | Self::ADMIN) != 0 {
             return Err(DecodeError::Invalid("device flags"));
         }
         Ok(Self {
             host: b & Self::HOST != 0,
             admin: b & Self::ADMIN != 0,
-            a2a: b & Self::A2A != 0,
         })
     }
 }
@@ -682,14 +660,6 @@ pub enum Action {
         /// admin), hosts and each host's ids in byte order. End: empty.
         removals: Vec<(String, Vec<String>)>,
     },
-    /// Kind 23: which A2A proxies host `host` takes A2A calls from — an
-    /// admin signs it, `devices` is ascending by bytes with no repeats, at
-    /// most [`MAX_ACCEPT_IDS`], possibly empty. Written by v0.3.0-rc.1 only,
-    /// so it is decoded and carried through; nothing reads it now.
-    SetA2aAccept {
-        host: String,
-        devices: Vec<String>,
-    },
 }
 
 /// What a [`Action::RenewalPause`] marker says (its byte; any other does not
@@ -784,7 +754,6 @@ impl Action {
             Action::RotateHostKey(_) => 20,
             Action::SetRenewalPolicy { .. } => 21,
             Action::RenewalPause { .. } => 22,
-            Action::SetA2aAccept { .. } => 23,
         }
     }
 
@@ -1088,29 +1057,6 @@ fn get_accept(r: &mut Reader<'_>) -> Result<Accept, DecodeError> {
     }
 }
 
-/// `u16 n | str16 id × n` (after kind 23's `str16 host`): at most
-/// [`MAX_ACCEPT_IDS`], strictly ascending by bytes, possibly empty. An A2A
-/// list, unlike a `SetAccept` one, may name none.
-fn get_a2a_accept(r: &mut Reader<'_>) -> Result<Vec<String>, DecodeError> {
-    let n = usize::from(r.u16()?);
-    if n > MAX_ACCEPT_IDS {
-        return Err(DecodeError::TooLarge {
-            what: "A2A accept list",
-            len: n,
-            max: MAX_ACCEPT_IDS,
-        });
-    }
-    let mut ids: Vec<String> = Vec::with_capacity(n);
-    for _ in 0..n {
-        let id = r.str16("device id", MAX_ID_LEN)?;
-        if ids.last().is_some_and(|last| last.as_bytes() >= id.as_bytes()) {
-            return Err(DecodeError::Invalid("A2A accept list order"));
-        }
-        ids.push(id);
-    }
-    Ok(ids)
-}
-
 /// `str16 host | sign_key 32 | dh_key 32 | u64 staged_seq | staged_head 32 |
 /// nonce 16 | u8 assurance (0 or 1) | old_sig 64 | new_sig 64`.
 fn put_rotation(out: &mut Vec<u8>, r: &HostRotation) {
@@ -1267,13 +1213,6 @@ impl Draft {
                     }
                 }
             }
-            Action::SetA2aAccept { host, devices } => {
-                put_str16(&mut out, host);
-                put_count(&mut out, devices.len());
-                for id in devices {
-                    put_str16(&mut out, id);
-                }
-            }
         }
         out
     }
@@ -1366,10 +1305,6 @@ impl Entry {
                 always_assured: get_bool(&mut r, "renewal policy")?,
             },
             (true, 22) => get_pause(&mut r)?,
-            (true, 23) => Action::SetA2aAccept {
-                host: id(&mut r, "device id")?,
-                devices: get_a2a_accept(&mut r)?,
-            },
             (_, other) => {
                 return Err(DecodeError::Unknown {
                     what: "chain action",
@@ -1526,8 +1461,6 @@ pub struct DeviceRecord {
     pub host: bool,
     /// Manages the account (v2: a full device).
     pub admin: bool,
-    /// The removed A2A proxy flag (bit 2), carried for replay only.
-    pub a2a: bool,
     /// Has run AI here at some point — been a host, so its agent held its
     /// key in a file (review of chain v3: such a device never becomes an
     /// admin, [`rules::RAN_AI_NOT_ADMIN`]).
@@ -1573,7 +1506,6 @@ impl DeviceRecord {
         Flags {
             host: self.host,
             admin: self.admin,
-            a2a: self.a2a,
         }
     }
 
@@ -1784,10 +1716,6 @@ pub struct ChainState {
     slots: BTreeMap<String, SlotRecord>,
     /// Hosts whose accept policy is not the default ([`Accept::Admins`]).
     accept: BTreeMap<String, Accept>,
-    /// Hosts that take A2A calls from some a2a device (kind 23 of the removed
-    /// feature): never empty (none is the default), only current a2a devices.
-    /// Kept so the replay matches rc.1's checks, the no-op one included.
-    a2a_accept: BTreeMap<String, Vec<String>>,
     /// The first v3 entry's seq: no v2 entry may follow it.
     v3_from: Option<u64>,
     /// A host that joined or restarted hosting in the last entry: the next
@@ -1871,14 +1799,6 @@ pub mod rules {
     pub const PAUSE_NOT_OPEN: &str = "only an open renewal pause ends, and only once";
     /// A completion or cancellation names no removals.
     pub const PAUSE_END_REMOVALS: &str = "a renewal pause ends without naming removals";
-    /// Kind 23's host: a current, active host (the removed A2A feature; kept
-    /// so a v0.3.0-rc.1 chain replays, its checks included).
-    pub const A2A_ACCEPT_NOT_HOST: &str = "only a host accepts A2A calls";
-    /// Kind 23 names only current A2A proxies.
-    pub const A2A_ACCEPT_NOT_A2A: &str = "an A2A accept list names only current A2A proxies";
-    /// Kind 23 changes the host's list (as `SetAccept`, no no-op): rc.1
-    /// refuses a list equal to the one now, and so does the replay.
-    pub const A2A_ACCEPT_SAME: &str = "the host already accepts exactly those A2A proxies";
 }
 
 /// Which removal voids the recovery key: v2's `RemoveDevice` (unchanged, so
@@ -1914,7 +1834,6 @@ impl ChainState {
                 Flags {
                     host: false,
                     admin: device.full,
-                    a2a: false,
                 },
                 recovery_key,
             ),
@@ -1988,7 +1907,6 @@ impl ChainState {
             devices: BTreeMap::new(),
             slots: BTreeMap::new(),
             accept: BTreeMap::new(),
-            a2a_accept: BTreeMap::new(),
             v3_from: (d.version == VERSION_3).then_some(0),
             host_key_due: flags.host.then(|| keys.id.clone()),
             always_assured: false,
@@ -2002,7 +1920,6 @@ impl ChainState {
                 info: keys,
                 host: flags.host,
                 admin: flags.admin,
-                a2a: flags.a2a,
                 ran_ai: flags.host,
                 status: DeviceStatus::Active,
                 via_recovery: false,
@@ -2140,7 +2057,6 @@ impl ChainState {
                     Flags {
                         host: false,
                         admin: device.full,
-                        a2a: false,
                     },
                     DeviceStatus::Active,
                     seq,
@@ -2149,16 +2065,7 @@ impl ChainState {
             Action::AddMachine(machine) => {
                 let keys = keys_of(&machine.id, &machine.sign_key, &machine.dh_key);
                 self.check_new(seq, &keys)?;
-                self.insert(
-                    keys,
-                    Flags {
-                        host: true,
-                        admin: false,
-                        a2a: false,
-                    },
-                    DeviceStatus::Active,
-                    seq,
-                );
+                self.insert(keys, Flags { host: true, admin: false }, DeviceStatus::Active, seq);
             }
             Action::RecoveryJoin(device) => {
                 let keys = keys_of(&device.id, &device.sign_key, &device.dh_key);
@@ -2166,16 +2073,7 @@ impl ChainState {
                 if !device.full {
                     return Err(not_allowed(seq, "a recovered device is a full device"));
                 }
-                self.insert(
-                    keys,
-                    Flags {
-                        host: false,
-                        admin: true,
-                        a2a: false,
-                    },
-                    DeviceStatus::Pending { join_seq: seq },
-                    seq,
-                );
+                self.insert(keys, Flags { host: false, admin: true }, DeviceStatus::Pending { join_seq: seq }, seq);
                 let record = self.devices.get_mut(&device.id).expect("inserted");
                 record.via_recovery = true;
                 record.via_recovery_key = self.recovery_key;
@@ -2365,11 +2263,9 @@ impl ChainState {
                 if *host {
                     host_key_due = Some(id.clone());
                 } else {
-                    // Its accept policies go with its hosting: restarting
-                    // starts from admins only and no a2a device, never
-                    // silently from before.
+                    // Its accept policy goes with its hosting: restarting
+                    // starts from admins only, never silently from before.
                     self.accept.remove(id);
-                    self.a2a_accept.remove(id);
                 }
                 let record = self.devices.get_mut(id).expect("present");
                 record.host = *host;
@@ -2575,9 +2471,7 @@ impl ChainState {
                         for (host, ids) in removals {
                             if ids.is_empty()
                                 || !ascending(ids)
-                                || ids
-                                    .iter()
-                                    .any(|id| id == host || !self.devices.contains_key(id) || self.admin(id).is_some())
+                                || ids.iter().any(|id| id == host || !self.devices.contains_key(id) || self.admin(id).is_some())
                             {
                                 return Err(not_allowed(seq, rules::PAUSE_IDS));
                             }
@@ -2601,46 +2495,6 @@ impl ChainState {
                         }
                         self.pauses.get_mut(op).expect("open").end = Some((*phase, seq));
                     }
-                }
-            }
-            Action::SetA2aAccept { host, devices } => {
-                // Kind 23 of the removed A2A feature (PR #669). Decoded and
-                // checked so a v0.3.0-rc.1 chain replays; nothing reads it
-                // yet. An admin signed it (checked above, as for every entry);
-                // decoding already refused a non-canonical list.
-                let host_record = self
-                    .devices
-                    .get(host)
-                    .filter(|r| r.is_active())
-                    .ok_or_else(|| ChainError::UnknownId { seq, id: host.clone() })?;
-                if !valid_id(host) || !host_record.host {
-                    return Err(not_allowed(seq, rules::A2A_ACCEPT_NOT_HOST));
-                }
-                for id in devices {
-                    if !valid_id(id) {
-                        return Err(ChainError::BadId { seq });
-                    }
-                    match self.device(id) {
-                        None => return Err(ChainError::UnknownId { seq, id: id.clone() }),
-                        Some(record) if !record.a2a => return Err(not_allowed(seq, rules::A2A_ACCEPT_NOT_A2A)),
-                        Some(_) => {}
-                    }
-                }
-                if self.a2a_accept(host) == devices.as_slice() {
-                    return Err(not_allowed(seq, rules::A2A_ACCEPT_SAME));
-                }
-                // A device the host stops taking calls from never held a
-                // machine key, but a session it started could read the host's
-                // key files, its machine key included: as for a `SetAccept`
-                // narrowing, the host's next epoch comes in the very next
-                // entry. Adding one owes nothing.
-                if self.a2a_accept(host).iter().any(|id| !devices.contains(id)) {
-                    host_key_due = Some(host.clone());
-                }
-                if devices.is_empty() {
-                    self.a2a_accept.remove(host);
-                } else {
-                    self.a2a_accept.insert(host.clone(), devices.clone());
                 }
             }
         }
@@ -2684,13 +2538,6 @@ impl ChainState {
                 slot.removed = true;
             }
         }
-        // It leaves every host's a2a list (a list left empty is the default,
-        // none), and a host's own list goes with it.
-        self.a2a_accept.remove(id);
-        for ids in self.a2a_accept.values_mut() {
-            ids.retain(|d| d != id);
-        }
-        self.a2a_accept.retain(|_, ids| !ids.is_empty());
         self.devices.get_mut(id).expect("present").status = DeviceStatus::Removed;
     }
 
@@ -2702,7 +2549,6 @@ impl ChainState {
                 info,
                 host: flags.host,
                 admin: flags.admin,
-                a2a: flags.a2a,
                 ran_ai: flags.host,
                 status,
                 via_recovery: false,
@@ -3074,9 +2920,9 @@ impl ChainState {
     /// Whether any device the chain ever named — in whatever state — holds
     /// or held `key`, as its sign or its DH key.
     pub fn ever_named(&self, key: &[u8; 32]) -> bool {
-        self.devices
-            .values()
-            .any(|d| d.info.sign_key == *key || d.info.dh_key == *key || d.retired.iter().any(|r| r.sign_key == *key || r.dh_key == *key))
+        self.devices.values().any(|d| {
+            d.info.sign_key == *key || d.info.dh_key == *key || d.retired.iter().any(|r| r.sign_key == *key || r.dh_key == *key)
+        })
     }
 
     /// A current host: an active device that runs AI (v2: a current machine).
@@ -3118,13 +2964,6 @@ impl ChainState {
     /// Whom host `host` accepts control from besides admin devices.
     pub fn accept_policy(&self, host: &str) -> Accept {
         self.accept.get(host).cloned().unwrap_or_default()
-    }
-
-    /// The a2a devices host `host`'s last kind 23 named, ascending (current
-    /// a2a devices only): what the replay compares against for the no-op rule.
-    /// Nothing reads it for control any more.
-    pub fn a2a_accept(&self, host: &str) -> &[String] {
-        self.a2a_accept.get(host).map_or(&[], Vec::as_slice)
     }
 
     /// Devices that joined with the recovery key and are not yet active: what
@@ -4028,112 +3867,5 @@ pub(crate) mod tests {
         let mut forged = Attestation::create(&state, "dev-3", &f.devices[3].0, 20_000);
         forged.signature[0] ^= 1;
         assert_eq!(state.check_attestation(&forged), Err(ChainError::BadAttestation("bad signature")));
-    }
-
-    /// The removed A2A feature's chain bits (PR #669): a v0.3.0-rc.1 entry —
-    /// a device with flag bit 2, and a `SetA2aAccept` (kind 23) — decodes,
-    /// comes back byte for byte from re-encoding (the signature covers both),
-    /// replays through the checks, and the device keeps its flag. This is
-    /// what keeps a chain some rc.1 already wrote readable after the revert.
-    #[test]
-    fn a2a_entries_a_v0_3_0_rc_1_wrote_still_decode_and_replay() {
-        use crate::v3_regressions::{extra, with_second_host};
-        let f = fixture();
-        let (mut state, mut entries) = with_second_host(&f);
-        let k0 = &f.devices[0].0;
-        let signer = || Signer::Device("dev-0".into());
-        let proxy = extra(40);
-        let add = Action::AddDevice3(DeviceV3 {
-            id: "a-1".into(),
-            sign_key: proxy.0.verifying_key().to_bytes(),
-            dh_key: proxy.1.public(),
-            flags: Flags {
-                host: false,
-                admin: false,
-                a2a: true,
-            },
-        });
-        let add = state.draft(signer(), add, 30_000).sign(k0);
-        state.apply(&add, &mut h()).unwrap();
-        entries.push(add);
-        let accept = Action::SetA2aAccept {
-            host: "m-1".into(),
-            devices: vec!["a-1".into()],
-        };
-        let accept = state.draft(signer(), accept, 30_001).sign(k0);
-        state.apply(&accept, &mut h()).unwrap();
-        entries.push(accept.clone());
-
-        for entry in &entries {
-            let decoded = Entry::decode(&entry.encode()).expect("a rc.1 entry decodes");
-            assert_eq!(&decoded, entry);
-            assert_eq!(decoded.encode(), entry.encode(), "the signed bytes come back");
-        }
-        let again = ChainState::verify(&entries, None, &mut h()).expect("the chain verifies");
-        let proxy = again.device("a-1").expect("the proxy is current");
-        assert!(proxy.a2a && !proxy.host && !proxy.admin);
-
-        // The list is canonical: unsorted, repeated, over the cap and cut
-        // encodings do not decode.
-        let shape = |devices: Vec<String>| Action::SetA2aAccept { host: "m-1".into(), devices };
-        let unsorted = state.draft(signer(), shape(vec!["a-2".into(), "a-1".into()]), 0).sign(k0);
-        assert!(matches!(Entry::decode(&unsorted.encode()), Err(ChainError::Decode(_))));
-        let repeated = state.draft(signer(), shape(vec!["a-1".into(), "a-1".into()]), 0).sign(k0);
-        assert!(matches!(Entry::decode(&repeated.encode()), Err(ChainError::Decode(_))));
-        let many = state
-            .draft(signer(), shape((0..=MAX_ACCEPT_IDS).map(|i| format!("d{i:02}")).collect()), 0)
-            .sign(k0);
-        assert!(matches!(Entry::decode(&many.encode()), Err(ChainError::Decode(_))));
-        let mut cut = accept.encode();
-        cut.pop();
-        assert!(matches!(Entry::decode(&cut), Err(ChainError::Decode(_))));
-        let mut v2 = accept.encode();
-        v2[0] = VERSION;
-        assert!(matches!(Entry::decode(&v2), Err(ChainError::Decode(_))));
-
-        // The checks rc.1 made still hold. A list equal to the one now is a
-        // no-op; the empty list is how rc.1 cleared a host; a listed device
-        // must be a current a2a one.
-        let seq = state.seq() + 1;
-        let same = state.draft(signer(), shape(vec!["a-1".into()]), 30_002).sign(k0);
-        assert_eq!(state.clone().apply(&same, &mut h()), Err(not_allowed(seq, rules::A2A_ACCEPT_SAME)));
-        let a2 = extra(41);
-        let add_a2 = Action::AddDevice3(DeviceV3 {
-            id: "a-2".into(),
-            sign_key: a2.0.verifying_key().to_bytes(),
-            dh_key: a2.1.public(),
-            flags: Flags {
-                host: false,
-                admin: false,
-                a2a: true,
-            },
-        });
-        let add_a2 = state.draft(signer(), add_a2, 30_003).sign(k0);
-        state.apply(&add_a2, &mut h()).unwrap();
-        let clear = state.draft(signer(), shape(vec![]), 30_004).sign(k0);
-        state.apply(&clear, &mut h()).unwrap();
-        assert!(state.a2a_accept("m-1").is_empty(), "the empty list clears");
-        // Dropping a listed proxy owes the host its next machine key epoch.
-        let epoch = again.machine_key_epochs("m-1");
-        let due = Action::KeyEpochs(KeyCommits {
-            user: None,
-            machines: vec![(
-                "m-1".into(),
-                KeyCommit {
-                    epoch,
-                    hash: machine_key_commit("acct-1", "m-1", epoch, &[7; 32]),
-                },
-            )],
-        });
-        let due = state.draft(signer(), due, 30_005).sign(k0);
-        state.apply(&due, &mut h()).unwrap();
-        let not_a2a = state.draft(signer(), shape(vec!["a-1".into(), "dev-2".into()]), 30_006).sign(k0);
-        let seq = state.seq() + 1;
-        assert_eq!(state.clone().apply(&not_a2a, &mut h()), Err(not_allowed(seq, rules::A2A_ACCEPT_NOT_A2A)));
-        let remove = state.draft(signer(), Action::RemoveDevice3("a-2".into()), 30_006).sign(k0);
-        state.apply(&remove, &mut h()).unwrap();
-        let gone = state.draft(signer(), shape(vec!["a-2".into()]), 30_007).sign(k0);
-        let seq = state.seq() + 1;
-        assert_eq!(state.clone().apply(&gone, &mut h()), Err(ChainError::UnknownId { seq, id: "a-2".into() }));
     }
 }

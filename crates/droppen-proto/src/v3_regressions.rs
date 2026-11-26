@@ -32,7 +32,7 @@ pub(crate) fn dev3(id: &str, keys: &(SigningKey, DhKeypair), host: bool, admin: 
         id: id.into(),
         sign_key: keys.0.verifying_key().to_bytes(),
         dh_key: keys.1.public(),
-        flags: Flags { host, admin, a2a: false },
+        flags: Flags { host, admin },
     }
 }
 
@@ -184,11 +184,11 @@ fn c2_versions_cannot_be_confused_and_encodings_are_canonical() {
     let mut v2_by_pak = state.draft(Signer::Passkey("p-1".into()), Action::ApproveDevice("x".into()), 1);
     v2_by_pak.version = VERSION;
     assert!(matches!(Entry::decode(&v2_by_pak.sign(&pk.signing).encode()), Err(ChainError::Decode(_))));
-    // Flag bits beyond host, admin and the carried a2a bit; a boolean that is not 0 or 1.
+    // Flag bits beyond host and admin; a boolean that is not 0 or 1.
     let mut bytes = add.encode();
     let flags_at = bytes.len() - 64 - 1;
     assert_eq!(bytes[flags_at], Flags::HOST);
-    bytes[flags_at] = 0b1000 | Flags::HOST;
+    bytes[flags_at] = 0b100 | Flags::HOST;
     assert!(matches!(Entry::decode(&bytes), Err(ChainError::Decode(_))));
     let set = state
         .draft(
@@ -2096,12 +2096,7 @@ pub(crate) fn rotation_chain(f: &Fixture) -> (ChainState, Vec<Entry>, Vec<(Strin
         entries.push(push(state, by0(), k0, action).unwrap_or_else(|e| panic!("{label}: {e}")));
         steps.push((label.to_string(), state.seq()));
     };
-    step(
-        &mut state,
-        &mut entries,
-        "addController",
-        Action::AddDevice3(dev3("d-c", &extra(20), false, false)),
-    );
+    step(&mut state, &mut entries, "addController", Action::AddDevice3(dev3("d-c", &extra(20), false, false)));
     step(
         &mut state,
         &mut entries,
@@ -2112,12 +2107,7 @@ pub(crate) fn rotation_chain(f: &Fixture) -> (ChainState, Vec<Entry>, Vec<(Strin
         },
     );
     step(&mut state, &mut entries, "removeController", Action::RemoveDevice3("d-c".into()));
-    step(
-        &mut state,
-        &mut entries,
-        "removalKeys",
-        Action::KeyEpochs(mk_commit("h-2", 1, &[0x23; 32])),
-    );
+    step(&mut state, &mut entries, "removalKeys", Action::KeyEpochs(mk_commit("h-2", 1, &[0x23; 32])));
     let first = renewal(&state, "h-2", &extra(0).0, &extra(RENEWED[0]), state.seq(), [0x31; 16], Assurance::Auto);
     step(&mut state, &mut entries, "rotate", Action::RotateHostKey(first));
     step(&mut state, &mut entries, "rotateKey", Action::KeyEpochs(mk_commit("h-2", 2, &[0x24; 32])));
@@ -2131,12 +2121,7 @@ pub(crate) fn rotation_chain(f: &Fixture) -> (ChainState, Vec<Entry>, Vec<(Strin
         Assurance::OnDevice,
     );
     step(&mut state, &mut entries, "rotateAgain", Action::RotateHostKey(second));
-    step(
-        &mut state,
-        &mut entries,
-        "rotateAgainKey",
-        Action::KeyEpochs(mk_commit("h-2", 3, &[0x25; 32])),
-    );
+    step(&mut state, &mut entries, "rotateAgainKey", Action::KeyEpochs(mk_commit("h-2", 3, &[0x25; 32])));
     (state, entries, steps)
 }
 
@@ -2203,7 +2188,10 @@ fn r1_a_renewal_keeps_the_id_and_retires_the_old_keys() {
     assert_eq!(at(again), Some(public(&second)));
     assert_eq!(at(state.seq()), Some(public(&second)));
     assert_eq!(at(state.seq() + 1), None, "past this view");
-    assert_eq!(state.keys_at("m-1", 2).map(|k| k.sign_key), Some(f.machine.0.verifying_key().to_bytes()));
+    assert_eq!(
+        state.keys_at("m-1", 2).map(|k| k.sign_key),
+        Some(f.machine.0.verifying_key().to_bytes())
+    );
     // ever_named: current, retired, any device's (removed ones too), either kind.
     for key in [
         public(&old).0,
@@ -2347,31 +2335,15 @@ fn r1_each_renewal_rule_fails_on_its_own() {
     assert_eq!(attempt(&base, weak), Err(ChainError::WeakKey { seq }));
     let to = |s: &ChainState, old: &SigningKey, new: (SigningKey, DhKeypair)| renewal(s, "h-2", old, &new, s.seq(), [9; 16], Assurance::Auto);
     let o = &extra(0).0;
-    assert_eq!(
-        attempt(&base, to(&base, o, extra(0))),
-        rule(seq, rules::ROTATE_KEY_REUSED),
-        "its current keys"
-    );
+    assert_eq!(attempt(&base, to(&base, o, extra(0))), rule(seq, rules::ROTATE_KEY_REUSED), "its current keys");
     let dev0 = (f.devices[0].0.clone(), DhKeypair::from_secret(bytes32(300)));
     assert_eq!(attempt(&base, to(&base, o, dev0)), rule(seq, rules::ROTATE_KEY_REUSED), "an admin's keys");
     let m1_dh = (SigningKey::from_bytes(&bytes32(990)), DhKeypair::from_secret(bytes32(401)));
-    assert_eq!(
-        attempt(&base, to(&base, o, m1_dh)),
-        rule(seq, rules::ROTATE_KEY_REUSED),
-        "another host's DH key"
-    );
+    assert_eq!(attempt(&base, to(&base, o, m1_dh)), rule(seq, rules::ROTATE_KEY_REUSED), "another host's DH key");
     let removed_dev = (f.devices[1].0.clone(), DhKeypair::from_secret(bytes32(991)));
-    assert_eq!(
-        attempt(&base, to(&base, o, removed_dev)),
-        rule(seq, rules::ROTATE_KEY_REUSED),
-        "a removed device's key"
-    );
+    assert_eq!(attempt(&base, to(&base, o, removed_dev)), rule(seq, rules::ROTATE_KEY_REUSED), "a removed device's key");
     let removed_ctl = (SigningKey::from_bytes(&bytes32(992)), extra(20).1);
-    assert_eq!(
-        attempt(&base, to(&base, o, removed_ctl)),
-        rule(seq, rules::ROTATE_KEY_REUSED),
-        "the removed controller's"
-    );
+    assert_eq!(attempt(&base, to(&base, o, removed_ctl)), rule(seq, rules::ROTATE_KEY_REUSED), "the removed controller's");
     let renewed = upto(&entries, &steps, "rotateKey");
     let n = &extra(21).0;
     assert_eq!(
@@ -2471,7 +2443,10 @@ fn r1_each_renewal_rule_fails_on_its_own() {
         push(&mut narrowed, by0(), k0, Action::SetAccept { host: "h-2".into(), from }).unwrap();
     }
     assert_eq!(narrowed.host_key_due(), Some("h-2"));
-    assert_eq!(attempt(&narrowed, ok(&narrowed, "h-2", &extra(0).0)), rule(seq + 2, rules::HOST_KEY_NEXT));
+    assert_eq!(
+        attempt(&narrowed, ok(&narrowed, "h-2", &extra(0).0)),
+        rule(seq + 2, rules::HOST_KEY_NEXT)
+    );
 }
 
 /// §5.7 attack regressions (§8 items 2–3): one admin alone cannot rebind a
@@ -2564,11 +2539,7 @@ fn r1_the_confirmation_the_code_and_the_ack() {
     assert!(r.verify("acct-1", &old_sign, &old_dh));
     let eph = DhKeypair::from_secret(bytes32(900));
     let mac = host_rotate_confirm(&new.1, &eph.public(), &body).unwrap();
-    assert_eq!(
-        mac,
-        rotate_confirm_mac(&eph.agree(&new.1.public()).unwrap(), &body),
-        "the same secret either side"
-    );
+    assert_eq!(mac, rotate_confirm_mac(&eph.agree(&new.1.public()).unwrap(), &body), "the same secret either side");
     assert!(check_rotate_confirm(&eph, &new.1.public(), &body, &mac));
     assert!(!check_rotate_confirm(&eph, &old.1.public(), &body, &mac), "the old DH key proves nothing");
     let mut other = body.clone();
@@ -2587,10 +2558,7 @@ fn r1_the_confirmation_the_code_and_the_ack() {
     let ack = sign_rotate_ack(&new.0, "acct-1", "h-2", &body, &nonce);
     let new_sign = new.0.verifying_key().to_bytes();
     assert!(verify_rotate_ack(&new_sign, "acct-1", "h-2", &body, &nonce, &ack));
-    assert!(
-        !verify_rotate_ack(&new_sign, "acct-1", "h-2", &body, &bytes32(902), &ack),
-        "another login"
-    );
+    assert!(!verify_rotate_ack(&new_sign, "acct-1", "h-2", &body, &bytes32(902), &ack), "another login");
     assert!(!verify_rotate_ack(&new_sign, "acct-1", "m-1", &body, &nonce, &ack));
     assert!(!verify_rotate_ack(&new_sign, "acct-2", "h-2", &body, &nonce, &ack));
     assert!(!verify_rotate_ack(&new_sign, "acct-1", "h-2", &other, &nonce, &ack));
@@ -2717,13 +2685,7 @@ fn r1b_a_retired_key_never_activates_a_device() {
     let by_pk = || Signer::Passkey("p-1".into());
     let mut slotted = base.clone();
     push(&mut slotted, by0(), k0, Action::PasskeySlotSet(p.slot.clone())).unwrap();
-    push(
-        &mut slotted,
-        by_pk(),
-        &p.signing,
-        Action::AddDevice3(dev3("d-k0", &extra(0), false, false)),
-    )
-    .unwrap();
+    push(&mut slotted, by_pk(), &p.signing, Action::AddDevice3(dev3("d-k0", &extra(0), false, false))).unwrap();
     try_push(&slotted, by_pk(), &p.signing, Action::PasskeyActivate("d-k0".into())).expect("activated before the renewal");
     renew(&mut slotted);
     assert_eq!(
@@ -2779,18 +2741,12 @@ fn r1c_a_dispute_names_the_renewal_by_its_hash() {
         ("another device", sign(k0, "h-2", rotate, hash(rotate), new_of(&first))),
         ("another hash", sign(&old.0, "h-2", rotate, [7; 32], new_of(&first))),
         ("another new key", sign(&old.0, "h-2", rotate, hash(rotate), [7; 32])),
-        (
-            "another account",
-            sign_rotate_dispute(&old.0, "acct-2", "h-2", rotate, &hash(rotate), &new_of(&first)),
-        ),
+        ("another account", sign_rotate_dispute(&old.0, "acct-2", "h-2", rotate, &hash(rotate), &new_of(&first))),
         ("another seq in the body", sign(&old.0, "h-2", rotate + 1, hash(rotate), new_of(&first))),
     ] {
         assert!(!state.verify_rotate_dispute("h-2", rotate, &sig), "{what}");
     }
-    assert!(
-        !state.verify_rotate_dispute("m-1", rotate, &sign(&old.0, "m-1", rotate, hash(rotate), new_of(&first))),
-        "another host"
-    );
+    assert!(!state.verify_rotate_dispute("m-1", rotate, &sign(&old.0, "m-1", rotate, hash(rotate), new_of(&first))), "another host");
     let keys = seq_of(&steps, "rotateKey");
     assert!(
         !state.verify_rotate_dispute("h-2", keys, &sign(&first.0, "h-2", keys, hash(keys), new_of(&first))),
@@ -2821,10 +2777,7 @@ fn r1d_the_renewal_policy_asks_for_renewals_confirmed_on_the_device() {
     let (_, entries, steps) = rotation_chain(&f);
     let k0 = &f.devices[0].0;
     let mut state = upto(&entries, &steps, "removalKeys");
-    assert!(
-        !state.always_assured() && state.renewal_policy_seq().is_none(),
-        "off until an admin turns it on"
-    );
+    assert!(!state.always_assured() && state.renewal_policy_seq().is_none(), "off until an admin turns it on");
     let policy = |on: bool| Action::SetRenewalPolicy { always_assured: on };
     // Only an active admin sets it: not a plain device, not the host, not the recovery words.
     let seq = state.seq() + 1;
@@ -2852,15 +2805,7 @@ fn r1d_the_renewal_policy_asks_for_renewals_confirmed_on_the_device() {
     );
     let mut off_view = state.clone();
     push(&mut off_view, by0(), k0, policy(false)).unwrap();
-    let auto_later = renewal(
-        &off_view,
-        "h-2",
-        &extra(0).0,
-        &extra(RENEWED[0]),
-        off_view.seq(),
-        [9; 16],
-        Assurance::Auto,
-    );
+    let auto_later = renewal(&off_view, "h-2", &extra(0).0, &extra(RENEWED[0]), off_view.seq(), [9; 16], Assurance::Auto);
     try_push(&off_view, by0(), k0, Action::RotateHostKey(auto_later)).expect("off again: automatic renewals go through");
     let assured = renewal(&state, "h-2", &extra(0).0, &extra(RENEWED[0]), state.seq(), [9; 16], Assurance::OnDevice);
     push(&mut state, by0(), k0, Action::RotateHostKey(assured)).unwrap();
@@ -2868,15 +2813,7 @@ fn r1d_the_renewal_policy_asks_for_renewals_confirmed_on_the_device() {
     push(&mut state, by0(), k0, Action::KeyEpochs(mk_commit("h-2", epoch, &[0x27; 32]))).unwrap();
     assert!(state.retired_keys("h-2")[0].by_assured);
     // The other rules still come first: a bad proof is refused as one.
-    let mut bad_proof = renewal(
-        &state,
-        "h-2",
-        &extra(RENEWED[0]).0,
-        &extra(RENEWED[1]),
-        state.seq(),
-        [9; 16],
-        Assurance::Auto,
-    );
+    let mut bad_proof = renewal(&state, "h-2", &extra(RENEWED[0]).0, &extra(RENEWED[1]), state.seq(), [9; 16], Assurance::Auto);
     bad_proof.old_sig = [0; 64];
     assert_eq!(
         try_push(&state, by0(), k0, Action::RotateHostKey(bad_proof)),
@@ -2885,15 +2822,7 @@ fn r1d_the_renewal_policy_asks_for_renewals_confirmed_on_the_device() {
     // Off: automatic renewals again.
     let off = push(&mut state, by0(), k0, policy(false)).unwrap();
     assert!(!state.always_assured() && state.renewal_policy_seq() == Some(off.seq()));
-    let auto = renewal(
-        &state,
-        "h-2",
-        &extra(RENEWED[0]).0,
-        &extra(RENEWED[1]),
-        state.seq(),
-        [9; 16],
-        Assurance::Auto,
-    );
+    let auto = renewal(&state, "h-2", &extra(RENEWED[0]).0, &extra(RENEWED[1]), state.seq(), [9; 16], Assurance::Auto);
     push(&mut state, by0(), k0, Action::RotateHostKey(auto)).unwrap();
     // Encoding: kind 21, one byte 0 or 1; nothing else decodes, nor kind 21 under v2.
     for (e, byte) in [(&on, 1u8), (&off, 0u8)] {
@@ -2935,10 +2864,7 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
     let mut st = upto(&entries, &steps, "removalKeys");
     let (a, b) = ([0xa1u8; 16], [0xb2u8; 16]);
     let removal = |hosts: &[(&str, &[&str])]| -> Vec<(String, Vec<String>)> {
-        hosts
-            .iter()
-            .map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect()))
-            .collect()
+        hosts.iter().map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect())).collect()
     };
     let pause = |op: [u8; 16], phase: PausePhase, removals: Vec<(String, Vec<String>)>| Action::RenewalPause { op, phase, removals };
     let ids = |ids: &[&str]| Accept::Devices(ids.iter().map(|i| i.to_string()).collect());
@@ -2952,33 +2878,15 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
     assert!(ok(&st, "h-2", "m-1") && ok(&st, "m-1", "h-2") && ok(&st, "dev-2", "m-1") && ok(&st, "dev-0", "m-1"));
 
     // The pause: h-2 stops accepting m-1; m-1 stops accepting dev-2 and h-2 (hosts, and each host's ids, in byte order).
-    let start = push(
-        &mut st,
-        by0(),
-        k0,
-        pause(a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["dev-2", "h-2"])])),
-    )
-    .unwrap();
-    assert!(
-        !ok(&st, "h-2", "m-1") && !ok(&st, "m-1", "h-2") && !ok(&st, "dev-2", "m-1"),
-        "the paused edges are refused"
-    );
+    let start = push(&mut st, by0(), k0, pause(a, PausePhase::Start, removal(&[("h-2", &["m-1"]), ("m-1", &["dev-2", "h-2"])]))).unwrap();
+    assert!(!ok(&st, "h-2", "m-1") && !ok(&st, "m-1", "h-2") && !ok(&st, "dev-2", "m-1"), "the paused edges are refused");
     assert!(
         matches!(st.may_control("dev-2", "m-1"), Err(ChainError::NotAccepted { reason, .. }) if reason == "control is paused while identity keys are renewed")
     );
-    assert!(
-        ok(&st, "dev-2", "h-2") && ok(&st, "dev-0", "m-1") && ok(&st, "d-a", "m-1"),
-        "the rest stands, admins always"
-    );
+    assert!(ok(&st, "dev-2", "h-2") && ok(&st, "dev-0", "m-1") && ok(&st, "d-a", "m-1"), "the rest stands, admins always");
     assert!(st.authorize_control("h-2", &extra(0).1.public(), "m-1").is_err());
-    assert_eq!(
-        st.hosts_admitting("h-2").map(|d| d.info.id.clone()).collect::<Vec<_>>(),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        (st.base_accept("m-1"), st.paused_edges("m-1")),
-        (Accept::All, vec!["dev-2".to_string(), "h-2".to_string()])
-    );
+    assert_eq!(st.hosts_admitting("h-2").map(|d| d.info.id.clone()).collect::<Vec<_>>(), Vec::<String>::new());
+    assert_eq!((st.base_accept("m-1"), st.paused_edges("m-1")), (Accept::All, vec!["dev-2".to_string(), "h-2".to_string()]));
     assert_eq!(st.paused_edges("h-2"), vec!["m-1".to_string()]);
     assert_eq!(
         st.open_pauses(),
@@ -3002,16 +2910,7 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
 
     // A pause whose starter is demoted stays in force; another admin ends it.
     push(&mut st, by_a(), ka, pause(b, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))).unwrap();
-    push(
-        &mut st,
-        by0(),
-        k0,
-        Action::SetAdmin {
-            id: "d-a".into(),
-            admin: false,
-        },
-    )
-    .unwrap();
+    push(&mut st, by0(), k0, Action::SetAdmin { id: "d-a".into(), admin: false }).unwrap();
     assert_eq!(st.paused_edges("m-1"), vec!["dev-2".to_string()]);
     assert!(!ok(&st, "dev-2", "m-1"));
     assert_eq!(
@@ -3025,36 +2924,15 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
     // Overlapping pauses: an edge comes back only when every pause naming it ended.
     let mut two = st.clone();
     push(&mut two, by0(), k0, pause([0xd1; 16], PausePhase::Start, removal(&[("m-1", &["h-2"])]))).unwrap();
-    push(
-        &mut two,
-        by0(),
-        k0,
-        pause([0xd2; 16], PausePhase::Start, removal(&[("m-1", &["dev-2", "h-2"])])),
-    )
-    .unwrap();
+    push(&mut two, by0(), k0, pause([0xd2; 16], PausePhase::Start, removal(&[("m-1", &["dev-2", "h-2"])]))).unwrap();
     push(&mut two, by0(), k0, pause([0xd1; 16], PausePhase::Completed, vec![])).unwrap();
     assert_eq!(two.paused_edges("m-1"), vec!["dev-2".to_string(), "h-2".to_string()]);
     push(&mut two, by0(), k0, pause([0xd2; 16], PausePhase::Completed, vec![])).unwrap();
     assert!(two.paused_edges("m-1").is_empty());
     // A device made admin while paused stays paused until the pause ends: a pause only ever narrows.
     let mut promoted = st.clone();
-    push(
-        &mut promoted,
-        by0(),
-        k0,
-        pause([0xd3; 16], PausePhase::Start, removal(&[("m-1", &["dev-2"])])),
-    )
-    .unwrap();
-    push(
-        &mut promoted,
-        by0(),
-        k0,
-        Action::SetAdmin {
-            id: "dev-2".into(),
-            admin: true,
-        },
-    )
-    .unwrap();
+    push(&mut promoted, by0(), k0, pause([0xd3; 16], PausePhase::Start, removal(&[("m-1", &["dev-2"])]))).unwrap();
+    push(&mut promoted, by0(), k0, Action::SetAdmin { id: "dev-2".into(), admin: true }).unwrap();
     assert!(!ok(&promoted, "dev-2", "m-1"), "an admin now, paused all the same");
     push(&mut promoted, by0(), k0, pause([0xd3; 16], PausePhase::Completed, vec![])).unwrap();
     assert!(ok(&promoted, "dev-2", "m-1"));
@@ -3063,10 +2941,7 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
     let seq = st.seq() + 1;
     let attempt = |s: &ChainState, action: Action| try_push(s, by0(), k0, action);
     let c = [0xc1u8; 16];
-    assert_eq!(
-        attempt(&st, pause(a, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))),
-        rule(seq, rules::PAUSE_OP_REUSED)
-    );
+    assert_eq!(attempt(&st, pause(a, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))), rule(seq, rules::PAUSE_OP_REUSED));
     for removals in [
         vec![],
         removal(&[("dev-2", &["m-1"])]),
@@ -3076,20 +2951,10 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
         removal(&[("m-1", &["dev-2"]), ("h-2", &["dev-2"])]),
         (0..257).map(|i| (format!("h-{i}"), vec!["dev-2".to_string()])).collect(),
     ] {
-        assert_eq!(
-            attempt(&st, pause(c, PausePhase::Start, removals.clone())),
-            rule(seq, rules::PAUSE_HOSTS),
-            "{removals:?}"
-        );
+        assert_eq!(attempt(&st, pause(c, PausePhase::Start, removals.clone())), rule(seq, rules::PAUSE_HOSTS), "{removals:?}");
     }
     let mut pending = st.clone();
-    push(
-        &mut pending,
-        Signer::Recovery,
-        &f.recovery.signing,
-        Action::RecoveryJoin3(dev3("dev-r", &extra(4), false, true)),
-    )
-    .unwrap();
+    push(&mut pending, Signer::Recovery, &f.recovery.signing, Action::RecoveryJoin3(dev3("dev-r", &extra(4), false, true))).unwrap();
     assert_eq!(
         attempt(&pending, pause(c, PausePhase::Start, removal(&[("dev-r", &["m-1"])]))),
         rule(seq + 1, rules::PAUSE_HOSTS),
@@ -3108,19 +2973,12 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
         removal(&[("m-1", &["h-2", "dev-2"])]),
         removal(&[("m-1", &["dev-0"])]),
     ] {
-        assert_eq!(
-            attempt(&st, pause(c, PausePhase::Start, removals.clone())),
-            rule(seq, rules::PAUSE_IDS),
-            "{removals:?}"
-        );
+        assert_eq!(attempt(&st, pause(c, PausePhase::Start, removals.clone())), rule(seq, rules::PAUSE_IDS), "{removals:?}");
     }
     // The whole entry fits every transport: one byte past MAX_PAUSE_ENTRY_LEN is refused for that alone; at it, the
     // ids' own rule speaks.
     let sized = |len: usize| {
-        let entry = |ids: &[String]| {
-            st.draft(by0(), pause(c, PausePhase::Start, vec![("m-1".into(), ids.to_vec())]), 0)
-                .sign(k0)
-        };
+        let entry = |ids: &[String]| st.draft(by0(), pause(c, PausePhase::Start, vec![("m-1".into(), ids.to_vec())]), 0).sign(k0);
         let mut ids: Vec<String> = Vec::new();
         while entry(&ids).encode().len() + 2 * 66 <= len {
             ids.push(format!("x{:063}", ids.len()));
@@ -3134,16 +2992,8 @@ fn r1e_a_renewal_pause_overlays_the_accept_policy_and_leaves_the_base_alone() {
     assert_eq!(attempt(&st, sized(MAX_PAUSE_ENTRY_LEN + 1)), rule(seq, rules::PAUSE_TOO_LARGE));
     assert_eq!(attempt(&st, sized(MAX_PAUSE_ENTRY_LEN)), rule(seq, rules::PAUSE_IDS));
     attempt(&st, pause(c, PausePhase::Start, removal(&[("m-1", &["dev-1"])]))).expect("a removed device is a device the chain named");
-    assert_eq!(
-        attempt(&st, pause(a, PausePhase::Completed, vec![])),
-        rule(seq, rules::PAUSE_NOT_OPEN),
-        "twice"
-    );
-    assert_eq!(
-        attempt(&st, pause([0xcc; 16], PausePhase::Cancelled, vec![])),
-        rule(seq, rules::PAUSE_NOT_OPEN),
-        "unknown"
-    );
+    assert_eq!(attempt(&st, pause(a, PausePhase::Completed, vec![])), rule(seq, rules::PAUSE_NOT_OPEN), "twice");
+    assert_eq!(attempt(&st, pause([0xcc; 16], PausePhase::Cancelled, vec![])), rule(seq, rules::PAUSE_NOT_OPEN), "unknown");
     let mut open = st.clone();
     push(&mut open, by0(), k0, pause(c, PausePhase::Start, removal(&[("m-1", &["dev-2"])]))).unwrap();
     assert_eq!(

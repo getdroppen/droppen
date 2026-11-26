@@ -17,7 +17,14 @@ use serde_json::Value;
 
 fn ws(socket: &str, dir: &str, text: &str) {
     if let Ok(body) = serde_json::from_str::<Value>(text) {
-        droppen_client::tap::record("devkit", droppen_client::tap::Event::Ws { socket, dir, body: &body });
+        droppen_client::tap::record(
+            "devkit",
+            droppen_client::tap::Event::Ws {
+                socket,
+                dir,
+                body: &body,
+            },
+        );
     }
 }
 
