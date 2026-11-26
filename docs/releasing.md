@@ -344,8 +344,10 @@ The trust boundaries:
   packages by their lockfiles; Apple's Developer ID G2 intermediate
   certificate by sha256. The Linux app takes its Ubuntu libraries from the
   live jammy archive, in the versions `LIBRARIES-<arch>.txt` records, and
-  their sources from the same image's apt lists, those very versions or
-  nothing.
+  their sources from the same image's apt lists: those very versions, or —
+  when the index has already moved past one — the same version from the
+  archive's own pool, checked against its `.dsc` hashes (the log says which),
+  and nothing at all when neither can be fetched.
 - **Names stay out of the log.** The release text check's list of personal
   names (`RELEASE_FORBIDDEN_ENV`) reaches only the `release` job's text checks; the
   build jobs check for "Kilerd" only (`DROPPEN_RELEASE_NAMES_DEFERRED`). A hit
