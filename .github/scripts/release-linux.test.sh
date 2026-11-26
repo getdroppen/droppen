@@ -124,8 +124,8 @@ WHY='ends (before|inside)' text refused "a cut .deb" "$TMP/members"
 
 # unpack-desktop-linux.sh: the builds for the release job; for verify and
 # publish all nine files, each required.
-export ALLOW_DESKTOP_LINUX='^desktop-linux(/(Droppen-[0-9]+\.[0-9]+\.[0-9]+-(x86_64|aarch64)\.AppImage|droppen_[0-9]+\.[0-9]+\.[0-9]+_(amd64|arm64)\.deb|LIBRARIES-(x86_64|aarch64)\.txt))?$'
-export ALLOW_SIGNED_LINUX='^linux(/Droppen-[0-9]+\.[0-9]+\.[0-9]+-(x86_64|aarch64)\.AppImage\.sig)?$'
+export ALLOW_DESKTOP_LINUX='^desktop-linux(/(Droppen-[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?-(x86_64|aarch64)\.AppImage|droppen_[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?_(amd64|arm64)\.deb|LIBRARIES-(x86_64|aarch64)\.txt))?$'
+export ALLOW_SIGNED_LINUX='^linux(/Droppen-[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?-(x86_64|aarch64)\.AppImage\.sig)?$'
 DL=$TMP/dl
 for arch in x86_64 aarch64; do
   if [ "$arch" = x86_64 ]; then debarch=amd64; else debarch=arm64; fi
@@ -170,6 +170,25 @@ cp -R "$DL" "$TMP/dl-stray" && echo x >"$TMP/dl-stray/desktop-linux-sources/stra
 unpack refused "all, a stray file beside the sources tar" 'holds other than' "$TMP/dl-stray" all LINUX_SOURCES_SHA="$SOURCES_SHA" LINUX_SIGNED_SHA="$SIGNED_SHA"
 cp -R "$DL" "$TMP/dl-gz" && gzip -c <"$DL/desktop-linux-sources/Droppen-$V-linux-sources.tar" >"$TMP/dl-gz/desktop-linux-sources/Droppen-$V-linux-sources.tar"
 unpack refused "all, a compressed sources tar" 'compressed' "$TMP/dl-gz" all LINUX_SOURCES_SHA="$(sha "$TMP/dl-gz/desktop-linux-sources/Droppen-$V-linux-sources.tar")" LINUX_SIGNED_SHA="$SIGNED_SHA"
+
+# A prerelease version: the files the build makes carry the suffix
+# (`0.3.0-rc.1`), and the allowlist and version checks take it.
+RC=0.3.0-rc.1
+DLRC=$TMP/dl-rc
+for arch in x86_64 aarch64; do
+  if [ "$arch" = x86_64 ]; then debarch=amd64; else debarch=arm64; fi
+  mkdir -p "$TMP/art-rc-$arch/desktop-linux" "$DLRC/desktop-linux-$arch"
+  cp "$TMP/contact/Droppen-$V-$arch.AppImage" "$TMP/art-rc-$arch/desktop-linux/Droppen-$RC-$arch.AppImage"
+  cp "$TMP/contact/droppen_${V}_$debarch.deb" "$TMP/art-rc-$arch/desktop-linux/droppen_${RC}_$debarch.deb"
+  cp "$TMP/contact/LIBRARIES-$arch.txt" "$TMP/art-rc-$arch/desktop-linux/"
+  tar -cf "$DLRC/desktop-linux-$arch/desktop-linux-$arch.tar" -C "$TMP/art-rc-$arch" desktop-linux
+done
+OLDV=$V
+V=$RC
+LINUX_X86_64_SHA=$(sha "$DLRC/desktop-linux-x86_64/desktop-linux-x86_64.tar")
+LINUX_AARCH64_SHA=$(sha "$DLRC/desktop-linux-aarch64/desktop-linux-aarch64.tar")
+unpack ok "builds, a prerelease version" 6 "$DLRC" builds
+V=$OLDV
 
 echo "release-linux: $PASSED passed, $FAILED failed"
 [ "$FAILED" = 0 ]

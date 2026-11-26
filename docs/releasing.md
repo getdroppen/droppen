@@ -173,6 +173,12 @@ workflow would look for an app it does not ship. Naming the final version's
 carry the bilingual banner, the phrases `test release` and `测试版本`, so it
 reads as a test in both languages.
 
+The packaging's version checks take a prerelease too, for CI (which builds the
+Linux app on every pull request that touches the release workflow) and for a
+manual `desktop_linux` dry run; a release still ships no app for an rc. Were
+that to change, note that the .deb's version would be `X.Y.Z-rc.N`, which dpkg
+orders *after* `X.Y.Z`: it would need `~rc.N` to sort below the final.
+
 1. On the branch, write `docs/releases/vX.Y.Z-rc.N.md` with that banner, and
    change nothing else about the app.
 2. Bump `version` in `crates/droppen-server/Cargo.toml` (and the
@@ -190,7 +196,8 @@ reads as a test in both languages.
    `DROPPEN_VERSION=vX.Y.Z-rc.N` on the installer.
 7. Fix a bad RC forward with the next `rc.N+1`; never move or re-create a
    published tag. A version must not be older than the newest existing
-   `vX.Y.Z-rc.*` tag (an equal one is allowed, for a re-run of the same tag).
+   `vX.Y.Z-rc.N` tag (an equal one is allowed, for a re-run of the same tag;
+   a hand tag like `-rc.1-old` is ignored).
 
 `scripts/cut-rc.sh vX.Y.Z-rc.N` does steps 2–4: it checks the branch, the open
 pull request, that the version is not older than the newest RC and the tag
@@ -204,7 +211,8 @@ the one holding the secrets — runs that branch's scripts
 pull request's diff — or, for an rc on main, the commits it adds — before you
 approve, especially the signing-sensitive
 paths: `.github/scripts/`, `.github/workflows/`, `scripts/` and `install.sh`.
-The run's admission summary lists any of them the branch changes; that listing
+The run's admission summary lists any of them the branch changes — an rc on
+main has no branch and so no such list; that listing
 informs the approval, it does not replace it.
 
 A fork's pull request is refused: its branch is not this repository's, so the

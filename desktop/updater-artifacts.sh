@@ -153,7 +153,6 @@ fi
 REPO_PUBLIC=${DROPPEN_RELEASE_REPO:-getdroppen/droppen}
 ARCHIVE=Droppen.app.tar.gz
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "$VERSION is not a semantic version"
-if [ "$TEST" = 0 ] && ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then die "a release version is x.y.z, not $VERSION"; fi
 BASE_URL=${BASE_URL:-https://github.com/$REPO_PUBLIC/releases/download/v$VERSION}
 NOTES=${NOTES:-https://github.com/$REPO_PUBLIC/releases/tag/v$VERSION}
 RELEASE_PUBKEY=$DESKTOP/src-tauri/tauri.conf.json

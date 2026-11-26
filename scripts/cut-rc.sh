@@ -14,7 +14,8 @@
 #    head is exactly the current commit (the tag must point at the reviewed
 #    commit, not one the branch has moved on from);
 #  - the version is a vX.Y.Z-rc.N version newer than every existing
-#    vX.Y.Z-rc.* tag, locally and on origin (equal is allowed, for a re-run),
+#    vX.Y.Z-rc.N tag (a hand tag like -rc.1-old is ignored), locally and on
+#    origin (equal is allowed, for a re-run),
 #    and its tag exists in neither place;
 #  - docs/releases/v<version>.md exists, is not empty, carries the bilingual
 #    banner ("test release" and "测试版本") and names no RC-versioned app file
