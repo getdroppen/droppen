@@ -18,7 +18,7 @@
  *   --theme <t>          light | dark | both (default both)
  *   --viewport <v>       desktop | mobile | both (default both)
  *   --channel <name>     Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>        settings | devices | agents | new-chat | cloud-bar | connection-log | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | both (default both: every fixture)
+ *   --fixture <f>        settings | devices | agents | new-chat | cloud-bar | connection-log | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | session-list | both (default both: every fixture)
  *   --url <url>          skip the fixture and audit a running page
  *   --check              exit 1 if any target invariant fails
  *   --no-screenshots     skip writing PNG screenshots (all measurements and checks still run)
@@ -83,6 +83,7 @@ const runNoCopy = which === "both" || which === "no-copy";
 const runSessionFromCopy = which === "both" || which === "session-from-copy";
 const runWelcome = which === "both" || which === "welcome";
 const runDesktopApp = which === "both" || which === "desktop-app";
+const runSessionList = which === "both" || which === "session-list";
 const runUpdates = which === "both" || which === "updates";
 
 await fs.mkdir(out, { recursive: true });
@@ -1968,6 +1969,28 @@ async function auditUpdates(theme, view, context) {
   await page.close();
 }
 
+/**
+ * The session sidebar grouped by directory (`?fixture=session-list`): the
+ * headings keep the order work was started in while the quiet-but-newer
+ * projects sit above the loud-older one, and only rows move inside a group.
+ */
+async function auditSessionList(theme, view, context) {
+  const page = await context.newPage();
+  await page.goto(`${base}ui-audit/index.html?fixture=session-list&theme=${theme}`);
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForSelector("[data-audit-row='sidebar'] [data-label]");
+  const headings = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-audit-row='sidebar'] [data-label]")].map((e) => e.textContent),
+  );
+  await snap(page.locator("[data-fixture-root]"), { path: `${out}/session-list-${theme}-${view.name}.png`, animations: "disabled" });
+  results.push({ mode: "session-list", theme, viewport: view.name, headings });
+  // beta started newest, then gamma; alpha is loudest but oldest.
+  const expected = ["beta", "gamma", "alpha"];
+  if (headings.join(",") !== expected.join(","))
+    failures.push({ theme, viewport: view.name, fixture: "session-list", id: "session-list.headings", actual: headings, expected });
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -1995,6 +2018,7 @@ try {
             if (runSessionFromCopy) await auditSessionFromCopy(theme, view, context);
             if (runWelcome) await auditWelcome(theme, view, context);
             if (runDesktopApp) await auditDesktopApp(theme, view, context);
+            if (runSessionList) await auditSessionList(theme, view, context);
             if (runUpdates) await auditUpdates(theme, view, context);
           } finally {
             await context.close();

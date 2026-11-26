@@ -98,7 +98,7 @@ export function StatusBadge({ session, unread = 0 }: { session: AttentionRow; un
 // unchanged rows (with their context-menu roots) skip re-rendering entirely.
 // Every row here is one this server owns, so nothing in it has to hedge about
 // scope: external sessions are not listed at all (see `buildSessionList`).
-const SessionRow = memo(function SessionRow({
+export const SessionRow = memo(function SessionRow({
   session,
   dirLabel,
   nested,
@@ -462,7 +462,7 @@ function loadCollapsedDirs(machine: MachineKey): Set<string> {
   return out;
 }
 
-const GroupHeader = memo(function GroupHeader({
+export const GroupHeader = memo(function GroupHeader({
   dir,
   collapseKey,
   list,

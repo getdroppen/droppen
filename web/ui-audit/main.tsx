@@ -19,7 +19,8 @@
  * (the real session view on droppen.app, drawn from the device's copy of the
  * session while the machine is asked for it; `&state=live`, once it has
  * answered; `&state=offline`, the page on the copy while the machine is
- * away), `?fixture=desktop-app` (Settings → Desktop app, on each system and in
+ * away), `?fixture=session-list` (the sidebar grouped by directory, a loud old
+ * project beside quiet recent ones), `?fixture=desktop-app` (Settings → Desktop app, on each system and in
  * each Start at Login state: `desktop-app.tsx`), `?fixture=welcome` (the
  * desktop app's first-run guide and its server's setup page, on each system
  * the app runs on: `welcome.tsx`) or `?fixture=updates` (the desktop app's
@@ -87,6 +88,7 @@ import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/
 import { SettingRow, SettingsSection } from "@/features/settings/layout";
 import { applyLanguage, type LanguagePref } from "@/i18n";
 import { mountDesktopApp } from "./desktop-app";
+import { mountSessionList } from "./session-list";
 import { mountUpdates } from "./updates";
 import { mountWelcome } from "./welcome";
 
@@ -1515,6 +1517,8 @@ function LandingFixture() {
 // language.
 if (fixture === "new-chat") {
   await mountNewChat();
+} else if (fixture === "session-list") {
+  await mountSessionList();
 } else if (fixture === "cloud-bar") {
   await mountCloudBar();
 } else if (fixture === "connection-log") {

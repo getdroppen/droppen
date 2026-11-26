@@ -207,6 +207,33 @@ function dirLabelFor(session: SessionSummary, grouped: boolean, homeDir: string)
   return grouped ? shortenHome(session.cwd, homeDir) : basename(session.cwd);
 }
 
+/** The newest session start in a group: what its heading is ranked by ([`compareGroups`]). */
+function newestStart(list: readonly SessionSummary[]): string {
+  let newest = "";
+  for (const session of list) if (session.createdAt > newest) newest = session.createdAt;
+  return newest;
+}
+
+/**
+ * The order directory headings sit in: the one most recently *started in*
+ * first — where work was begun, not what is loudest. A message arriving in a
+ * directory's existing sessions moves its rows (`compareSessions` still orders
+ * them inside the group) but never the heading, so groups do not trade places
+ * while they stream. Ties fall back to `tie` (a directory, or a device and one)
+ * so the order does not depend on which group happened to be listed first.
+ */
+function compareGroups(
+  a: readonly SessionSummary[],
+  b: readonly SessionSummary[],
+  tieA: string,
+  tieB: string,
+): number {
+  const startedA = newestStart(a);
+  const startedB = newestStart(b);
+  if (startedA !== startedB) return startedA < startedB ? 1 : -1;
+  return tieA.localeCompare(tieB);
+}
+
 function pushRows(
   rows: SessionListRow[],
   sessions: readonly SessionSummary[],
@@ -224,7 +251,10 @@ function pushRows(
     if (bucket) bucket.push(session);
     else groups.set(key, [session]);
   }
-  for (const [dir, list] of groups) {
+  // Headings keep their place as messages stream; the rows inside them do not
+  // (`compareGroups`).
+  const order = [...groups.entries()].sort(([a, al], [b, bl]) => compareGroups(al, bl, a, b));
+  for (const [dir, list] of order) {
     const key = collapseKey(dir);
     const isOpen = !input.collapsedDirs.has(key);
     rows.push({ type: "header", dir, collapseKey: key, list, isOpen });
@@ -310,7 +340,8 @@ export function deviceCollapseKey(machine: MachineKey, home: MachineKey, dir: st
  * its gateway's devices, S1-7): the same rules as [`buildSessionList`] — owned
  * rows only, the filter, pins first, the 300-row cut — over every device's
  * rows sorted as one list ([`compareSessions`]), or one device's (`device`).
- * Grouped, each device's projects are headings of their own. Every row says
+ * Grouped, each device's projects are headings of their own, in the same
+ * start-time order as the single-device list ([`compareGroups`]). Every row says
  * its device. One device's list is exactly what [`buildSessionList`] makes
  * of it, folds and all.
  */
@@ -349,7 +380,12 @@ export function buildDeviceList(input: DeviceListInput): SessionListModel {
       if (group) group.items.push(t);
       else groups.set(key, { machine: t.machine, dir, items: [t] });
     }
-    for (const { machine, dir, items } of groups.values()) {
+    // Sorted by when work was started in each project, like the single-device
+    // list: loudness moves rows inside a group, never the headings.
+    const order = [...groups.entries()].sort(([keyA, a], [keyB, b]) =>
+      compareGroups(a.items.map((t) => t.session), b.items.map((t) => t.session), keyA, keyB),
+    );
+    for (const [, { machine, dir, items }] of order) {
       const key = deviceCollapseKey(machine, input.home, dir);
       const isOpen = !input.collapsedDirs.has(key);
       rows.push({ type: "header", dir, collapseKey: key, list: items.map((t) => t.session), isOpen, machine });

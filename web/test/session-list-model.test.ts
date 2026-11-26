@@ -161,6 +161,53 @@ test("worktrees of one repository land under one heading, each row naming its ch
   assert.deepEqual(labels, ["~/Projects/app", "~/Projects/app-hotfix", "~/Projects/other"]);
 });
 
+test("directory headings are ranked by when work was started, not by what is loudest", () => {
+  const loud = session({
+    id: "loud",
+    cwd: "/Users/k/Projects/old",
+    createdAt: "2024-04-01T10:00:00.000Z",
+    updatedAt: "2024-05-01T12:00:00.000Z",
+    unread: true,
+  });
+  const quiet = session({ id: "quiet", cwd: "/Users/k/Projects/new", createdAt: "2024-04-02T10:00:00.000Z", updatedAt: "2024-04-02T10:00:00.000Z" });
+  const headings = (sessions: Session[]) =>
+    buildSessionList(input({ sessions, grouped: true })).rows.map((r) => (r.type === "header" ? `H:${r.dir}` : key(r)));
+  // The louder directory is listed first by activity, and still sits second.
+  assert.deepEqual(headings([loud, quiet]), [
+    "H:/Users/k/Projects/new",
+    "local|claude/quiet",
+    "H:/Users/k/Projects/old",
+    "local|claude/loud",
+  ]);
+  // A message makes `old` the loudest; only its row moves, never the heading.
+  const after = [{ ...loud, unread: true, updatedAt: "2024-05-01T13:00:00.000Z" }, quiet];
+  assert.deepEqual(headings(after), [
+    "H:/Users/k/Projects/new",
+    "local|claude/quiet",
+    "H:/Users/k/Projects/old",
+    "local|claude/loud",
+  ]);
+});
+
+test("rows keep the feed's order inside their heading", () => {
+  const dir = "/Users/k/Projects/app";
+  const newer = session({ id: "newer", cwd: dir, updatedAt: "2024-05-01T12:00:00.000Z", unread: true });
+  const older = session({ id: "older", cwd: dir, updatedAt: "2024-05-01T09:00:00.000Z" });
+  const model = buildSessionList(input({ sessions: [newer, older], grouped: true }));
+  assert.deepEqual(model.rows.map(key), [`h:${collapseKey(dir)}`, "local|claude/newer", "local|claude/older"]);
+});
+
+test("headings started at the same moment order by directory, so the list never shuffles on a tie", () => {
+  const sessions = [
+    session({ id: "b", cwd: "/Users/k/Projects/b", createdAt: "2024-05-01T10:00:00.000Z" }),
+    session({ id: "a", cwd: "/Users/k/Projects/a", createdAt: "2024-05-01T10:00:00.000Z" }),
+  ];
+  assert.deepEqual(
+    buildSessionList(input({ sessions, grouped: true })).rows.map((r) => (r.type === "header" ? `H:${r.dir}` : key(r))),
+    ["H:/Users/k/Projects/a", "local|claude/a", "H:/Users/k/Projects/b", "local|claude/b"],
+  );
+});
+
 test("flat mode still labels rows with the basename", () => {
   const model = buildSessionList(input({ sessions: [session({ id: "a" })] }));
   assert.deepEqual(
@@ -235,13 +282,13 @@ test("the list is capped, and says how many matched behind the cap", () => {
 // projects are headings of their own.
 test("several devices' sessions make one list, and one device's is exactly the single list", () => {
   const mine = [
-    session({ id: "m1", updatedAt: "2024-05-01T10:00:00.000Z", cwd: "/Users/k/Projects/app", repoKey: "/Users/k/Projects/app/.git" }),
-    session({ id: "m2", updatedAt: "2024-05-01T08:00:00.000Z", cwd: "/Users/k/Projects/other", pinned: true } as Partial<Session> & { id: string }),
+    session({ id: "m1", createdAt: "2024-05-01T10:00:00.000Z", updatedAt: "2024-05-01T10:00:00.000Z", cwd: "/Users/k/Projects/app", repoKey: "/Users/k/Projects/app/.git" }),
+    session({ id: "m2", createdAt: "2024-05-01T08:00:00.000Z", updatedAt: "2024-05-01T08:00:00.000Z", cwd: "/Users/k/Projects/other", pinned: true } as Partial<Session> & { id: string }),
     session({ id: "mx", scope: "external" }),
   ];
   const theirs = [
-    session({ id: "t1", updatedAt: "2024-05-01T11:00:00.000Z", cwd: "/home/b/app", repoKey: "/home/b/app/.git", unread: true } as Partial<Session> & { id: string }),
-    session({ id: "t2", updatedAt: "2024-05-01T09:00:00.000Z", cwd: "/Users/k/Projects/app", repoKey: "/Users/k/Projects/app/.git" }),
+    session({ id: "t1", createdAt: "2024-05-01T11:00:00.000Z", updatedAt: "2024-05-01T11:00:00.000Z", cwd: "/home/b/app", repoKey: "/home/b/app/.git", unread: true } as Partial<Session> & { id: string }),
+    session({ id: "t2", createdAt: "2024-05-01T09:00:00.000Z", updatedAt: "2024-05-01T09:00:00.000Z", cwd: "/Users/k/Projects/app", repoKey: "/Users/k/Projects/app/.git" }),
   ];
   const lists = [
     { machine: LOCAL, rows: mine, homeDir: "/Users/k" },
