@@ -3,7 +3,10 @@ name: release
 # Every release of Droppen is built here, from this repository's source, and
 # published as this repository's GitHub release of the tag, with a build
 # provenance attestation for every file (docs/releasing.md). A `v*` tag of a
-# commit on main releases; a manual run is a dry run unless it is on such a
+# commit on main releases a stable version; a `vX.Y.Z-rc.N` tag of a commit on
+# an open pull request's branch from this repository, to main, publishes an RC
+# prerelease (server-only), so a branch can be tried without merging it. A
+# manual run is a dry run unless it is on such a
 # tag and `dry_run` is unticked. A dry run on main signs and notarises too.
 #
 # Zero trust in the builder:
@@ -105,6 +108,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      # An RC is admitted from an open pull request to main, and its second
+      # summary step reads the pull request's checks. Read only: no secret, no
+      # write, as everywhere but `publish` and `publish-a2a-proxy`.
+      pull-requests: read
+      checks: read
     outputs:
       version: ${{ steps.meta.outputs.version }}
       plain: ${{ steps.meta.outputs.plain }}
@@ -167,6 +175,29 @@ jobs:
           # latest.json. A dry run builds it on request too (desktop_linux).
           desktop_linux=false
           linux_files=("Droppen-$plain-x86_64.AppImage" "Droppen-$plain-aarch64.AppImage" "droppen_${plain}_amd64.deb" "droppen_${plain}_arm64.deb")
+          # A prerelease is server-only and billed as a test: its notes must
+          # say so in both languages (the banner), and name none of the app's
+          # files, or the workflow would look for an app it does not ship.
+          case "$plain" in
+            *-*)
+              if [ -f "$notes" ]; then
+                grep -qF "test release" "$notes" || {
+                  echo "::error::$notes does not say \"test release\": a prerelease's notes carry the bilingual banner (\"test release\" and \"测试版本\")"
+                  exit 1
+                }
+                grep -qF "测试版本" "$notes" || {
+                  echo "::error::$notes does not say \"测试版本\": a prerelease's notes carry the bilingual banner (\"test release\" and \"测试版本\")"
+                  exit 1
+                }
+                for name in "Droppen-$plain.dmg" "${linux_files[@]}"; do
+                  if grep -qF "$name" "$notes"; then
+                    echo "::error::$notes names $name: a prerelease is server-only, so its notes must not name the app's files"
+                    exit 1
+                  fi
+                done
+              fi
+              ;;
+          esac
           if [ -f "$notes" ]; then
             named=()
             for name in "${linux_files[@]}" "Droppen-$plain-linux-sources.tar"; do
@@ -254,25 +285,118 @@ jobs:
             echo "### Droppen $version from \`$(git rev-parse HEAD)\`"
             echo
             if [ "$publish" = true ]; then
-              echo "Publishes to $DROPPEN_RELEASE_REPO once the \`release\` job is approved (the \`release\` environment): one approval for the run."
+              case "$plain" in
+                *-*)
+                  # The admission step below names the pull request once it
+                  # has checked it: this step cannot know it yet.
+                  echo "Publishes a **prerelease** to $DROPPEN_RELEASE_REPO once the \`release\` job is approved (the \`release\` environment): one approval for the run. It is released from the open pull request the admission step names."
+                  ;;
+                *)
+                  echo "Publishes to $DROPPEN_RELEASE_REPO once the \`release\` job is approved (the \`release\` environment): one approval for the run."
+                  ;;
+              esac
             else
               echo "**Dry run**: builds; on main or a tag, signs and notarises once the \`release\` job is approved; attests and publishes nothing."
             fi
             echo
             echo "Desktop app: $desktop. Linux app: $desktop_linux. Snapshot (no release notes): $snapshot."
           } >> "$GITHUB_STEP_SUMMARY"
-      # Only a commit on main is signed or released: the tag ruleset decides
-      # who may tag, this what may be. (A run on main is on main.)
-      - name: A tag of a commit on main
+      # What may be released, for a tag. A stable version must be on main (a
+      # run on main is on main). An RC may be on an open pull request's branch
+      # instead, so a branch is tried without merging; release-rc-commit.sh
+      # refuses a fork and a pull request that is closed or is not to main.
+      # The tag ruleset decides who may tag, this what may be.
+      - name: A tag of a commit on main, or of an open pull request's branch
+        id: admit
         if: github.ref_type == 'tag'
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git fetch --no-tags --filter=blob:none origin +refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_SHA is not on main: only a commit merged into main is released"
-            exit 1
+          case "$VERSION" in
+            *-*)
+              .github/scripts/release-rc-commit.sh "$GITHUB_SHA"
+              ;;
+            *)
+              git fetch --no-tags --filter=blob:none origin +refs/heads/main:refs/remotes/origin/main
+              if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+                echo "::error::$GITHUB_SHA is not on main: only a commit merged into main is released"
+                exit 1
+              fi
+              echo "ok: $GITHUB_SHA is on main"
+              ;;
+          esac
+      # For an RC, a picture of the pull request for the approver: which one it
+      # is, what its checks say, and whether the branch touches what signs and
+      # publishes. Never fatal: this informs the approval, the admission above
+      # decides. No `-e` (a failed lookup leaves a gap, not a failed job), and
+      # it always exits 0.
+      - name: The pull request an RC is released from
+        if: github.ref_type == 'tag' && contains(steps.meta.outputs.version, '-')
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          PR: ${{ steps.admit.outputs.pr }}
+          PR_URL: ${{ steps.admit.outputs.pr_url }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # The pull request's head, not the tagged commit: a re-run after the
+          # branch moved still reports the checks that matter.
+          head=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha 2>/dev/null || true)
+          [ -n "$head" ] || head=$SHA
+          runs=$(gh api --paginate "repos/$REPO/commits/$head/check-runs?per_page=100" \
+            --jq '.check_runs[] | [.name, .status, (.conclusion // "-")] | @tsv' 2>/dev/null || true)
+          total=0 failed=0 pending=0 failed_names=""
+          while IFS=$'\t' read -r name status conclusion; do
+            [ -n "$name" ] || continue
+            total=$((total + 1))
+            if [ "$status" != completed ]; then
+              pending=$((pending + 1))
+              continue
+            fi
+            case "$conclusion" in
+              failure|timed_out|cancelled|action_required|startup_failure)
+                failed=$((failed + 1)); failed_names="$failed_names, $name" ;;
+            esac
+          done <<< "$runs"
+          # Signing-sensitive: what the release secrets and the published
+          # scripts read, from the compare API (the tag may sit behind main).
+          changed=$(gh api --paginate "repos/$REPO/compare/main...$SHA" --jq '.files[].filename' 2>/dev/null || true)
+          sensitive=$(printf '%s\n' "$changed" | grep -E '^(\.github/(scripts|workflows)/|scripts/|install\.sh)' || true)
+          {
+            echo "### Prerelease: $VERSION"
+            echo
+            echo "Pull request: #$PR (<$PR_URL>)"
+            echo
+            echo "Tagged commit: \`$SHA\`. Pull request head: \`$head\`."
+            echo
+            if [ "$total" = 0 ]; then
+              echo "Checks: none reported."
+            else
+              echo "Checks: $total total, $failed failed, $pending not finished."
+              if [ "$failed" -gt 0 ]; then
+                echo
+                echo "Failed: ${failed_names#, }"
+              fi
+            fi
+            echo
+            if [ -n "$sensitive" ]; then
+              echo "Signing-sensitive paths changed:"
+              printf '%s\n' "$sensitive" | sed 's/^/ - /'
+            else
+              echo "No signing-sensitive paths changed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failed" -gt 0 ] || [ "$pending" -gt 0 ]; then
+            echo "::warning::pull request #$PR at $head has $failed failed and $pending not finished check(s)"
           fi
-          echo "ok: $GITHUB_SHA is on main"
+          if [ -n "$sensitive" ]; then
+            echo "::warning::pull request #$PR changes signing-sensitive paths; review the main...head diff before approving"
+          fi
+          exit 0
 
   # The public web build (what droppen.app serves), once, for every binary to
   # embed: the same commands as the hub's Docker stage and CI's
