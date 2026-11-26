@@ -291,6 +291,13 @@ impl StandaloneDevice {
         }
     }
 
+    /// A `mux` socket to `host` at `path` (the feed route): one pipe, opened
+    /// for the caller ([`crate::mux`]).
+    pub async fn mux(&self, host: &str, path: &str) -> Result<crate::mux::MuxPipe, Failure> {
+        let channel = self.channel(host).await?;
+        crate::mux::open(channel, path).await
+    }
+
     /// The view and its clock, copied for a handshake.
     fn snapshot(&self) -> Option<(ChainState, ChainClock)> {
         let chain = self.chain.lock().expect("chain");

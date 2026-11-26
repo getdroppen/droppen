@@ -88,6 +88,8 @@ droppen-notify = { path = "../droppen-notify" }
 droppen-cloud = { path = "../droppen-cloud" }
 # `droppen a2a-proxy`.
 droppen-a2a-proxy = { path = "../droppen-a2a-proxy" }
+# `droppen session-proxy`.
+droppen-session-proxy = { path = "../droppen-session-proxy" }
 gotcha = { workspace = true }
 # Named by no code here (the routes reach axum through gotcha), but the one
 # dependency that keeps axum's default features in the binary: gotcha takes

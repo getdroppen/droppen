@@ -1765,6 +1765,7 @@ dependencies = [
  "droppen-provider-codex",
  "droppen-pty",
  "droppen-relay-core",
+ "droppen-session-proxy",
  "droppen-sessions",
  "droppen-setup",
  "droppen-supervisor",
@@ -1796,6 +1797,29 @@ dependencies = [
  "tower-http",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "droppen-session-proxy"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "droppen-client",
+ "droppen-proto",
+ "droppen-relay-core",
+ "ed25519-dalek",
+ "futures-util",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

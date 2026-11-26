@@ -29,10 +29,11 @@
 //!   out, presence followed;
 //! - [`channel`]: one end-to-end channel to a host, opened through a relay;
 //! - [`rpc`]: HTTP requests over a channel's pipes, answers streamed;
+//! - [`mux`]: a websocket route (`/api/events?v=2`) over a channel's mux pipe;
 //! - [`failure`]: why a request did not get through, sorted;
 //! - [`device`]: all of it together ([`device::StandaloneDevice`]);
-//! - [`enroll`]: claiming an enrollment code at the hub, as an A2A proxy
-//!   joins its account.
+//! - [`enroll`]: claiming an enrollment code at the hub, as an A2A proxy or a
+//!   device that runs AI joins its account.
 
 pub mod channel;
 pub mod device;
@@ -44,6 +45,7 @@ pub mod http;
 pub mod hub;
 pub mod identity;
 pub mod link;
+pub mod mux;
 pub mod relays;
 pub mod rpc;
 pub mod session;

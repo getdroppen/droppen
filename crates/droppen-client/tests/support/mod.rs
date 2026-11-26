@@ -7,7 +7,7 @@
 //! one does (`droppen_proto::handshake::accept` with a live clock) and
 //! bridges each `rpc` pipe to a handler the test gives.
 //!
-//! Shared by `droppen-client`'s tests and the a2a proxy's (`#[path]`).
+//! Shared by `droppen-client`'s tests and the proxies' (`#[path]`).
 
 #![allow(dead_code)]
 
@@ -480,9 +480,10 @@ pub struct Proved {
     pub proof: [u8; 32],
 }
 
-/// The hub's enrollment socket (`/v1/agent`), as an A2A proxy claims a code
-/// there: `enroll {token, kind}`, `enroll_assigned`, `enroll_proof` (the
-/// `HubLogin {role: Device}` signature checked), `enrolled`.
+/// The hub's enrollment socket (`/v1/agent`), as a device claims a code
+/// there — an A2A proxy's code as `kind: "a2a"`, a machine's as `"machine"`:
+/// `enroll {token, kind}`, `enroll_assigned`, `enroll_proof` (the `HubLogin`
+/// of its kind checked), then `enrolled` or `welcome`.
 async fn enroll_socket(ws: WebSocketUpgrade, State(state): State<Arc<Mutex<HubState>>>) -> axum::response::Response {
     ws.on_upgrade(move |socket| claim(socket, state))
 }
@@ -510,11 +511,10 @@ async fn claim(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
         return agent_session(socket, state, nonce, enroll).await;
     }
     let token = enroll["token"].as_str().unwrap_or_default().to_string();
+    let kind = enroll["kind"].as_str().unwrap_or_default().to_string();
     let known = {
         let st = state.lock().unwrap();
-        st.enrollments
-            .get(&token)
-            .is_some_and(|e| e.proved.is_none() && Some(e.kind.as_str()) == enroll["kind"].as_str())
+        st.enrollments.get(&token).is_some_and(|e| e.proved.is_none() && e.kind == kind)
     };
     if enroll["t"] != "enroll" || !known {
         let _ = socket
@@ -522,9 +522,11 @@ async fn claim(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
             .await;
         return;
     }
-    let device = format!("a2a-{n}");
+    let machine = kind == "machine";
+    let device = format!("{}-{n}", if machine { "m" } else { "a2a" });
+    let field = if machine { "machine" } else { "device" };
     let _ = socket
-        .send(text(json!({"t": "enroll_assigned", "account": ACCOUNT, "device": device})))
+        .send(text(json!({"t": "enroll_assigned", "account": ACCOUNT, field: device})))
         .await;
     let Some(proof) = json_of(socket.recv().await) else { return };
     let key = |name: &str| droppen_client::key32(proof[name].as_str().unwrap_or_default()).ok();
@@ -537,14 +539,14 @@ async fn claim(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
         return;
     };
     let login = HubLogin {
-        role: LoginRole::Device,
+        role: if machine { LoginRole::Agent } else { LoginRole::Device },
         account: ACCOUNT.into(),
         id: device.clone(),
         hub: origin,
         nonce,
         time_ms: proof["time_ms"].as_u64().unwrap_or_default(),
     };
-    if proof["t"] != "enroll_proof" || proof["kind"] != "a2a" || !login.verify(&sign_key, &sig) {
+    if proof["t"] != "enroll_proof" || proof["kind"] != kind || !login.verify(&sign_key, &sig) {
         let _ = socket
             .send(text(json!({"t": "error", "code": "denied", "message": "the signature does not hold"})))
             .await;
@@ -558,7 +560,11 @@ async fn claim(mut socket: WebSocket, state: Arc<Mutex<HubState>>) {
             proof: p,
         });
     }
-    let _ = socket.send(text(json!({"t": "enrolled", "account": ACCOUNT, "device": device}))).await;
+    let _ = if machine {
+        socket.send(text(json!({"t": "welcome", "account": ACCOUNT, "machine": device}))).await
+    } else {
+        socket.send(text(json!({"t": "enrolled", "account": ACCOUNT, "device": device}))).await
+    };
 }
 
 /// The hub's side of an agent's connection (`/v1/agent`), as far as a real

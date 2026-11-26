@@ -22,9 +22,14 @@
 //! are bound into the proof the page checks and into the chain entry the
 //! page signs; whether the device joined is its verified chain's to say
 //! ([`crate::device::StandaloneDevice::watch_chain`]).
+//!
+//! [`claim_machine`] is the same exchange for the other kind of code — an
+//! `RH1` code that adds a device which runs AI, rather than an A2A proxy — so
+//! it proves with [`EnrollCode`]'s label, signs as an agent and answers
+//! `welcome`.
 
 use droppen_proto::frame::AGENT_PATH;
-use droppen_proto::identity::A2aEnrollCode;
+use droppen_proto::identity::{A2aEnrollCode, EnrollCode};
 use droppen_proto::keys::DhKeypair;
 use droppen_proto::sig::{HubLogin, LoginRole};
 use ed25519_dalek::SigningKey;
@@ -37,6 +42,8 @@ use crate::{hex, key32, now_ms, tap, HubUrl};
 
 /// The kind an A2A proxy's code is registered and claimed as.
 pub const KIND_A2A: &str = "a2a";
+/// The kind a code for a device that runs AI is claimed as.
+pub const KIND_MACHINE: &str = "machine";
 
 /// What the hub assigned a claimed code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +132,88 @@ pub async fn claim_a2a(hub: &HubUrl, code: &A2aEnrollCode, sign: &SigningKey, dh
         Some("enrolled") => {
             let _ = sink.close().await;
             Ok(Claimed { account, device })
+        }
+        Some("error") => Err(refused(&answer)),
+        _ => Err(failed(format!("not an answer to the proof: {answer}"))),
+    }
+}
+
+/// Claim `code` at `hub` as a machine (`KIND_MACHINE`) with these keys — the
+/// way a device that runs AI joins (`droppen agent enroll`), as an `RH1` code
+/// asks.
+///
+/// It is [`claim_a2a`]'s exchange with a machine's own differences: the code
+/// is an [`EnrollCode`], the proof is the machine's label
+/// ([`EnrollCode::proof`]), the assigned id comes back as `machine`, and the
+/// signature is a `HubLogin {role: Agent}` — the hub signs the device in as
+/// its agent and answers `welcome`. The page that added the code then writes
+/// the device into the chain with the host flag (`AddDevice3 {host}`), which
+/// is what lets it control the account's computers; an A2A proxy stays
+/// `A2aOnly` for good, a machine does not.
+pub async fn claim_machine(hub: &HubUrl, code: &EnrollCode, sign: &SigningKey, dh: &DhKeypair) -> Result<Claimed, ClaimError> {
+    let failed = ClaimError::Failed;
+    let url = format!("{}{AGENT_PATH}", hub.ws);
+    let (ws, _) = tokio::time::timeout(std::time::Duration::from_secs(20), tokio_tungstenite::connect_async(&url))
+        .await
+        .map_err(|_| failed("connect: no answer within 20 s".into()))?
+        .map_err(|e| failed(format!("connect: {e}")))?;
+    let (mut sink, mut stream) = ws.split();
+    let challenge = next_json(&mut stream, AGENT_PATH).await.map_err(failed)?;
+    let nonce = key32(challenge["nonce"].as_str().ok_or_else(|| failed("no challenge".into()))?).map_err(failed)?;
+    send(&mut sink, json!({"t": "enroll", "token": hex(&code.token()), "kind": KIND_MACHINE})).await?;
+    let assigned = next_json(&mut stream, AGENT_PATH).await.map_err(failed)?;
+    let refused = |v: &Value| ClaimError::Refused {
+        code: v["code"].as_str().unwrap_or("refused").to_string(),
+        message: v["message"].as_str().unwrap_or_default().to_string(),
+    };
+    if assigned["t"] != "enroll_assigned" {
+        return Err(if assigned["t"] == "error" {
+            refused(&assigned)
+        } else {
+            failed(format!("not an answer to the claim: {assigned}"))
+        });
+    }
+    let account = assigned["account"]
+        .as_str()
+        .ok_or_else(|| failed("no account assigned".into()))?
+        .to_string();
+    let machine = assigned["machine"]
+        .as_str()
+        .or_else(|| assigned["device"].as_str())
+        .ok_or_else(|| failed("no machine id assigned".into()))?
+        .to_string();
+    let time_ms = now_ms();
+    let sig = HubLogin {
+        role: LoginRole::Agent,
+        account: account.clone(),
+        id: machine.clone(),
+        hub: hub.origin.clone(),
+        nonce,
+        time_ms,
+    }
+    .sign(sign)
+    .map_err(|e| failed(format!("sign: {e}")))?;
+    let (sign_key, dh_key) = (sign.verifying_key().to_bytes(), dh.public());
+    let proof = code.proof(&account, &machine, &sign_key, &dh_key);
+    let message = json!({
+        "t": "enroll_proof",
+        "kind": KIND_MACHINE,
+        "sign_key": hex(&sign_key),
+        "dh_key": hex(&dh_key),
+        "time_ms": time_ms,
+        "sig": hex(&sig),
+        "proof": hex(&proof),
+    });
+    send(&mut sink, message).await?;
+    let answer = next_json(&mut stream, AGENT_PATH).await.map_err(failed)?;
+    match answer["t"].as_str() {
+        // `welcome` is the machine's: it is also its sign-in as an agent.
+        Some("welcome" | "enrolled") => {
+            let _ = sink.close().await;
+            Ok(Claimed {
+                account,
+                device: machine,
+            })
         }
         Some("error") => Err(refused(&answer)),
         _ => Err(failed(format!("not an answer to the proof: {answer}"))),
