@@ -9,6 +9,7 @@ use droppen_provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 use crate::resident;
 use droppen_provider::{claude_prompt, require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
 use crate::sessions::claude;
+use droppen_sessions::context::{context_window, LARGE_CONTEXT_WINDOW};
 use droppen_sessions::Source;
 use droppen_base::process_env::{claude_env, claude_env_bare, clean_env_bare, Env};
 use droppen_instance::paths::{ClaudeRoot, Paths};
@@ -105,6 +106,60 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
         args.extend(RESIDENT_DISALLOWED_TOOLS.iter().map(|tool| (*tool).to_string()));
     }
     args
+}
+
+/// The variable the CLI's own compaction threshold is set through.
+const AUTO_COMPACT_WINDOW_ENV: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+
+/// The variable an account declares the gateway's real window with.
+const MAX_CONTEXT_TOKENS_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
+
+/// The model variables an account maps the aliases to. The alias maps the CLI
+/// asked for never appear here — `--model opus` names whatever this says.
+const MAPPED_MODEL_ENV: [&str; 3] = [
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+];
+
+/// Give the CLI a window to compact against when the model is a `[1m]` opt-in.
+///
+/// Claude Code survives a full window two ways: compact before the request, or
+/// let the API refuse it as "Prompt is too long" and compact reactively. It
+/// only does the first for a model it trusts. For an unknown model asked for
+/// its long-context variant — a gateway's `deepseek-v4.1-flash[1m]` is the case
+/// that failed — the window it resolved counts as its own guess (`source:
+/// "auto"`), so the threshold check is skipped and the session is supposed to
+/// wait for the refusal.
+///
+/// That refusal is only read when its text *starts with* "Prompt is too long".
+/// A gateway that words it like DeepSeek does — "API Error: 400 This model's
+/// maximum context length is …" — never matches, so nothing reacts: the
+/// conversation runs past the window, one token over the limit fails a turn,
+/// and the compaction that follows fails with it because the summarising
+/// request carries the same oversized conversation.
+///
+/// Naming the window turns the source into `env`, which *is* enforced. The
+/// value is the window the account already declared for the gateway, falling
+/// back to the long-context size; the CLI clamps it to the model's own window,
+/// so overstating it costs nothing. A value the account set itself is kept.
+pub(super) fn enforce_auto_compaction(env: &mut Env, asked: Option<&str>) {
+    if env.contains_key(AUTO_COMPACT_WINDOW_ENV) {
+        return;
+    }
+    let asked_long_context = std::iter::once(asked)
+        .chain(MAPPED_MODEL_ENV.iter().map(|key| env.get(*key).map(String::as_str)))
+        .flatten()
+        .any(|model| context_window(Some(model)) == LARGE_CONTEXT_WINDOW);
+    if !asked_long_context {
+        return;
+    }
+    let window = env
+        .get(MAX_CONTEXT_TOKENS_ENV)
+        .and_then(|declared| declared.trim().parse::<u64>().ok())
+        .filter(|declared| *declared > 0)
+        .unwrap_or(LARGE_CONTEXT_WINDOW);
+    env.insert(AUTO_COMPACT_WINDOW_ENV.to_string(), window.to_string());
 }
 
 /// Everything a resident spawn needs, resolved against one send.
@@ -693,5 +748,64 @@ mod tests {
                 assert_eq!(first.fingerprint, next.fingerprint);
             }
         }
+    }
+
+    fn env_of(pairs: &[(&str, &str)]) -> Env {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect()
+    }
+
+    fn enforced(env: &mut Env, asked: Option<&str>) -> Option<String> {
+        enforce_auto_compaction(env, asked);
+        env.get(AUTO_COMPACT_WINDOW_ENV).cloned()
+    }
+
+    /// A `[1m]` on an alias the account maps is what a gateway session looks
+    /// like: the ask is `opus` and only the environment names the real model.
+    /// The window is made explicit so the CLI compacts before the request
+    /// rather than waiting for a refusal it will not recognise.
+    #[test]
+    fn a_long_context_model_gets_the_cli_compacting_on_its_own() {
+        let mut env = env_of(&[(MAPPED_MODEL_ENV[0], "deepseek-v4.1-flash[1m]")]);
+        assert_eq!(enforced(&mut env, Some("opus")), Some(LARGE_CONTEXT_WINDOW.to_string()));
+        // On the ask itself too, in any case.
+        assert_eq!(
+            enforced(&mut Env::new(), Some("DeepSeek-V4.1-Flash[1M]")),
+            Some(LARGE_CONTEXT_WINDOW.to_string())
+        );
+        // A long-context generation with no marker is the same window.
+        assert_eq!(enforced(&mut Env::new(), Some("fable")), Some(LARGE_CONTEXT_WINDOW.to_string()));
+    }
+
+    /// The window the account already declared for the gateway is the true
+    /// one, so that is the threshold — not the long-context default.
+    #[test]
+    fn the_declared_gateway_window_is_the_one_enforced() {
+        let mut env = env_of(&[(MAX_CONTEXT_TOKENS_ENV, "500000"), (MAPPED_MODEL_ENV[1], "deepseek[1m]")]);
+        assert_eq!(enforced(&mut env, Some("sonnet")), Some("500000".to_string()));
+        // A declaration that is not a number is no declaration.
+        let mut env = env_of(&[(MAX_CONTEXT_TOKENS_ENV, "lots"), (MAPPED_MODEL_ENV[1], "deepseek[1m]")]);
+        assert_eq!(enforced(&mut env, Some("sonnet")), Some(LARGE_CONTEXT_WINDOW.to_string()));
+    }
+
+    #[test]
+    fn an_auto_compact_window_the_account_named_is_kept() {
+        let mut env = env_of(&[
+            (AUTO_COMPACT_WINDOW_ENV, "300000"),
+            (MAPPED_MODEL_ENV[0], "deepseek[1m]"),
+            (MAX_CONTEXT_TOKENS_ENV, "1000000"),
+        ]);
+        assert_eq!(enforced(&mut env, Some("opus")), Some("300000".to_string()));
+    }
+
+    /// An ordinary 200k model already compacts on its own: the CLI recognises
+    /// it, so there is nothing to correct and no environment churn.
+    #[test]
+    fn an_ordinary_model_is_left_to_the_cli() {
+        assert_eq!(enforced(&mut Env::new(), Some("sonnet")), None);
+        assert_eq!(enforced(&mut Env::new(), Some("claude-sonnet-5")), None);
+        assert_eq!(enforced(&mut Env::new(), None), None);
     }
 }

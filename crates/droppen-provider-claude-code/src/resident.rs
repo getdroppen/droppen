@@ -1644,6 +1644,12 @@ impl ClaudeCodeRuns {
         }
         args.extend(recipe.args.iter().cloned());
 
+        // Built here rather than kept on the recipe: it is a reading of the
+        // model and account the recipe already names, and a rotation's swapped
+        // environment must be read, not a stale copy of the old one.
+        let mut env = recipe.env.clone();
+        spawn::enforce_auto_compaction(&mut env, recipe.fingerprint.running_name());
+
         #[cfg(test)]
         droppen_provider::testing::shims_run_as(crate::shims::SHIMS);
         let link = shim::spawn_via_shim(Spawn {
@@ -1652,7 +1658,7 @@ impl ClaudeCodeRuns {
             program: "claude",
             args: &args,
             workdir: recipe.workdir.as_deref(),
-            env: &recipe.env,
+            env: &env,
             buffer_bytes: None,
         })
         .await
@@ -3798,6 +3804,12 @@ impl Driver {
             let detail = detail.unwrap_or_default().trim();
             let message = if detail.is_empty() {
                 format!("claude ended the turn with {subtype}")
+            } else if subtype == "success" {
+                // An API error before the stream starts, a limit, a refusal:
+                // the subtitle is still `success`, and "ended the turn with
+                // success" on top of an error reads as a contradiction. The
+                // detail is the whole story here.
+                self.runs.host.redact(detail)
             } else {
                 format!("claude ended the turn with {subtype}\n{}", self.runs.host.redact(detail))
             };
@@ -12435,5 +12447,38 @@ done
             registry.host.steps()[2..],
             [step("adopted: the new id", false, Some(true)), step("adopted: the old id", false, Some(false))]
         );
+    }
+
+    /// The `result` an API error before the stream starts comes back as: the
+    /// subtype is still `success`, and only the text says otherwise.
+    ///
+    /// "claude ended the turn with success" over an error reads as a
+    /// contradiction — and on a gateway that words its context overflow its own
+    /// way, that error *is* the whole explanation. The detail stands alone.
+    #[tokio::test]
+    async fn an_api_error_is_reported_without_calling_it_a_success() {
+        let harness = Harness::start(
+            r#"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG"
+  case "$line" in *control_request*) continue ;; esac
+  printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 400 maximum context length is 1048576 tokens"}'
+done
+"#,
+            NEVER_SETTLES,
+            NEVER_SETTLES,
+            NEVER_SETTLES,
+        )
+        .await;
+        until("the init", || harness.state().phase == Phase::Idle).await;
+        harness.send("go");
+        until("the failure", || {
+            harness.injection().is_some_and(|run| run.state == InjectionRunState::Failed)
+        })
+        .await;
+
+        let error = harness.injection().expect("a run").error.0.expect("a reason");
+        assert_eq!(error, "API Error: 400 maximum context length is 1048576 tokens");
+        assert!(!error.contains("with success"), "{error}");
     }
 }
