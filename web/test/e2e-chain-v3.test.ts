@@ -331,4 +331,19 @@ test("an a2a entry a v0.3.0-rc.1 wrote still decodes and replays", async () => {
   // Kind 23 names a host and current a2a devices only.
   await assert.rejects(tryPush(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "dev-2", devices: [] }), kind("notAllowed"));
   await assert.rejects(tryPush(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["dev-2"] }), kind("notAllowed"));
+  // As in rc.1, a list equal to the one now is a no-op; the empty list clears.
+  await assert.rejects(tryPush(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["a-1"] }), kind("notAllowed"));
+  await push(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: [] });
+  assert.deepEqual(state.a2aAccept("m-1"), []);
+  // The list is canonical, and kind 23 exists only in v3: unsorted, repeated and
+  // v2-labelled encodings, and a cut one, do not decode.
+  const unsorted = await entryFor(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["a-2", "a-1"] });
+  assert.throws(() => decodeEntry(encodeEntry(unsorted)), kind("decode"));
+  const repeated = await entryFor(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: ["a-1", "a-1"] });
+  assert.throws(() => decodeEntry(encodeEntry(repeated)), kind("decode"));
+  const v2 = encodeEntry(await entryFor(state, by("dev-0"), k0(), { type: "setA2aAccept", host: "m-1", devices: [] }));
+  v2[0] = CHAIN_VERSION;
+  assert.throws(() => decodeEntry(v2), kind("decode"));
+  const cut = encodeEntry(unsorted);
+  assert.throws(() => decodeEntry(cut.slice(0, cut.length - 1)), kind("decode"));
 });

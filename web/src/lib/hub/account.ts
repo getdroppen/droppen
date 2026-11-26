@@ -46,7 +46,8 @@
  *   (another device added or removed, a recovery join, new recovery words) is
  *   an alert until it is acknowledged here.
  * - **Chain v3** (docs/local-aggregator.md §3): every endpoint is a device;
- *   「可运行 AI」(host) and 「可管理账号」(admin) are its two flags. A new
+ *   「可运行 AI」(host) and 「可管理账号」(admin) are its two flags, and bit 2
+ *   is the removed A2A proxy's, carried through untouched. A new
  *   account is v3 from its genesis (`createGenesis`, only while the hub
  *   takes v3 entries: `/v1/me`'s `chain_v3.writable`). What is written
  *   follows the chain itself (review D4): on an account made before chain

@@ -7,7 +7,8 @@
  *
  * - Chain v3 (`docs/local-aggregator.md` §3): every member is a **device**
  *   with two flags, `host` (runs AI: an agent, machine keys) and `admin`
- *   (manages the account: signs entries, holds `UK`, attests, delivers keys).
+ *   (manages the account: signs entries, holds `UK`, attests, delivers keys),
+ *   and a third bit the removed A2A proxy left behind: carried, not acted on.
  *   Entries carry a version byte (2 or 3, signed). A v2 chain maps onto the
  *   same state: a full device is an admin, a limited one a plain device, a
  *   machine a host that is not an admin. Once a chain holds a v3 entry, no v2
@@ -608,6 +609,8 @@ export const RULES = {
   a2aAcceptNotHost: "only a host accepts A2A calls",
   /** Kind 23 lists current A2A proxies only. */
   a2aAcceptNotA2a: "an A2A accept list names only current A2A proxies",
+  /** A kind 23 equal to the host's list now is refused (no alert for a no-op), as a setAccept's. */
+  a2aAcceptSame: "the host already accepts exactly those A2A proxies",
 } as const;
 
 export class ChainError extends Error {
@@ -812,6 +815,10 @@ function getA2aIds(r: Reader): string[] {
     ids.push(id);
   }
   return ids;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 function sameAccept(a: Accept, b: Accept): boolean {
@@ -1324,6 +1331,8 @@ export class ChainState {
   private readonly slots = new Map<string, SlotRecord>();
   /** Hosts whose accept policy is not the default (`admins`). */
   private readonly accept = new Map<string, Accept>();
+  /** Hosts that take A2A calls from some a2a devices (kind 23 of the removed feature), by host: never empty. */
+  private readonly a2aLists = new Map<string, string[]>();
   /** The first v3 entry's seq: no v2 entry may follow it. */
   private v3FromSeq: number | null;
   /** A host that joined or restarted hosting in the last entry: the next entry must commit its next machine key epoch. */
@@ -1668,8 +1677,11 @@ export class ChainState {
         if (record.host === a.host) throw notAllowed(RULES.noChange);
         if (a.host && record.admin) throw notAllowed(RULES.hostNotAdmin);
         if (a.host) hostKeyDue = a.id;
-        // As in Rust: its accept policy goes with its hosting.
-        else this.accept.delete(a.id);
+        // As in Rust: its accept policies go with its hosting.
+        else {
+          this.accept.delete(a.id);
+          this.a2aLists.delete(a.id);
+        }
         record.host = a.host;
         record.ranAi ||= a.host;
         break;
@@ -1803,6 +1815,12 @@ export class ChainState {
           if (!listed) throw unknownId(id);
           if (!listed.a2a) throw notAllowed(RULES.a2aAcceptNotA2a);
         }
+        if (sameIds(this.a2aAccept(a.host), a.devices)) throw notAllowed(RULES.a2aAcceptSame);
+        // A device it stops taking calls from never held a machine key, but a session it started could read the host's
+        // key files: as for a setAccept narrowing, the host's next epoch comes in the very next entry.
+        if (this.a2aAccept(a.host).some((id) => !a.devices.includes(id))) hostKeyDue = a.host;
+        if (a.devices.length === 0) this.a2aLists.delete(a.host);
+        else this.a2aLists.set(a.host, [...a.devices]);
         break;
       }
     }
@@ -1868,6 +1886,12 @@ export class ChainState {
     }
     for (const slot of this.slots.values()) {
       if (!slot.removed && (slot.setBy === id || record.viaPasskey === slot.slot.slot)) slot.removed = true;
+    }
+    this.a2aLists.delete(id);
+    for (const [host, ids] of [...this.a2aLists]) {
+      const kept = ids.filter((d) => d !== id);
+      if (kept.length === 0) this.a2aLists.delete(host);
+      else if (kept.length !== ids.length) this.a2aLists.set(host, kept);
     }
     record.status = { type: "removed" };
   }
@@ -1956,6 +1980,7 @@ export class ChainState {
     for (const [id, d] of this.devices) c.devices.set(id, { ...d, status: { ...d.status }, retired: [...d.retired] });
     for (const [id, s] of this.slots) c.slots.set(id, { ...s });
     for (const [host, from] of this.accept) c.accept.set(host, from);
+    for (const [host, ids] of this.a2aLists) c.a2aLists.set(host, [...ids]);
     return c;
   }
 
@@ -2194,6 +2219,11 @@ export class ChainState {
   /** Whom host `host` accepts control from besides admin devices. */
   acceptPolicy(host: string): Accept {
     return this.accept.get(host) ?? { type: "admins" };
+  }
+
+  /** The a2a devices host `host`'s last kind 23 named, ascending: the no-op rule's comparison, nothing more. */
+  a2aAccept(host: string): string[] {
+    return [...(this.a2aLists.get(host) ?? [])];
   }
 
   private pending(which: (d: DeviceRecord) => boolean): { id: string; joinSeq: number }[] {

@@ -352,6 +352,12 @@ tickets. WebSocket limits are in websocket.md.
   `off` stops new ones, it does not undo one). The end of a pause the chain
   holds open (`completed`, `cancelled`) passes the gate and the switch: it
   starts nothing, and every reader of that chain reads kind 22 already.
+  The removed A2A proxy's entry (`SetA2aAccept`, kind 23) and its device flag
+  (bit 2) have no gate of their own: the hub takes both on any v3 chain, and
+  after the first no reader may be rolled back below the release that reads
+  them (the entry is carried, the flag with it — see `droppen_proto::chain`,
+  `Flags::A2A`). It is not written any more; an account that has one keeps
+  following its chain, the device simply never calls anything now.
 - **Every change to the hub API updates this folder in the same round**: the
   closed change implements, the open change documents (here) and adapts the
   clients; `check.mjs` must pass.

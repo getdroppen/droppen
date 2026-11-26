@@ -917,6 +917,14 @@ an end only for an open pause, so every reader of that chain reads kind 22
 already, and the end only gives control back): switching renewals off, or a
 host without `rotate/1` joining meanwhile, never strands an open pause.
 
+`SetA2aAccept` (kind 23), which named the A2A proxies a host takes calls from,
+is carried without a feature gate: the A2A feature itself was removed, so the
+hub writes none, but the chain keeps the entry and the device flag bit 2
+(`Flags::A2A`) so an account that added one still follows. A later reader may
+not roll back below the release that reads kind 23; nothing applies it, and
+its only check is the shape (a current host; current a2a devices, ascending,
+`MAX_ACCEPT_IDS`).
+
 #### `GET /v1/rotations`
 Any device session of the account → `{now_ms, enabled, window_ms,
 hosts: [Rotation], disputes: [Dispute]}` — `now_ms` the

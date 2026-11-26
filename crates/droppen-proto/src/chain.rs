@@ -11,7 +11,8 @@
 //! # One kind of member: the device (chain v3)
 //!
 //! Every endpoint is a **device** with one identity (an Ed25519 signing key and
-//! an X25519 key) and two flags (`docs/local-aggregator.md` §3):
+//! an X25519 key) and two flags (`docs/local-aggregator.md` §3), plus a third,
+//! carried-only bit for the removed A2A proxy ([`Flags::A2A`]):
 //!
 //! - **host** (可运行 AI): it runs an agent, can be connected to, and has a
 //!   machine key `MK` per epoch for its streams. Declared when it joins and
@@ -1783,6 +1784,10 @@ pub struct ChainState {
     slots: BTreeMap<String, SlotRecord>,
     /// Hosts whose accept policy is not the default ([`Accept::Admins`]).
     accept: BTreeMap<String, Accept>,
+    /// Hosts that take A2A calls from some a2a device (kind 23 of the removed
+    /// feature): never empty (none is the default), only current a2a devices.
+    /// Kept so the replay matches rc.1's checks, the no-op one included.
+    a2a_accept: BTreeMap<String, Vec<String>>,
     /// The first v3 entry's seq: no v2 entry may follow it.
     v3_from: Option<u64>,
     /// A host that joined or restarted hosting in the last entry: the next
@@ -1871,6 +1876,9 @@ pub mod rules {
     pub const A2A_ACCEPT_NOT_HOST: &str = "only a host accepts A2A calls";
     /// Kind 23 names only current A2A proxies.
     pub const A2A_ACCEPT_NOT_A2A: &str = "an A2A accept list names only current A2A proxies";
+    /// Kind 23 changes the host's list (as `SetAccept`, no no-op): rc.1
+    /// refuses a list equal to the one now, and so does the replay.
+    pub const A2A_ACCEPT_SAME: &str = "the host already accepts exactly those A2A proxies";
 }
 
 /// Which removal voids the recovery key: v2's `RemoveDevice` (unchanged, so
@@ -1980,6 +1988,7 @@ impl ChainState {
             devices: BTreeMap::new(),
             slots: BTreeMap::new(),
             accept: BTreeMap::new(),
+            a2a_accept: BTreeMap::new(),
             v3_from: (d.version == VERSION_3).then_some(0),
             host_key_due: flags.host.then(|| keys.id.clone()),
             always_assured: false,
@@ -2356,9 +2365,11 @@ impl ChainState {
                 if *host {
                     host_key_due = Some(id.clone());
                 } else {
-                    // Its accept policy goes with its hosting: restarting
-                    // starts from admins only, never silently from before.
+                    // Its accept policies go with its hosting: restarting
+                    // starts from admins only and no a2a device, never
+                    // silently from before.
                     self.accept.remove(id);
+                    self.a2a_accept.remove(id);
                 }
                 let record = self.devices.get_mut(id).expect("present");
                 record.host = *host;
@@ -2615,6 +2626,22 @@ impl ChainState {
                         Some(_) => {}
                     }
                 }
+                if self.a2a_accept(host) == devices.as_slice() {
+                    return Err(not_allowed(seq, rules::A2A_ACCEPT_SAME));
+                }
+                // A device the host stops taking calls from never held a
+                // machine key, but a session it started could read the host's
+                // key files, its machine key included: as for a `SetAccept`
+                // narrowing, the host's next epoch comes in the very next
+                // entry. Adding one owes nothing.
+                if self.a2a_accept(host).iter().any(|id| !devices.contains(id)) {
+                    host_key_due = Some(host.clone());
+                }
+                if devices.is_empty() {
+                    self.a2a_accept.remove(host);
+                } else {
+                    self.a2a_accept.insert(host.clone(), devices.clone());
+                }
             }
         }
         self.host_key_due = host_key_due;
@@ -2657,6 +2684,13 @@ impl ChainState {
                 slot.removed = true;
             }
         }
+        // It leaves every host's a2a list (a list left empty is the default,
+        // none), and a host's own list goes with it.
+        self.a2a_accept.remove(id);
+        for ids in self.a2a_accept.values_mut() {
+            ids.retain(|d| d != id);
+        }
+        self.a2a_accept.retain(|_, ids| !ids.is_empty());
         self.devices.get_mut(id).expect("present").status = DeviceStatus::Removed;
     }
 
@@ -3084,6 +3118,13 @@ impl ChainState {
     /// Whom host `host` accepts control from besides admin devices.
     pub fn accept_policy(&self, host: &str) -> Accept {
         self.accept.get(host).cloned().unwrap_or_default()
+    }
+
+    /// The a2a devices host `host`'s last kind 23 named, ascending (current
+    /// a2a devices only): what the replay compares against for the no-op rule.
+    /// Nothing reads it for control any more.
+    pub fn a2a_accept(&self, host: &str) -> &[String] {
+        self.a2a_accept.get(host).map_or(&[], Vec::as_slice)
     }
 
     /// Devices that joined with the recovery key and are not yet active: what
@@ -4021,7 +4062,7 @@ pub(crate) mod tests {
         };
         let accept = state.draft(signer(), accept, 30_001).sign(k0);
         state.apply(&accept, &mut h()).unwrap();
-        entries.push(accept);
+        entries.push(accept.clone());
 
         for entry in &entries {
             let decoded = Entry::decode(&entry.encode()).expect("a rc.1 entry decodes");
@@ -4031,5 +4072,68 @@ pub(crate) mod tests {
         let again = ChainState::verify(&entries, None, &mut h()).expect("the chain verifies");
         let proxy = again.device("a-1").expect("the proxy is current");
         assert!(proxy.a2a && !proxy.host && !proxy.admin);
+
+        // The list is canonical: unsorted, repeated, over the cap and cut
+        // encodings do not decode.
+        let shape = |devices: Vec<String>| Action::SetA2aAccept { host: "m-1".into(), devices };
+        let unsorted = state.draft(signer(), shape(vec!["a-2".into(), "a-1".into()]), 0).sign(k0);
+        assert!(matches!(Entry::decode(&unsorted.encode()), Err(ChainError::Decode(_))));
+        let repeated = state.draft(signer(), shape(vec!["a-1".into(), "a-1".into()]), 0).sign(k0);
+        assert!(matches!(Entry::decode(&repeated.encode()), Err(ChainError::Decode(_))));
+        let many = state
+            .draft(signer(), shape((0..=MAX_ACCEPT_IDS).map(|i| format!("d{i:02}")).collect()), 0)
+            .sign(k0);
+        assert!(matches!(Entry::decode(&many.encode()), Err(ChainError::Decode(_))));
+        let mut cut = accept.encode();
+        cut.pop();
+        assert!(matches!(Entry::decode(&cut), Err(ChainError::Decode(_))));
+        let mut v2 = accept.encode();
+        v2[0] = VERSION;
+        assert!(matches!(Entry::decode(&v2), Err(ChainError::Decode(_))));
+
+        // The checks rc.1 made still hold. A list equal to the one now is a
+        // no-op; the empty list is how rc.1 cleared a host; a listed device
+        // must be a current a2a one.
+        let seq = state.seq() + 1;
+        let same = state.draft(signer(), shape(vec!["a-1".into()]), 30_002).sign(k0);
+        assert_eq!(state.clone().apply(&same, &mut h()), Err(not_allowed(seq, rules::A2A_ACCEPT_SAME)));
+        let a2 = extra(41);
+        let add_a2 = Action::AddDevice3(DeviceV3 {
+            id: "a-2".into(),
+            sign_key: a2.0.verifying_key().to_bytes(),
+            dh_key: a2.1.public(),
+            flags: Flags {
+                host: false,
+                admin: false,
+                a2a: true,
+            },
+        });
+        let add_a2 = state.draft(signer(), add_a2, 30_003).sign(k0);
+        state.apply(&add_a2, &mut h()).unwrap();
+        let clear = state.draft(signer(), shape(vec![]), 30_004).sign(k0);
+        state.apply(&clear, &mut h()).unwrap();
+        assert!(state.a2a_accept("m-1").is_empty(), "the empty list clears");
+        // Dropping a listed proxy owes the host its next machine key epoch.
+        let epoch = again.machine_key_epochs("m-1");
+        let due = Action::KeyEpochs(KeyCommits {
+            user: None,
+            machines: vec![(
+                "m-1".into(),
+                KeyCommit {
+                    epoch,
+                    hash: machine_key_commit("acct-1", "m-1", epoch, &[7; 32]),
+                },
+            )],
+        });
+        let due = state.draft(signer(), due, 30_005).sign(k0);
+        state.apply(&due, &mut h()).unwrap();
+        let not_a2a = state.draft(signer(), shape(vec!["a-1".into(), "dev-2".into()]), 30_006).sign(k0);
+        let seq = state.seq() + 1;
+        assert_eq!(state.clone().apply(&not_a2a, &mut h()), Err(not_allowed(seq, rules::A2A_ACCEPT_NOT_A2A)));
+        let remove = state.draft(signer(), Action::RemoveDevice3("a-2".into()), 30_006).sign(k0);
+        state.apply(&remove, &mut h()).unwrap();
+        let gone = state.draft(signer(), shape(vec!["a-2".into()]), 30_007).sign(k0);
+        let seq = state.seq() + 1;
+        assert_eq!(state.clone().apply(&gone, &mut h()), Err(ChainError::UnknownId { seq, id: "a-2".into() }));
     }
 }
