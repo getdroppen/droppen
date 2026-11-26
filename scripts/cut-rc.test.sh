@@ -161,9 +161,15 @@ grep -qF 'test release' "$OUT" && ok || fail "asks for the English banner"
 
 begin
 write_notes v0.2.0-rc.1
-echo 'The app: Droppen-0.2.0.dmg' >> docs/releases/v0.2.0-rc.1.md
-run 1 "notes naming the app" "$(good_pr)" v0.2.0-rc.1
+echo 'The app: Droppen-0.2.0-rc.1.dmg' >> docs/releases/v0.2.0-rc.1.md
+run 1 "notes naming the RC's app" "$(good_pr)" v0.2.0-rc.1
 grep -qF 'server-only' "$OUT" && ok || fail "says a prerelease is server-only"
+
+begin
+write_notes v0.2.0-rc.1
+echo 'The app comes with Droppen-0.2.0.dmg.' >> docs/releases/v0.2.0-rc.1.md
+run 0 "notes naming the final release's app" "$(good_pr)" v0.2.0-rc.1
+[ "$(git log -1 --format=%s)" = "chore: release v0.2.0-rc.1" ] && ok || fail "made the commit for a final-version DMG note"
 
 begin
 write_notes v0.2.0-rc.1

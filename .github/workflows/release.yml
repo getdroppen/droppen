@@ -363,8 +363,13 @@ jobs:
             esac
           done <<< "$runs"
           # Signing-sensitive: what the release secrets and the published
-          # scripts read, from the compare API (the tag may sit behind main).
-          changed=$(gh api --paginate "repos/$REPO/compare/main...$SHA" --jq '.files[].filename' 2>/dev/null || true)
+          # scripts read, from the pull request's files, every page of them
+          # (the compare API's file list stops at 300).
+          if [ -n "$PR" ]; then
+            changed=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename' 2>/dev/null || true)
+          else
+            changed=""
+          fi
           sensitive=$(printf '%s\n' "$changed" | grep -E '^(\.github/(scripts|workflows)/|scripts/|install\.sh)' || true)
           {
             echo "### Prerelease: $VERSION"

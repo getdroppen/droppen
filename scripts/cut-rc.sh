@@ -17,8 +17,10 @@
 #    vX.Y.Z-rc.* tag, locally and on origin (equal is allowed, for a re-run),
 #    and its tag exists in neither place;
 #  - docs/releases/v<version>.md exists, is not empty, carries the bilingual
-#    banner ("test release" and "测试版本") and names no app file (an RC is
-#    server-only: scripts/publish-release.sh refuses an RC with the app);
+#    banner ("test release" and "测试版本") and names no RC-versioned app file
+#    (an RC is server-only: scripts/publish-release.sh refuses an RC with the
+#    app). The final version's DMG may be named: it is a later build, not this
+#    one's; the workflow's meta check draws the line at the RC's own names too;
 #  - the working tree is clean but for that notes file (untracked or
 #    modified).
 #
@@ -94,9 +96,8 @@ fi
 [ -s "$notes" ] || die "$notes is missing or empty: write the RC's notes first"
 grep -qF "test release" "$notes" || die "$notes does not say \"test release\" (the English half of the banner)"
 grep -qF "测试版本" "$notes" || die "$notes does not say \"测试版本\" (the Chinese half of the banner)"
-plain=$base
-for name in "Droppen-$plain.dmg" "Droppen-$plain-x86_64.AppImage" "Droppen-$plain-aarch64.AppImage" \
-  "droppen_${plain}_amd64.deb" "droppen_${plain}_arm64.deb"; do
+for name in "Droppen-$version.dmg" "Droppen-$version-x86_64.AppImage" "Droppen-$version-aarch64.AppImage" \
+  "droppen_${version}_amd64.deb" "droppen_${version}_arm64.deb"; do
   if grep -qF "$name" "$notes"; then
     die "$notes names $name: a prerelease is server-only, so its notes must not name the app's files"
   fi

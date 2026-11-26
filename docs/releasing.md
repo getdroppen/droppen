@@ -164,10 +164,11 @@ branch, so the branch is built, signed and published through the real release
 path without merging it. A stable release still has to be on main; **a stable
 release from a branch is not supported yet**.
 
-An RC is **server-only**: its notes must not name `Droppen-X.Y.Z.dmg` nor the
-Linux app's files, or the workflow would look for an app it does not ship. Its
-notes carry the bilingual banner, the phrases `test release` and `测试版本`,
-so it reads as a test in both languages.
+An RC is **server-only**: its notes must not name `Droppen-X.Y.Z-rc.N.dmg` nor
+the Linux app's files of that version, or the workflow would look for an app it
+does not ship. Naming the final version's `Droppen-X.Y.Z.dmg` is fine: it is a
+later build, not this one's. Its notes carry the bilingual banner, the phrases
+`test release` and `测试版本`, so it reads as a test in both languages.
 
 1. On the branch, write `docs/releases/vX.Y.Z-rc.N.md` with that banner, and
    change nothing else about the app.
