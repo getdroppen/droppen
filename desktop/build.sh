@@ -214,11 +214,11 @@ if [ "$WORKTREE" = 1 ]; then
 else
   VERSION=$(git -C "$REPO" show "$SHA:crates/droppen-server/Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
 fi
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "cannot read the server version (got '$VERSION')"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "cannot read the server version (got '$VERSION')"
 SERVER_VERSION=$VERSION
 # The app's version is what the updater compares with the newest release's
 # (`latest.json`), so a release tag must name it exactly.
-if [[ "${REF:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$REF" != "v$VERSION" ]; then
+if [[ "${REF:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] && [ "$REF" != "v$VERSION" ]; then
   die "$REF has the server version $VERSION in crates/droppen-server/Cargo.toml; the app would call itself $VERSION"
 fi
 if [ -n "$TEST_VERSION" ]; then

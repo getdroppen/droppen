@@ -170,7 +170,7 @@ while IFS= read -r path; do
   esac
 
   case "$path" in
-    scripts/publish-release.sh|scripts/publish-release.test.mjs|scripts/verify-web.mjs|scripts/verify-web.test.mjs|scripts/web-manifest.mjs|scripts/release-notes.sh|scripts/release-notes.test.mjs|scripts/release-public.sh|scripts/install.sh|scripts/install.test.mjs|scripts/install-key.sh|scripts/release-text-check.sh|scripts/release-text-check.test.sh|scripts/notices/attributions.txt|LICENSE|web/owner-placeholders.txt|docs/releases/*|desktop/src-tauri/tauri.conf.json)
+    scripts/publish-release.sh|scripts/publish-release.test.mjs|scripts/verify-web.mjs|scripts/verify-web.test.mjs|scripts/web-manifest.mjs|scripts/release-notes.sh|scripts/release-notes.test.mjs|scripts/release-public.sh|scripts/install.sh|scripts/install.test.mjs|scripts/install-key.sh|scripts/release-text-check.sh|scripts/release-text-check.test.sh|scripts/notices/attributions.txt|LICENSE|web/owner-placeholders.txt|docs/releases/*|docs/releasing.md|scripts/cut-rc.sh|scripts/cut-rc.test.sh|desktop/src-tauri/tauri.conf.json)
       release_tooling=1; matched=1 ;;
   esac
 

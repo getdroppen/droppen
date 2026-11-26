@@ -24,11 +24,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Linux prerequisites (https://v2.tauri.app/start/prerequisites/#linux), as
 # CI's desktop-app-linux job installs them. The downloaded packages go; the
 # lists stay.
+# The security archive publishes its index before the files they name, and can
+# be mid-sync: an update or an install is retried a little rather than failing
+# the whole packaging run on that window.
 RUN sed -n 's/^deb /deb-src /p' /etc/apt/sources.list > /etc/apt/sources.list.d/deb-src.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
+ && n=0; until apt-get update; do n=$((n+1)); [ "$n" -lt 6 ] || exit 1; sleep 20; done \
+ && n=0; until apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl file pkg-config \
       libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+    ; do n=$((n+1)); [ "$n" -lt 6 ] || exit 1; sleep 20; apt-get update || true; done \
  && apt-get clean
 
 ENV RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:$PATH

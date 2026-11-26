@@ -166,7 +166,7 @@ echo "ok: signing as $IDENTITY_NAME ($IDENTITY); notarising with \`notarytool ${
 
 DIR=$(cd "$1" && pwd -P)
 VERSION=${2#v}
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "a release version is x.y.z, not $VERSION"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "a release version is x.y.z, not $VERSION"
 APP=$DIR/Droppen.app
 DMG=$DIR/Droppen-$VERSION.dmg
 SERVER_BIN=$APP/Contents/MacOS/droppen-server
