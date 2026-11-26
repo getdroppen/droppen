@@ -135,6 +135,14 @@ git tag v0.2.0-rc.2
 run 1 "a version older than the newest rc" "$(good_pr)" v0.2.0-rc.1
 grep -qF 'older than v0.2.0-rc.2' "$OUT" && ok || fail "says the version is older"
 
+# A hand tag beside the rc.N series (v0.2.0-rc.1-old) sorts after rc.1 under
+# sort -V: it must not make the real rc.1 look older.
+begin
+write_notes v0.2.0-rc.1
+git tag v0.2.0-rc.1-old
+run 0 "a hand tag beside the rc series" "$(good_pr)" v0.2.0-rc.1
+grep -qF 'older than' "$OUT" && fail "counted the hand tag as newer" || ok
+
 begin
 write_notes v0.2.0-rc.1
 git tag v0.2.0-rc.1

@@ -68,7 +68,8 @@ while IFS=$'\t' read -r n u state merge_sha; do
     number=$n; url=$u; break
   fi
   [ -n "$merge_sha" ] || continue
-  git fetch --no-tags --filter=blob:none origin "+refs/pull/$n/head:refs/remotes/origin/pr/$n" >/dev/null 2>&1 || continue
+  git fetch --no-tags --filter=blob:none origin "+refs/pull/$n/head:refs/remotes/origin/pr/$n" >/dev/null 2>&1 \
+    || die "cannot read the head of pull request #$n (git fetch refs/pull/$n/head): cannot tell whether $sha is part of its merge"
   git merge-base --is-ancestor "$sha" "refs/remotes/origin/pr/$n" 2>/dev/null || continue
   git merge-base --is-ancestor "$merge_sha" origin/main 2>/dev/null || continue
   number=$n; url=$u; merged=1; break

@@ -380,7 +380,8 @@ jobs:
           head=$SHA
           if [ -n "$PR" ]; then
             reported=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha 2>/dev/null || true)
-            [ -z "$reported" ] || head=$reported
+            # gh writes a 404's JSON body to stdout, not nothing: take a sha.
+            [[ $reported =~ ^[0-9a-f]{40}$ ]] && head=$reported
           fi
           runs=$(gh api --paginate "repos/$REPO/commits/$head/check-runs?per_page=100" \
             --jq '.check_runs[] | [.name, .status, (.conclusion // "-")] | @tsv' 2>/dev/null || true)
