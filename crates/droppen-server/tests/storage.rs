@@ -37,6 +37,7 @@ async fn prefs_round_trip_and_leave_no_file_behind() {
             "math": "rendered",
             "diagrams": "rendered",
             "subagentTree": "off",
+            "archivedRetention": "never",
         })
     );
 
@@ -49,6 +50,7 @@ async fn prefs_round_trip_and_leave_no_file_behind() {
         "math": "source",
         "diagrams": "source",
         "subagentTree": "on",
+        "archivedRetention": "7d",
     });
     let (status, body) = server.json("PUT", "/api/prefs", &wanted).await;
     assert_eq!(status, 200, "PUT /api/prefs -> {status}: {body}");
@@ -68,6 +70,7 @@ async fn prefs_round_trip_and_leave_no_file_behind() {
     assert_eq!(
         stored,
         [
+            "archivedRetention=7d",
             "composerSend=modifier",
             "diagrams=source",
             "fontSize=xlarge",

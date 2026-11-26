@@ -61,12 +61,12 @@ use droppen_sessions::util::{
     first_line_of, make_item, make_tool_item, read_head_lines, read_tail_lines, title_line, try_parse, FileRef, ItemKind, Role, ToolDisplay,
     TranscriptItem,
 };
-use droppen_sessions::{SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
+use droppen_sessions::{Purged, SessionActivity, SessionScope, SessionStatus, SessionSummary, Source};
 use crate::protocol::{ContentBlock, SessionUpdate, ToolCallContent, ToolCallStatus, ToolKind};
 use droppen_instance::identity::ServerId;
 use droppen_http::openapi_ext::Nullable;
 use droppen_instance::paths::Paths;
-use droppen_base::time::iso8601;
+use droppen_base::time::{iso8601, mtime_ms};
 
 /// The transcripts this instance keeps for ACP sessions:
 /// `<instance dir>/acp-sessions/`, one directory per agent.
@@ -149,6 +149,45 @@ impl AcpTranscripts {
         agents.sort();
         agents
     }
+}
+
+/// Delete archived ACP transcripts whose file mtime is at or before
+/// `cutoff_ms`.
+///
+/// The archive move stamps the file with the archive instant, so mtime is the
+/// age there is. `skip` is asked for each id that would otherwise go, so a
+/// session some server is still driving keeps its transcript.
+pub async fn purge_archived(paths: &Paths, cutoff_ms: i64, skip: &(dyn Fn(&str) -> bool + Sync)) -> Purged {
+    let mut purged = Purged::default();
+    let transcripts = AcpTranscripts::of(paths);
+    for agent in transcripts.agent_dirs().await {
+        let Ok(mut entries) = tokio::fs::read_dir(transcripts.dir().join(&agent).join("archived")).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(id) = path.file_stem().and_then(|stem| stem.to_str()).map(str::to_owned) else {
+                continue;
+            };
+            let Ok(metadata) = entry.metadata().await else { continue };
+            if !metadata.is_file() || mtime_ms(&metadata) as i64 > cutoff_ms || skip(&id) {
+                continue;
+            }
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    tracing::warn!(session = %id, %error, "cannot delete an archived ACP transcript");
+                    continue;
+                }
+            }
+            purged.add(&id, metadata.len());
+        }
+    }
+    purged
 }
 
 /// What a transcript's `session` record says about the session.
@@ -947,6 +986,33 @@ pub(crate) mod tests {
 
     fn lines(records: &[Value]) -> Vec<String> {
         records.iter().map(Value::to_string).collect()
+    }
+
+    #[tokio::test]
+    async fn purging_deletes_only_old_archived_transcripts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(dir.path().to_path_buf());
+        let archived = AcpTranscripts::of(&paths).dir().join("agent").join("archived");
+        std::fs::create_dir_all(&archived).expect("archive dir");
+        let old = archived.join("old.jsonl");
+        let fresh = archived.join("fresh.jsonl");
+        std::fs::write(&old, b"gone").expect("old");
+        std::fs::write(&fresh, b"kept").expect("fresh");
+        let epoch = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .expect("open")
+            .set_modified(epoch)
+            .expect("mtime");
+
+        let purged = purge_archived(&paths, droppen_base::time::now_ms() - 86_400_000, &|_| false).await;
+
+        assert_eq!(purged.sessions, 1);
+        assert_eq!(purged.bytes, 4);
+        assert_eq!(purged.ids, ["old"]);
+        assert!(!old.exists(), "the old transcript is gone");
+        assert!(fresh.exists(), "the fresh one stays");
     }
 
     /// A transcript line with its stamp written as `<timestamp>`, once the

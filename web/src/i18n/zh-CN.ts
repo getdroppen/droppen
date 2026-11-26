@@ -570,6 +570,14 @@ export const zhCN: Record<string, string> = {
   /* the file browser hides dot-files; the switch is a per-browser setting */
   "show hidden files": "显示隐藏文件",
   "dot-files in the file browser · this device only": "文件浏览器里以 . 开头的条目 · 仅本设备",
+  "delete archived data after": "归档数据保留",
+  "archived sessions and their transcripts · checked hourly": "归档的会话及记录 · 每小时检查一次",
+  never: "永不",
+  "1 day": "1 天",
+  "3 days": "3 天",
+  "5 days": "5 天",
+  "7 days": "7 天",
+  "30 days": "30 天",
   hide: "隐藏",
   show: "显示",
   /* the login page, drawn only by a server that has accounts */
