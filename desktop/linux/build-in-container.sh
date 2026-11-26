@@ -79,6 +79,39 @@ has_copyright() { # directory, .dsc
   return 1
 }
 
+# A source package's .dsc and its files, straight from the archive's pool.
+# Needed when the archive has moved its source index on to a newer version
+# while the installed binary (and so LIBRARIES) still names this one: apt then
+# finds no version in the index, though the pool keeps the files. The .dsc's
+# own Source, Version, sizes and Checksums-Sha256 are the check; HTTPS, and
+# these hashes for every file, take the signed index's place.
+# (The pool path is Debian's: pool/main/<first letter, or the fourth of lib*>/<source>/.)
+fetch_dsc_from_pool() { # source, version, destination
+  local src=$1 ver=$2 dest=$3 area dsc base url tmp
+  case "$src" in lib*) area=${src:3:1} ;; *) area=${src:0:1} ;; esac
+  dsc=${src}_${ver#*:}.dsc
+  for base in https://security.ubuntu.com/ubuntu https://archive.ubuntu.com/ubuntu https://ports.ubuntu.com/ubuntu-ports; do
+    tmp=$(mktemp -d "$dest/.pool.XXXXXX")
+    url=$base/pool/main/$area/$src/$dsc
+    if curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/$dsc" "$url" 2>/dev/null \
+      && [ "$(sed -n 's/^Source: //p' "$tmp/$dsc")" = "$src" ] \
+      && [ "$(sed -n 's/^Version: //p' "$tmp/$dsc")" = "$ver" ]; then
+      local ok=1 sha size name
+      while read -r sha size name; do
+        case "$name" in */*) ok=0; break ;; esac
+        curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/$name" "$base/pool/main/$area/$src/$name" 2>/dev/null || { ok=0; break; }
+        [ "$(wc -c <"$tmp/$name")" = "$size" ] || { ok=0; break; }
+        [ "$(sha256sum "$tmp/$name" | cut -d' ' -f1)" = "$sha" ] || { ok=0; break; }
+      done < <(awk '/^Checksums-Sha256:/ { f = 1; next } /^[^ ]/ { f = 0 } f && NF == 3 { print $1, $2, $3 }' "$tmp/$dsc")
+      if [ "$ok" = 1 ]; then
+        mv "$tmp"/* "$dest"/ && rmdir "$tmp" && return 0
+      fi
+    fi
+    rm -rf "$tmp"
+  done
+  return 1
+}
+
 if [ "$MODE" = sources ]; then
   # The source of what the AppImage carries: the Ubuntu source package of
   # every package LIBRARIES-<arch>.txt names, in the version it names, by apt
@@ -86,7 +119,10 @@ if [ "$MODE" = sources ]; then
   # deb-src lines of the same archive: the lists the packages were installed
   # from, never updated since, so each source is of the very version built
   # into the AppImage. apt checks every file against the signed index; one it
-  # cannot fetch fails the build, and no other version is ever taken.
+  # cannot fetch fails the build, and no other version is ever taken. Where
+  # the archive has already moved its source index past the installed
+  # version, the same version is taken from the pool and checked against the
+  # .dsc's own hashes instead (fetch_dsc_from_pool).
   LIBRARIES=/work/out/LIBRARIES-$ARCH.txt
   OUT=/work/sources
   [ -s "$LIBRARIES" ] || die "no $LIBRARIES: build first"
@@ -96,12 +132,18 @@ if [ "$MODE" = sources ]; then
   say "the source packages of LIBRARIES-$ARCH.txt: $(wc -l <"$OUT/SOURCES")"
   NAMES=$(mktemp)
   while IFS=$'\t' read -r src ver; do
-    # A mirror can be mid-sync on one file: retry a few times, then fail.
-    for attempt in 1 2 3 4; do
-      (cd "$OUT/ubuntu" && apt-get source --download-only -qq "$src=$ver" >/dev/null) && break
-      [ "$attempt" -lt 4 ] || die "apt cannot fetch the source of $src $ver"
+    # A mirror can be mid-sync on one file: retry a little. If the index has
+    # moved past this version altogether, take the same version from the pool.
+    fetched=0
+    for attempt in 1 2 3; do
+      (cd "$OUT/ubuntu" && apt-get source --download-only -qq "$src=$ver" >/dev/null) && { fetched=1; break; }
       sleep 10
     done
+    if [ "$fetched" = 0 ]; then
+      fetch_dsc_from_pool "$src" "$ver" "$OUT/ubuntu" \
+        || die "apt cannot fetch the source of $src $ver and the pool has none"
+      echo "note: $src $ver is no longer named by the index: taken from the pool and checked against its .dsc"
+    fi
     dsc=${src}_${ver#*:}.dsc
     [ -f "$OUT/ubuntu/$dsc" ] || die "apt fetched no $dsc for $src $ver"
     [ "$(sed -n 's/^Source: //p' "$OUT/ubuntu/$dsc")" = "$src" ] && [ "$(sed -n 's/^Version: //p' "$OUT/ubuntu/$dsc")" = "$ver" ] \
