@@ -112,24 +112,20 @@ export interface HeldChange {
 export interface ChainAlert {
   seq: number;
   /** `upgrade`: the account's first chain v3 entry (a new user key written as v3: review D4). */
-  /** `a2aAccept`: whom a host takes A2A calls from now (`setA2aAccept`, docs/a2a.md §7.1). */
-  kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy" | "renewalPause" | "a2aAccept";
+  kind: "addDevice" | "removeDevice" | "recoveryJoin" | "setRecoveryKey" | "keyEpochs" | "upgrade" | "setAdmin" | "setHost" | "setAccept" | "passkey" | "rotateHostKey" | "renewalPolicy" | "renewalPause";
   /**
    * `renewalPause` (host identity rotation §3.4 rule 10): which marker, and the control its start paused (per host, the
-   * ids it stopped accepting; `a2a`: the A2A proxies among them, whose calls it held — docs/a2a.md §7.1) — for
-   * `completed`, only what comes back (empty: none of it).
+   * ids it stopped accepting) — for `completed`, only what comes back (empty: none of it).
    */
-  pause?: { phase: "start" | "completed" | "cancelled"; removals: { host: string; ids: string[]; a2a?: string[] }[] };
+  pause?: { phase: "start" | "completed" | "cancelled"; removals: { host: string; ids: string[] }[] };
   /** The device that signed it, or `null` for the recovery words (a passkey slot's entries: the slot). */
   by: string | null;
-  /** Chain v3's `addDevice3`: what the added device may do (「可运行 AI」, 「可管理账号」, or an A2A proxy: 「A2A 代理」). */
-  flags?: { host: boolean; admin: boolean; a2a: boolean };
+  /** Chain v3's `addDevice3`: what the added device may do (「可运行 AI」, 「可管理账号」). */
+  flags?: { host: boolean; admin: boolean };
   /** `setAdmin` / `setHost`: what it was set to; `renewalPolicy`: whether every renewal must now be confirmed on the device. */
   on?: boolean;
   /** `setAccept`: whom the host accepts control from now. */
   accept?: Accept;
-  /** `a2aAccept`: the A2A proxies the host takes A2A calls from now (none: it takes none). */
-  a2a?: string[];
   /** A passkey entry: which (a slot registered or removed, a device it added, one activating itself). */
   passkey?: "slotSet" | "slotRemove" | "join" | "activate";
   /** `rotateHostKey` (`docs/host-identity-rotation.md` §3.4 "告警"): the host's new keys (said by their `deviceFingerprint`), and whether the renewal was confirmed on the device. */

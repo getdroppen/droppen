@@ -80,8 +80,6 @@ pub mod wire;
 pub mod wrap;
 
 #[cfg(test)]
-mod a2a_regressions;
-#[cfg(test)]
 mod attack_regressions;
 #[cfg(all(test, feature = "runtime"))]
 mod link_sim;

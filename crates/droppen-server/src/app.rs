@@ -143,24 +143,16 @@ impl RemoteHandApp {
         // two feeds that would otherwise only notice on their next poll.
         let refresh = droppen_http::refresh::Refresh::new(global.clone());
         drive.injections.host.attach_listeners(feeds.clone(), refresh.clone());
-        // The sessions behind the A2A server (`docs/a2a.md` §5) hear of every
-        // turn's end and question first; the push alerts go on as before.
-        let cloud = droppen_cloud::Cloud::new(paths.as_ref().clone());
-        let a2a_sessions = crate::a2a_backend::A2aSessions::new(&drive, &global, &refresh, &cloud);
-        drive.injections.host.attach_alerts(Arc::new(a2a_sessions.alerts(PushAlerts {
+        drive.injections.host.attach_alerts(Arc::new(PushAlerts {
             transcripts: drive.transcripts.clone(),
-        })));
+        }));
         // Found once, here: an entry that registers no ACP provider fails
         // to start rather than on the first request for an agent.
         let acp_agents = droppen_provider_acp::agents::AcpAgentState::new(drive.providers.clone())
             .ok_or_else(|| GotchaError::message("no ACP provider is registered"))?;
-        let cancel = CancellationToken::new();
-        let a2a = a2a_server(&paths, config, &a2a_sessions, &cloud, cancel.clone())?;
         Ok(AppState {
-            a2a,
             acp_agents,
-            cloud,
-            a2a_sessions,
+            cloud: droppen_cloud::Cloud::new(paths.as_ref().clone()),
             // Touches nothing yet: the installed packages are read by the
             // first status, the instance database by the first switch or
             // store, and `boot` below.
@@ -178,36 +170,12 @@ impl RemoteHandApp {
             feeds,
             global,
             refresh,
-            cancel,
+            cancel: CancellationToken::new(),
             lock: Arc::new(std::sync::OnceLock::new()),
             desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),
             send_limit: droppen_http::SEND_LIMIT,
         })
     }
-}
-
-/// The A2A server over this instance's database (`docs/a2a.md`), its tasks
-/// run by `sessions` and reported through its inbox, its A2A proxies those
-/// the Droppen link's device chain admits (§7.3).
-fn a2a_server(
-    paths: &Paths,
-    config: &ConfigWrapper<AppConfig>,
-    sessions: &Arc<crate::a2a_backend::A2aSessions>,
-    cloud: &Arc<droppen_cloud::Cloud>,
-    cancel: CancellationToken,
-) -> GotchaResult<Arc<droppen_a2a::A2a>> {
-    let inbox = sessions
-        .take_inbox()
-        .ok_or_else(|| GotchaError::message("the A2A sessions' inbox was taken already"))?;
-    let store = droppen_a2a::store::Store::new(droppen_instance::db::at(paths.instance_db()));
-    let settings = droppen_a2a::Settings::from_env(droppen_http::SERVER_VERSION, config.app.a2a.public_base());
-    let devices = crate::a2a_backend::LinkDevices::new(cloud.control.clone());
-    let a2a = droppen_a2a::A2a::new(store, sessions.clone(), devices, inbox, settings, cancel);
-    // Every status change and artifact goes to the callers' webhooks from
-    // here on; what an earlier run left undelivered goes at `A2a::resume`,
-    // which only the instance's owner calls.
-    droppen_a2a::push::Pusher::attach(&a2a);
-    Ok(a2a)
 }
 
 /// The instance claims [`Prepared::claim_for_process`] keeps. A static is never
@@ -258,10 +226,6 @@ impl RemoteHandApp {
             // find them. `/redoc` is a redirect of ours — see
             // [`redoc_to_scalar`].
             .openapi_endpoints(Some(OpenApiEndpoints::default()))
-            // `/a2a/*` is a router of its own, with its own credential
-            // (`droppen_a2a::protocol`); the guards `router` adds go around it
-            // as around everything else.
-            .finish_router(|router, context| router.nest_service("/a2a", droppen_a2a::protocol::router(context.state.a2a.clone())))
     }
 
     /// The router the server serves: [`Self::builder`], plus the `/embed`
@@ -383,9 +347,6 @@ impl RemoteHandApp {
         // would attach to that server's live shims, advance their cursors and
         // sweep the sidecars of any it could not reach. Adoption without
         // ownership is exactly the thing this whole module exists to prevent.
-        // Whether this server owns its instance, so resumes its A2A tasks once
-        // the adoption below is done.
-        let mut resume_a2a = false;
         if let Some(held) = &lock {
             // The flock is on the inode; a deleted or replaced lock file means
             // the claim no longer keeps anyone else out. Adopting under a lost
@@ -465,10 +426,6 @@ impl RemoteHandApp {
                 // task. Acting on a schedule without owning the instance is
                 // exactly the thing this block exists to prevent.
                 droppen_drive::schedule::runner::spawn(&droppen_drive::schedule::ScheduleState::from_ref(&state));
-                // The A2A tasks that were running when the server stopped are
-                // picked up again, below, once the runs are adopted: that
-                // starts sessions too, so only the instance's owner does it.
-                resume_a2a = true;
                 // The quota fallback probe starts CLIs as well — against the
                 // usage logins every instance on this machine shares — so it
                 // sits behind the same gate. It only probes a login nothing has
@@ -486,21 +443,6 @@ impl RemoteHandApp {
                     state.cancel.clone(),
                 );
             }
-        }
-        // The boot has adopted the runs it could (one without the lock adopts
-        // none): an A2A task resumed from now on is read against them.
-        state.a2a_sessions.adopted();
-        // Where each unfinished A2A task's session stands is read against
-        // what was just adopted, and the waiting tasks are handed out.
-        if resume_a2a {
-            tokio::spawn({
-                let a2a = state.a2a.clone();
-                async move { a2a.resume().await }
-            });
-            // Finished A2A tasks are kept 30 days (`docs/a2a.md` §4); the
-            // owner prunes them, as it does everything else that writes the
-            // instance's state on a timer.
-            state.a2a.spawn_retention();
         }
         let cancel = state.cancel.clone();
         let desktop_app = state.desktop_app;

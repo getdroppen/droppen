@@ -430,22 +430,9 @@ export function chainV3Writable(view: Pick<AccountView, "chainV3"> | null | unde
 export interface EnrollmentStatus {
   state: "waiting" | "expired" | "proved";
   machine?: string;
-  /**
-   * An A2A proxy's code, proved (`a2a_device`, docs/a2a.md §7.2): the device
-   * id the hub gave the proxy's claim (there is no machine). Read only for a
-   * code this page made as an A2A proxy's; its proof binds it.
-   */
-  a2aDevice?: string;
   signKey?: Bytes;
   dhKey?: Bytes;
   proof?: Bytes;
-  /**
-   * How many times a socket claimed the code while it was live (`enroll` on
-   * `/v1/agent` naming its token, refused claims included). More than one is
-   * someone else holding the code; `undefined` from a hub from before A2A
-   * proxies.
-   */
-  claims?: number;
 }
 
 /** A machine's offline copy on the hub: how many streams, their bytes, and the newest content write. */
@@ -469,12 +456,6 @@ export interface MachineSummary {
   readsV3: boolean;
   /** Its agent declared `rotate/1`: it renews its identity key on request (`false` from a hub that does not say). */
   rotates: boolean;
-  /**
-   * Its agent declared `a2a/1`: it reads an A2A proxy in the chain and serves
-   * one its A2A routes only (docs/a2a.md §7.3). `null` from a hub that does not
-   * say. Availability only: the hub can lie, and nothing secure rests on it.
-   */
-  a2a: boolean | null;
 }
 
 /** Mailbox purposes (`POST /v1/mailbox`). */

@@ -6,10 +6,7 @@ exact bodies are in [`schema/http.schema.json`](schema/http.schema.json)
 under `$defs["<METHOD> <path>"]`. "Errors" lists the codes a route itself
 returns; any route may also answer `429 rate`, `503 unavailable`, and the
 framework's non-JSON 400/413/415/422; a route that needs no sign-in also
-`408 slow_request` when its body takes longer than 10 s to arrive; and every
-route with a session but `GET /v1/chain`, `GET /v1/relays` and
-`POST /v1/relays/tickets` answers an A2A proxy's session `403 a2a_only`
-(README, "Authentication"), which the lists below do not repeat.
+`408 slow_request` when its body takes longer than 10 s to arrive.
 
 Audience: **client** routes are what devices and agents use; the **operator**
 routes (`/v1/admin/*`) are documented with the Hub, not here; **relay** and
@@ -407,9 +404,6 @@ get one. Errors: `400 bad_request` (ids not 1–64 printable characters).
 `{account, device, token, expires_ms}`. `signature` (64-byte hex) is the
 device key's signature of `HubLogin {role: DeviceSession, account, id:
 device, hub: <origin dialled>, nonce, time_ms}`; `time_ms` within 5 minutes.
-An A2A proxy signs in here as any device does, before the chain names it
-and after; what its session is good for is in the README ("An A2A proxy's
-session").
 A host (chain v3: a device that runs AI) signs in here with the identity it
 enrolled with — `device` is its machine id — once the chain lists it as a
 current device; it then controls other hosts as a device. With
@@ -490,10 +484,7 @@ chain v3). The open clients send neither since chain v3 (a computer controls
 other devices with its one identity; the earlier `"aggregator"` second device
 is gone); the hub itself writes `kind: "host"` for a host that signed in as a
 device — such a row is no registration: it counts neither towards the 10 a
-day nor as waiting. `kind: "a2a"` is refused (`400 bad_request`): the hub
-takes a row of that kind for an A2A proxy's until the chain names it
-(README, "An A2A proxy's session"), and only an A2A proxy's enrollment
-makes one (`POST /v1/enrollments`, `kind: "a2a"`).
+day nor as waiting.
 
 `replaces` (optional) names the device of this account the new one takes
 the place of: the browser lost that one's keys and registers as a new
@@ -502,7 +493,7 @@ device. Metadata only, like `kind`: kept and shown in `GET /v1/me`
 remove the old one — the web app asks first and writes the ordinary
 removal only if the person confirms; the hub never removes anything for it.
 An id of no device of this account is kept as `null`.
-Errors: `400 bad_request` (also a malformed `kind`, `host` or `replaces`, and `kind: "a2a"`), `403 email_unverified`, `429 device_rate | too_many_pending_devices`.
+Errors: `400 bad_request` (also a malformed `kind`, `host` or `replaces`), `403 email_unverified`, `429 device_rate | too_many_pending_devices`.
 Limits: 10/hour per address, 10/day per account, 3 waiting at once (both
 counted with the registration itself, so requests at once cannot each slip
 under them). A device
@@ -532,7 +523,7 @@ login session. Any other value is no hint.
 - `rotations`: `{enabled, window_ms, active: [{host, state}]}` — identity key renewals ([below](#identity-key-renewals)): whether this hub takes them (`DROPPEN_HUB_HOST_ROTATION=on`), the window T, and each host with a renewal under way or committed in the last day (`GET /v1/rotations` has the rest); a hub from before renewals leaves it out;
 - `devices[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, kind, host, ua_label, replaces, online}` (`kind`, `host`, `replaces`: as registered, `null` when not given; a hub from before local sign-in leaves them out, and one from before `replaces` and `online` leaves those out; `ua_label`: below; `online`: whether the device is signed in on `/v1/client` now — `last_seen_ms` is when it last signed in, which a device connected for hours does not move);
 - `devices[].ua_label`: the device's browser by a short name, for a page to tell browsers and phones apart: what the device is and which browser, `"<device> · <browser>"` (a space, `·` U+00B7, a space), or either alone. `<device>` is one of `iPhone`, `iPad`, `Mac`, `Windows`, `Android`, `Linux`, `ChromeOS`, `<browser>` one of `Safari`, `Chrome`, `Firefox`, `Edge`, `Opera`, `Samsung Internet` — nothing else, ever: no version, no model, never the `User-Agent` itself, which the hub does not keep. A webview that names no browser (the desktop app's, a home-screen web app) is the device alone (`"Mac"`, `"iPhone"`); an iPad asking for desktop sites reads as `"Mac"` unless its page says `?touch=1` (above), then `"iPad"`. It comes from the `User-Agent` of the device's own requests only: its sign-in on `/v1/client` and its `GET /v1/me` with its device session — never a request body, a login session or another device's request. Replaced when it changes; a request whose `User-Agent` names nothing known (curl, an HTTP library, the agent) leaves it as it is, and so does one that says `Mac` where the device is known as an `iPad` with the same browser (a request without the hint cannot tell the two apart, and a device never turns from one into the other). `null` until one named something; metadata only, like `kind`; a hub from before it leaves it out;
-- `machines[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, presence, copy: {streams, bytes, last_write_ms}, reads_v3, rotates, a2a}` (`presence` as in websocket.md; `copy`: the machine's encrypted offline copy on the hub; `in_chain`: a current host; `reads_v3`: its agent declared `chain/3` and `policy/1`; `rotates`: it declared `rotate/1`, it can renew its identity key; `a2a`: it declared `a2a/1`, it reads an A2A proxy in the chain — the page adds an A2A proxy only once every current host says `true`, for availability only (`docs/a2a.md` §7.1); absent from hubs before A2A proxies).
+- `machines[]`: `{id, sign_key, dh_key, created_ms, last_seen_ms, in_chain, presence, copy: {streams, bytes, last_write_ms}, reads_v3, rotates}` (`presence` as in websocket.md; `copy`: the machine's encrypted offline copy on the hub; `in_chain`: a current host; `reads_v3`: its agent declared `chain/3` and `policy/1`; `rotates`: it declared `rotate/1`, it can renew its identity key).
 - A host that signed in as a device (`POST /v1/session`) is listed in `devices[]` too, with `kind: "host"`.
 - `credentials`: `{password, passkeys}` — whether the account has a password (an account made with a passkey, or one whose password was removed, has none) and how many passkeys; a hub from before passkeys leaves it out.
 - `sign_in_changes`: `[{id, kind, device, label, at_ms}]` — how the account's sign-in changed in the last 30 days (below, "The account's ways to sign in"), oldest first, at most the newest 50, each exactly as `sign_in_changed` told the account's devices at the time (websocket.md): `kind` `passkey_added | passkey_renamed | passkey_removed | password_set | password_changed | password_removed`; `device` the device session that made it; `label` the passkey's (the new one, for a rename), `null` for the password. A hub from before it leaves it out.
@@ -540,9 +531,7 @@ login session. Any other value is no hint.
 ### `GET /v1/chain?from=N`
 → `{entries: [hex], seq}`: the account's chain entries from index `N`
 (default 0), each an encoded `droppen_proto::chain::Entry`; `seq` is the head,
-`null` before genesis. Verify them yourself. An A2A proxy's session reads
-it always, before the chain names the proxy too: it waits to see itself
-added.
+`null` before genesis. Verify them yourself.
 
 ### `POST /v1/email/resend`
 `{turnstile?}` → `{queued}`. Errors: `409 verification_off | already_verified`,
@@ -601,14 +590,10 @@ says when), `needs_assurance` (the host takes only a renewal confirmed on
 the device: clone evidence within 30 days, or isolated), `conflict` (the
 host's keys at the hub are not the ones the entry replaces). Body ≤ 256 KiB.
 
-Besides the chain's own rules (the A2A ones included) the hub checks: a
-device the batch adds (or that joins with the recovery words, or founds the
-chain) is registered to the account with the same keys and was not revoked
-(its pairing closed by an admin device), and its `a2a` flag matches its
-row — a row an A2A proxy's enrollment made joins only with the flag, and
-the flag names only such a row (`AddDevice3`, `Genesis3`, `RecoveryJoin3`;
-a v2 `Genesis`, `AddDevice` or `RecoveryJoin` never names one; `422
-invalid_entry` otherwise); a host it adds (or makes a
+Besides the chain's own rules the hub checks: a device the batch adds (or
+that joins with the recovery words, or founds the chain) is registered to the
+account with the same keys and was not revoked (its pairing closed by an
+admin device); a host it adds (or makes a
 host again) is an *enrolled machine* with the same keys; a batch never ends
 with a new or restarted host still owed its machine key epoch (`422`). An
 agent that has not declared `chain/3` is never sent a v3 entry (it gets the
@@ -626,55 +611,18 @@ fp}` and close with 4005, its relay tickets so far are revoked, and the
 account's devices hear `rotation {state: "committed"}`.
 
 ### `POST /v1/enrollments` — requires a current full device
-`{device, token, kind?}` (`device`: the session's own; `token`: the
-enrollment code's 16-byte token, hex; `kind`: what will claim it) →
-`{expires_ms, kind}` (10 minutes). Announces a code an agent, or an A2A
-proxy, will claim on `/v1/agent` (`enroll`). `kind` is `"machine"` (or
-absent: a computer that runs AI, an `RH1-` code, as before) or `"a2a"` (an
-A2A proxy's `DA1-` code, `docs/a2a.md` §7.2, whose token is derived as an
-`RH1-` code's); the answer's `kind` is what the hub took the code as. A
-hub from before A2A proxies answers without `kind` and took the code as a
-computer's: a page that adds an A2A proxy must then go no further.
-A computer's code counts against `hosts.max` — the chain's hosts and the
-computers' codes not yet in the chain — as before; an A2A proxy's against
-`devices.max` only: the chain's current devices (hosts included) and every
-code of either kind not yet in the chain.
-Errors: `400 bad_request` (also a `kind` other than `machine` or `a2a`),
-`403 not_a_full_device | email_unverified`, `409 limit` (`hosts.max` for a
-computer's code, `devices.max` for an A2A proxy's), `409 exists`,
-`429 too_many_enrollments`. Limits: 10/hour per device, 5 waiting per
-account (both kinds counted).
+`{device, token}` (`device`: the session's own; `token`: the enrollment
+code's 16-byte token, hex) → `{expires_ms}` (10 minutes). Announces a code
+an agent will claim on `/v1/agent` (`enroll`).
+Errors: `400 bad_request`, `403 not_a_full_device | email_unverified`,
+`409 limit` (`hosts.max`, waiting enrollments included), `409 exists`,
+`429 too_many_enrollments`. Limits: 10/hour per device, 5 waiting per account.
 
 ### `GET /v1/enrollments/{token}`
-→ `{state: "waiting"|"expired"|"proved", expires_ms, kind, claims}` and,
-once the code is proved, what proved it:
-- `kind`: `"machine"` or `"a2a"`, as registered;
-- `claims`: how many times a socket claimed the code (`enroll` naming its
-  token) while it was live, refused claims included (one of the wrong kind,
-  or after another took it). More than 1 means someone else holds the code:
-  the page that adds an A2A proxy aborts (`docs/a2a.md` §7.2 step 3);
-- a computer, proved: `machine, device, sign_key, dh_key, proof`, as before
-  (`device`: the device that registered the code). The device checks
-  `proof` against the code before it adds the host (`[AddDevice3{host},
-  KeyEpochs]`; v2: `AddMachine`);
-- an A2A proxy, proved: `a2a_device, device, sign_key, dh_key, proof`, and
-  no `machine`. `a2a_device` is the device id the claim was given;
-  `sign_key` and `dh_key` come from the device row the claim made; `proof`
-  is the code's proof under the A2A label (`rh/v1 enroll-proof a2a\0`,
-  `A2aEnrollCode::verify_proof`), which the **page** checks — the hub never
-  holds the code's secret and cannot check it. The page also compares the
-  fingerprint the person pastes from the proxy's log with
-  `deviceFingerprint(sign_key, dh_key)` before it adds the proxy
-  (`[AddDevice3{a2a}, SetA2aAccept …]`).
-
-A proxy the page does not add (the fingerprint does not match, or `claims`
-is more than 1) stays out of the chain: its session reads the chain and
-nothing else, and the hub deletes its row a day after the claim, as it does
-any device that never joined. Until then `GET /v1/me` lists it in `devices`
-with `kind: "a2a"`; it counts neither towards the day's registrations nor
-as waiting (`POST /v1/devices`).
-
-A hub from before A2A proxies answers without `kind` and `claims`.
+→ `{state: "waiting"|"expired", expires_ms}`, or once the agent proved
+`{state: "proved", machine, device, sign_key, dh_key, proof}`. The device
+checks `proof` against the code before it adds the host (`[AddDevice3{host},
+KeyEpochs]`; v2: `AddMachine`).
 Errors: `400 bad_request`, `404 not_found` (another account's, or none).
 
 ### `POST /v1/mailbox` — requires a current admin device (but see purpose 4)
@@ -702,12 +650,6 @@ machine key.
 When the chain demotes an admin (`SetAdmin false`), any user key (purpose 1)
 still waiting for it is deleted with the entry; removing a device or a host
 deletes the mail from and to it, and nothing else.
-**No mail goes to an A2A proxy**, of any purpose, in the chain or still
-outside it (`403 a2a_device`; purposes 1, 3 and 5 above all): it holds no
-key and reads no mailbox. Mail **from** one, key requests (purpose 4)
-included, is refused: its session gets `403 a2a_only` on this route
-(README, "An A2A proxy's session"), and the hub's mail rule refuses it too
-(`403 a2a_only`).
 Errors: `400 bad_request` (also: no such recipient, or one no role of it
 would read: purpose 2 to anything but a machine of the account, any other
 purpose to anything but a registered device — a host only once it signed in
@@ -718,8 +660,7 @@ signs in as a device"), `403 not_a_full_device
 | not_an_admin | not_in_chain` (purpose 5 to an admin, a pending device or
 no device of the account) `| not_accepted` (purpose 5 to a device the named
 host does not admit) `| bad_host_key` (purpose 5 that does not name its
-host) `| a2a_device` (to an A2A proxy) `| a2a_only` (from one), `409 limit`
-(`storage.bytes`), `429 mail_rate`, `507 mailbox_full`.
+host), `409 limit` (`storage.bytes`), `429 mail_rate`, `507 mailbox_full`.
 Body ≤ 20 KiB.
 
 ### `GET /v1/mailbox?after=N&limit=M`
@@ -804,10 +745,6 @@ against the per-device session limit.
 - `agents`: `{<machine>: {<relay>: rtt_ms}}`, each machine's last reported round trips;
 - `throttled`: the account's relayed transfer is throttled.
 
-An A2A proxy reads it once the chain names it as a current A2A proxy, and
-its `agents` lists only the hosts that take its A2A calls.
-Errors: `403 not_in_chain` (an A2A proxy the chain does not name yet).
-
 ### `PATCH /v1/relays/prefs` — requires a current device
 `{standby?: bool}` → `{standby}`: the account's relay preference, for all its
 devices. With `standby` the hub keeps two working public relays in the
@@ -839,19 +776,8 @@ lets it reach; never itself) — and, for a device that is not an admin, only
 the hosts whose agent last declared `policy/1` (the `policy/1` gate, S1-4:
 an agent from before would let such a device reach every route,
 self-upgrade included). A host asks here as a
-device, with its own device session. An A2A proxy gets tickets once the
-chain names it as a current A2A proxy (`403 forbidden` before, as any
-device outside the chain); their `peers` are the current hosts whose
-`SetA2aAccept` list names it (`ChainState::may_call_a2a`, which an open
-renewal pause naming it narrows too) **and** whose agent declared `a2a/1`
-in `agent_info` — the hub names no other peer for it. The hub routes a
-device's `OPEN` by the same rules (`4403` otherwise).
-When an append leaves an A2A proxy able to call fewer hosts (a
-`SetA2aAccept` that drops it, a host that stops running AI or leaves, a
-renewal pause), the hub revokes its relay tickets and closes its relay
-connections, as it does for a removed device, so its next tickets name only
-the hosts left. That is defence in depth: the host's agent refuses it on its
-own chain view.
+device, with its own device session. The hub routes a device's `OPEN` by the
+same rules (`4403` otherwise).
 Errors: `400 bad_request`, `403 forbidden` (no chain, or not current),
 `403 isolated` (this device is an isolated host), `403 rotation_pending`.
 Limits: 120 an hour per device (`429 rate`; tickets last 15 minutes, so a

@@ -13,7 +13,6 @@
     "ms": { "type": "integer", "minimum": 0 },
     "count": { "type": "integer", "minimum": 0 },
     "u32": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
-    "enrollmentKind": { "enum": ["machine", "a2a"], "description": "machine: a computer that runs AI (an RH1- code); a2a: an A2A proxy (a DA1- code, docs/a2a.md §7.2)" },
     "presence": {
       "type": "object",
       "required": ["id", "state", "since_ms"],
@@ -311,19 +310,13 @@
     "agent.c2s.enroll": {
       "type": "object",
       "required": ["t", "token"],
-      "properties": {
-        "t": { "const": "enroll" },
-        "token": { "$ref": "#/$defs/hex16" },
-        "kind": { "$ref": "#/$defs/enrollmentKind", "description": "what claims the code: machine (or absent) a computer that runs AI, a2a an A2A proxy. It must be the kind the code was registered with, else error enrollment_kind (the socket stays open; a try and a claim); any other value: error bad_kind and 4400" }
-      }
+      "properties": { "t": { "const": "enroll" }, "token": { "$ref": "#/$defs/hex16" } }
     },
     "agent.c2s.enroll_proof": {
       "type": "object",
-      "description": "For an A2A proxy, sig is HubLogin {role: Device, account, id: the assigned device, hub, nonce, time_ms} under sign_key; for a computer, role Agent",
       "required": ["t", "sign_key", "dh_key", "time_ms", "sig", "proof"],
       "properties": {
         "t": { "const": "enroll_proof" },
-        "kind": { "$ref": "#/$defs/enrollmentKind", "description": "the claim's kind, else error enrollment_kind and 4400" },
         "sign_key": { "$ref": "#/$defs/hex32" },
         "dh_key": { "$ref": "#/$defs/hex32" },
         "time_ms": { "$ref": "#/$defs/ms" },
@@ -408,7 +401,7 @@
       "type": "object",
       "required": ["t"],
       "properties": {
-        "t": { "enum": ["challenge", "welcome", "enroll_assigned", "enrolled", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets", "rotation_staged", "rotation_refused", "rotation_pending"] }
+        "t": { "enum": ["challenge", "welcome", "enroll_assigned", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets", "rotation_staged", "rotation_refused", "rotation_pending"] }
       },
       "oneOf": [
         { "$ref": "#/$defs/agent.s2c.rotation_staged" },
@@ -417,7 +410,6 @@
         { "$ref": "#/$defs/agent.s2c.challenge" },
         { "$ref": "#/$defs/agent.s2c.welcome" },
         { "$ref": "#/$defs/agent.s2c.enroll_assigned" },
-        { "$ref": "#/$defs/agent.s2c.enrolled" },
         { "$ref": "#/$defs/agent.s2c.mail" },
         { "$ref": "#/$defs/agent.s2c.error" },
         { "$ref": "#/$defs/agent.s2c.plan" },
@@ -432,21 +424,8 @@
     "agent.s2c.welcome": { "$ref": "#/$defs/hubWelcome" },
     "agent.s2c.enroll_assigned": {
       "type": "object",
-      "description": "machine for a computer's code, device for an A2A proxy's: exactly one of them",
-      "required": ["t", "account"],
-      "properties": {
-        "t": { "const": "enroll_assigned" },
-        "account": { "$ref": "#/$defs/id" },
-        "machine": { "$ref": "#/$defs/id" },
-        "device": { "$ref": "#/$defs/id" }
-      },
-      "oneOf": [{ "required": ["machine"] }, { "required": ["device"] }]
-    },
-    "agent.s2c.enrolled": {
-      "type": "object",
-      "description": "An A2A proxy's enrollment is done: its device row is made. The hub then closes the socket (1000 \"enrolled\"); the proxy is not signed in and signs in as a device on /v1/client",
-      "required": ["t", "account", "device"],
-      "properties": { "t": { "const": "enrolled" }, "account": { "$ref": "#/$defs/id" }, "device": { "$ref": "#/$defs/id" } }
+      "required": ["t", "account", "machine"],
+      "properties": { "t": { "const": "enroll_assigned" }, "account": { "$ref": "#/$defs/id" }, "machine": { "$ref": "#/$defs/id" } }
     },
     "agent.s2c.mail": { "$ref": "#/$defs/mail" },
     "agent.s2c.error": { "$ref": "#/$defs/hubError" },

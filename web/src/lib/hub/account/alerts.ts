@@ -6,7 +6,7 @@
  * pinning the account writes where alerts start.
  */
 import { ASSURANCE_ON_DEVICE, PAUSE_COMPLETED, PAUSE_START } from "@/lib/e2e";
-import { acceptsA2a, admits } from "../chain-policy";
+import { admits } from "../chain-policy";
 import type { AckRecord } from "../seen-store";
 import type { AccountBasics } from "./basics";
 import type { Standing } from "./devices";
@@ -117,10 +117,6 @@ export class ChainAlerts {
         case "setAccept":
           out.push({ alert: { seq, kind: "setAccept", by, subject: action.host, accept: action.from, atMs, remove: null }, pending: false });
           break;
-        case "setA2aAccept":
-          // Whom a host takes A2A calls from (docs/a2a.md §7.1, §7.3: said as 「A2A 代理」): letting one in is "is this you?".
-          out.push({ alert: { seq, kind: "a2aAccept", by, subject: action.host, a2a: [...action.devices], atMs, remove: null }, pending: false });
-          break;
         case "setRenewalPolicy":
           // The account's renewal policy (host identity rotation §3.4 rule 9): a note.
           out.push({ alert: { seq, kind: "renewalPolicy", by, subject: null, on: action.alwaysAssured, atMs, remove: null }, pending: false });
@@ -128,18 +124,11 @@ export class ChainAlerts {
         case "renewalPause": {
           // Control paused over hosts while identity keys are renewed (§3.4 rule 10): a note. An ending marker names no
           // removals; its start did. "Resumes" names only the control that comes back: never an edge the base has since
-          // dropped (a hand setAccept, a removal, a host that stopped hosting) or another open pause still holds. An A2A
-          // proxy's calls a pause held come back as well (docs/a2a.md §7.1).
+          // dropped (a hand setAccept, a removal, a host that stopped hosting) or another open pause still holds.
           const phase = action.phase === PAUSE_START ? "start" : action.phase === PAUSE_COMPLETED ? "completed" : "cancelled";
-          // A proxy's edge is its A2A calls, said apart from control (`a2a`).
-          const proxy = (id: string) => chain.deviceRecord(id)?.a2a === true;
           const removals = (action.phase === PAUSE_START ? action.removals : (chain.pause(action.op)?.removals ?? []))
-            .map((r) => ({ host: r.host, ids: action.phase === PAUSE_COMPLETED ? r.ids.filter((id) => admits(chain, r.host, id) || acceptsA2a(chain, r.host, id)) : [...r.ids] }))
-            .map((r) => {
-              const a2a = r.ids.filter(proxy);
-              return { host: r.host, ids: r.ids.filter((id) => !proxy(id)), ...(a2a.length ? { a2a } : {}) };
-            })
-            .filter((r) => r.ids.length > 0 || (r.a2a?.length ?? 0) > 0);
+            .map((r) => ({ host: r.host, ids: action.phase === PAUSE_COMPLETED ? r.ids.filter((id) => admits(chain, r.host, id)) : [...r.ids] }))
+            .filter((r) => r.ids.length > 0);
           out.push({ alert: { seq, kind: "renewalPause", by, subject: null, pause: { phase, removals }, atMs, remove: null }, pending: false });
           break;
         }

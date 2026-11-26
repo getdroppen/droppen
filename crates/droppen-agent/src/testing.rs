@@ -135,9 +135,6 @@ pub trait RunningTesting {
     /// Note that the push keys are to be renewed, as a promotion notes it,
     /// and save the state.
     fn ask_push_renew(&self);
-    /// Take chain `entries` as if the hub had sent them, and act on them as
-    /// on any chain advance; `false` when not every entry took.
-    fn take_entries(&self, entries: &[droppen_proto::chain::Entry]) -> bool;
 }
 
 impl RunningTesting for Running {
@@ -147,9 +144,6 @@ impl RunningTesting for Running {
     fn ask_push_renew(&self) {
         self.shared.state.lock().expect("agent state").rotation.push_renew = true;
         self.shared.save();
-    }
-    fn take_entries(&self, entries: &[droppen_proto::chain::Entry]) -> bool {
-        Running::take_entries(self, entries)
     }
 }
 

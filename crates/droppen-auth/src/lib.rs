@@ -81,7 +81,7 @@
 //!
 //! # What is deliberately *not* behind the guard
 //!
-//! Six things, and nothing else:
+//! Five things, and nothing else:
 //!
 //! * `POST /api/auth/login`, `POST /api/auth/setup`, `POST /api/auth/local-open`
 //!   and `GET /api/auth/status` — the three ways in, and the way to ask which
@@ -101,13 +101,7 @@
 //!   `GET /api/apps` hands out, and the proxied VS Code server speaks its own
 //!   protocol on paths this server does not model. The residual risk is real and
 //!   written down in docs/manual.zh-CN.md: anyone who learns an id reaches that
-//!   app;
-//! * `/a2a/*`, every method — the A2A server (the server's `droppen_a2a`), which
-//!   has credentials of its own and checks them on every request: an A2A token,
-//!   from a loopback peer only, or an A2A proxy bridged in
-//!   ([`BridgedDevice`] with `a2a` set, `docs/a2a.md` §7.3). No login is
-//!   resolved there and none counts, and a request bridged from any other
-//!   device is refused outright (`docs/a2a.md` §2, §6).
+//!   app.
 //!
 //! `/openapi.json`, `/redoc`, `/scalar`, `/api/settings`, `/api/push/vapid` and
 //! `POST /api/server/self-upgrade` are **not** exempt. The first three describe
@@ -124,14 +118,6 @@
 //! and then treats the request as `cloud:<device>` — the device the agent
 //! authorised against its device chain. Both headers are removed before any
 //! handler runs, and a wrong or non-loopback credential is simply no identity.
-//!
-//! An A2A proxy's channel (`docs/a2a.md` §7.3) adds a third,
-//! `x-rh-agent-kind: a2a`, honoured only beside that credential and removed
-//! with the others. Such a request is no login: it gets no [`AuthIdentity`],
-//! and it reaches `/a2a/*` and nothing else — the bridge already lets it
-//! nowhere else, and this is the guard saying so again. Every bridged request
-//! carries a [`BridgedDevice`] in its extensions (`a2a` set for a proxy), and
-//! no other device bridged in reaches `/a2a/*`.
 //!
 //! # A third kind of credential, on one route
 //!
@@ -174,7 +160,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 
 use droppen_http::config::AuthSettings;
 use droppen_http::error::ApiError;
-use droppen_http::identity::{AuthIdentity, BridgedDevice, NotifyGrant};
+use droppen_http::identity::{AuthIdentity, NotifyGrant};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
@@ -359,7 +345,7 @@ impl Auth {
 
     /// The bridged device a request speaks for, if it carries this boot's
     /// internal credential and came from a loopback peer. `None` otherwise.
-    fn bridged(&self, headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> Option<BridgedDevice> {
+    fn bridged(&self, headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
         headers.bridged_identity(&self.internal, peer)
     }
 
@@ -486,10 +472,9 @@ pub fn signed_out_frame() -> gotcha::axum::extract::ws::CloseFrame {
 
 /// The credentials this guard reads out of a request's headers.
 trait RequestCredentialsExt {
-    /// The device a request bridged by the cloud agent speaks for: only with
-    /// `expected` (this boot's credential) and only from a loopback peer —
-    /// whether it is an A2A proxy too, which the kind header says only then.
-    fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<BridgedDevice>;
+    /// The identity a request bridged by the cloud agent speaks for: only with
+    /// `expected` (this boot's credential) and only from a loopback peer.
+    fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity>;
 
     /// Whether this is really a websocket handshake and not a plain `GET` of
     /// the same path. Without the check, a `?ticket=` would be spendable on any
@@ -507,31 +492,20 @@ trait RequestCredentialsExt {
 }
 
 impl RequestCredentialsExt for HeaderMap {
-    fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<BridgedDevice> {
-        use droppen_http::bridge::{A2A_KIND, CREDENTIAL_HEADER, DEVICE_HEADER, KIND_HEADER};
-        let offered = self.get(CREDENTIAL_HEADER)?.as_bytes();
+    fn bridged_identity(&self, expected: &str, peer: Option<std::net::SocketAddr>) -> Option<AuthIdentity> {
+        let offered = self.get(droppen_http::bridge::CREDENTIAL_HEADER)?.as_bytes();
         if !peer.is_some_and(|p| p.ip().is_loopback()) {
             return None;
         }
         if !bool::from(subtle::ConstantTimeEq::ct_eq(offered, expected.as_bytes())) {
             return None;
         }
-        // The bridge sends each once: a second of any is not the bridge's.
-        if [CREDENTIAL_HEADER, DEVICE_HEADER, KIND_HEADER]
-            .iter()
-            .any(|name| self.get_all(*name).iter().count() > 1)
-        {
-            return None;
-        }
-        let device = self.get(DEVICE_HEADER)?.to_str().ok()?;
+        let device = self.get(droppen_http::bridge::DEVICE_HEADER)?.to_str().ok()?;
         let valid = !device.is_empty() && device.len() <= 64 && device.bytes().all(|b| b.is_ascii_graphic());
-        // An A2A proxy's mark, or none: any other kind is nobody's.
-        let a2a = match self.get(KIND_HEADER) {
-            None => false,
-            Some(kind) if kind.as_bytes() == A2A_KIND.as_bytes() => true,
-            Some(_) => return None,
-        };
-        valid.then(|| BridgedDevice { id: device.to_string(), a2a })
+        valid.then(|| AuthIdentity {
+            username: format!("cloud:{device}"),
+            token_sha256: None,
+        })
     }
 
     fn is_websocket_upgrade(&self) -> bool {
@@ -592,38 +566,6 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     let bridged = auth.bridged(request.headers(), peer);
     request.headers_mut().remove(droppen_http::bridge::CREDENTIAL_HEADER);
     request.headers_mut().remove(droppen_http::bridge::DEVICE_HEADER);
-    request.headers_mut().remove(droppen_http::bridge::KIND_HEADER);
-
-    // `docs/a2a.md` §7.3, behind the bridge's own policy: an A2A proxy
-    // reaches the A2A server and nothing else, and no other device bridged in
-    // reaches the A2A server at all.
-    if let Some(device) = &bridged {
-        if device.a2a != is_a2a(&path) {
-            let refused = if device.a2a {
-                "an A2A proxy reaches the A2A routes only"
-            } else {
-                "not from another device"
-            };
-            return ApiError::new(StatusCode::FORBIDDEN, refused).into_response().with_guard_headers(&path);
-        }
-    }
-    // Who it was bridged from, typed, for whoever asks which device or
-    // whether an A2A proxy; and the login of any other device. An A2A proxy
-    // is no login (`docs/a2a.md` §2). Where the A2A server plugs in
-    // (`droppen_a2a`, wired at integration): a `BridgedDevice { a2a: true }`
-    // in the extensions is its caller `a2a:device:<id>` — and none else on a
-    // bridged request: the bridge forwards no `Authorization` — once it has
-    // asked again that the chain still names it an A2A proxy this machine
-    // takes calls from (the link's state, `Access::A2aOnly.check`) and that
-    // the entry's `allowedDevices` lists it.
-    let bridged_login = bridged.as_ref().filter(|device| !device.a2a).map(|device| AuthIdentity {
-        username: format!("cloud:{}", device.id),
-        token_sha256: None,
-    });
-    let proxy = bridged.as_ref().is_some_and(|device| device.a2a);
-    if let Some(device) = bridged {
-        request.extensions_mut().insert(device);
-    }
 
     let is_exempt = exempt(&method, &path);
     // Resolved wherever it could matter, which is two overlapping sets. Every
@@ -635,10 +577,8 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // What is left out is the case that matters for cost: an exempt static
     // asset, which is most requests a browser makes and now touches neither the
     // session store nor the account file.
-    let mut identity = if bridged_login.is_some() {
-        bridged_login
-    } else if proxy {
-        None
+    let mut identity = if bridged.is_some() {
+        bridged
     } else if path.starts_with("/api/") || !is_exempt {
         auth.identify(request.headers()).await
     } else {
@@ -649,7 +589,7 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // header, and only for the scope that surface belongs to. Everywhere else a
     // `?ticket=` in the URL is ignored, which is what keeps it from becoming a
     // general-purpose credential in a query string.
-    if identity.is_none() && !proxy {
+    if identity.is_none() {
         if let Some((ticket, scope)) = ticket_offered(&method, &path, request.uri(), request.headers()) {
             if let Some(redeemed) = auth.tickets.redeem(&ticket, scope) {
                 // A ticket is worth no more than the login that minted it: that
@@ -683,12 +623,11 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
         request.extensions_mut().insert(found);
     }
 
-    // Nobody is let through for where they connect from: an identity, an A2A
-    // proxy bridged in (to `/a2a/*` only, above), the notify capability on its
-    // one route, the exempt surface — or nothing at all asked, with
-    // authentication switched off. Everyone else is refused without a word
-    // about why; the status route is where a client learns it.
-    if identity.is_some() || proxy || caller.is_some() || is_exempt || auth.is_off() {
+    // Nobody is let through for where they connect from: an identity, the
+    // notify capability on its one route, the exempt surface — or nothing at
+    // all asked, with authentication switched off. Everyone else is refused
+    // without a word about why; the status route is where a client learns it.
+    if identity.is_some() || caller.is_some() || is_exempt || auth.is_off() {
         return next.run(request).await.with_guard_headers(&path);
     }
     ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized").into_response().with_guard_headers(&path)
@@ -743,21 +682,11 @@ fn exempt(method: &Method, path: &str) -> bool {
     if is_embed(path) {
         return true;
     }
-    // The A2A server's own credential is checked by the A2A server, on every
-    // request and every method; a login is no A2A caller.
-    if is_a2a(path) {
-        return true;
-    }
     // The SPA and its assets. An unauthenticated browser must be able to load
     // the shell, or there is nowhere to type a password. `index.html` and the
     // hashed bundles say nothing about the machine they are served from; the
     // three documentation paths do, so they are carved back out.
     (method == Method::GET || method == Method::HEAD) && !path.starts_with("/api/") && !DOC_PATHS.contains(&path)
-}
-
-/// The A2A server's paths: `/a2a` and everything under it.
-fn is_a2a(path: &str) -> bool {
-    path == "/a2a" || path.starts_with("/a2a/")
 }
 
 /// The `/embed/{id}` prefix, matched exactly as
@@ -1024,11 +953,8 @@ mod tests {
         let local6: std::net::SocketAddr = "[::1]:5000".parse().unwrap();
         let remote: std::net::SocketAddr = "192.168.1.9:5000".parse().unwrap();
         assert_eq!(
-            with(&cred, "d-abc").bridged_identity(&cred, Some(local)),
-            Some(BridgedDevice {
-                id: "d-abc".into(),
-                a2a: false
-            })
+            with(&cred, "d-abc").bridged_identity(&cred, Some(local)).map(|i| i.username),
+            Some("cloud:d-abc".to_string())
         );
         assert!(with(&cred, "d-abc").bridged_identity(&cred, Some(local6)).is_some());
         assert_eq!(with(&cred, "d-abc").bridged_identity(&cred, Some(remote)), None, "not from loopback");
@@ -1040,144 +966,6 @@ mod tests {
         );
         assert_eq!(HeaderMap::new().bridged_identity(&cred, Some(local)), None);
         assert_eq!(with(&cred, "").bridged_identity(&cred, Some(local)), None, "no device");
-    }
-
-    /// `docs/a2a.md` §7.3: the A2A proxy's mark counts only beside this
-    /// boot's credential from loopback, exactly as the bridge writes it, and
-    /// once; any other kind, or a second of any of the three headers, makes
-    /// the request nobody's.
-    #[test]
-    fn the_a2a_mark_counts_only_beside_the_agents_credential() {
-        use droppen_http::bridge::{CREDENTIAL_HEADER, DEVICE_HEADER, KIND_HEADER};
-        let cred = "ab".repeat(32);
-        let marked = |value: &str, kind: &str| {
-            let mut h = HeaderMap::new();
-            h.insert(CREDENTIAL_HEADER, HeaderValue::from_str(value).unwrap());
-            h.insert(DEVICE_HEADER, HeaderValue::from_static("p-1"));
-            h.insert(KIND_HEADER, HeaderValue::from_str(kind).unwrap());
-            h
-        };
-        let local: std::net::SocketAddr = "127.0.0.1:5000".parse().unwrap();
-        let remote: std::net::SocketAddr = "192.168.1.9:5000".parse().unwrap();
-        assert_eq!(
-            marked(&cred, "a2a").bridged_identity(&cred, Some(local)),
-            Some(BridgedDevice { id: "p-1".into(), a2a: true })
-        );
-        assert_eq!(marked(&cred, "a2a").bridged_identity(&cred, Some(remote)), None, "not from loopback");
-        assert_eq!(
-            marked(&"cd".repeat(32), "a2a").bridged_identity(&cred, Some(local)),
-            None,
-            "another boot's credential"
-        );
-        for kind in ["A2A", "a2a ", "full", ""] {
-            assert_eq!(marked(&cred, kind).bridged_identity(&cred, Some(local)), None, "{kind:?}");
-        }
-        for name in [CREDENTIAL_HEADER, DEVICE_HEADER, KIND_HEADER] {
-            let mut twice = marked(&cred, "a2a");
-            let first = twice.get(name).unwrap().clone();
-            twice.append(name, first);
-            assert_eq!(twice.bridged_identity(&cred, Some(local)), None, "{name} twice");
-        }
-    }
-
-    /// The guard behind the bridge (`docs/a2a.md` §7.3): an A2A proxy bridged
-    /// in reaches `/a2a/*` and nothing else, as a [`BridgedDevice`] and no
-    /// login; any other device bridged in reaches everything but `/a2a/*`,
-    /// as its login and a [`BridgedDevice`]; the mark without the credential
-    /// is nobody's. No handler sees any of the three headers.
-    #[tokio::test]
-    async fn the_guard_confines_an_a2a_proxy_to_the_a2a_routes() {
-        use droppen_http::bridge::{CREDENTIAL_HEADER, DEVICE_HEADER, KIND_HEADER};
-        use gotcha::axum::body::Body;
-        use tower_service::Service;
-
-        /// What the handler finds in its request: its bridged device, its
-        /// login, and whether any of the bridge's headers is still there.
-        async fn found(request: Request) -> String {
-            let extensions = request.extensions();
-            let headers = request.headers();
-            format!(
-                "{:?} {:?} {}",
-                extensions.get::<BridgedDevice>().map(|d| (d.id.clone(), d.a2a)),
-                extensions.get::<AuthIdentity>().map(|i| i.username.clone()),
-                [CREDENTIAL_HEADER, DEVICE_HEADER, KIND_HEADER]
-                    .iter()
-                    .any(|name| headers.contains_key(*name)),
-            )
-        }
-
-        let home = tempfile::tempdir().expect("tempdir");
-        let (_, auth) = auth_at(home.path());
-        auth.users
-            .add("ada", "correct horse battery staple")
-            .await
-            .expect("an account: logins are asked for");
-        let credential = auth.internal_credential().to_string();
-        let mut router = gotcha::axum::Router::new()
-            .route("/a2a/agents/main/jsonrpc", gotcha::axum::routing::post(found))
-            .route("/api/settings", gotcha::axum::routing::get(found))
-            .route("/api/sessions/new", gotcha::axum::routing::post(found))
-            .layer(layer(auth.clone()));
-        /// One request from a loopback peer: its status and body.
-        async fn call(router: &mut gotcha::axum::Router, method: &str, path: &str, headers: &[(&str, &str)]) -> (StatusCode, String) {
-            let mut request = gotcha::axum::http::Request::builder().method(method).uri(path);
-            for (name, value) in headers {
-                request = request.header(*name, *value);
-            }
-            let mut request = request.body(Body::empty()).expect("request");
-            request.extensions_mut().insert(gotcha::axum::extract::ConnectInfo(
-                "127.0.0.1:50000".parse::<std::net::SocketAddr>().unwrap(),
-            ));
-            let response = router.call(request).await.expect("infallible");
-            let status = response.status();
-            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 16).await.expect("body");
-            (status, String::from_utf8_lossy(&body).into_owned())
-        }
-        let proxy = [(CREDENTIAL_HEADER, credential.as_str()), (DEVICE_HEADER, "p-1"), (KIND_HEADER, "a2a")];
-        let device = [(CREDENTIAL_HEADER, credential.as_str()), (DEVICE_HEADER, "d-1")];
-
-        assert_eq!(
-            call(&mut router, "POST", "/a2a/agents/main/jsonrpc", &proxy).await,
-            (StatusCode::OK, r#"Some(("p-1", true)) None false"#.to_string()),
-            "a proxy, typed, and no login"
-        );
-        for (method, path) in [("GET", "/api/settings"), ("POST", "/api/sessions/new"), ("GET", "/"), ("GET", "/a2a2/x")] {
-            let (status, _) = call(&mut router, method, path, &proxy).await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
-        }
-        assert_eq!(
-            call(&mut router, "GET", "/api/settings", &device).await,
-            (StatusCode::OK, r#"Some(("d-1", false)) Some("cloud:d-1") false"#.to_string()),
-            "any other device: its login, and typed"
-        );
-        assert_eq!(
-            call(&mut router, "POST", "/a2a/agents/main/jsonrpc", &device).await.0,
-            StatusCode::FORBIDDEN,
-            "no A2A for it"
-        );
-        // The mark alone is nobody's: no credential, nothing bridged. The A2A
-        // server, which checks its own credentials, hears of no device and no
-        // login, and stripped headers.
-        assert_eq!(
-            call(
-                &mut router,
-                "POST",
-                "/a2a/agents/main/jsonrpc",
-                &[(DEVICE_HEADER, "p-1"), (KIND_HEADER, "a2a")],
-            )
-            .await,
-            (StatusCode::OK, "None None false".to_string())
-        );
-        // A local login is no caller there either.
-        let login = auth.sessions.issue(LOCAL_OWNER, None).await.expect("a login").token;
-        let bearer = format!("Bearer {login}");
-        assert_eq!(
-            call(&mut router, "POST", "/a2a/agents/main/jsonrpc", &[("authorization", bearer.as_str())]).await,
-            (StatusCode::OK, "None None false".to_string()),
-            "no login is resolved on /a2a"
-        );
-        let (status, _) = call(&mut router, "GET", "/api/settings", &[(DEVICE_HEADER, "p-1"), (KIND_HEADER, "a2a")]).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     /// What a long-lived socket waits on: nothing for a socket no login

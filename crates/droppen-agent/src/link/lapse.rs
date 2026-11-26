@@ -5,7 +5,6 @@ use std::time::Duration;
 use droppen_proto::chain::{Attestation, ChainClock, ChainError, ChainState};
 use droppen_proto::driver::Channel;
 use droppen_proto::frame::Frame;
-use droppen_proto::handshake::Access;
 use tokio::sync::mpsc;
 
 use super::admit::refuse;
@@ -47,11 +46,6 @@ pub(crate) fn on_removed(shared: &Arc<Shared>, why: &str) {
 /// this machine stops running AI (`SetHost false`): "who may control me" holds
 /// for open channels, not only new ones ([`droppen_proto::chain::ChainState::may_control`]).
 ///
-/// An A2A proxy's channel (`docs/a2a.md` §7.3) is held to what let it in, as
-/// any other is: once this machine no longer takes A2A calls from it
-/// (`SetA2aAccept`, its removal, this machine no longer running AI), it closes
-/// ([`Access::check`]).
-///
 /// Host identity renewal (`docs/host-identity-rotation.md` §3.5, §8 item 8):
 /// also every channel whose device's static key is not the one the chain
 /// names for it now — a host that renewed its identity key opened it with
@@ -63,16 +57,13 @@ pub(crate) fn drop_removed(shared: &Arc<Shared>, routes: &mut Routes, out: &mpsc
         let Some(chain) = st.chain.as_ref() else { return };
         routes
             .iter()
-            .filter_map(|(ch, (device, key, _, access))| {
+            .filter_map(|(ch, (device, key, _))| {
                 let why = if chain.device(device).is_none() {
                     Gone::Removed
-                } else if access.check(chain, device, &st.machine).is_err() {
-                    // A pause takes control away; say so, rather than a narrowing.
-                    if chain.paused_edges(&st.machine).iter().any(|id| id == device) {
-                        Gone::Paused
-                    } else {
-                        Gone::NotAccepted(*access)
-                    }
+                } else if chain.paused_edges(&st.machine).iter().any(|id| id == device) {
+                    Gone::Paused
+                } else if chain.may_control(device, &st.machine).is_err() {
+                    Gone::NotAccepted
                 } else if !chain.holds_named_key(device, key) {
                     Gone::Renewed
                 } else {
@@ -89,13 +80,9 @@ pub(crate) fn drop_removed(shared: &Arc<Shared>, routes: &mut Routes, out: &mpsc
                 tracing::info!(%device, ch, "closing the channel of a device the chain no longer lists");
                 refuse(out, ch, 4403, "this device was removed from the account");
             }
-            Gone::NotAccepted(Access::Full) => {
+            Gone::NotAccepted => {
                 tracing::info!(%device, ch, "closing the channel of a device this machine no longer accepts control from");
                 refuse(out, ch, 4403, "the device you reach no longer accepts control from this one");
-            }
-            Gone::NotAccepted(Access::A2aOnly) => {
-                tracing::info!(%device, ch, "closing the channel of an A2A proxy this machine no longer takes A2A calls from");
-                refuse(out, ch, 4403, "the device you reach no longer takes A2A calls from this A2A proxy");
             }
             Gone::Paused => {
                 tracing::info!(%device, ch, "closing the channel of a device whose control is paused while identity keys are renewed");
@@ -321,15 +308,13 @@ impl ChannelLapse {
     }
 }
 
-/// Whether the device of `lapse`, its channel admitted for `access`, may
-/// still have it at `now`: the chain still lets it in so
-/// ([`droppen_proto::chain::ChainState::may_control`] for control,
-/// [`droppen_proto::chain::ChainState::may_call_a2a`] for an A2A proxy:
-/// [`Access::check`]) and its channel has not lapsed.
-pub(crate) fn still_controls(shared: &Shared, lapse: &Mutex<ChannelLapse>, access: Access, now: u64) -> bool {
+/// Whether the device of `lapse` may still control this machine at `now`:
+/// the chain lets it ([`droppen_proto::chain::ChainState::may_control`]) and its
+/// control has not lapsed.
+pub(crate) fn still_controls(shared: &Shared, lapse: &Mutex<ChannelLapse>, now: u64) -> bool {
     let st = shared.state.lock().expect("agent state");
     let mut lapse = lapse.lock().expect("channel lapse");
-    let may = st.chain.as_ref().is_some_and(|c| access.check(c, &lapse.device, &st.machine).is_ok());
+    let may = st.chain.as_ref().is_some_and(|c| c.may_control(&lapse.device, &st.machine).is_ok());
     lapse.holds(&st, now) && may
 }
 
@@ -353,14 +338,13 @@ pub(crate) fn close_lapsed(channel: &Channel, device: &str, ch: u32) {
 /// Forget the routes of channels that ended here (a lapse, a protocol
 /// error): neither the hub nor a relay echoes the `CLOSE` this agent sent.
 pub(crate) fn drop_ended(routes: &mut Routes) {
-    routes.retain(|_, (_, _, route, _)| !route.is_closed());
+    routes.retain(|_, (_, _, route)| !route.is_closed());
 }
 
 /// Why [`drop_removed`] closes a channel.
 pub(crate) enum Gone {
     Removed,
-    /// The chain no longer lets it in as its channel was admitted.
-    NotAccepted(Access),
+    NotAccepted,
     /// An open renewal pause removes it from this host's effective accept
     /// (§3.4 rule 10): it comes back once the pause ends.
     Paused,

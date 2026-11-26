@@ -4,8 +4,7 @@
 //! because code that may not depend on the guard reads it too: the
 //! desktop-window gate (`app_window`) asks whether a request's caller is
 //! signed in. [`NotifyGrant`] sits here for the same reason: the guard inserts
-//! it and notify reads it back, and neither may name the other. So does
-//! [`BridgedDevice`], which the A2A server reads.
+//! it and notify reads it back, and neither may name the other.
 
 use std::any::Any;
 use std::sync::Arc;
@@ -23,24 +22,6 @@ pub struct AuthIdentity {
     /// one — or, for a request authorized by a ticket, of the session that
     /// minted the ticket (`None` for a ticket no session minted).
     pub token_sha256: Option<String>,
-}
-
-/// The device a request was bridged from (`crate::bridge`): the device id
-/// the agent's end-to-end channel was authorised for, and whether that device
-/// is an A2A proxy (`docs/a2a.md` §7.3).
-///
-/// Put in the request extensions by the guard (the server's `auth::guard`)
-/// for every bridged request, beside the [`AuthIdentity`] `cloud:<id>` of any
-/// other device; an A2A proxy gets this alone — it is no login, and reaches
-/// nothing but `/a2a/*` — so code that asks which device a request came
-/// from, or whether it is an A2A proxy, reads this rather than a string
-/// prefix.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BridgedDevice {
-    /// Its device id, as the account's device chain names it.
-    pub id: String,
-    /// It is an A2A proxy: its channel was admitted for A2A calls only.
-    pub a2a: bool,
 }
 
 /// What the notify capability proved about a request, which the guard (the
