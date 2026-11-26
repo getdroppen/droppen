@@ -10,10 +10,18 @@ on the release Mac, published at
 [getdroppen/releases](https://github.com/getdroppen/releases), and have no
 attestations ([The move from getdroppen/releases](#the-move-from-getdroppenreleases)).
 
+A stable release (`vX.Y.Z`) is cut from a commit on main. A prerelease
+(`vX.Y.Z-rc.N`) can be cut from an open pull request's branch instead, so a
+branch is tried without merging it ([An RC from a pull
+request](#an-rc-from-a-pull-request)).
+
 ## Who can publish, what is attested
 
 - **Who can publish.** Only a run of `release.yml` for a `v*` tag of a commit
-  on main (the workflow checks the commit is on main), and only once a person
+  on main (a stable release), or for a `vX.Y.Z-rc.N` tag of a commit on an
+  open pull request's branch from this repository to main (an RC prerelease;
+  the workflow checks both, [An RC from a pull request](#an-rc-from-a-pull-request)),
+  and only once a person
   has approved it: the one job that holds the secrets and signs, `release`,
   runs in the protected `release` environment, whose required reviewer is
   the owner and which deploys only for `v*` tags and main (dry runs); GitHub
@@ -23,7 +31,8 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
   token with `contents: write`, in that job only; there is no other token
   that can write a release.
 - **What is published.** One release per tag, made once: a draft with every
-  file, checked, then published and marked latest. Releases are immutable:
+  file, checked, then published and marked latest (a prerelease is marked
+  prerelease instead, never latest). Releases are immutable:
   nothing is added, replaced or deleted afterwards, so a bad release is
   fixed forward with a new version (`desktop/SIGNING.md`, "Rollback").
 - **What is attested.** Every file the release publishes: the server
@@ -114,7 +123,9 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
 
    The tag must be the version in `crates/droppen-server/Cargo.toml` at that commit,
    and the commit must be on main: the workflow refuses to publish anything
-   else. A run of *release* for the tag shows up under *Actions* within a
+   else. An RC instead tags a commit on an open pull request's branch, without
+   merging it ([An RC from a pull request](#an-rc-from-a-pull-request)). A run
+   of *release* for the tag shows up under *Actions* within a
    minute. If none does (a skip marker in the commit's message, or GitHub
    dropping the event), start it on the tag yourself; on a tag, with
    `dry_run` unticked, it is the release:
@@ -146,11 +157,59 @@ server-only releases after it until the next app
 the workflow runs (`desktop/SIGNING.md`, "Making a release"), which remain
 the fallback whenever GitHub Actions cannot be used.
 
+## An RC from a pull request
+
+A prerelease, `vX.Y.Z-rc.N`, may be released from an open pull request's
+branch, so the branch is built, signed and published through the real release
+path without merging it. A stable release still has to be on main; **a stable
+release from a branch is not supported yet**.
+
+An RC is **server-only**: its notes must not name `Droppen-X.Y.Z.dmg` nor the
+Linux app's files, or the workflow would look for an app it does not ship. Its
+notes carry the bilingual banner, the phrases `test release` and `测试版本`,
+so it reads as a test in both languages.
+
+1. On the branch, write `docs/releases/vX.Y.Z-rc.N.md` with that banner, and
+   change nothing else about the app.
+2. Bump `version` in `crates/droppen-server/Cargo.toml` (and the
+   `droppen-server` entry in `Cargo.lock`) to `X.Y.Z-rc.N`.
+3. Commit and push the branch. Its pull request to main must be open, and its
+   checks green before you tag.
+4. Tag the reviewed commit, `vX.Y.Z-rc.N`, and push the tag. Tag the commit,
+   not the branch: a re-run after the branch moved on still releases the
+   commit that was reviewed.
+5. Approve the run once, on the run's page, as for a release.
+6. The run publishes a prerelease: built, signed, attested and published like
+   a release, but marked prerelease, so it never becomes the latest release
+   and does not move `latest.json`. Installed servers take it with
+   `DROPPEN_VERSION=vX.Y.Z-rc.N` on the installer.
+7. Fix a bad RC forward with the next `rc.N+1`; never move or re-create a
+   published tag. A version must not be older than the newest existing
+   `vX.Y.Z-rc.*` tag (an equal one is allowed, for a re-run of the same tag).
+
+`scripts/cut-rc.sh vX.Y.Z-rc.N` does steps 2–4: it checks the branch, the open
+pull request, that the version is not older than the newest RC and the tag
+does not exist, and the notes' banner and server-only content, then bumps,
+commits signed-off, pushes, tags and pushes the tag. Its test is in CI.
+
+**The trust note.** An RC is released from a branch, so the `release` job —
+the one holding the secrets — runs that branch's scripts
+(`desktop/notarise.sh`, `desktop/updater-artifacts.sh`, the text checks,
+`install.sh`), before anything is merged or reviewed as main's. Review the
+`main...head` diff before you approve, especially the signing-sensitive
+paths: `.github/scripts/`, `.github/workflows/`, `scripts/` and `install.sh`.
+The run's admission summary lists any of them the branch changes; that listing
+informs the approval, it does not replace it.
+
+A fork's pull request is refused: its branch is not this repository's, so the
+scripts are not reviewed as this repository's; push the branch here. A pull
+request to a branch other than main is refused too.
+
 ## What the workflow does
 
 | job | runner | holds | what |
 |---|---|---|---|
-| `meta` | Linux | nothing | the version (the tag, or the source's for a dry run), whether it publishes (a `v*` tag of a commit on main), whether it has the app and the Linux app (the notes' four Linux files, beside the DMG; the `.deb`'s maintainer no placeholder for a release; the Linux image's Rust this workflow's) |
+| `meta` | Linux | nothing | the version (the tag, or the source's for a dry run), whether it publishes (a `v*` tag of a commit on main, or an RC tag of a commit on an open pull request to main from this repository), whether it has the app and the Linux app (the notes' four Linux files, beside the DMG; the `.deb`'s maintainer no placeholder for a release; the Linux image's Rust this workflow's) |
 | `web` | Linux | nothing | the public web build, once, for every binary to embed |
 | `tools` | Linux | nothing | cargo-about and tauri-cli for the build jobs: upstream's release files, each checked against `.github/release-tools.lock` (nothing built) |
 | `signer` | macOS | nothing | `droppen-update-signer` (`desktop/update-signer`, with its format tests) and `droppen-update-manifest`, built from this repository's locked sources, for the `release` job |
