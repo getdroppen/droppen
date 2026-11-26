@@ -84,7 +84,7 @@ all_tags=$(
   git tag -l "v$base-rc.*"
   git ls-remote --tags origin "refs/tags/v$base-rc.*" | sed -n 's|^[0-9a-f]*[[:space:]]*refs/tags/||p' | sed 's|\^{}$||'
 ) || die "cannot read the tags of origin"
-all_tags=$(printf '%s\n' "$all_tags" | sed '/^$/d')
+all_tags=$(printf '%s\n' "$all_tags" | sed '/^$/d' | grep -E "^v$base-rc\.[0-9]+\$" || true)
 newest=$(printf '%s\n' "$all_tags" | sort -V | tail -n 1)
 if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$tag" | sort -V | tail -n 1)" != "$tag" ]; then
   die "$tag is older than $newest: an RC of $base continues from it"

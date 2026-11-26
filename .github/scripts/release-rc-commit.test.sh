@@ -9,6 +9,7 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/release-rc-commit-test.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 PASSED=0
 FAILED=0
+N=0
 ok() { PASSED=$((PASSED + 1)); }
 fail() { FAILED=$((FAILED + 1)); echo "FAIL: $*" >&2; }
 
@@ -94,6 +95,63 @@ grep -q '::error::.*not to main' "$OUT" && ok || fail "says the base is not main
 run 0 "one qualifying pull request among others" "$SHA" \
   "$(pr_json 48 closed main "$REPO")" "$(pr_json 49 open main someone/droppen)" "$(pr_json 50 open main "$REPO")"
 grep -q '#50' "$OUT" && ok || fail "picks the qualifying pull request"
+
+# --- merged pull requests ---------------------------------------------------
+# A squash merge leaves the tagged branch commit on no main: the script takes
+# a merged pull request only if this commit is behind its head and its merge
+# commit is on origin/main, from real git.
+
+mbegin() { # a bare origin and a clone, a main branch and feat as the PR head
+  N=$((N + 1))
+  MORIGIN=$TMP/morigin-$N.git
+  MREPO=$TMP/mclone-$N
+  PRNO=$((N + 50))
+  git init -q --bare "$MORIGIN"
+  git clone -q "$MORIGIN" "$MREPO" 2>/dev/null
+  cd "$MREPO"
+  git config user.email test@example.com
+  git config user.name Test
+  echo base > f; git add f; git commit -q -m base; git push -q origin HEAD:main
+  git checkout -q -b feat; echo b > b; git add b; git commit -q -m b; git push -q origin feat
+  MSHA=$(git rev-parse HEAD)
+  git push -q origin "HEAD:refs/pull/$PRNO/head"
+  git checkout -q main; echo m > m; git add m; git commit -q -m merge; git push -q origin main
+  MMERGE=$(git rev-parse HEAD)
+  git checkout -q feat
+  git fetch -q origin
+}
+
+merged_pr_json() { # number, merge commit sha, head repository
+  printf '{"number":%s,"state":"closed","merged_at":"2026-01-01T00:00:00Z","merge_commit_sha":"%s","base":{"ref":"main"},"head":{"repo":{"full_name":"%s"}},"html_url":"https://github.com/getdroppen/droppen/pull/%s"}' \
+    "$1" "$2" "$3" "$1"
+}
+
+mbegin
+run 0 "a merged pull request" "$MSHA" "$(merged_pr_json "$PRNO" "$MMERGE" "$REPO")"
+grep -q 'was merged in pull request' "$OUT" && ok || fail "accepts a merged pull request"
+
+mbegin
+git checkout -q -b later; echo l > l; git add l; git commit -q -m later
+git push -q origin "HEAD:refs/pull/$PRNO/head"
+run 0 "a commit behind a merged pull request's head" "$MSHA" "$(merged_pr_json "$PRNO" "$MMERGE" "$REPO")"
+grep -q 'was merged in pull request' "$OUT" && ok || fail "accepts a commit the merged head carries"
+
+mbegin
+run 1 "a merged pull request whose merge is not on main" "$MSHA" "$(merged_pr_json "$PRNO" 1111111111111111111111111111111111111111 "$REPO")"
+grep -q 'did not take it into main' "$OUT" && ok || fail "refuses a merge that is not on main"
+
+mbegin
+git checkout -q -b other; echo o > o; git add o; git commit -q -m other
+run 1 "a commit ahead of the merged pull request's head" "$(git rev-parse HEAD)" "$(merged_pr_json "$PRNO" "$MMERGE" "$REPO")"
+grep -q 'did not take it into main' "$OUT" && ok || fail "refuses a commit the merged head does not carry"
+
+mbegin
+run 1 "a merged pull request from a fork" "$MSHA" "$(merged_pr_json "$PRNO" "$MMERGE" someone/droppen)"
+grep -q 'not from' "$OUT" && ok || fail "refuses a merged fork"
+
+mbegin
+run 1 "a closed, unmerged pull request" "$MSHA" "$(pr_json "$PRNO" closed main "$REPO")"
+grep -q 'did not take it into main' "$OUT" && ok || fail "refuses a closed, unmerged pull request"
 
 # A sha that is not 40 hexadecimal digits fails before any API call.
 run 1 "a short sha" 94a4ffd

@@ -12,17 +12,18 @@ attestations ([The move from getdroppen/releases](#the-move-from-getdroppenrelea
 
 A stable release (`vX.Y.Z`) is cut from a commit on main. A prerelease
 (`vX.Y.Z-rc.N`) can be cut from an open pull request's branch instead, so a
-branch is tried without merging it; a commit on main is accepted for an rc
-too, which is how a merged rc is re-run ([An RC from a pull
-request](#an-rc-from-a-pull-request)).
+branch is tried without merging it; a commit on main, or on a pull request
+already merged into main, is accepted for an rc too, which is how a merged rc
+is re-run ([An RC from a pull request](#an-rc-from-a-pull-request)).
 
 ## Who can publish, what is attested
 
 - **Who can publish.** Only a run of `release.yml` for a `v*` tag of a commit
-  on main (a stable release), or for a `vX.Y.Z-rc.N` tag of a commit on main
-  or on an open pull request's branch from this repository to main (an RC
-  prerelease; the workflow checks both, [An RC from a pull
-  request](#an-rc-from-a-pull-request)), and only once a person
+  on main (a stable release), or for a `vX.Y.Z-rc.N` tag of a commit on main,
+  on a pull request merged into main, or on an open pull request's branch from
+  this repository to main (an RC prerelease; the workflow checks all three,
+  [An RC from a pull request](#an-rc-from-a-pull-request)), and only once a
+  person
   has approved it: the one job that holds the secrets and signs, `release`,
   runs in the protected `release` environment, whose required reviewer is
   the owner and which deploys only for `v*` tags and main (dry runs); GitHub
@@ -177,8 +178,8 @@ reads as a test in both languages.
 2. Bump `version` in `crates/droppen-server/Cargo.toml` (and the
    `droppen-server` entry in `Cargo.lock`) to `X.Y.Z-rc.N`.
 3. Commit and push the branch. Its pull request to main must be open, and its
-   checks green before you tag. (An rc whose pull request has already merged is
-   on main, and needs no open pull request to re-run.)
+   checks green before you tag. (An rc on a commit already merged, or on main,
+   needs no open pull request to re-run.)
 4. Tag the reviewed commit, `vX.Y.Z-rc.N`, and push the tag. Tag the commit,
    not the branch: a re-run after the branch moved on still releases the
    commit that was reviewed.
@@ -200,7 +201,8 @@ commits signed-off, pushes, tags and pushes the tag. Its test is in CI.
 the one holding the secrets — runs that branch's scripts
 (`desktop/notarise.sh`, `desktop/updater-artifacts.sh`, the text checks,
 `install.sh`), before anything is merged or reviewed as main's. Review the
-pull request's diff before you approve, especially the signing-sensitive
+pull request's diff — or, for an rc on main, the commits it adds — before you
+approve, especially the signing-sensitive
 paths: `.github/scripts/`, `.github/workflows/`, `scripts/` and `install.sh`.
 The run's admission summary lists any of them the branch changes; that listing
 informs the approval, it does not replace it.
