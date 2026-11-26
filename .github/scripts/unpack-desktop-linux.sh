@@ -38,7 +38,7 @@ esac
 : "${LINUX_X86_64_SHA:?}" "${LINUX_AARCH64_SHA:?}" "${ALLOW_DESKTOP_LINUX:?}"
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
-[[ "$PLAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "$PLAIN is not a version"
+[[ "$PLAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "$PLAIN is not a version"
 if [ -e "$DEST" ] && [ -n "$(ls -A "$DEST")" ]; then die "$DEST is not empty"; fi
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 UNPACK=$ROOT/.github/scripts/unpack-artifact.sh

@@ -57,7 +57,7 @@ else
     || die "DROPPEN_RELEASE_NOTICE_ALLOW may only spell out whole third-party copyright lines, each ^Copyright …\$ with its metacharacters escaped"
 fi
 
-[[ "$PLAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "$PLAIN is not a version"
+[[ "$PLAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "$PLAIN is not a version"
 [ -d "$DIR" ] || die "$DIR is not a directory"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/release-text-check-linux.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
