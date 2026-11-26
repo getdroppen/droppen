@@ -249,9 +249,9 @@ impl ProviderRegistry {
     /// `None` when none is registered.
     ///
     /// The type does not hold the lend: any code that can name `P` can call
-    /// this. A source scan does (`only_the_providers_reach_the_spawn_gate`):
-    /// outside this file, only the ACP agent routes' `AcpAgentState::gate`
-    /// names it.
+    /// this. A source scan does (`the_scans_agree`, through
+    /// `only_the_providers_reach_the_spawn_gate`): outside this file, only the
+    /// ACP agent routes' `AcpAgentState::gate` names it.
     pub fn provider_with_gate<P: Provider + 'static>(&self) -> Option<(&P, &SpawnGate)> {
         Some((self.provider::<P>()?, &self.gate))
     }

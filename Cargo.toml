@@ -47,3 +47,17 @@ await_holding_lock = "deny"
 opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
+
+# The tests are the same story, only more so: the vector generators verify
+# thousands of Ed25519 signatures, the link simulations encrypt tens of
+# megabytes, and the source scans `syn`-parse the whole tree. Unoptimized,
+# that tail is the whole server job (issue #671: the three vector tests alone
+# took 124-131s each in CI). Optimizing the dependencies alone, as for argon2
+# above, leaves this workspace's code a debug build — a backtrace through it
+# is still one — while the crypto and the parser stop dominating; the three
+# vector tests drop from 25s to a fraction of a second and the suite more than
+# halves.
+# `"*"` does not match workspace members, which is the point: the `dev`
+# profile and this workspace's own code stay unoptimized.
+[profile.test.package."*"]
+opt-level = 1

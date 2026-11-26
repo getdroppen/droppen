@@ -112,7 +112,7 @@ pub(crate) fn pak(f: &Fixture, slot: &str, seed: u64, cred: u8, self_activate: b
 /// device is an admin, a limited one a plain device, a machine a host that is
 /// not an admin, a recovered device a pending admin — and the v2 views
 /// (`device`, `machine`) say what they said before. (Byte-identical replay of
-/// the v2 vectors is `vectors::rust_vectors_are_current`; the same mapping in
+/// the v2 vectors is `vectors::the_vectors_are_current_and_labelled`; the same mapping in
 /// TypeScript is checked against `chain.v3.state` there.)
 #[test]
 fn c1_a_v2_chain_maps_onto_devices_with_flags() {

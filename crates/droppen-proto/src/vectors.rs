@@ -1,7 +1,9 @@
 //! Interop vectors between this crate and the browser half (`web/src/lib/e2e/`).
 //!
 //! - `vectors/rust.json` is generated here, deterministically, and checked in.
-//!   [`rust_vectors_are_current`] fails when the code and the file disagree;
+//!   [`the_vectors_are_current_and_labelled`] fails when the code and the file
+//!   disagree, or when a case it labels as refused is not refused with that
+//!   label;
 //!   `DROPPEN_PROTO_WRITE_VECTORS=1 cargo test -p droppen-proto --lib vectors` rewrites
 //!   it. The TypeScript tests replay it: they must produce the same bytes where
 //!   the operation is deterministic (frames, the Noise handshake with fixed
@@ -824,6 +826,23 @@ pub(crate) fn verify_label(entries: &[Value]) -> Result<ChainState, &'static str
     ChainState::verify(&decoded, None, &mut ChainClock::history()).map_err(|e| chain_error_kind(&e))
 }
 
+/// [`verify_label`] and the `notAllowed` rule of the refusal, from the same
+/// verification. The generators need both, and used to verify each invalid
+/// chain twice (three times with the `rule` in their JSON), which at debug
+/// codegen was most of their cost (issue #671).
+fn check_label(entries: &[Value]) -> (Result<ChainState, &'static str>, Option<&'static str>) {
+    let decoded = entries.iter().map(|e| Entry::decode(&hexv(e))).collect::<Result<Vec<_>, _>>();
+    let decoded = match decoded {
+        Ok(decoded) => decoded,
+        Err(error) => return (Err(chain_error_kind(&error)), None),
+    };
+    match ChainState::verify(&decoded, None, &mut ChainClock::history()) {
+        Ok(state) => (Ok(state), None),
+        Err(error @ ChainError::NotAllowed { reason, .. }) => (Err(chain_error_kind(&error)), Some(reason)),
+        Err(error) => (Err(chain_error_kind(&error)), None),
+    }
+}
+
 /// A v3 state as both halves' vectors write it: every device with its flags
 /// and history, the current hosts and admins, the passkey slots, and — for
 /// `hosts` — the accept policy and the committed machine key epochs.
@@ -1226,7 +1245,7 @@ fn chain_v3_vectors() -> Value {
     };
 
     // Invalid chains: a valid prefix and one bad entry (or bad bytes).
-    let mut invalid: Vec<(String, Vec<Value>, &str)> = Vec::new();
+    let mut invalid: Vec<(String, Vec<Value>, &'static str)> = Vec::new();
     // The rule each `notAllowed` case is about (review finding 10): the
     // reason it must be refused with, on both halves.
     let mut rule_of: Vec<(String, &'static str)> = Vec::new();
@@ -1705,12 +1724,18 @@ fn chain_v3_vectors() -> Value {
         let g = crate::chain::genesis3_draft("acct-3", ak, dev3("dev-g", &extra(6), true, false), None, 1).sign(&f.ak);
         invalid.push(("a v3 genesis without an admin".into(), vec![h(&g.encode())], "notAllowed"));
     }
-    for (name, es, error) in &invalid {
-        assert_eq!(verify_label(es).err(), Some(*error), "{name}");
-        if let Some((_, rule)) = rule_of.iter().find(|(n, _)| n == name) {
-            assert_eq!(not_allowed_reason(es), Some(*rule), "{name}");
-        }
-    }
+    // Check each invalid chain once, and keep the reason for the JSON.
+    let checked: Vec<(String, Vec<Value>, &'static str, Option<&'static str>)> = invalid
+        .drain(..)
+        .map(|(name, es, error)| {
+            let (got, reason) = check_label(&es);
+            assert_eq!(got.err(), Some(error), "{name}");
+            if let Some((_, rule)) = rule_of.iter().find(|(n, _)| n == &name) {
+                assert_eq!(reason, Some(*rule), "{name}");
+            }
+            (name, es, error, reason)
+        })
+        .collect();
 
     // A v3 genesis chain: an admin first device and its user key (a host
     // cannot be an admin while hosts neither attest nor sign, D1).
@@ -1840,7 +1865,7 @@ fn chain_v3_vectors() -> Value {
         "keys": {"userKey": h(&uk0), "m1": h(&mk_m1), "m1b": h(&mk_m1_b), "h2": [h(&mk_h2_0), h(&mk_h2_1), h(&mk_h2_2)]},
         "state": v3_state_json(&state, &["m-1", "h-2"]),
         "control": control,
-        "invalid": invalid.iter().map(|(name, es, error)| json!({"name": name, "entries": es, "error": error, "rule": not_allowed_reason(es)})).collect::<Vec<_>>(),
+        "invalid": checked.iter().map(|(name, es, error, reason)| json!({"name": name, "entries": es, "error": error, "rule": reason})).collect::<Vec<_>>(),
         "passkeyReplace": passkey_replace,
         "genesis3": {"entries": entries_json(g_state.entries()), "head": h(&g_state.head()), "device": "d-first"},
         "passkeyActivation": {
@@ -2597,11 +2622,17 @@ fn host_rotation_vectors() -> Value {
         es.push(h(&b));
         invalid.push((name.into(), es, "decode"));
     }
-    for (name, es, error) in &invalid {
-        assert_eq!(verify_label(es).err(), Some(*error), "{name}");
-        let rule = rule_of.iter().find(|(n, _)| n == name).map(|(_, r)| *r);
-        assert_eq!(not_allowed_reason(es), rule, "{name}");
-    }
+    // Check each invalid chain once, and keep the reason for the JSON.
+    let checked: Vec<(String, Vec<Value>, &'static str, Option<&'static str>)> = invalid
+        .drain(..)
+        .map(|(name, es, error)| {
+            let (got, reason) = check_label(&es);
+            assert_eq!(got.err(), Some(error), "{name}");
+            let rule = rule_of.iter().find(|(n, _)| n == &name).map(|(_, r)| *r);
+            assert_eq!(reason, rule, "{name}");
+            (name, es, error, reason)
+        })
+        .collect();
 
     // Disputes (§3.8 「证据：退役钥签的争议声明」): each renewal's statement by the key it retired, and statements that
     // must not verify against this chain.
@@ -2701,7 +2732,7 @@ fn host_rotation_vectors() -> Value {
                 "off": h(&policy_entries[base.len() + 4].encode()),
             },
         },
-        "invalid": invalid.iter().map(|(name, es, error)| json!({"name": name, "entries": es, "error": error, "rule": not_allowed_reason(es)})).collect::<Vec<_>>(),
+        "invalid": checked.iter().map(|(name, es, error, reason)| json!({"name": name, "entries": es, "error": error, "rule": reason})).collect::<Vec<_>>(),
         "labels": {
             "hostRotate": String::from_utf8_lossy(crate::sig::HOST_ROTATE),
             "rotateAck": String::from_utf8_lossy(crate::sig::ROTATE_ACK),
@@ -3281,27 +3312,36 @@ pub(crate) fn rust_vectors() -> Value {
     })
 }
 
+/// The checked-in vectors are current, their negative cases fail with the
+/// error they are labelled with, and the `DR1-`/`DRP1-` forms read as exactly
+/// what their `RH1-`/`RHP1-` forms do.
+///
+/// One test, one generation: `rust_vectors()` costs seconds (thousands of
+/// signature verifications), and every one of these checks needs the same
+/// tree. Three separate tests are three nextest processes, so they built it
+/// three times (issue #671).
 #[test]
-fn rust_vectors_are_current() {
+fn the_vectors_are_current_and_labelled() {
+    let v = rust_vectors();
     let path = dir().join("rust.json");
-    let generated = serde_json::to_string_pretty(&rust_vectors()).unwrap() + "\n";
+    let generated = serde_json::to_string_pretty(&v).unwrap() + "\n";
     if std::env::var("DROPPEN_PROTO_WRITE_VECTORS").as_deref() == Ok("1") {
         std::fs::create_dir_all(dir()).unwrap();
         std::fs::write(&path, &generated).unwrap();
-        return;
+    } else {
+        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            committed == generated,
+            "{} is out of date; regenerate it with DROPPEN_PROTO_WRITE_VECTORS=1 cargo test -p droppen-proto --lib vectors, then re-run the web tests",
+            path.display()
+        );
     }
-    let committed = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(
-        committed == generated,
-        "{} is out of date; regenerate it with DROPPEN_PROTO_WRITE_VECTORS=1 cargo test -p droppen-proto --lib vectors, then re-run the web tests",
-        path.display()
-    );
+    negative_cases_fail_as_labelled(&v);
+    dr_prefixed_texts_parse_to_the_same_values(&v);
 }
 
 /// The negative cases really fail, with the error they are labelled with.
-#[test]
-fn rust_vector_negative_cases_fail_as_labelled() {
-    let v = rust_vectors();
+fn negative_cases_fail_as_labelled(v: &Value) {
     for case in v["chain"]["invalid"].as_array().unwrap() {
         let entries: Vec<Entry> = case["entries"]
             .as_array()
@@ -3354,9 +3394,7 @@ fn rust_vector_utf8_strings_read_as_labelled() {
 
 /// The `DR1-` / `DRP1-` forms in the vectors read as exactly what their
 /// `RH1-` / `RHP1-` forms do.
-#[test]
-fn rust_vector_dr_prefixed_texts_parse_to_the_same_values() {
-    let v = rust_vectors();
+fn dr_prefixed_texts_parse_to_the_same_values(v: &Value) {
     let e = &v["identity"]["enroll"];
     let (written, dr) = (e["code"].as_str().unwrap(), e["codeDr"].as_str().unwrap());
     assert!(written.starts_with("RH1-") && dr.starts_with("DR1-") && written[4..] == dr[4..]);
