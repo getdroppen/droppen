@@ -298,8 +298,10 @@ jobs:
       # again for every feature set. `droppen-devkit`'s direct-path probe is a
       # feature the default build leaves out, named per package so the other
       # crates still build without it. The timeout keeps any future wedge to
-      # minutes, not the 6-hour cap.
-      - run: cargo nextest run --profile ci --workspace --features droppen-devkit/p2p-probe
+      # minutes, not the 6-hour cap. `--status-level slow` prints every test
+      # past the profile's period as it finishes, so a test's growth shows in
+      # the log instead of only in the step's total (issue #671).
+      - run: cargo nextest run --profile ci --workspace --features droppen-devkit/p2p-probe --status-level slow
         timeout-minutes: 20
       - run: scripts/check-sdk-crate-deps.sh
       # serde_json's `preserve_order` on for every member that reaches it

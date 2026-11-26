@@ -29,14 +29,11 @@ struct Source {
 
 impl Source {
     /// Every source file of the server and of every crate of its workspace,
-    /// but the gate's own and this one ([`Source::every`]).
-    fn all() -> Vec<Self> {
-        Self::every().into_iter().filter(|source| !source.is_gate_or_scan()).collect()
-    }
-
-    /// Every source file of the server and of every crate of its workspace.
-    /// Wherever the feed and the drive live, the scans read them as code that
-    /// can reach the base.
+    /// the gate's own and this one included: callers that want those out
+    /// filter with [`Source::is_gate_or_scan`].
+    ///
+    /// The one walk: it `syn`-parses ten megabytes, and six tests used to run
+    /// it six times as six processes (issue #671).
     fn every() -> Vec<Self> {
         fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
             for entry in std::fs::read_dir(dir).expect("read_dir").flatten() {
@@ -575,12 +572,27 @@ struct Exempt {
 /// borrow the gate from the registry.
 const GATE_NAMES: [&str; 4] = ["SpawnGate", "SpawnPermit", "SessionLease", "provider_with_gate"];
 
+/// Every scan below, against one walk of the workspace. Each assertion used
+/// to be its own test (its own process, its own ten-megabyte parse); the
+/// distinction between them is the rule, not the input (issue #671).
+#[test]
+fn the_scans_agree() {
+    let sources = Source::every();
+    let every: Vec<&Source> = sources.iter().collect();
+    let all: Vec<&Source> = every.iter().copied().filter(|source| !source.is_gate_or_scan()).collect();
+    nothing_in_the_server_starts_a_cli_without_the_gate(&all);
+    only_the_provider_registry_makes_a_spawn_gate(&all);
+    only_the_providers_reach_the_spawn_gate(&all);
+    only_the_providers_keep_the_runs(&all);
+    outside_the_providers_a_source_is_named_as_often_as_layers_json_records(&every);
+    only_the_providers_query_the_runs_table(&all);
+}
+
 /// The permit that takes no gate starts nothing in the server: only the
 /// test probe that hands it out (`droppen_provider::testing`) names it, and
 /// the shim's own end-to-end test, outside `src/`, uses it. Read in the
 /// whole text, tests and comments too.
-#[test]
-fn nothing_in_the_server_starts_a_cli_without_the_gate() {
+fn nothing_in_the_server_starts_a_cli_without_the_gate(sources: &[&Source]) {
     const NAME: &str = "without_a_session";
     const PROBE: &str = "crates/droppen-provider/src/testing.rs";
     let ident = |c: char| c.is_alphanumeric() || c == '_';
@@ -588,10 +600,10 @@ fn nothing_in_the_server_starts_a_cli_without_the_gate() {
     // or passed as a function is found too, and a test named
     // `…_without_a_session_…` is not.
     let says = |text: &str| text.match_indices(NAME).any(|(at, _)| !text[..at].ends_with(ident) && !text[at + NAME.len()..].starts_with(ident));
-    let found: Vec<String> = Source::all()
-        .into_iter()
+    let found: Vec<&str> = sources
+        .iter()
         .filter(|source| source.path != PROBE && says(&source.text))
-        .map(|source| source.path)
+        .map(|source| source.path.as_str())
         .collect();
     assert!(found.is_empty(), "a CLI started without the spawn gate: {found:?}");
 }
@@ -600,9 +612,7 @@ fn nothing_in_the_server_starts_a_cli_without_the_gate() {
 /// is lent is the only one there is: a provider that made its own and took
 /// that instead would start a CLI beside one the registry's gate keeps
 /// out. A file's tests make theirs as they like.
-#[test]
-fn only_the_provider_registry_makes_a_spawn_gate() {
-    let sources = Source::all();
+fn only_the_provider_registry_makes_a_spawn_gate(sources: &[&Source]) {
     assert!(
         sources.iter().any(|source| source.is_registry() && source.code.makes_a_gate()),
         "the provider registry makes the gate"
@@ -624,13 +634,11 @@ fn only_the_provider_registry_makes_a_spawn_gate() {
 /// nothing else names but the registry that defines it: they reach it
 /// through `AcpAgentState::gate`, and every call of theirs that takes the
 /// gate is handed it from there. A file's tests aside.
-#[test]
-fn only_the_providers_reach_the_spawn_gate() {
+fn only_the_providers_reach_the_spawn_gate(sources: &[&Source]) {
     const LEND: &str = "provider_with_gate";
     const ROUTES: &str = "crates/droppen-provider-acp/src/agents.rs";
-    let sources = Source::all();
     let mut found = Vec::new();
-    for source in &sources {
+    for source in sources {
         if !source.in_provider() && source.sees_base {
             found.extend(GATE_NAMES.into_iter().filter(|name| source.code.names(name)).map(|name| format!("{}: {name}", source.path)));
         } else if !source.is_registry() && source.path != ROUTES && source.code.names(LEND) {
@@ -684,10 +692,8 @@ fn only_the_providers_reach_the_spawn_gate() {
 /// journal row. The feeds watch a draft through the provider registry. The
 /// server and every crate that depends on the base are read, so code that
 /// moves out of the server is still held to this.
-#[test]
-fn only_the_providers_keep_the_runs() {
-    let sources = Source::all();
-    let (inside, outside): (Vec<&Source>, Vec<&Source>) = sources.iter().partition(|source| source.in_provider());
+fn only_the_providers_keep_the_runs(sources: &[&Source]) {
+    let (inside, outside): (Vec<&Source>, Vec<&Source>) = sources.iter().copied().partition(|source| source.in_provider());
     for name in RUN_NAMES {
         assert!(inside.iter().any(|source| source.code.names(name)), "the providers use {name}");
     }
@@ -708,12 +714,10 @@ fn only_the_providers_keep_the_runs() {
 /// crate of its workspace, the crates `layers.json` exempts aside, are as
 /// many as its `sourceMatches.count` records: the number only goes down, and
 /// a lower one is written down.
-#[test]
-fn outside_the_providers_a_source_is_named_as_often_as_layers_json_records() {
+fn outside_the_providers_a_source_is_named_as_often_as_layers_json_records(sources: &[&Source]) {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let layers: Layers = serde_json::from_str(&std::fs::read_to_string(manifest.join("../../layers.json")).expect("layers.json")).expect("layers.json's sourceMatches");
-    let sources = Source::every();
-    let crates: BTreeSet<&str> = sources.iter().map(Source::krate).collect();
+    let crates: BTreeSet<&str> = sources.iter().map(|source| source.krate()).collect();
     let exempt: BTreeSet<&str> = layers.source_matches.exempt.iter().map(|exempt| exempt.krate.as_str()).collect();
     for name in &exempt {
         assert!(crates.contains(name), "layers.json exempts {name}, which is no crate of the workspace: {crates:?}");
@@ -748,12 +752,10 @@ fn outside_the_providers_a_source_is_named_as_often_as_layers_json_records() {
 /// (droppen-instance's `db/migrations.rs`). Every crate is read, not only
 /// those that can reach the base: the table is in droppen-instance's
 /// database, which far more of them open.
-#[test]
-fn only_the_providers_query_the_runs_table() {
+fn only_the_providers_query_the_runs_table(sources: &[&Source]) {
     const CREATES: &str = "crates/droppen-instance/src/db/migrations.rs";
     let sql = regex::Regex::new(r#"(?i)\b(from|join|into|update|table)\s+(if\s+not\s+exists\s+)?(\w+\.)?["`\[]?runs\b"#).expect("the pattern");
     let name = regex::Regex::new(r#"(?i)^\s*["`\[]?runs["`\]]?\s*$"#).expect("the pattern");
-    let sources = Source::all();
     let queries = |source: &Source| {
         source
             .code

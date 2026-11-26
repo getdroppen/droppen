@@ -31,8 +31,10 @@ fail-fast = false
 # for the server crate's tests at 8 against 2 threads on two cores; the
 # hosted runner is four cores now, so the same 4:1 ratio).
 test-threads = 16
-# A hung test is killed on its own, and named, after 10 minutes, instead of
-# taking the step's timeout with it.
-slow-timeout = { period = "120s", terminate-after = 5 }
+# A hung test is killed on its own, and named, after two periods, instead of
+# taking the step's timeout with it. With the test profile optimized (see the
+# root Cargo.toml) the slowest test in the workspace finishes well inside one
+# period; a test that runs two is a regression, not a slow machine.
+slow-timeout = { period = "60s", terminate-after = 2 }
 # Failures print as they happen and once more at the end.
 failure-output = "immediate-final"
