@@ -149,7 +149,7 @@ mod tests {
             (vec![("DROPPEN_SESSION_PROXY_TOKEN", TOKEN)], "DROPPEN_DATA_DIR"),
             (vec![("DROPPEN_DATA_DIR", "/d")], "DROPPEN_SESSION_PROXY_TOKEN is required"),
             (vec![("DROPPEN_DATA_DIR", "/d"), ("DROPPEN_SESSION_PROXY_TOKEN", "short")], "at least 32"),
-            (vec![("DROPPEN_DATA_DIR", "/d"), ("DROPPEN_SESSION_PROXY_TOKEN", "0123456789abcdef 0123456789abcdef")], "printable"),
+            (vec![("DROPPEN_DATA_DIR", "/d"), ("DROPPEN_SESSION_PROXY_TOKEN", "0123456789abcdef 0123456789abcdef")], "printable"), // gitleaks:allow
             (
                 vec![("DROPPEN_DATA_DIR", "/d"), ("DROPPEN_SESSION_PROXY_TOKEN", TOKEN), ("PORT", "x")],
                 "PORT",

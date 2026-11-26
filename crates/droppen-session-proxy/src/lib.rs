@@ -195,7 +195,7 @@ mod tests {
     fn config(insecure: bool) -> Config {
         let values: Vec<(&str, String)> = vec![
             ("DROPPEN_DATA_DIR", "/data".to_string()),
-            ("DROPPEN_SESSION_PROXY_TOKEN", "0123456789abcdef0123456789abcdef".to_string()),
+            ("DROPPEN_SESSION_PROXY_TOKEN", "0123456789abcdef0123456789abcdef".to_string()), // gitleaks:allow
             ("DROPPEN_SESSION_PROXY_RELAY_INSECURE", if insecure { "1" } else { "" }.to_string()),
         ];
         Config::from_vars(|name| values.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())).unwrap()
