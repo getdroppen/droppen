@@ -625,9 +625,9 @@ test("while this device holds an activation back, the pairing says so and cannot
 test("chain v3's alerts in words: a full device added is just added, a limited one is named so; a device made a full device is loud, the rest are notes", () => {
   const t = (key: string, opts?: Record<string, unknown>) => key.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(opts?.[k]));
   const base = { seq: 1, by: "d-1", atMs: 0, remove: null };
-  assert.equal(alertText({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false } }, t), "d-1 added m-2 to this account: it can run AI");
-  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-2", flags: { host: false, admin: true } }, t), "d-1 added d-2 to this account", "a full device: nothing more to say");
-  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-3", flags: { host: false, admin: false } }, t), "d-1 added d-3 to this account as a limited device");
+  assert.equal(alertText({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false, a2a: false } }, t), "d-1 added m-2 to this account: it can run AI");
+  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-2", flags: { host: false, admin: true, a2a: false } }, t), "d-1 added d-2 to this account", "a full device: nothing more to say");
+  assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-3", flags: { host: false, admin: false, a2a: false } }, t), "d-1 added d-3 to this account as a limited device");
   assert.equal(alertText({ ...base, kind: "addDevice", subject: "d-4" }, t), "d-1 added d-4 to this account", "chain v2: as before");
   assert.equal(alertText({ ...base, kind: "setAdmin", subject: "d-2", on: true }, t), "d-1 made d-2 a full device");
   assert.equal(alertText({ ...base, kind: "setAdmin", subject: "d-2", on: false }, t), "d-1 made d-2 a limited device");
@@ -637,7 +637,7 @@ test("chain v3's alerts in words: a full device added is just added, a limited o
   assert.equal(alertText({ ...base, kind: "passkey", passkey: "join", subject: "d-5" }, t), "a passkey added d-5 to this account (it waits to be approved)");
   assert.equal(alertLevel({ ...base, kind: "setAdmin", subject: "d-2", on: true }), "high");
   assert.equal(alertLevel({ ...base, kind: "setAdmin", subject: "d-2", on: false }), "info");
-  assert.equal(alertLevel({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false } }), "confirm");
+  assert.equal(alertLevel({ ...base, kind: "addDevice", subject: "m-2", flags: { host: true, admin: false, a2a: false } }), "confirm");
   const alerts = [
     { ...base, seq: 8, kind: "setAdmin", subject: "d-2", on: true, remove: "d-2" },
     { ...base, seq: 9, kind: "setHost", subject: "m-3", on: false },

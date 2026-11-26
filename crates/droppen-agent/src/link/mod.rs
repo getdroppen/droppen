@@ -42,12 +42,14 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Semaphore};
 use tokio_util::sync::CancellationToken;
 
-use lapse::{ChannelLapse, Clock};
 use super::bridge::Loopback;
 use super::state::{self, AgentState};
-use super::{bridge, direct, hub, load_or_create, relays, rotation, streams, AgentFiles, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE};
-use droppen_instance::paths::Paths;
+use super::{
+    bridge, direct, hub, load_or_create, relays, rotation, streams, AgentFiles, StagedSeed, CHAIN_V3_FEATURE, POLICY_FEATURE, ROTATE_FEATURE,
+};
 use droppen_base::time::now_ms_u64;
+use droppen_instance::paths::Paths;
+use lapse::{ChannelLapse, Clock};
 
 mod admit;
 mod alerts;
@@ -56,13 +58,13 @@ mod lapse;
 mod local;
 mod mail;
 
-pub use connection::{enabled, start, LinkEnv, LinkHost, Running};
+pub(super) use admit::{expire_pending, on_channel_frame};
+pub(super) use alerts::raise_alarm;
 #[cfg(test)]
 pub(super) use connection::run;
 #[cfg(test)]
 pub(super) use connection::test_shared;
-pub(super) use admit::{expire_pending, on_channel_frame};
-pub(super) use alerts::raise_alarm;
+pub use connection::{enabled, start, LinkEnv, LinkHost, Running};
 pub(super) use lapse::{drop_ended, drop_removed};
 pub(super) use local::standing_of;
 
@@ -196,7 +198,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use futures_util::{SinkExt, StreamExt};
     use droppen_proto::bridge::{RequestHead, ResponseHead};
     use droppen_proto::chain::{Action, Attestation, ChainError, Entry, Signer};
     use droppen_proto::channel::Session;
@@ -207,11 +208,13 @@ mod tests {
     use droppen_proto::mux::{Role, StreamClass};
     use droppen_proto::noise::{Binding, RekeyPolicy};
     use droppen_proto::path::DirectBinding;
+    use futures_util::{SinkExt, StreamExt};
     use serde_json::{json, Value};
     use tokio::sync::mpsc;
     use tokio_tungstenite::tungstenite::Message;
     use tokio_util::sync::CancellationToken;
 
+    use super::admit::ChainErrorExt;
     use super::admit::*;
     use super::alerts::*;
     use super::connection::*;
@@ -219,7 +222,6 @@ mod tests {
     use super::local::*;
     use super::mail::*;
     use super::*;
-    use super::admit::ChainErrorExt;
     use droppen_proto::chain::{genesis_draft, recovery_keys, ChainClock, ChainState, DeviceInfo, RecoveryKey, RecoveryKeys};
     use droppen_proto::identity::{fingerprint, MachineIdentity};
 
@@ -260,21 +262,36 @@ mod tests {
 
     /// [`account`], the push keys and the phone's alerts asked of `host`.
     fn hosted_account(host: Arc<dyn LinkHost>) -> Account {
-        account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::wall(), host)
+        account_on(
+            super::super::streams::Handle::detached(),
+            "127.0.0.1:9".parse().unwrap(),
+            Clock::wall(),
+            host,
+        )
     }
 
     /// [`account`], its channels' control lapse judged by tokio's clock
     /// ([`Clock::tokio`]). Under `start_paused`, a lapse comes when the test
     /// moves that clock past it, however long the work before it took.
     fn clocked_account() -> Account {
-        account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::tokio(), Arc::new(NoHost))
+        account_on(
+            super::super::streams::Handle::detached(),
+            "127.0.0.1:9".parse().unwrap(),
+            Clock::tokio(),
+            Arc::new(NoHost),
+        )
     }
 
     /// [`account`], its channels' control lapse judged by a clock the test
     /// moves by hand ([`Clock::manual`]), and that clock's offset.
     fn manual_account() -> (Account, Arc<std::sync::atomic::AtomicU64>) {
         let offset = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let a = account_on(super::super::streams::Handle::detached(), "127.0.0.1:9".parse().unwrap(), Clock::manual(offset.clone()), Arc::new(NoHost));
+        let a = account_on(
+            super::super::streams::Handle::detached(),
+            "127.0.0.1:9".parse().unwrap(),
+            Clock::manual(offset.clone()),
+            Arc::new(NoHost),
+        );
         (a, offset)
     }
 
@@ -576,10 +593,7 @@ mod tests {
             "a view vouched for thirteen hours ago is stale for management"
         );
         attest(&a, "d-2", &d2(), 0);
-        assert_eq!(
-            (local.standing("d-1").admin, local.standing("d-1").view),
-            (true, bridge::View::Fresh)
-        );
+        assert_eq!((local.standing("d-1").admin, local.standing("d-1").view), (true, bridge::View::Fresh));
         assert!(!local.standing("d-3").admin, "a device that does not manage the account");
         assert!(!local.standing("d-9").admin, "a device the chain does not name");
         a.shared.state.lock().unwrap().chain = None;
@@ -632,7 +646,10 @@ mod tests {
             local.handle("d-1", "POST", "/rh/display-name", long.as_bytes()).await,
             bad("a name is at most 64 characters, none of them control characters")
         );
-        assert_eq!(local.handle("d-1", "POST", "/rh/display-name", br#"{"name":5}"#).await, bad("name must be a string or null"));
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/display-name", br#"{"name":5}"#).await,
+            bad("name must be a string or null")
+        );
         assert_eq!(
             local.handle("d-1", "POST", "/rh/display-name", br#"{"name":"study"}"#).await,
             (200, json!({"displayName": "study"}))
@@ -642,16 +659,27 @@ mod tests {
             (200, json!({"displayName": null}))
         );
         assert_eq!(local.handle("d-1", "POST", "/rh/machine-key", b"nope").await, bad("JSON expected"));
-        assert_eq!(local.handle("d-1", "POST", "/rh/machine-key", b"{}").await, bad("{epoch, key (64 hex)} expected"));
+        assert_eq!(
+            local.handle("d-1", "POST", "/rh/machine-key", b"{}").await,
+            bad("{epoch, key (64 hex)} expected")
+        );
         let held = a.shared.state.lock().unwrap().mk_epoch;
-        let offer = |epoch: u32, key: &[u8; 32], reencrypt: bool| json!({"epoch": epoch, "key": droppen_base::text::hex(key), "reencrypt": reencrypt}).to_string();
+        let offer = |epoch: u32, key: &[u8; 32], reencrypt: bool| {
+            json!({"epoch": epoch, "key": droppen_base::text::hex(key), "reencrypt": reencrypt}).to_string()
+        };
         assert_eq!(
             local.handle("d-1", "POST", "/rh/machine-key", offer(1, &key, false).as_bytes()).await,
-            (409, json!({"error": "uncommitted", "message": "the chain commits no such content key epoch (yet): sync and attest, then retry", "mkEpoch": held}))
+            (
+                409,
+                json!({"error": "uncommitted", "message": "the chain commits no such content key epoch (yet): sync and attest, then retry", "mkEpoch": held})
+            )
         );
         assert_eq!(
             local.handle("d-1", "POST", "/rh/machine-key", offer(0, &[8; 32], false).as_bytes()).await,
-            (409, json!({"error": "key_mismatch", "message": "not the key the chain committed for that epoch", "mkEpoch": held}))
+            (
+                409,
+                json!({"error": "key_mismatch", "message": "not the key the chain committed for that epoch", "mkEpoch": held})
+            )
         );
         assert_eq!(
             local.handle("d-1", "POST", "/rh/machine-key", offer(0, &key, false).as_bytes()).await,
@@ -788,7 +816,11 @@ mod tests {
         let subscription = br#"{"endpoint":"https://push.example/x","keys":{"p256dh":"p","auth":"a"}}"#;
         let (status, body) = rpc(&admin, "POST", "/api/push/subscriptions", subscription).await.expect("an answer");
         assert_eq!((status, body["error"].as_str()), (503, Some("push_renewing")), "{body}");
-        assert!(reached.lock().unwrap().is_empty(), "nothing reached the server: {:?}", reached.lock().unwrap());
+        assert!(
+            reached.lock().unwrap().is_empty(),
+            "nothing reached the server: {:?}",
+            reached.lock().unwrap()
+        );
         // Renewed: the page gets the key.
         a.shared.state.lock().unwrap().rotation.push_renew = false;
         let (status, body) = rpc(&admin, "GET", "/api/push/vapid", b"").await.expect("an answer");
@@ -946,11 +978,17 @@ mod tests {
         let refused = connect(&a, &a.d1, "d-1", 1, &mut routes).await.err().expect("not saved, not let in");
         assert_eq!(refused, vec![(1, AGENT_UNSAVED)]);
         assert!(routes.is_empty());
-        assert!(controller_ids(&a.shared.state.lock().unwrap()).is_empty(), "taken back: the next try saves again");
+        assert!(
+            controller_ids(&a.shared.state.lock().unwrap()).is_empty(),
+            "taken back: the next try saves again"
+        );
         assert_eq!(told(&mut events), 0, "nothing new to say");
         break_saves(&a, false);
         let _open = connect(&a, &a.d1, "d-1", 2, &mut routes).await.expect("saved, let in");
-        assert_eq!(controller_ids(&AgentState::load(&a.shared.files).unwrap().unwrap()), vec!["d-1".to_string()]);
+        assert_eq!(
+            controller_ids(&AgentState::load(&a.shared.files).unwrap().unwrap()),
+            vec!["d-1".to_string()]
+        );
         assert_eq!(told(&mut events), 1, "the status is told once it is saved");
         break_saves(&a, true);
         let _again = connect(&a, &a.d1, "d-1", 3, &mut routes)
@@ -1014,11 +1052,18 @@ mod tests {
         for task in direct {
             assert!(!task.await.unwrap(), "no direct path for it");
         }
-        assert_eq!(hub.await.unwrap(), (false, vec![(9, AGENT_UNSAVED)]), "no channel on the hub either: 4507");
+        assert_eq!(
+            hub.await.unwrap(),
+            (false, vec![(9, AGENT_UNSAVED)]),
+            "no channel on the hub either: 4507"
+        );
         assert!(controller_ids(&a.shared.state.lock().unwrap()).is_empty(), "noted nowhere");
         break_saves(&a, false);
         let (bind, hello) = direct_hello(&a, &d2(), "d-2");
-        assert!(matches!(LinkAdmit { shared: a.shared.clone() }.admit("d-2", &bind, &hello), Admission::Open { .. }), "saved: in");
+        assert!(
+            matches!(LinkAdmit { shared: a.shared.clone() }.admit("d-2", &bind, &hello), Admission::Open { .. }),
+            "saved: in"
+        );
     }
 
     /// One hub (or relay) handshake on `ch`, as [`on_channel_frame`] runs
@@ -1061,7 +1106,9 @@ mod tests {
             let shared = a.shared.clone();
             tokio::task::spawn_blocking(move || hub_attempt(&shared, 9, "d-2", &hello))
         };
-        noted_rx.recv_timeout(Duration::from_secs(5)).expect("the hub handshake noted d-2 and is held before its save");
+        noted_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the hub handshake noted d-2 and is held before its save");
         let (done_tx, done_rx) = std::sync::mpsc::channel::<bool>();
         let second = {
             let shared = a.shared.clone();
@@ -1337,7 +1384,11 @@ mod tests {
         assert_eq!(served(&channel).await, Some(200));
         // The paused clock moves on 2.5 s: past a lapse that was 1.5 s off.
         tokio::time::sleep(Duration::from_millis(2_500)).await;
-        assert_eq!(*a.heard_closes.lock().unwrap(), vec![(4, CHANNEL_STALE)], "closed once its seven days ran out");
+        assert_eq!(
+            *a.heard_closes.lock().unwrap(),
+            vec![(4, CHANNEL_STALE)],
+            "closed once its seven days ran out"
+        );
         assert_eq!(served(&channel).await, None, "nothing is served on it");
         drop_ended(&mut routes);
         assert!(!routes.contains_key(&4), "its route goes with it");
@@ -1457,7 +1508,11 @@ mod tests {
             None,
             "a fresh word about a head this agent had moved past counts for nothing"
         );
-        assert_eq!(lapse_at(&a, &mut d2_lapse), Some(d1_at + SEVEN_DAYS), "and does not take back d-1's word before");
+        assert_eq!(
+            lapse_at(&a, &mut d2_lapse),
+            Some(d1_at + SEVEN_DAYS),
+            "and does not take back d-1's word before"
+        );
         // d-1 vouches for a head the hub has not served this machine.
         let ahead = a
             .hub
@@ -1465,7 +1520,11 @@ mod tests {
             .sign(a.d1.signing_key());
         a.hub.apply(&ahead, &mut ChainClock::history()).unwrap();
         attest(&a, "d-1", &a.d1, 0);
-        assert_eq!(lapse_at(&a, &mut ChannelLapse::new("d-2")), None, "a word from beyond this view extends nothing");
+        assert_eq!(
+            lapse_at(&a, &mut ChannelLapse::new("d-2")),
+            None,
+            "a word from beyond this view extends nothing"
+        );
         assert_eq!(lapse_at(&a, &mut d2_lapse), Some(d1_at + SEVEN_DAYS), "nor takes anything back");
     }
 
@@ -1598,7 +1657,13 @@ mod tests {
         let shared = a.shared.clone();
         *a.shared.after_admission.lock().unwrap() = Some(Box::new(move || {
             assert!(take_attestation(&shared, renewal));
-            assert!(shared.state.lock().unwrap().absorb(std::slice::from_ref(&pairing), shared.clock.now_ms()).error.is_none());
+            assert!(shared
+                .state
+                .lock()
+                .unwrap()
+                .absorb(std::slice::from_ref(&pairing), shared.clock.now_ms())
+                .error
+                .is_none());
             assert!(take_attestation(&shared, replacing));
         }));
         let mut routes = Routes::new();
@@ -1801,7 +1866,10 @@ mod tests {
         let channel = connect(&a, &d2(), "d-2", 4, &mut routes).await.expect("fresh");
         let held = rpc_held(&channel, "POST", "/rh/display-name", br#"{"name":"held"}"#, Duration::from_millis(2_500)).await;
         let (status, body) = held.expect("an answer");
-        assert_eq!((status, body["error"].as_str(), body["reason"].as_str()), (412, Some("stale"), Some("stale")));
+        assert_eq!(
+            (status, body["error"].as_str(), body["reason"].as_str()),
+            (412, Some("stale"), Some("stale"))
+        );
         assert_eq!(a.shared.state.lock().unwrap().display_name, None, "not renamed");
     }
 
@@ -2044,7 +2112,11 @@ mod tests {
                     id: "h-2".into(),
                     sign_key: host.sign_public(),
                     dh_key: host.dh_public(),
-                    flags: Flags { host: true, admin: false },
+                    flags: Flags {
+                        host: true,
+                        admin: false,
+                        a2a: false,
+                    },
                 }),
                 2_000,
             )
@@ -2140,11 +2212,19 @@ mod tests {
         let key = |epoch| {
             Action::KeyEpochs(KeyCommits {
                 user: None,
-                machines: vec![("h-2".into(), KeyCommit { epoch, hash: [epoch as u8; 32] })],
+                machines: vec![(
+                    "h-2".into(),
+                    KeyCommit {
+                        epoch,
+                        hash: [epoch as u8; 32],
+                    },
+                )],
             })
         };
         let mut push = |state: &mut ChainState, action: Action| {
-            let e = state.draft(Signer::Device("d-1".into()), action, 2_000 + state.seq()).sign(dev.signing_key());
+            let e = state
+                .draft(Signer::Device("d-1".into()), action, 2_000 + state.seq())
+                .sign(dev.signing_key());
             state.apply(&e, &mut ChainClock::history()).unwrap();
             e
         };
@@ -2152,7 +2232,11 @@ mod tests {
             id: "h-2".into(),
             sign_key: old.sign_public(),
             dh_key: old.dh_public(),
-            flags: Flags { host: true, admin: false },
+            flags: Flags {
+                host: true,
+                admin: false,
+                a2a: false,
+            },
         };
         push(&mut state, Action::AddDevice3(add));
         push(&mut state, key(0));
@@ -2212,7 +2296,10 @@ mod tests {
                     Action::RenewalPause {
                         op: [7; 16],
                         phase,
-                        removals: removals.iter().map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect())).collect(),
+                        removals: removals
+                            .iter()
+                            .map(|(h, ids)| (h.to_string(), ids.iter().map(|i| i.to_string()).collect()))
+                            .collect(),
                     },
                     9_002,
                 )
@@ -2254,7 +2341,11 @@ mod tests {
         let pause = |op: u8, phase: droppen_proto::chain::PausePhase, ids: &[&str]| Action::RenewalPause {
             op: [op; 16],
             phase,
-            removals: if ids.is_empty() { vec![] } else { vec![("h-2".into(), ids.iter().map(|i| i.to_string()).collect())] },
+            removals: if ids.is_empty() {
+                vec![]
+            } else {
+                vec![("h-2".into(), ids.iter().map(|i| i.to_string()).collect())]
+            },
         };
         push(&mut state, plain("d-2", 8));
         push(&mut state, plain("d-3", 9));
@@ -2297,9 +2388,18 @@ mod tests {
         assert_eq!(out["id"], 0);
         assert_eq!(deferred.len(), MAX_DEFERRED);
         // Pushed out: acknowledged when moot, else released to the mailbox — never dropped.
-        assert_eq!(serde_json::to_value(evicted_message(&mail(0, 2), Some(3))).unwrap(), json!({"t": "mail_ack", "id": 0}));
-        assert_eq!(serde_json::to_value(evicted_message(&mail(0, 5), Some(3))).unwrap(), json!({"t": "mail_release", "id": 0}));
-        assert_eq!(serde_json::to_value(evicted_message(&mail(0, 5), None)).unwrap(), json!({"t": "mail_release", "id": 0}));
+        assert_eq!(
+            serde_json::to_value(evicted_message(&mail(0, 2), Some(3))).unwrap(),
+            json!({"t": "mail_ack", "id": 0})
+        );
+        assert_eq!(
+            serde_json::to_value(evicted_message(&mail(0, 5), Some(3))).unwrap(),
+            json!({"t": "mail_release", "id": 0})
+        );
+        assert_eq!(
+            serde_json::to_value(evicted_message(&mail(0, 5), None)).unwrap(),
+            json!({"t": "mail_release", "id": 0})
+        );
     }
 
     fn closes(out: &mut mpsc::UnboundedReceiver<Frame>) -> Vec<(u32, u16)> {
@@ -2565,7 +2665,11 @@ mod tests {
                 id: id.into(),
                 sign_key: dev.sign_public(),
                 dh_key: dev.dh_public(),
-                flags: Flags { host, admin: false },
+                flags: Flags {
+                    host,
+                    admin: false,
+                    a2a: false,
+                },
             })
         };
         let commit = KeyCommit { epoch: 0, hash: [0; 32] };

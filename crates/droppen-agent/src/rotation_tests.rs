@@ -8,16 +8,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures_util::{SinkExt, StreamExt};
-use rand::RngCore;
 use droppen_proto::chain::{
-    genesis_draft, Action, Assurance, Attestation, ChainClock, ChainState, DeviceInfo, DeviceV3, Entry, Flags, HostRotation, KeyCommit,
-    KeyCommits, Signer,
+    genesis_draft, Action, Assurance, Attestation, ChainClock, ChainState, DeviceInfo, DeviceV3, Entry, Flags, HostRotation, KeyCommit, KeyCommits,
+    Signer,
 };
 use droppen_proto::frame::Frame;
 use droppen_proto::identity::{fingerprint, MachineIdentity};
 use droppen_proto::keys::DhKeypair;
 use droppen_proto::sig::{HubLogin, LoginRole};
+use futures_util::{SinkExt, StreamExt};
+use rand::RngCore;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
@@ -30,9 +30,9 @@ use super::link::{self, Shared};
 use super::rotation::{self, Verdict};
 use super::state::AgentState;
 use super::{AgentFiles, FileSeedStore, StagedSeed, StoredSeed};
-use droppen_instance::paths::Paths;
 use droppen_base::text::{hex, unhex32};
 use droppen_base::time::now_ms_u64;
+use droppen_instance::paths::Paths;
 
 fn account_key() -> MachineIdentity {
     MachineIdentity::from_seed(&[1; 32])
@@ -56,12 +56,20 @@ fn thief() -> MachineIdentity {
 fn key_epoch(host: &str, epoch: u32) -> Action {
     Action::KeyEpochs(KeyCommits {
         user: None,
-        machines: vec![(host.into(), KeyCommit { epoch, hash: [epoch as u8; 32] })],
+        machines: vec![(
+            host.into(),
+            KeyCommit {
+                epoch,
+                hash: [epoch as u8; 32],
+            },
+        )],
     })
 }
 
 fn unhex64(text: &str) -> [u8; 64] {
-    droppen_base::text::unhex(text).and_then(|b| <[u8; 64]>::try_from(b).ok()).expect("64 bytes of hex")
+    droppen_base::text::unhex(text)
+        .and_then(|b| <[u8; 64]>::try_from(b).ok())
+        .expect("64 bytes of hex")
 }
 
 /// A v3 account — genesis (d-1, an admin) → m-1 (this machine, runs AI) →
@@ -105,7 +113,11 @@ impl Account {
             id: "m-1".into(),
             sign_key: m.sign_public(),
             dh_key: m.dh_public(),
-            flags: Flags { host: true, admin: false },
+            flags: Flags {
+                host: true,
+                admin: false,
+                a2a: false,
+            },
         }));
         a.push(key_epoch("m-1", 0));
         let uuid = droppen_instance::identity::ensure(&a.paths).unwrap().uuid;
@@ -254,7 +266,12 @@ impl Account {
 
     /// The nonces of every staging, oldest first.
     fn nonces(&self) -> Vec<[u8; 16]> {
-        FileSeedStore::for_instance(&self.files).stagings().unwrap().iter().map(|s| s.nonce).collect()
+        FileSeedStore::for_instance(&self.files)
+            .stagings()
+            .unwrap()
+            .iter()
+            .map(|s| s.nonce)
+            .collect()
     }
 }
 
@@ -672,7 +689,10 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     assert_eq!(stages[0]["dh_key"], hex(&new_dh));
     assert_eq!(stages[0]["old_sig"], answer["oldSig"]);
     assert_eq!(stages[0]["new_sig"], answer["newSig"]);
-    assert_eq!((stages[0]["staged_seq"].as_u64(), stages[0]["assurance"].as_u64()), (Some(a.hub.seq()), Some(0)));
+    assert_eq!(
+        (stages[0]["staged_seq"].as_u64(), stages[0]["assurance"].as_u64()),
+        (Some(a.hub.seq()), Some(0))
+    );
     // The whole message: every key above, and the staged head.
     assert_eq!(
         stages[0].clone().blank(&["staged_head"]),
@@ -688,7 +708,10 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     // The same nonce with another view or assurance is not the same request.
     assert_eq!(
         rotate(&shared, &a.request([7; 16], &eph, 1)).await,
-        (400, json!({"error": "bad_request", "message": "this nonce came before with another chain view or assurance"}))
+        (
+            400,
+            json!({"error": "bad_request", "message": "this nonce came before with another chain view or assurance"})
+        )
     );
     // A new nonce: a new seed, staged beside the one the hub took (which it
     // may still commit: kept).
@@ -702,15 +725,24 @@ async fn a_renewal_request_stages_a_new_seed_and_proves_it() {
     // ones it took stay.
     hub.script.lock().unwrap().stage = StageAnswer::Refused("conflict");
     let (status, refused) = rotate(&shared, &a.request([9; 16], &eph, 0)).await;
-    assert_eq!((status, refused["error"].as_str(), refused["reason"].as_str()), (409, Some("hub_refused"), Some("conflict")));
-    assert_eq!(refused, json!({"error": "hub_refused", "reason": "conflict", "message": "the hub refused to stage this renewal"}));
+    assert_eq!(
+        (status, refused["error"].as_str(), refused["reason"].as_str()),
+        (409, Some("hub_refused"), Some("conflict"))
+    );
+    assert_eq!(
+        refused,
+        json!({"error": "hub_refused", "reason": "conflict", "message": "the hub refused to stage this renewal"})
+    );
     assert_eq!(a.nonces(), vec![[7; 16], [8; 16]]);
     // One the hub did not answer in time (504) is kept for the attempt's ten
     // minutes, unanswered; its late answer makes it one the hub took.
     hub.script.lock().unwrap().stage = StageAnswer::Silent;
     let (status, lost) = rotate(&shared, &a.request([10; 16], &eph, 0)).await;
     assert_eq!((status, lost["error"].as_str()), (504, Some("hub_timeout")));
-    assert_eq!(lost, json!({"error": "hub_timeout", "message": "the hub did not answer the staging in time: ask again"}));
+    assert_eq!(
+        lost,
+        json!({"error": "hub_timeout", "message": "the hub did not answer the staging in time: ask again"})
+    );
     assert_eq!(a.nonces(), vec![[7; 16], [8; 16], [10; 16]]);
     assert!(a.staged().unwrap().accepted_ms.is_none());
     hub.send_json(json!({"t": "rotation_staged", "nonce_hash": hex(&Sha256::digest([10u8; 16])), "ready_ms": 1}));
@@ -742,7 +774,11 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
         id: "h-2".into(),
         sign_key: h2.sign_public(),
         dh_key: h2.dh_public(),
-        flags: Flags { host: true, admin: false },
+        flags: Flags {
+            host: true,
+            admin: false,
+            a2a: false,
+        },
     }));
     a.push(key_epoch("h-2", 0));
     a.push(Action::SetAccept {
@@ -760,32 +796,66 @@ async fn a_renewal_request_is_checked_and_a_high_assurance_one_shows_its_code() 
         body,
         json!({"error": "not_on_chain", "message": "that chain view is not on this device's chain: sync and retry", "chainSeq": a.hub.seq()})
     );
-    let ahead = json!({"nonce": hex(&[7; 16]), "eph": hex(&eph.public()), "chainSeq": a.hub.seq() + 1, "chainHead": hex(&a.hub.head()), "assurance": 0});
+    let ahead =
+        json!({"nonce": hex(&[7; 16]), "eph": hex(&eph.public()), "chainSeq": a.hub.seq() + 1, "chainHead": hex(&a.hub.head()), "assurance": 0});
     assert_eq!(rotate(&shared, ahead.to_string().as_bytes()).await.1["error"], "not_on_chain");
     for (bad, message) in [
         (&b"nope"[..], "JSON expected"),
         (br#"{"nonce":"00"}"#, "nonce: 16 bytes of hex expected"),
-        (br#"{"nonce":"07070707070707070707070707070707","eph":"00","chainSeq":1,"chainHead":"00","assurance":2}"#, "eph: 32 bytes of hex expected"),
+        (
+            br#"{"nonce":"07070707070707070707070707070707","eph":"00","chainSeq":1,"chainHead":"00","assurance":2}"#,
+            "eph: 32 bytes of hex expected",
+        ),
     ] {
         assert_eq!(rotate(&shared, bad).await, (400, json!({"error": "bad_request", "message": message})));
     }
-    let refused = |answer: &(u16, Value)| (answer.0, answer.1["error"].as_str().map(str::to_string), answer.1["reason"].as_str().map(str::to_string));
+    let refused = |answer: &(u16, Value)| {
+        (
+            answer.0,
+            answer.1["error"].as_str().map(str::to_string),
+            answer.1["reason"].as_str().map(str::to_string),
+        )
+    };
     let lapsed = (412, Some("stale".to_string()), Some("lapsed".to_string()));
     let limited = (403, Some("limited_device".to_string()), None);
     let stale = (412, Some("stale".to_string()), Some("stale".to_string()));
     // Not a device that may control this machine: refused first, whatever else.
-    let off_chain_too = json!({"nonce": hex(&[7; 16]), "eph": hex(&eph.public()), "chainSeq": a.hub.seq(), "chainHead": hex(&[3; 32]), "assurance": 0});
-    assert_eq!(refused(&rotation::rotate(&shared, "d-9", off_chain_too.to_string().as_bytes()).await), lapsed, "not of the account");
+    let off_chain_too =
+        json!({"nonce": hex(&[7; 16]), "eph": hex(&eph.public()), "chainSeq": a.hub.seq(), "chainHead": hex(&[3; 32]), "assurance": 0});
+    assert_eq!(
+        refused(&rotation::rotate(&shared, "d-9", off_chain_too.to_string().as_bytes()).await),
+        lapsed,
+        "not of the account"
+    );
     // May control it, no admin: 403 — before the chain view is judged.
-    assert_eq!(refused(&rotation::rotate(&shared, "h-2", off_chain_too.to_string().as_bytes()).await), limited, "not an admin");
+    assert_eq!(
+        refused(&rotation::rotate(&shared, "h-2", off_chain_too.to_string().as_bytes()).await),
+        limited,
+        "not an admin"
+    );
     let vouched = std::mem::take(&mut shared.state.lock().unwrap().attestations);
-    assert_eq!(refused(&rotation::rotate(&shared, "d-9", &a.request([7; 16], &eph, 0)).await), lapsed, "lapsed before stale");
-    assert_eq!(refused(&rotation::rotate(&shared, "h-2", &a.request([7; 16], &eph, 0)).await), limited, "no admin before stale");
+    assert_eq!(
+        refused(&rotation::rotate(&shared, "d-9", &a.request([7; 16], &eph, 0)).await),
+        lapsed,
+        "lapsed before stale"
+    );
+    assert_eq!(
+        refused(&rotation::rotate(&shared, "h-2", &a.request([7; 16], &eph, 0)).await),
+        limited,
+        "no admin before stale"
+    );
     // The admin, its view vouched for by nobody: 412 stale — before the chain says anything.
     assert_eq!(refused(&rotate(&shared, &a.request([7; 16], &eph, 0)).await), stale);
-    assert_eq!(refused(&rotate(&shared, off_chain_too.to_string().as_bytes()).await), stale, "stale before not_on_chain");
+    assert_eq!(
+        refused(&rotate(&shared, off_chain_too.to_string().as_bytes()).await),
+        stale,
+        "stale before not_on_chain"
+    );
     shared.state.lock().unwrap().attestations = vouched;
-    assert!(a.staged().is_none() && hub.heard("rotation_stage").is_empty(), "nothing staged on a refusal");
+    assert!(
+        a.staged().is_none() && hub.heard("rotation_stage").is_empty(),
+        "nothing staged on a refusal"
+    );
     // High assurance: the code is the R1 SAS of the proof, shown for ten minutes.
     let (status, answer) = rotate(&shared, &a.request([7; 16], &eph, 1)).await;
     assert_eq!(status, 200, "{answer}");
@@ -886,7 +956,10 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
     until("the ack", || !hub.heard("rotation_ack").is_empty()).await;
     let ack = hub.heard("rotation_ack").remove(0);
     assert_eq!(ack["sign_key"], answer["signKey"]);
-    assert_eq!(ack.clone().blank(&["sig"]), json!({"t": "rotation_ack", "sign_key": answer["signKey"], "sig": ""}));
+    assert_eq!(
+        ack.clone().blank(&["sig"]),
+        json!({"t": "rotation_ack", "sign_key": answer["signKey"], "sig": ""})
+    );
     let login = hub.logins().last().cloned().unwrap();
     let old = machine();
     let body = droppen_proto::chain::host_rotate_body(
@@ -902,7 +975,10 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
         Assurance::Auto,
     );
     let sig = unhex64(ack["sig"].as_str().unwrap());
-    assert!(droppen_proto::chain::verify_rotate_ack(&new_sign, "a-1", "m-1", &body, &login.nonce, &sig), "over this connection's nonce");
+    assert!(
+        droppen_proto::chain::verify_rotate_ack(&new_sign, "a-1", "m-1", &body, &login.nonce, &sig),
+        "over this connection's nonce"
+    );
     assert!(!droppen_proto::chain::verify_rotate_ack(&new_sign, "a-1", "m-1", &body, &[0; 32], &sig));
     // A key it does not hold.
     let mut other = pending;
@@ -910,7 +986,10 @@ async fn rotation_pending_is_confirmed_with_the_new_key_over_this_connections_no
     hub.send_json(other);
     until("rotation_unknown", || !hub.heard("rotation_unknown").is_empty()).await;
     assert_eq!(hub.heard("rotation_unknown")[0]["sign_key"], json!(hex(&thief().sign_public())));
-    assert_eq!(hub.heard("rotation_unknown")[0], json!({"t": "rotation_unknown", "sign_key": hex(&thief().sign_public())}));
+    assert_eq!(
+        hub.heard("rotation_unknown")[0],
+        json!({"t": "rotation_unknown", "sign_key": hex(&thief().sign_public())})
+    );
     assert_eq!(hub.heard("rotation_ack").len(), 1);
     shared.cancel.cancel();
     let _ = task.await;
@@ -953,7 +1032,10 @@ async fn a_committed_renewal_is_taken_after_signing_in_with_the_new_key() {
     let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.rotation.renewed_ms.is_some());
     assert!(st.rotation.push_renew, "the push keys are renewed with it at the restart (R6 review)");
-    assert_eq!(st.rotation.previous_fingerprint.as_deref(), Some(super::fingerprint::machine_fingerprint(&old).as_str()));
+    assert_eq!(
+        st.rotation.previous_fingerprint.as_deref(),
+        Some(super::fingerprint::machine_fingerprint(&old).as_str())
+    );
     let shown = a.files.rotation_status(Some(&st), now_ms_u64());
     assert_eq!(shown.state, "renewed");
     assert!(st.alarms.is_empty(), "no alarm for its own renewal");
@@ -994,7 +1076,13 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     let restart: rotation::Restart = Arc::new(move || {
         count.fetch_add(1, Ordering::SeqCst);
     });
-    let shared = link::test_shared(&a.paths, a.state(hub), MachineIdentity::from_seed(&[44; 32]), super::streams::Handle::detached(), restart);
+    let shared = link::test_shared(
+        &a.paths,
+        a.state(hub),
+        MachineIdentity::from_seed(&[44; 32]),
+        super::streams::Handle::detached(),
+        restart,
+    );
     // The state cannot be saved (a directory where its file goes); what is
     // on disk stays as it was, as after any failed atomic write.
     let state_file = a.files.state();
@@ -1013,7 +1101,10 @@ async fn a_renewed_key_is_taken_only_once_the_state_naming_it_is_saved() {
     assert_eq!(a.seed_in_use().sign_public(), first.sign_public(), "the key in use stays");
     assert_eq!(a.nonces(), vec![[7; 16]], "the renewed key stays staged, to be taken at the next sign-in");
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
-    assert!(!shared.state.lock().unwrap().rotation.push_renew, "the push keys are renewed with a key taken only");
+    assert!(
+        !shared.state.lock().unwrap().rotation.push_renew,
+        "the push keys are renewed with a key taken only"
+    );
     // Once the state saves, it is taken.
     rotation::promote(&shared, &second).unwrap();
     assert_eq!(a.seed_in_use().sign_public(), second.sign_public());
@@ -1358,7 +1449,10 @@ async fn a_hub_taking_the_staged_key_without_the_entry_promotes_nothing() {
     let task = tokio::spawn(link::run(shared.clone()));
     until("the staged key signing in again", || hub.logins().len() >= 2).await;
     let logins = hub.logins();
-    assert!(logins.iter().all(|l| l.by(&new, &hub.url) && l.welcomed), "never the key in use: {logins:?}");
+    assert!(
+        logins.iter().all(|l| l.by(&new, &hub.url) && l.welcomed),
+        "never the key in use: {logins:?}"
+    );
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "no promotion on the hub's word");
     assert!(a.staged().is_some());
@@ -1402,7 +1496,10 @@ async fn a_host_asleep_through_its_renewal_never_signs_in_with_the_retired_key()
     until("the restart with the renewed key", || restarts.load(Ordering::SeqCst) == 1).await;
     tokio::time::timeout(Duration::from_secs(5), task).await.expect("the link ends").unwrap();
     let after: Vec<Login> = hub.logins()[awake..].to_vec();
-    assert!(!after.is_empty() && after.iter().all(|l| l.by(&new, &hub.url)), "never the retired key: {after:?}");
+    assert!(
+        !after.is_empty() && after.iter().all(|l| l.by(&new, &hub.url)),
+        "never the retired key: {after:?}"
+    );
     assert_eq!(a.seed_in_use().sign_public(), new.sign_public());
 }
 
@@ -1520,7 +1617,10 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     let before = hub.logins().len();
     let entries = a.renew_to(&thief());
     hub.send_entries(&entries);
-    tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .expect("the link stops")
+        .unwrap();
     assert!(shared.cancel.is_cancelled());
     assert_eq!(a.seed_in_use().sign_public(), old.sign_public(), "the old seed stays");
     assert_eq!(restarts.load(Ordering::SeqCst), 0, "nothing promoted");
@@ -1528,9 +1628,14 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     // over that renewal, kept and delivered to the hub — no sign-in with the
     // retired key is made for it.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
-    let file = a.files.dispute("a-1", "m-1", entries[0].seq(), &hex(&a.hub.hash_at(entries[0].seq()).unwrap()));
+    let file = a
+        .files
+        .dispute("a-1", "m-1", entries[0].seq(), &hex(&a.hub.hash_at(entries[0].seq()).unwrap()));
     let name = file.file_name().unwrap().to_str().unwrap().to_string();
-    assert!(name.starts_with(&format!("rotation-dispute-{}-", entries[0].seq())) && name.ends_with(".json"), "{name}");
+    assert!(
+        name.starts_with(&format!("rotation-dispute-{}-", entries[0].seq())) && name.ends_with(".json"),
+        "{name}"
+    );
     assert!(file.parent().unwrap().ends_with("agent"));
     assert!(file.exists(), "kept until the hub has it");
     until("the hub's 200", || hub.disputes().len() == 3).await;
@@ -1544,7 +1649,10 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     assert_eq!(body["seq"].as_u64(), Some(seq));
     assert_eq!(body["entry_hash"].as_str(), Some(hex(&a.hub.hash_at(seq).unwrap()).as_str()));
     let sig = unhex64(body["sig"].as_str().unwrap());
-    assert!(a.hub.verify_rotate_dispute("m-1", seq, &sig), "it verifies with droppen-proto on the chain");
+    assert!(
+        a.hub.verify_rotate_dispute("m-1", seq, &sig),
+        "it verifies with droppen-proto on the chain"
+    );
     until("the hub's 200 noted", || {
         AgentState::load(&a.files).unwrap().unwrap().rotation.evidence_ms.is_some()
     })
@@ -1553,7 +1661,10 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     let st = AgentState::load(&a.files).unwrap().unwrap();
     assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere")), "{:?}", st.alarms);
     let shown = a.files.rotation_status(Some(&st), now_ms_u64());
-    assert_eq!((shown.state.as_str(), shown.reason.as_deref()), ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE)));
+    assert_eq!(
+        (shown.state.as_str(), shown.reason.as_deref()),
+        ("foreign", Some(rotation::FOREIGN_RENEWED_ELSEWHERE))
+    );
     assert_eq!(
         rotation::verdict(&st, &old, &[], false),
         Verdict::Foreign {
@@ -1566,7 +1677,10 @@ async fn a_renewal_to_keys_this_device_does_not_hold_is_alarmed_and_stops_the_li
     let again = link::test_shared(&a.paths, st, old, super::streams::Handle::detached(), rotation::no_restart());
     let before = hub.logins().len();
     let task = tokio::spawn(link::run(again.clone()));
-    tokio::time::timeout(Duration::from_secs(5), task).await.expect("it stops at once").unwrap();
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("it stops at once")
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), before, "no sign-in with a key the chain retired");
     assert_eq!(hub.disputes().len(), 3);
@@ -1593,7 +1707,10 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     }
     let entries = a.renew_to(&thief());
     hub.send_entries(&entries);
-    tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .expect("the link stops")
+        .unwrap();
     let seq = entries[0].seq();
     let file = a.files.dispute("a-1", "m-1", seq, &hex(&a.hub.hash_at(seq).unwrap()));
     until("a first delivery", || !hub.disputes().is_empty()).await;
@@ -1603,7 +1720,10 @@ async fn an_undelivered_dispute_statement_survives_disconnecting() {
     // with the server).
     a.files.unenroll().unwrap();
     assert!(file.exists(), "the statement survives");
-    let left: Vec<std::ffi::OsString> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    let left: Vec<std::ffi::OsString> = std::fs::read_dir(file.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     assert_eq!(left, vec![file.file_name().unwrap().to_os_string()], "everything else in agent/ is gone");
     assert!(!a.files.has_state());
     // Still delivered, unenrolled…
@@ -1679,22 +1799,40 @@ async fn a_hub_saying_rotated_is_believed_only_with_a_verified_renewal() {
         }),
     );
     let task = tokio::spawn(link::run(shared.clone()));
-    tokio::time::timeout(Duration::from_secs(10), task).await.expect("the link stops").unwrap();
+    tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .expect("the link stops")
+        .unwrap();
     {
         let st = shared.state.lock().unwrap();
         assert_eq!(st.rotation.foreign_reason.as_deref(), Some(rotation::FOREIGN_RENEWED_ELSEWHERE));
-        assert!(st.alarms.iter().any(|al| al.what.contains("replaced elsewhere") && al.what.contains("backup")), "{:?}", st.alarms);
+        assert!(
+            st.alarms
+                .iter()
+                .any(|al| al.what.contains("replaced elsewhere") && al.what.contains("backup")),
+            "{:?}",
+            st.alarms
+        );
     }
     // That refused sign-in is no evidence; the retired key's dispute
     // statement is, delivered on its own — no other sign-in.
     until("the dispute statement", || !hub.disputes().is_empty()).await;
     let (_, body) = hub.disputes()[0].clone();
-    assert!(b.hub.verify_rotate_dispute("m-1", renewal[0].seq(), &unhex64(body["sig"].as_str().unwrap())));
+    assert!(b
+        .hub
+        .verify_rotate_dispute("m-1", renewal[0].seq(), &unhex64(body["sig"].as_str().unwrap())));
     let entry_hash = hex(&b.hub.hash_at(renewal[0].seq()).unwrap());
-    assert_eq!(body.blank(&["sig"]), json!({"seq": renewal[0].seq(), "entry_hash": entry_hash, "sig": ""}));
+    assert_eq!(
+        body.blank(&["sig"]),
+        json!({"seq": renewal[0].seq(), "entry_hash": entry_hash, "sig": ""})
+    );
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(hub.logins().len(), 1);
-    assert_eq!(b.seed_in_use().sign_public(), old.sign_public(), "the seed stays until a person adds it again");
+    assert_eq!(
+        b.seed_in_use().sign_public(),
+        old.sign_public(),
+        "the seed stays until a person adds it again"
+    );
     assert_eq!(restarts.load(Ordering::SeqCst), 0);
     // Only now is the seed retired, and the next sign-up uses a fresh one.
     assert!(b.files.seed_retired(&old));
@@ -1715,7 +1853,11 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
         id: "h-2".into(),
         sign_key: h2_old.sign_public(),
         dh_key: h2_old.dh_public(),
-        flags: Flags { host: true, admin: false },
+        flags: Flags {
+            host: true,
+            admin: false,
+            a2a: false,
+        },
     }));
     a.push(key_epoch("h-2", 0));
     a.push(Action::SetAccept {
@@ -1725,7 +1867,10 @@ async fn a_channel_opened_with_a_renewed_key_is_closed() {
     let shared = a.shared("ws://127.0.0.1:9", &Arc::default());
     let (tx, rx) = mpsc::unbounded_channel();
     std::mem::forget(rx);
-    let mut routes: link::Routes = std::collections::HashMap::from([(1, ("h-2".to_string(), h2_old.dh_public(), tx.clone())), (2, ("d-1".to_string(), admin().dh_public(), tx))]);
+    let mut routes: link::Routes = std::collections::HashMap::from([
+        (1, ("h-2".to_string(), h2_old.dh_public(), tx.clone())),
+        (2, ("d-1".to_string(), admin().dh_public(), tx)),
+    ]);
     let (out, mut closed) = mpsc::unbounded_channel();
     link::drop_removed(&shared, &mut routes, &out);
     assert_eq!(routes.len(), 2, "nothing to close yet");
@@ -1812,7 +1957,10 @@ async fn a_hub_in_trouble_never_makes_the_key_in_use_sign_in() {
     let task = tokio::spawn(link::run(shared.clone()));
     until("a second try", || hub.logins().len() >= 2).await;
     let logins = hub.logins();
-    assert!(logins.iter().all(|l| l.by(&new, &hub.url) && !l.welcomed), "never the key in use: {logins:?}");
+    assert!(
+        logins.iter().all(|l| l.by(&new, &hub.url) && !l.welcomed),
+        "never the key in use: {logins:?}"
+    );
     assert!(shared.rotation.session().is_none());
     assert!(a.staged().is_some(), "still staged");
     // The hub is well again and does not know the staged key: `denied`, then the key in use.

@@ -156,8 +156,14 @@ impl Session {
                 let (id, epoch) = (enrolled.machine.id.clone(), enrolled.mk_epoch);
                 self.device.mail_machine_key(&id, epoch, &mk).await?;
                 self.reset_link();
-                let uk = enrolled.uk_epoch.map_or_else(String::new, |e| format!("; a new user key epoch {e} with it (the newest was stale)"));
-                let failed = if enrolled.failed.is_empty() { String::new() } else { format!("; not sent: {}", enrolled.failed.join("; ")) };
+                let uk = enrolled
+                    .uk_epoch
+                    .map_or_else(String::new, |e| format!("; a new user key epoch {e} with it (the newest was stale)"));
+                let failed = if enrolled.failed.is_empty() {
+                    String::new()
+                } else {
+                    format!("; not sent: {}", enrolled.failed.join("; "))
+                };
                 Ok(format!("enrolled machine {id} (chain v3); MK epoch {epoch} by mail{uk}{failed}"))
             }
             ["approve", device] => {
@@ -197,7 +203,11 @@ impl Session {
                     }
                 }
                 let uk = uk.map_or_else(|| "user key kept".to_string(), |e| format!("user key epoch {e}"));
-                let failed = if failed.is_empty() { String::new() } else { format!("; not sent: {}", failed.join("; ")) };
+                let failed = if failed.is_empty() {
+                    String::new()
+                } else {
+                    format!("; not sent: {}", failed.join("; "))
+                };
                 Ok(format!("removed {device}; {uk}; {}{failed}", delivered.join("; ")))
             }
             ["keys"] => {
@@ -256,7 +266,9 @@ impl Session {
                 let hub_ak = ed25519_dalek::SigningKey::from_bytes(&droppen_devkit::random_key());
                 let (id, sign_key, dh_key) = (
                     "d-hubforged0000000".to_string(),
-                    ed25519_dalek::SigningKey::from_bytes(&droppen_devkit::random_key()).verifying_key().to_bytes(),
+                    ed25519_dalek::SigningKey::from_bytes(&droppen_devkit::random_key())
+                        .verifying_key()
+                        .to_bytes(),
                     droppen_proto::keys::DhKeypair::from_secret(droppen_devkit::random_key()).public(),
                 );
                 // The genesis in the account's own version: a v3 one names the
@@ -269,7 +281,11 @@ impl Session {
                             id,
                             sign_key,
                             dh_key,
-                            flags: droppen_proto::chain::Flags { host: false, admin: true },
+                            flags: droppen_proto::chain::Flags {
+                                host: false,
+                                admin: true,
+                                a2a: false,
+                            },
                         },
                         *recovery_key,
                         droppen_devkit::now_ms(),
@@ -322,7 +338,10 @@ impl Session {
         loop {
             match self.device.enroll_host3(code, mk, timeout).await {
                 Ok(enrolled) => return Ok(enrolled),
-                Err(e) if e.contains("chain_v3_not_ready") && *deadline.get_or_insert_with(|| tokio::time::Instant::now() + Duration::from_secs(60)) > tokio::time::Instant::now() => {
+                Err(e)
+                    if e.contains("chain_v3_not_ready")
+                        && *deadline.get_or_insert_with(|| tokio::time::Instant::now() + Duration::from_secs(60)) > tokio::time::Instant::now() =>
+                {
                     timeout = Duration::from_secs(10);
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     self.device.sync_chain().await?;

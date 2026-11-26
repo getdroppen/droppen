@@ -6,15 +6,15 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use ed25519_dalek::SigningKey;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use droppen_proto::chain::{recovery_keys, Action, ChainClock, ChainState, Entry, Signer};
 use droppen_proto::identity::fingerprint;
 use droppen_proto::keys::DhKeypair;
 use droppen_proto::pairing::{channel_id, Answer, Delivery, Hello, Offer};
 use droppen_proto::pake::{Cpace, Role};
 use droppen_proto::wrap::{self, context, Purpose, SealContext, SealedKey, WrappedKey};
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
@@ -263,7 +263,9 @@ impl Device {
     /// Create the account with a recovery key, as accounts were made before
     /// chain v3: a v2 genesis naming its RSK, user key 0 and its recovery
     /// package. Returns `RK` (what the words encode).
-    #[deprecated(note = "chain v2: every new account is v3 from its genesis — use Device::create_genesis3(true); this stands only for an account made before chain v3")]
+    #[deprecated(
+        note = "chain v2: every new account is v3 from its genesis — use Device::create_genesis3(true); this stands only for an account made before chain v3"
+    )]
     pub async fn create_genesis_with_recovery(&mut self) -> Result<[u8; 16]> {
         let mut rk = [0u8; 16];
         OsRng.fill_bytes(&mut rk);
@@ -394,7 +396,9 @@ impl Device {
     /// An existing full device adds the device behind `offer` and mails it
     /// every user key epoch, MAC'd with `secret` — as chain v2's `AddDevice`,
     /// which a v3 chain refuses ([`Device::add_and_deliver3`]).
-    #[deprecated(note = "chain v2's AddDevice: on a chain v3 account use Device::add_and_deliver3; this stands only for an account made before chain v3")]
+    #[deprecated(
+        note = "chain v2's AddDevice: on a chain v3 account use Device::add_and_deliver3; this stands only for an account made before chain v3"
+    )]
     pub async fn add_and_deliver(&mut self, device: &str, sign_key: [u8; 32], dh_key: [u8; 32], secret: &[u8; 32]) -> Result<()> {
         self.sync_chain().await?;
         self.append(Action::AddDevice(droppen_proto::chain::DeviceInfo {
@@ -437,7 +441,11 @@ impl Device {
             id: device.into(),
             sign_key,
             dh_key,
-            flags: droppen_proto::chain::Flags { host: false, admin },
+            flags: droppen_proto::chain::Flags {
+                host: false,
+                admin,
+                a2a: false,
+            },
         }))
         .await?;
         let chain = self.chain.as_ref().ok_or("no chain")?;
@@ -643,7 +651,9 @@ impl Device {
     /// to the agents (in a channel, or [`Device::mail_machine_key`]). Chain
     /// v2's `RemoveDevice`, which a v3 chain refuses
     /// ([`Device::remove_and_rotate3`]).
-    #[deprecated(note = "chain v2's RemoveDevice: on a chain v3 account use Device::remove_and_rotate3 (or remove3_and_rotate_hosts); this stands only for an account made before chain v3")]
+    #[deprecated(
+        note = "chain v2's RemoveDevice: on a chain v3 account use Device::remove_and_rotate3 (or remove3_and_rotate_hosts); this stands only for an account made before chain v3"
+    )]
     pub async fn remove_and_rotate(&mut self, device: &str) -> Result<(u32, Vec<(String, u32, [u8; 32])>)> {
         self.sync_chain().await?;
         self.append(Action::RemoveDevice(device.into())).await?;
@@ -727,9 +737,7 @@ impl Device {
             .user_keys
             .get(&latest)
             .ok_or_else(|| format!("this device does not hold user key epoch {latest}, the newest (take it from the mail first)"))?;
-        chain
-            .check_user_key(latest, uk)
-            .map_err(|e| format!("user key epoch {latest}: {e}"))?;
+        chain.check_user_key(latest, uk).map_err(|e| format!("user key epoch {latest}: {e}"))?;
         Ok(Some(latest))
     }
 
@@ -831,7 +839,11 @@ impl Device {
         }
         for (host, epoch, mk) in &machines {
             let mail = self.mail_host_key(host, *epoch, mk).await?;
-            failed.extend(mail.failed.into_iter().map(|(to, why)| format!("{host}'s key epoch {epoch} to {to}: {why}")));
+            failed.extend(
+                mail.failed
+                    .into_iter()
+                    .map(|(to, why)| format!("{host}'s key epoch {epoch} to {to}: {why}")),
+            );
         }
         for why in &failed {
             eprintln!("droppen-devkit: after the rotation: {why}");
@@ -898,7 +910,11 @@ impl Device {
             id: machine.id.clone(),
             sign_key: machine.sign_key,
             dh_key: machine.dh_key,
-            flags: Flags { host: true, admin: false },
+            flags: Flags {
+                host: true,
+                admin: false,
+                a2a: false,
+            },
         })];
         actions.extend(key_epochs(user, vec![(machine.id.clone(), commit)]));
         self.append_batch(actions).await?;
@@ -914,7 +930,11 @@ impl Device {
             self.share_user_key(uk_epoch, &mut failed).await;
         }
         let mail = self.mail_host_key(&machine.id, mk_epoch, mk).await?;
-        failed.extend(mail.failed.into_iter().map(|(to, why)| format!("{}'s key epoch {mk_epoch} to {to}: {why}", machine.id)));
+        failed.extend(
+            mail.failed
+                .into_iter()
+                .map(|(to, why)| format!("{}'s key epoch {mk_epoch} to {to}: {why}", machine.id)),
+        );
         for why in &failed {
             eprintln!("droppen-devkit: after adding {}: {why}", machine.id);
         }
@@ -977,7 +997,9 @@ impl Device {
     pub async fn remove3_and_rotate_hosts(&mut self, device: &str) -> Result<Rotation3> {
         self.sync_chain().await?;
         if held_user_key(self.chain.as_ref().ok_or("no chain")?, device) {
-            return Err(format!("{device} held the user key: remove it with remove_and_rotate3, which turns that over too"));
+            return Err(format!(
+                "{device} held the user key: remove it with remove_and_rotate3, which turns that over too"
+            ));
         }
         self.rotate3(vec![Action::RemoveDevice3(device.into())], false).await
     }
@@ -1206,7 +1228,12 @@ pub fn open_machine_copies(
 /// a package sealed by an admin no longer current can be the only way back
 /// in for its epoch (the hub keeps one per sender and epoch for that), so it
 /// must open — as [`wrap::open_from_recovery`], which this parses the name for.
-pub fn open_recovery_package(keys: &droppen_proto::chain::RecoveryKeys, chain: &ChainState, name: &str, blob: &[u8]) -> Option<(u32, Zeroizing<Vec<u8>>)> {
+pub fn open_recovery_package(
+    keys: &droppen_proto::chain::RecoveryKeys,
+    chain: &ChainState,
+    name: &str,
+    blob: &[u8],
+) -> Option<(u32, Zeroizing<Vec<u8>>)> {
     let parts: Vec<&str> = name.split('/').collect();
     let (epoch, sender) = match parts.as_slice() {
         ["rk", epoch, sender] | ["rk", epoch, sender, _] | ["rk", epoch, sender, _, _] => (*epoch, *sender),
@@ -1266,7 +1293,11 @@ mod tests {
             id: id.into(),
             sign_key: k.sign_public(),
             dh_key: k.dh_public(),
-            flags: Flags { host, admin: !host },
+            flags: Flags {
+                host,
+                admin: !host,
+                a2a: false,
+            },
         };
         let genesis = if v3 {
             genesis3_draft(ACCOUNT, ak.sign_public(), v3_device("d-1", &d1, false), recovery, 1)
@@ -1423,17 +1454,8 @@ mod tests {
     #[test]
     fn key_epochs_split_past_the_entrys_limit_as_the_web_does() {
         use droppen_proto::chain::MAX_KEY_COMMITS;
-        let user = || {
-            Some(KeyCommit {
-                epoch: 3,
-                hash: [1; 32],
-            })
-        };
-        let machines = |n: usize| -> Vec<(String, KeyCommit)> {
-            (0..n)
-                .map(|i| (format!("m-{i}"), KeyCommit { epoch: 0, hash: [2; 32] }))
-                .collect()
-        };
+        let user = || Some(KeyCommit { epoch: 3, hash: [1; 32] });
+        let machines = |n: usize| -> Vec<(String, KeyCommit)> { (0..n).map(|i| (format!("m-{i}"), KeyCommit { epoch: 0, hash: [2; 32] })).collect() };
         assert!(key_epochs(None, Vec::new()).is_empty());
         let shape = |actions: Vec<Action>| -> Vec<(bool, usize)> {
             actions

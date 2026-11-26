@@ -322,7 +322,7 @@ async function chainV3Vectors() {
     selfActivate: false,
   };
   const byDev = (m: { id: string }) => ({ type: "device", id: m.id }) as const;
-  const v3 = (m: typeof dev0, host: boolean, admin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host, admin } });
+  const v3 = (m: typeof dev0, host: boolean, admin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host, admin, a2a: false } });
   const entries: Entry[] = [
     await signDraft(genesisDraft(account, akPublic, { id: dev0.id, signKey: dev0.signKey, dhKey: dev0.dhKey, full: true }, await recoveryKeyFor(rk, account, akPublic), 1_000), ak),
   ];
@@ -622,7 +622,7 @@ async function hostRotationVectors() {
   const thief = await member("ts-r-host", 239);
   const fresh = await member("ts-r-host", 241);
   const rk = await recoveryKeys((await seed(243)).slice(0, 16));
-  const v3 = (m: Member, isHost: boolean, isAdmin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host: isHost, admin: isAdmin } });
+  const v3 = (m: Member, isHost: boolean, isAdmin: boolean) => ({ id: m.id, signKey: m.signKey, dhKey: m.dhKey, flags: { host: isHost, admin: isAdmin, a2a: false } });
   const byAdmin = { type: "device", id: admin.id } as const;
   const mk = async (id: string, epoch: number): Promise<Action> => ({
     type: "keyEpochs",

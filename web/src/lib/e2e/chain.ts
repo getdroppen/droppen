@@ -367,25 +367,31 @@ export interface DeviceIdentity {
   dhKey: Bytes;
 }
 
-/** A device's two flags (a `DeviceV3`'s last byte: bit 0 host, bit 1 admin; every other bit must be 0). */
+/**
+ * A device's flags (a `DeviceV3`'s last byte: bit 0 host, bit 1 admin, bit 2 A2A proxy; every other bit must be 0). Bit
+ * 2 is carried only since the A2A server was removed (PR #669), so a chain a v0.3.0-rc.1 wrote still decodes and verifies.
+ */
 export interface Flags {
   /** 可运行 AI: runs an agent, can be controlled, has machine keys. */
   host: boolean;
   /** 可管理账号: signs entries, holds `UK`, attests. */
   admin: boolean;
+  /** An A2A proxy: bit 2, carried only (no behaviour hangs on it now). */
+  a2a: boolean;
 }
 
-export const FLAG_HOST = 0b01;
-export const FLAG_ADMIN = 0b10;
+export const FLAG_HOST = 0b001;
+export const FLAG_ADMIN = 0b010;
+export const FLAG_A2A = 0b100;
 
 export function flagsToByte(f: Flags): number {
-  return (f.host ? FLAG_HOST : 0) | (f.admin ? FLAG_ADMIN : 0);
+  return (f.host ? FLAG_HOST : 0) | (f.admin ? FLAG_ADMIN : 0) | (f.a2a ? FLAG_A2A : 0);
 }
 
-/** Unknown bits are refused: one byte, one meaning. */
+/** Unknown bits are refused: one byte, one meaning. Bit 2 is known (preserved, not interpreted). */
 export function flagsFromByte(b: number): Flags {
-  if ((b & ~(FLAG_HOST | FLAG_ADMIN)) !== 0) throw new DecodeError("invalid device flags");
-  return { host: (b & FLAG_HOST) !== 0, admin: (b & FLAG_ADMIN) !== 0 };
+  if ((b & ~(FLAG_HOST | FLAG_ADMIN | FLAG_A2A)) !== 0) throw new DecodeError("invalid device flags");
+  return { host: (b & FLAG_HOST) !== 0, admin: (b & FLAG_ADMIN) !== 0, a2a: (b & FLAG_A2A) !== 0 };
 }
 
 /** A device as a **v3** entry names it. */
@@ -441,7 +447,12 @@ export type Action =
    * `setAccept` base minus those (`mayControl`, so `authorizeControl`; `pausedEdges`); a completion or cancellation lifts
    * it. A `setAccept` only ever changes the base. The whole entry fits every transport (`MAX_PAUSE_ENTRY_LEN`).
    */
-  | { type: "renewalPause"; op: Bytes; phase: PausePhase; removals: PauseRemoval[] };
+  | { type: "renewalPause"; op: Bytes; phase: PausePhase; removals: PauseRemoval[] }
+  /**
+   * Kind 23 of the removed A2A feature (PR #669): which A2A proxies `host` took A2A calls from — ascending by bytes, no
+   * repeats, at most `MAX_ACCEPT_IDS`, possibly none. An admin signs it. Decoded, checked and carried; nothing reads it.
+   */
+  | { type: "setA2aAccept"; host: string; devices: string[] };
 
 /**
  * One host and the ids it stops accepting while a renewal pause is open (Rust's `(host, ids)`): never a current admin;
@@ -593,6 +604,10 @@ export const RULES = {
   pauseNotOpen: "only an open renewal pause ends, and only once",
   /** A completion or cancellation names no removals. */
   pauseEndRemovals: "a renewal pause ends without naming removals",
+  /** Kind 23's host: a current, active host (the removed A2A feature; kept so a v0.3.0-rc.1 chain replays). */
+  a2aAcceptNotHost: "only a host accepts A2A calls",
+  /** Kind 23 lists current A2A proxies only. */
+  a2aAcceptNotA2a: "an A2A accept list names only current A2A proxies",
 } as const;
 
 export class ChainError extends Error {
@@ -630,6 +645,7 @@ const KIND: Record<Action["type"], number> = {
   rotateHostKey: 20,
   setRenewalPolicy: 21,
   renewalPause: 22,
+  setA2aAccept: 23,
 };
 
 /**
@@ -785,6 +801,19 @@ function getAccept(r: Reader): Accept {
   return { type: "devices", ids };
 }
 
+/** Kind 23's `u16 n | str16 id × n` (after `str16 host`): at most `MAX_ACCEPT_IDS`, strictly ascending, possibly empty. */
+function getA2aIds(r: Reader): string[] {
+  const n = r.u16();
+  if (n > MAX_ACCEPT_IDS) throw new DecodeError(`A2A accept list too large: ${n} > ${MAX_ACCEPT_IDS}`);
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const id = r.str16("device id", MAX_ID_LEN);
+    if (ids.length && compareUtf8(ids[ids.length - 1]!, id) >= 0) throw new DecodeError("invalid A2A accept list order");
+    ids.push(id);
+  }
+  return ids;
+}
+
 function sameAccept(a: Accept, b: Accept): boolean {
   if (a.type !== b.type) return false;
   if (a.type !== "devices" || b.type !== "devices") return true;
@@ -909,6 +938,10 @@ export function encodeDraft(d: Draft): Bytes {
         for (const id of ids) w.str16(id);
       }
       break;
+    case "setA2aAccept":
+      w.str16(a.host).u16(a.devices.length);
+      for (const id of a.devices) w.str16(id);
+      break;
   }
   return w.finish();
 }
@@ -1016,6 +1049,9 @@ export function decodeEntry(data: Uint8Array): Entry {
       case "3:22":
         action = getPause(r);
         break;
+      case "3:23":
+        action = { type: "setA2aAccept", host: id("device id"), devices: getA2aIds(r) };
+        break;
       default:
         throw new DecodeError(`unknown chain action ${kind}`);
     }
@@ -1121,6 +1157,8 @@ export interface DeviceRecord {
   host: boolean;
   /** Manages the account (v2: a full device). */
   admin: boolean;
+  /** The removed A2A proxy flag (bit 2), carried for replay only. */
+  a2a: boolean;
   /** Has run AI here at some point (been a host: its agent held its key in a file); such a device never becomes an admin. */
   ranAi: boolean;
   status: DeviceStatus;
@@ -1318,10 +1356,10 @@ export class ChainState {
     let flags: Flags;
     if (a.type === "genesis") {
       keys = { id: a.device.id, signKey: a.device.signKey, dhKey: a.device.dhKey };
-      flags = { host: false, admin: a.device.full };
+      flags = { host: false, admin: a.device.full, a2a: false };
     } else if (a.type === "genesis3") {
       keys = { id: a.device.id, signKey: a.device.signKey, dhKey: a.device.dhKey };
-      flags = { host: a.device.flags.host, admin: a.device.flags.admin };
+      flags = { host: a.device.flags.host, admin: a.device.flags.admin, a2a: a.device.flags.a2a };
     } else {
       throw new ChainError("notGenesis", "the first entry is not a genesis");
     }
@@ -1360,6 +1398,7 @@ export class ChainState {
       info: keys,
       host: flags.host,
       admin: flags.admin,
+      a2a: flags.a2a,
       ranAi: flags.host,
       status: { type: "active" },
       viaRecovery: false,
@@ -1503,20 +1542,20 @@ export class ChainState {
       case "addDevice": {
         const keys = identity(a.device);
         await this.checkNew(seq, keys);
-        this.insert(keys, { host: false, admin: a.device.full }, { type: "active" }, seq);
+        this.insert(keys, { host: false, admin: a.device.full, a2a: false }, { type: "active" }, seq);
         break;
       }
       case "addMachine": {
         const keys = identity(a.machine);
         await this.checkNew(seq, keys);
-        this.insert(keys, { host: true, admin: false }, { type: "active" }, seq);
+        this.insert(keys, { host: true, admin: false, a2a: false }, { type: "active" }, seq);
         break;
       }
       case "recoveryJoin": {
         const keys = identity(a.device);
         await this.checkNew(seq, keys);
         if (!a.device.full) throw notAllowed("a recovered device is a full device");
-        this.markRecovered(this.insert(keys, { host: false, admin: true }, { type: "pending", joinSeq: seq }, seq));
+        this.markRecovered(this.insert(keys, { host: false, admin: true, a2a: false }, { type: "pending", joinSeq: seq }, seq));
         break;
       }
       case "recoveryJoin3": {
@@ -1536,7 +1575,7 @@ export class ChainState {
           for (const record of this.devices.values()) {
             if (record.viaPasskey === authority.slot && record.status.type === "pending") record.status = { type: "removed" };
           }
-          this.insert(keys, { host: false, admin: false }, { type: "pending", joinSeq: seq }, seq).viaPasskey = authority.slot;
+          this.insert(keys, { host: false, admin: false, a2a: false }, { type: "pending", joinSeq: seq }, seq).viaPasskey = authority.slot;
         } else {
           if (a.device.flags.host && a.device.flags.admin) throw notAllowed(RULES.hostNotAdmin);
           if (a.device.flags.host) hostKeyDue = a.device.id;
@@ -1752,6 +1791,20 @@ export class ChainState {
         }
         break;
       }
+      case "setA2aAccept": {
+        // Kind 23 of the removed A2A feature (PR #669): decoded and checked so a v0.3.0-rc.1 chain replays; nothing reads
+        // it. An admin signed it (checked above); decoding already refused a non-canonical list.
+        const record = this.devices.get(a.host);
+        if (!record || record.status.type !== "active") throw unknownId(a.host);
+        if (!validId(a.host) || !record.host) throw notAllowed(RULES.a2aAcceptNotHost);
+        for (const id of a.devices) {
+          if (!validId(id)) throw new ChainError("badId", `entry ${seq}: invalid id`, { seq });
+          const listed = this.device(id);
+          if (!listed) throw unknownId(id);
+          if (!listed.a2a) throw notAllowed(RULES.a2aAcceptNotA2a);
+        }
+        break;
+      }
     }
     this.hostKeyDueId = hostKeyDue;
     if (d.version === CHAIN_VERSION_3 && this.v3FromSeq === null) this.v3FromSeq = seq;
@@ -1824,6 +1877,7 @@ export class ChainState {
       info,
       host: flags.host,
       admin: flags.admin,
+      a2a: flags.a2a,
       ranAi: flags.host,
       status,
       viaRecovery: false,

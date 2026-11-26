@@ -8,7 +8,6 @@ use super::hub::WireText;
 use super::Shared;
 use droppen_base::time::now_ms_u64;
 
-
 /// What an entry changes about who is in the account, in words, if anything:
 /// every addition, removal, recovery join and activation, approval and change
 /// of recovery words — an alert replaces the day of distrust after a removal,
@@ -206,13 +205,17 @@ pub(crate) fn alert_account_changes(shared: &Arc<Shared>, entries: &[Entry]) {
         if matches!(&entry.draft.action, Action::AddMachine(m) if m.id == me) || matches!(&entry.draft.action, Action::AddDevice3(d) if d.id == me) {
             continue;
         }
-        let Some(what) = account_change_in(entry, prev.as_ref(), paused.as_deref()) else { continue };
+        let Some(what) = account_change_in(entry, prev.as_ref(), paused.as_deref()) else {
+            continue;
+        };
         tracing::warn!(seq = entry.seq(), "account change: {what}");
         // Kept, and published in the encrypted status stream: every device
         // reads what this machine saw change in the account.
         shared.state.lock().expect("agent state").note_change(now_ms_u64(), &what);
         noted = true;
-        shared.host.account_change(Arc::new(shared.paths.clone()), "Droppen: account change".into(), what);
+        shared
+            .host
+            .account_change(Arc::new(shared.paths.clone()), "Droppen: account change".into(), what);
     }
     if noted {
         shared.save();
@@ -237,7 +240,9 @@ pub(crate) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     };
     shared.save();
     shared.sync.send(super::streams::Event::Alarms(alarms));
-    shared.host.account_change(Arc::new(shared.paths.clone()), "Droppen: device chain alarm".into(), what);
+    shared
+        .host
+        .account_change(Arc::new(shared.paths.clone()), "Droppen: device chain alarm".into(), what);
 }
 
 /// The hub sends each entry once a connection: an activation held back as too
@@ -257,4 +262,3 @@ pub(crate) fn ask_again_for_held(shared: &Arc<Shared>, text: &mpsc::UnboundedSen
         let _ = text.send(AgentToHub::ChainSub { from }.text());
     }
 }
-

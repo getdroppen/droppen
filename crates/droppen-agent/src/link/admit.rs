@@ -14,13 +14,13 @@ use droppen_proto::path::{self, DirectBinding};
 use tokio::sync::mpsc;
 
 use super::alerts::{alert_account_changes, raise_alarm};
-use crate::answers::ServerInfo;
 use super::bridge;
 use super::lapse::{close_lapsed, drop_removed, lapse_wait, on_removed, ChainStateExt, ChannelLapse};
 use super::local::AgentLocal;
 use super::mail::retry_mail;
 use super::state::{self, AgentState};
 use super::{Pending, Routes, Shared, AGENT_UNSAVED, CHANNEL_STALE, MAX_PENDING, PENDING_FOR};
+use crate::answers::ServerInfo;
 use droppen_base::time::now_ms_u64;
 
 /// Whether a chain error is a conflict between two views — a fork, a
@@ -498,7 +498,12 @@ pub(crate) fn accept(
         Ok(Accepted::Open { reply, transport, hello, .. }) => {
             // Saved above (a device not on record yet gets in only once it is).
             if recorded.as_ref().is_some_and(|r| !let_in(shared, &device, r)) {
-                return refuse(out, ch, AGENT_UNSAVED, "this device cannot save its record of who connects to it: check its disk");
+                return refuse(
+                    out,
+                    ch,
+                    AGENT_UNSAVED,
+                    "this device cannot save its record of who connects to it: check its disk",
+                );
             }
             let _ = out.send(Frame::Data { ch, payload: reply });
             let (tx, rx) = mpsc::unbounded_channel();

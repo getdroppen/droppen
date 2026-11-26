@@ -1541,7 +1541,7 @@ export class CloudAccount {
     const draft = genesis3Draft(
       this.account,
       akPublic,
-      { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } },
+      { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true, a2a: false } },
       recoveryKey,
       now,
     );
@@ -4257,7 +4257,7 @@ export class CloudAccount {
     if (!epochs.length) throw new AccountError("noPackages", "no recovery package opens with these words");
     // A v3 chain takes v3 joins only: an admin, never a host (review D1, D4).
     const join: Action = chain.isV3
-      ? { type: "recoveryJoin3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true } } }
+      ? { type: "recoveryJoin3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: true, a2a: false } } }
       : { type: "recoveryJoin", device: this.info() };
     const entry = await signDraft(chain.draft({ type: "recovery" }, join, Date.now()), keys.signing);
     // Refused here, by the chain's own rule, before it is posted (review 13).
@@ -4397,7 +4397,7 @@ export class CloudAccount {
       const pinned = await this.trust.pinnedGenesis();
       if (pinned && pinned !== hex(chain.hashAt(0)!)) throw new AccountError("fork", "the hub served a different genesis than this device pinned");
       await this.trust.pin();
-      const join: Action = { type: "addDevice3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: false } } };
+      const join: Action = { type: "addDevice3", device: { id: this.deviceId, signKey: this.keys.signPublic, dhKey: this.keys.dhPublic, flags: { host: false, admin: false, a2a: false } } };
       const entry = await signDraft(chain.draft({ type: "passkey", slot }, join, Date.now()), signing);
       // Refused here, by the chain's own rule, before it is posted.
       await verifyBatch(chain, [entry]);
