@@ -167,8 +167,19 @@ async fn a_relay_ticket_is_renewed_before_it_runs_out() {
     let conn = stand.device.relays().connected().await.pop().unwrap();
     tokio::time::sleep(Duration::from_millis(5_500)).await;
     assert!(!conn.is_closed(), "the relay kept the connection: {:?}", conn.link().close_frame().get());
-    assert!(conn.renewals() >= 2, "renewed {} times", conn.renewals());
-    assert!(conn.expires_ms() > now_ms());
+    // The renewal is applied a moment after the ticket's deadline, and the
+    // sample can land between the two: wait it out rather than assert at once.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while !(conn.renewals() >= 2 && conn.expires_ms() > now_ms()) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "renewed {} times, expires {} against {}",
+            conn.renewals(),
+            conn.expires_ms(),
+            now_ms()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     assert!(stand.hub.tickets() >= 3);
     let again = stand.device.channel(HOST).await.unwrap();
     assert!(Arc::ptr_eq(&channel, &again), "the same channel lives on");
