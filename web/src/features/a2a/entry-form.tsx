@@ -209,13 +209,15 @@ export function EntryFormView({
         />
       </SettingField>
 
-      {/* TODO(M2, docs/a2a.md §7): choose the a2a devices from the device chain. Read-only until then, and hidden while none is listed. */}
-      {form.allowedDevices.length > 0 && (
-        <div data-a2a-allowed-devices="" className="flex flex-col gap-1">
-          <span className="text-xs text-muted">{t("devices that may call it")}</span>
+      {/* TODO(M2, docs/a2a.md §7): choose the a2a devices from the device chain. Read-only until then. */}
+      <div data-a2a-allowed-devices="" className="flex flex-col gap-1">
+        <span className="text-xs text-muted">{t("devices that may call it")}</span>
+        {form.allowedDevices.length > 0 ? (
           <span className="font-mono text-2xs break-all text-fg">{form.allowedDevices.join(", ")}</span>
-        </div>
-      )}
+        ) : (
+          <span className="text-xs text-faint">{t("all A2A devices")}</span>
+        )}
+      </div>
 
       <div className="flex flex-col gap-1">
         <button

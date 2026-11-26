@@ -308,13 +308,13 @@ struct ProgressGate {
     scheduled: bool,
 }
 
-/// Whether `entry` lets A2A proxy `device` call it: its `allowedDevices` is
-/// empty (every proxy) or names it, and it runs in no bypass permission mode
-/// (§6), which an entry saved before that rule might, and which an entry
-/// saved before "empty is every proxy" did not have to name.
+/// Whether `entry` lets A2A proxy `device` call it: its `allowedDevices`
+/// names it, or the list is empty and the entry runs in no bypass permission
+/// mode (§6). A bypass entry has to name its devices (`manage` refuses it
+/// otherwise), so an empty bypass entry stored by an older build admits none.
 fn entry_admits_device(entry: &A2aEntry, device: &str) -> bool {
-    (entry.allowed_devices.is_empty() || entry.allowed_devices.iter().any(|allowed| allowed == device))
-        && !crate::entry::is_bypass(entry.permission.0.as_deref())
+    entry.allowed_devices.iter().any(|allowed| allowed == device)
+        || (entry.allowed_devices.is_empty() && !crate::entry::is_bypass(entry.permission.0.as_deref()))
 }
 
 /// What [`A2a::next_job`] hands the backend.

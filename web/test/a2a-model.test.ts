@@ -108,21 +108,21 @@ test("an incomplete form says what is missing, and is not saved", () => {
   assert.deepEqual(entryProblems({ ...withName(newEntryForm(), "x"), cwd: "/x", pushOrigins: "http://plain.example" }), ["pushOrigins"]);
 });
 
-test("an entry other devices may call is offered no bypass mode, and cannot be saved holding one", () => {
+test("a bypass mode needs the entry to name the devices it takes: offered only with them, and not saved without", () => {
   for (const cli of ["claude", "codex"] as const) {
     const all = permissionOptions(cli, []);
-    const called = permissionOptions(cli, ["d-7Kq2"]);
-    assert.ok(all.some(isBypass), `${cli}: offered while nobody else calls it`);
-    assert.deepEqual(called.filter(isBypass), [], `${cli}: none while a device may call it`);
-    assert.deepEqual(called, all.filter((mode) => !isBypass(mode)));
+    const named = permissionOptions(cli, ["d-7Kq2"]);
+    assert.ok(all.every((mode) => !isBypass(mode)), `${cli}: none while every proxy may call it`);
+    assert.ok(named.some(isBypass), `${cli}: offered once it names its devices`);
+    assert.deepEqual(all, named.filter((mode) => !isBypass(mode)));
   }
   assert.ok(isBypass("bypassPermissions") && isBypass("danger-full-access") && isBypass("full-access") && isBypass("bypass-all"));
   assert.ok(!isBypass("acceptEdits") && !isBypass("workspace-write") && !isBypass(null));
-  // The mode it holds is still shown, as what is saved — and named as the problem.
+  // The mode it holds is still shown, as what is saved — and named as the problem when no device is named.
   assert.ok(permissionOptions("claude", ["d-7Kq2"], "bypassPermissions").includes("bypassPermissions"));
   const held = entryFormOf({ ...saved, permission: "bypassPermissions", allowedDevices: ["d-7Kq2"] });
-  assert.deepEqual(entryProblems(held), ["bypassWithDevices"]);
-  assert.deepEqual(entryProblems({ ...held, allowedDevices: [] }), [], "fine while nobody else calls it");
+  assert.deepEqual(entryProblems(held), []);
+  assert.deepEqual(entryProblems({ ...held, allowedDevices: [] }), ["bypassWithDevices"], "every device would drive it");
 });
 
 test("an edit sends every field it shows, empty where it goes back to the default, and never enabled or the devices", () => {
