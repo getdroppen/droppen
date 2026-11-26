@@ -88,23 +88,31 @@ has_copyright() { # directory, .dsc
 # (The pool path is Debian's: pool/main/<first letter, or the fourth of lib*>/<source>/.)
 fetch_dsc_from_pool() { # source, version, destination
   local src=$1 ver=$2 dest=$3 area dsc base url tmp
+  # HTTPS and HTTPS on redirects: the .dsc's signature is not checked, so the
+  # transport is the trust anchor for the .dsc itself.
+  pool_get() { curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 "$@"; }
   case "$src" in lib*) area=${src:3:1} ;; *) area=${src:0:1} ;; esac
   dsc=${src}_${ver#*:}.dsc
   for base in https://security.ubuntu.com/ubuntu https://archive.ubuntu.com/ubuntu https://ports.ubuntu.com/ubuntu-ports; do
     tmp=$(mktemp -d "$dest/.pool.XXXXXX")
     url=$base/pool/main/$area/$src/$dsc
-    if curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/$dsc" "$url" 2>/dev/null \
+    if pool_get -o "$tmp/$dsc" "$url" 2>/dev/null \
       && [ "$(sed -n 's/^Source: //p' "$tmp/$dsc")" = "$src" ] \
       && [ "$(sed -n 's/^Version: //p' "$tmp/$dsc")" = "$ver" ]; then
       local ok=1 sha size name
       while read -r sha size name; do
         case "$name" in */*) ok=0; break ;; esac
-        curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/$name" "$base/pool/main/$area/$src/$name" 2>/dev/null || { ok=0; break; }
+        pool_get -o "$tmp/$name" "$base/pool/main/$area/$src/$name" 2>/dev/null || { ok=0; break; }
         [ "$(wc -c <"$tmp/$name")" = "$size" ] || { ok=0; break; }
         [ "$(sha256sum "$tmp/$name" | cut -d' ' -f1)" = "$sha" ] || { ok=0; break; }
       done < <(awk '/^Checksums-Sha256:/ { f = 1; next } /^[^ ]/ { f = 0 } f && NF == 3 { print $1, $2, $3 }' "$tmp/$dsc")
       if [ "$ok" = 1 ]; then
-        mv "$tmp"/* "$dest"/ && rmdir "$tmp" && return 0
+        # Dot-prefixed names too: the glob is not the only source of files.
+        for f in "$tmp"/* "$tmp"/.[!.]* "$tmp"/..?*; do
+          [ -e "$f" ] || continue
+          mv "$f" "$dest/" || { ok=0; break; }
+        done
+        if [ "$ok" = 1 ]; then rmdir "$tmp" && return 0; fi
       fi
     fi
     rm -rf "$tmp"
