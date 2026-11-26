@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 
 use crate::chain::tests::{device_info, fixture, machine_info, recovered_device, sample_chain};
 use crate::chain::{
-    genesis_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainError, ChainState, DeviceStatus, Entry, KeyCommit,
-    KeyCommits, PausePhase, RecoveryKey, Signer, RECOVERY_DELAY_MS,
+    genesis_draft, machine_key_commit, user_key_commit, Action, Attestation, ChainClock, ChainError, ChainState, DeviceStatus, DeviceV3, Entry,
+    KeyCommit, KeyCommits, PausePhase, RecoveryKey, Signer, RECOVERY_DELAY_MS,
 };
 use crate::frame::Frame;
 use crate::handshake::{HelloBody, ReplyBody, ReplyStatus};
@@ -1213,6 +1213,40 @@ fn chain_v3_vectors() -> Value {
     );
     push(&mut state, &mut entries, dev0(), k0, Action::ApproveDevice("d-t".into()), "approveT");
     push(&mut state, &mut entries, dev0(), k0, Action::RemoveDevice3("d-t".into()), "removeT");
+    // The removed A2A bits a v0.3.0-rc.1 chain carries (PR #669): an A2A
+    // device, then the host's accept list for it. Both implementations read
+    // and sign the same kind 23 entry. (The empty list is tested in chain.rs
+    // and its TS mirror, not here: it narrows, and the host's next machine key
+    // would owe an entry of its own.)
+    let a1 = extra(20);
+    push(
+        &mut state,
+        &mut entries,
+        dev0(),
+        k0,
+        Action::AddDevice3(DeviceV3 {
+            id: "a-1".into(),
+            sign_key: a1.0.verifying_key().to_bytes(),
+            dh_key: a1.1.public(),
+            flags: Flags {
+                host: false,
+                admin: false,
+                a2a: true,
+            },
+        }),
+        "addA2a",
+    );
+    push(
+        &mut state,
+        &mut entries,
+        dev0(),
+        k0,
+        Action::SetA2aAccept {
+            host: "m-1".into(),
+            devices: vec!["a-1".into()],
+        },
+        "a2aAccept",
+    );
     assert!(
         state.recovery_key().is_none(),
         "removing the device that came back with the current words voids them"
@@ -1832,7 +1866,7 @@ fn chain_v3_vectors() -> Value {
         "hashes": entries.iter().map(|e| h(&e.hash())).collect::<Vec<_>>(),
         "versions": entries.iter().map(|e| e.draft.version).collect::<Vec<_>>(),
         "steps": prefixes.iter().map(|(l, es, _)| json!({"label": l, "seq": es.len() - 1})).collect::<Vec<_>>(),
-        "extraDevices": [extra_json(0, "h-2"), extra_json(2, "d-p"), extra_json(4, "dev-r"), extra_json(5, "d-x"), extra_json(6, "dev-g"), extra_json(7, "d-first"), extra_json(8, "d-y"), extra_json(10, "d-w"), extra_json(15, "d-s"), extra_json(16, "d-t")],
+        "extraDevices": [extra_json(0, "h-2"), extra_json(2, "d-p"), extra_json(4, "dev-r"), extra_json(5, "d-x"), extra_json(6, "dev-g"), extra_json(7, "d-first"), extra_json(8, "d-y"), extra_json(10, "d-w"), extra_json(15, "d-s"), extra_json(16, "d-t"), extra_json(20, "a-1")],
         "passkeys": passkeys,
         "recoverySigners": recovery_signers,
         // Write gate: the v2 removal rule, untouched — a device that came back
