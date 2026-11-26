@@ -2474,7 +2474,7 @@
                   },
                   "a2a": {
                     "type": "boolean",
-                    "description": "Its agent last declared `a2a/1`: it reads an A2A proxy in the chain (docs/a2a.md §7.3). Absent from hubs before A2A proxies."
+                    "description": "Its agent last declared `a2a/1`: it reads an A2A proxy in the chain; the page adds an A2A proxy only once every current host says true, for availability only (docs/a2a.md §7.1). Absent from hubs before A2A proxies."
                   }
                 }
               }
