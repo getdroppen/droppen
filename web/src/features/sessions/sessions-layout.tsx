@@ -7,6 +7,7 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError, errorText } from "@/api/errors";
 import type { components } from "@/api/schema";
+import { Badge } from "@/components/ui/badge";
 import { CapsLabel } from "@/components/ui/caps-label";
 import {
   ContextMenu,
@@ -56,6 +57,8 @@ import { mq } from "@/lib/machines/query";
 import { readMachineItem, writeMachineItem } from "@/lib/machines/storage";
 import { MachineLink, MachineView, useMachineNavigate, useSectionPath } from "@/app/machine-route";
 import { SetupBars } from "@/features/setup/bars";
+import { useA2aMarks } from "@/features/a2a/api";
+import { callerLabel, sessionMarkKey, type A2aMark } from "@/features/a2a/model";
 
 type Source = components["schemas"]["Source"];
 type SessionSummary = components["schemas"]["SessionSummary"];
@@ -112,6 +115,7 @@ const SessionRow = memo(function SessionRow({
   expandKey,
   isOpen = false,
   onToggleChildren,
+  a2a = null,
 }: {
   session: SessionSummary;
   /** Basename when flat, the row's own cwd under a repository heading. */
@@ -132,6 +136,8 @@ const SessionRow = memo(function SessionRow({
   expandKey?: string;
   isOpen?: boolean;
   onToggleChildren?: (expandKey: string, remote: boolean) => void;
+  /** It was started over A2A: by whom, through which entry (`useA2aMarks`). */
+  a2a?: A2aMark | null;
 }) {
   const { t } = useTranslation();
   const children = session.children ?? [];
@@ -176,6 +182,15 @@ const SessionRow = memo(function SessionRow({
                 </span>
               )}
               <SourceIcon source={session.source} acpAgent={session.acpAgent} machine={machine} className="text-muted" />
+              {a2a && (
+                <Badge
+                  data-a2a-mark={a2a.entry}
+                  title={t("started over A2A by {{caller}}, through {{entry}}", { caller: callerLabel(a2a.caller).name, entry: a2a.entry })}
+                  className="shrink-0"
+                >
+                  {t("from A2A")}
+                </Badge>
+              )}
               {dirLabel && <span className="truncate font-mono text-2xs text-faint">{dirLabel}</span>}
               {children.length > 0 && <SubagentCount list={children} isOpen={isOpen} />}
               <span className="ml-auto shrink-0 font-mono text-2xs text-faint">
@@ -707,6 +722,8 @@ function SessionsPanel({ detailOpen, unified, devices }: { detailOpen: boolean; 
   // design, not something this view asks for — and the model drops the external
   // half. The detail route still wants those rows.
   const allSessions = useFeedSessions();
+  // Which of this device's sessions an A2A client started (not another device's: their rows carry no mark).
+  const a2aMarks = useA2aMarks(allSessions?.length ?? 0);
   const connected = useFeedConnected();
   const settings = useFeedSettings();
   const homeDir = settings?.homeDir ?? "";
@@ -895,6 +912,7 @@ function SessionsPanel({ detailOpen, unified, devices }: { detailOpen: boolean; 
                         expandKey={row.expandKey}
                         isOpen={row.isOpen}
                         onToggleChildren={toggleExpanded}
+                        a2a={!row.machine || row.machine === machine ? (a2aMarks.get(sessionMarkKey(row.session.source, row.session.id)) ?? null) : null}
                       />
                     )}
                   </div>

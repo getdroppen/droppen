@@ -136,6 +136,14 @@
           ]
         },
         {
+          "name": "droppen-a2a",
+          "about": "The A2A server: the protocol, its two bindings, Agent Cards, A2A tokens, the task store, push delivery to the callers' webhooks; owns the SessionBackend port.",
+          "mayUse": [],
+          "notes": [
+            "Runs no session itself: the entry implements its SessionBackend port on the providers and wires it in."
+          ]
+        },
+        {
           "name": "droppen-aggregator",
           "about": "The device role: copies of other machines; owns the Enrollment port.",
           "mayUse": []
@@ -146,6 +154,11 @@
           "mayUse": [
             "droppen-aggregator"
           ]
+        },
+        {
+          "name": "droppen-a2a-proxy",
+          "about": "droppen a2a-proxy: a standalone a2a device that carries A2A requests over end-to-end channels to the devices that run the agents.",
+          "mayUse": []
         },
         {
           "name": "droppen-cloud",

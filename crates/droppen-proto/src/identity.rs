@@ -26,6 +26,12 @@
 //!
 //! So a hub that issues codes cannot enroll a machine of its own (it cannot
 //! produce the proof), and there is no short code for anyone to grind.
+//!
+//! `DA1-<account fingerprint>-<secret>` ([`A2aEnrollCode`]) joins an A2A proxy
+//! (`docs/a2a.md` §7.2) the same way, with the same token, and a proof under
+//! its own label, `"rh/v1 enroll-proof a2a\0"`: a proof made for one kind of
+//! code never verifies as the other's, and each reader takes only its own
+//! version (`agent enroll` refuses `DA1-`, the proxy `RH1-` and `DR1-`).
 
 use ed25519_dalek::SigningKey;
 use hkdf::Hkdf;
@@ -42,6 +48,8 @@ const MACHINE_SALT: &[u8] = b"rh/v1 machine";
 const FINGERPRINT_LABEL: &[u8] = b"rh/v1 fingerprint\0";
 const TOKEN_LABEL: &[u8] = b"rh/v1 enroll-token";
 const PROOF_LABEL: &[u8] = b"rh/v1 enroll-proof\0";
+/// The proof label of an A2A proxy's code ([`A2aEnrollCode`]).
+const A2A_PROOF_LABEL: &[u8] = b"rh/v1 enroll-proof a2a\0";
 
 /// The first 16 bytes of a labelled SHA-256 of a public key.
 pub fn fingerprint(key: &[u8; 32]) -> [u8; 16] {
@@ -159,6 +167,53 @@ fn hmac(secret: &[u8; 16]) -> Hmac<Sha256> {
     <Hmac<Sha256> as Mac>::new_from_slice(secret).expect("HMAC takes any key length")
 }
 
+/// `HMAC(secret, "rh/v1 enroll-token")[..16]`.
+fn enroll_token(secret: &[u8; 16]) -> [u8; 16] {
+    let mut mac = hmac(secret);
+    mac.update(TOKEN_LABEL);
+    let out = mac.finalize().into_bytes();
+    out[..16].try_into().expect("16 bytes")
+}
+
+/// `HMAC(secret, label ‖ str16 account ‖ str16 id ‖ sign key ‖ dh key ‖ token)`.
+fn proof_mac(secret: &[u8; 16], label: &[u8], account: &str, id: &str, sign_key: &[u8; 32], dh_key: &[u8; 32]) -> Hmac<Sha256> {
+    let mut body = Vec::with_capacity(160);
+    put_str16(&mut body, account);
+    put_str16(&mut body, id);
+    body.extend_from_slice(sign_key);
+    body.extend_from_slice(dh_key);
+    body.extend_from_slice(&enroll_token(secret));
+    let mut mac = hmac(secret);
+    mac.update(label);
+    mac.update(&body);
+    mac
+}
+
+/// `<version>-<fingerprint>-<secret>` with one of `versions` (any case), as
+/// its two 16-byte parts.
+fn parse_code(text: &str, versions: &[&str]) -> Result<([u8; 16], [u8; 16]), &'static str> {
+    let mut parts = text.trim().split('-');
+    let (Some(version), Some(fp), Some(secret), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
+        return Err("an enrollment code looks like <version>-<fingerprint>-<secret>");
+    };
+    if !versions.iter().any(|v| version.eq_ignore_ascii_case(v)) {
+        if A2A_CODE_VERSIONS.iter().any(|v| version.eq_ignore_ascii_case(v)) {
+            return Err("a DA1 code joins an A2A proxy (droppen a2a-proxy, DROPPEN_ENROLL_CODE), not a computer that runs AI");
+        }
+        if ENROLL_CODE_VERSIONS.iter().any(|v| version.eq_ignore_ascii_case(v)) {
+            return Err("an RH1 code adds a computer that runs AI (droppen agent enroll); an A2A proxy joins with a DA1 code");
+        }
+        return Err("this is not an enrollment code of a version this agent understands");
+    }
+    let account_fingerprint: [u8; 16] = base32::decode(fp)
+        .and_then(|b| b.try_into().ok())
+        .ok_or("the fingerprint part is not 16 bytes of base32")?;
+    let secret: [u8; 16] = base32::decode(secret)
+        .and_then(|b| b.try_into().ok())
+        .ok_or("the secret part is not 16 bytes of base32")?;
+    Ok((account_fingerprint, secret))
+}
+
 impl EnrollCode {
     /// A fresh code for the account whose key has fingerprint `account_fingerprint`.
     pub fn generate<R: RngCore + CryptoRng>(account_fingerprint: [u8; 16], rng: &mut R) -> Self {
@@ -169,33 +224,22 @@ impl EnrollCode {
 
     /// What the hub knows the enrollment by.
     pub fn token(&self) -> [u8; 16] {
-        let mut mac = hmac(&self.secret);
-        mac.update(TOKEN_LABEL);
-        let out = mac.finalize().into_bytes();
-        out[..16].try_into().expect("16 bytes")
-    }
-
-    fn proof_mac(&self, account: &str, machine: &str, sign_key: &[u8; 32], dh_key: &[u8; 32]) -> Hmac<Sha256> {
-        let mut body = Vec::with_capacity(160);
-        put_str16(&mut body, account);
-        put_str16(&mut body, machine);
-        body.extend_from_slice(sign_key);
-        body.extend_from_slice(dh_key);
-        body.extend_from_slice(&self.token());
-        let mut mac = hmac(&self.secret);
-        mac.update(PROOF_LABEL);
-        mac.update(&body);
-        mac
+        enroll_token(&self.secret)
     }
 
     /// The agent's proof that it holds this code, bound to the keys it enrolls.
     pub fn proof(&self, account: &str, machine: &str, sign_key: &[u8; 32], dh_key: &[u8; 32]) -> [u8; 32] {
-        self.proof_mac(account, machine, sign_key, dh_key).finalize().into_bytes().into()
+        proof_mac(&self.secret, PROOF_LABEL, account, machine, sign_key, dh_key)
+            .finalize()
+            .into_bytes()
+            .into()
     }
 
     /// The device's constant-time check of that proof.
     pub fn verify_proof(&self, account: &str, machine: &str, sign_key: &[u8; 32], dh_key: &[u8; 32], proof: &[u8; 32]) -> bool {
-        self.proof_mac(account, machine, sign_key, dh_key).verify_slice(proof).is_ok()
+        proof_mac(&self.secret, PROOF_LABEL, account, machine, sign_key, dh_key)
+            .verify_slice(proof)
+            .is_ok()
     }
 }
 
@@ -212,20 +256,77 @@ impl std::fmt::Display for EnrollCode {
 impl std::str::FromStr for EnrollCode {
     type Err = &'static str;
 
+    /// `RH1-` or `DR1-` only: a `DA1-` code is an A2A proxy's.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let mut parts = text.trim().split('-');
-        let (Some(version), Some(fp), Some(secret), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
-            return Err("an enrollment code looks like <version>-<fingerprint>-<secret>");
-        };
-        if !ENROLL_CODE_VERSIONS.iter().any(|v| version.eq_ignore_ascii_case(v)) {
-            return Err("this is not an enrollment code of a version this agent understands");
-        }
-        let account_fingerprint: [u8; 16] = base32::decode(fp)
-            .and_then(|b| b.try_into().ok())
-            .ok_or("the fingerprint part is not 16 bytes of base32")?;
-        let secret: [u8; 16] = base32::decode(secret)
-            .and_then(|b| b.try_into().ok())
-            .ok_or("the secret part is not 16 bytes of base32")?;
+        let (account_fingerprint, secret) = parse_code(text, &ENROLL_CODE_VERSIONS)?;
+        Ok(Self { account_fingerprint, secret })
+    }
+}
+
+/// `DA1-<account fingerprint>-<secret>`: the code that joins an A2A proxy to
+/// an account (`docs/a2a.md` §7.2). The page that adds the proxy makes it
+/// and registers its token with the hub as `kind: "a2a"`; the proxy proves it
+/// under its own label, so neither kind of code stands in for the other.
+#[derive(Clone, PartialEq, Eq)]
+pub struct A2aEnrollCode {
+    pub account_fingerprint: [u8; 16],
+    pub secret: [u8; 16],
+}
+
+impl std::fmt::Debug for A2aEnrollCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("A2aEnrollCode")
+            .field("account", &display_fingerprint(&self.account_fingerprint))
+            .finish_non_exhaustive()
+    }
+}
+
+/// The version tag an A2A proxy's code starts with, in any case.
+const A2A_CODE_VERSIONS: [&str; 1] = ["DA1"];
+
+impl A2aEnrollCode {
+    /// A fresh code for the account whose key has fingerprint `account_fingerprint`.
+    pub fn generate<R: RngCore + CryptoRng>(account_fingerprint: [u8; 16], rng: &mut R) -> Self {
+        let mut secret = [0u8; 16];
+        rng.fill_bytes(&mut secret);
+        Self { account_fingerprint, secret }
+    }
+
+    /// What the hub knows the enrollment by (the same derivation as
+    /// [`EnrollCode::token`]).
+    pub fn token(&self) -> [u8; 16] {
+        enroll_token(&self.secret)
+    }
+
+    /// The proxy's proof that it holds this code, bound to the device id the
+    /// hub assigned and the keys it joins with.
+    pub fn proof(&self, account: &str, device: &str, sign_key: &[u8; 32], dh_key: &[u8; 32]) -> [u8; 32] {
+        proof_mac(&self.secret, A2A_PROOF_LABEL, account, device, sign_key, dh_key)
+            .finalize()
+            .into_bytes()
+            .into()
+    }
+
+    /// The page's constant-time check of that proof.
+    pub fn verify_proof(&self, account: &str, device: &str, sign_key: &[u8; 32], dh_key: &[u8; 32], proof: &[u8; 32]) -> bool {
+        proof_mac(&self.secret, A2A_PROOF_LABEL, account, device, sign_key, dh_key)
+            .verify_slice(proof)
+            .is_ok()
+    }
+}
+
+impl std::fmt::Display for A2aEnrollCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DA1-{}-{}", base32::encode(&self.account_fingerprint), base32::encode(&self.secret))
+    }
+}
+
+impl std::str::FromStr for A2aEnrollCode {
+    type Err = &'static str;
+
+    /// `DA1-` only: an `RH1-` or `DR1-` code adds a computer that runs AI.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (account_fingerprint, secret) = parse_code(text, &A2A_CODE_VERSIONS)?;
         Ok(Self { account_fingerprint, secret })
     }
 }
@@ -306,6 +407,47 @@ mod tests {
         assert!(!code.verify_proof("acct", "m-1", &other.sign_public(), &id.dh_public(), &proof));
         assert!(!code.verify_proof("acct", "m-2", &id.sign_public(), &id.dh_public(), &proof));
         assert_ne!(code.token(), code.secret, "the token is not the secret");
+    }
+
+    #[test]
+    fn an_a2a_code_is_its_own_kind_read_and_proved_apart_from_a_machines() {
+        let code = A2aEnrollCode::generate(fingerprint(&[9; 32]), &mut rng(3));
+        let text = code.to_string();
+        assert!(text.starts_with("DA1-"));
+        assert_eq!(text.len(), 4 + 26 + 1 + 26);
+        assert_eq!(text.parse::<A2aEnrollCode>(), Ok(code.clone()));
+        assert_eq!(format!(" {} \n", text.to_lowercase()).parse::<A2aEnrollCode>(), Ok(code.clone()));
+        // Each reader takes its own version only, and says what the other is.
+        let body = &text[4..];
+        for other in [format!("RH1-{body}"), format!("DR1-{body}"), format!("dr1-{body}")] {
+            assert!(other.parse::<A2aEnrollCode>().unwrap_err().contains("RH1 code"), "{other}");
+        }
+        assert!(text.parse::<EnrollCode>().unwrap_err().contains("DA1 code"));
+        assert!(text.to_lowercase().parse::<EnrollCode>().is_err());
+        for bad in [
+            "",
+            "DA1",
+            "DA1-AAAA-BBBB",
+            &format!("DA2-{body}"),
+            &format!("{text}-X"),
+            &format!("DAP1-{body}"),
+        ] {
+            assert!(bad.parse::<A2aEnrollCode>().is_err(), "{bad}");
+        }
+        // The same token as a machine's code with that secret; a proof under
+        // one label never verifies under the other.
+        let machine = EnrollCode {
+            account_fingerprint: code.account_fingerprint,
+            secret: code.secret,
+        };
+        assert_eq!(code.token(), machine.token());
+        let id = MachineIdentity::from_seed(&[6; 32]);
+        let proof = code.proof("acct", "a2a-1", &id.sign_public(), &id.dh_public());
+        assert!(code.verify_proof("acct", "a2a-1", &id.sign_public(), &id.dh_public(), &proof));
+        assert!(!machine.verify_proof("acct", "a2a-1", &id.sign_public(), &id.dh_public(), &proof));
+        let rh_proof = machine.proof("acct", "a2a-1", &id.sign_public(), &id.dh_public());
+        assert!(!code.verify_proof("acct", "a2a-1", &id.sign_public(), &id.dh_public(), &rh_proof));
+        assert!(!code.verify_proof("acct", "a2a-2", &id.sign_public(), &id.dh_public(), &proof));
     }
 
     #[test]

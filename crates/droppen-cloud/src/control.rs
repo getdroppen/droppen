@@ -77,6 +77,10 @@ pub struct Control {
     /// The other devices' copies in memory, for the local gateway:
     /// the copies task of whichever link runs publishes into it.
     live: Arc<droppen_aggregator::live::LiveCopies>,
+    /// Moves on whenever which A2A proxies this device takes calls from may
+    /// have changed ([`Control::a2a_changes`]): the running link's chain
+    /// moved, or a link started or stopped.
+    a2a_changes: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 impl Control {
@@ -91,7 +95,44 @@ impl Control {
             gate: tokio::sync::Mutex::new(()),
             generation: Mutex::new(0),
             live: droppen_aggregator::live::LiveCopies::new(),
+            a2a_changes: Arc::new(tokio::sync::watch::channel(0).0),
         })
+    }
+
+    /// Whether this device takes A2A calls from A2A proxy `device` now, on
+    /// its running link's verified chain (`docs/a2a.md` §7.3): what the A2A
+    /// server asks of every request bridged from one, and before every
+    /// stream event and push. No running link, no proxy.
+    pub fn takes_a2a_calls_from(&self, device: &str) -> bool {
+        let running = self.running.lock().expect("running");
+        running
+            .as_ref()
+            .filter(|run| !run.finished())
+            .is_some_and(|run| run.with_state(|st| st.takes_a2a_calls_from(device)))
+    }
+
+    /// Every A2A proxy [`Control::takes_a2a_calls_from`] admits: its id and
+    /// its fingerprint. None without a running link.
+    pub fn a2a_callers(&self) -> Vec<(String, String)> {
+        let running = self.running.lock().expect("running");
+        running
+            .as_ref()
+            .filter(|run| !run.finished())
+            .map(|run| run.with_state(|st| st.a2a_callers()))
+            .unwrap_or_default()
+    }
+
+    /// Moves on whenever an answer of [`Control::takes_a2a_calls_from`] may
+    /// have changed — the running link's chain advanced, a link started or
+    /// stopped — so the A2A server takes back what a proxy no longer admitted
+    /// has (`docs/a2a.md` §6).
+    pub fn a2a_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.a2a_changes.subscribe()
+    }
+
+    /// Tell [`Control::a2a_changes`]'s listeners to look again.
+    fn a2a_moved(&self) {
+        self.a2a_changes.send_modify(|n| *n += 1);
     }
 
     /// What a link calls once it renewed its identity key: this control
@@ -190,7 +231,18 @@ impl Control {
         // ([`droppen_agent::migrate_hub`]).
         droppen_agent::migrate_hub(&self.paths).await.map_err(ControlError::Failed)?;
         let started = droppen_agent::link::start(&self.paths, env, self.live.clone(), self.restart_hook()).map_err(ControlError::Failed)?;
+        // Every advance of this link's chain is one for the A2A proxies too,
+        // until the link ends.
+        let mut chain = started.chain_changes();
+        let changes = self.a2a_changes.clone();
+        tokio::spawn(async move {
+            while chain.changed().await.is_ok() {
+                changes.send_modify(|n| *n += 1);
+            }
+            changes.send_modify(|n| *n += 1);
+        });
         *self.running.lock().expect("running") = Some(started);
+        self.a2a_moved();
         Ok(())
     }
 
@@ -205,6 +257,7 @@ impl Control {
         if let Some(running) = running {
             running.stop().await;
         }
+        self.a2a_moved();
         // Whatever the copies task left in memory goes with it (it clears
         // it itself when it ends, unless it had to be cut short).
         self.live.clear();

@@ -11,6 +11,7 @@
 // not merged by `lang-*.ts`.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { a2aJa, a2aZhCN, a2aZhTW } from "../src/i18n/a2a.js";
 import { cloudDevicesJa, cloudDevicesZhCN, cloudDevicesZhTW } from "../src/i18n/cloud-devices.js";
 import { crossDeviceJa, crossDeviceZhCN, crossDeviceZhTW } from "../src/i18n/cross-device.js";
 import { hostsJa, hostsZhCN, hostsZhTW } from "../src/i18n/hosts.js";
@@ -33,6 +34,7 @@ type Table = Record<string, string>;
 /** Each language's tables as `lang-*.ts` merges them (link includes link-handoff). */
 const TABLES: Record<"zh-CN" | "zh-TW" | "ja", Record<string, Table>> = {
   "zh-CN": {
+    a2a: a2aZhCN,
     onboarding: onboardingZhCN,
     "cross-device": crossDeviceZhCN,
     link: linkZhCN,
@@ -46,6 +48,7 @@ const TABLES: Record<"zh-CN" | "zh-TW" | "ja", Record<string, Table>> = {
     main: zhCN,
   },
   "zh-TW": {
+    a2a: a2aZhTW,
     onboarding: onboardingZhTW,
     "cross-device": crossDeviceZhTW,
     link: linkZhTW,
@@ -59,6 +62,7 @@ const TABLES: Record<"zh-CN" | "zh-TW" | "ja", Record<string, Table>> = {
     main: zhTW,
   },
   ja: {
+    a2a: a2aJa,
     onboarding: onboardingJa,
     "cross-device": crossDeviceJa,
     link: linkJa,

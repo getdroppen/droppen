@@ -7,13 +7,13 @@ use droppen_proto::channel::{PathOptions, Session};
 use droppen_proto::direct::{Admission, Admit, AgentDirect};
 use droppen_proto::driver::{Channel, Incoming};
 use droppen_proto::frame::Frame;
-use droppen_proto::handshake::{self, Accepted, AgentSide, HandshakeError, FRESHNESS_MAX_AGE_MS};
+use droppen_proto::handshake::{self, Accepted, Access, AgentSide, HandshakeError, FRESHNESS_MAX_AGE_MS};
 use droppen_proto::mux::{Role, StreamClass};
 use droppen_proto::noise::{Binding, RekeyPolicy};
 use droppen_proto::path::{self, DirectBinding};
 use tokio::sync::mpsc;
 
-use super::alerts::{alert_account_changes, raise_alarm};
+use super::alerts::{a2a_connected, alert_account_changes, raise_alarm};
 use crate::answers::ServerInfo;
 use super::bridge;
 use super::lapse::{close_lapsed, drop_removed, lapse_wait, on_removed, ChainStateExt, ChannelLapse};
@@ -69,7 +69,9 @@ pub(crate) struct NoChain;
 /// The step every admission — a channel on the hub or a relay, a direct
 /// path — shares: this agent's live chain and clock, the freshness gate and
 /// the replay guard, under the state lock, with the guard and the device's
-/// record saved before the reply leaves.
+/// record saved before the reply leaves. A channel takes an A2A proxy too
+/// ([`handshake::accept_with_a2a`], [`Access::A2aOnly`]); a direct path
+/// never does.
 ///
 /// `after_open` runs in that same critical section, on the opened channel's
 /// behalf: the channel admission registers its control lapse there, so no
@@ -105,7 +107,7 @@ pub(crate) fn admit<R>(
         freshness_max_age_ms: FRESHNESS_MAX_AGE_MS,
     };
     let outcome = match hello {
-        Hello::Channel(message) => handshake::accept(side, device, message, now),
+        Hello::Channel(message) => handshake::accept_with_a2a(side, device, message, now),
         Hello::Direct(bind, message) => handshake::accept_direct(side, device, bind, message, now),
     };
     let mut recorded = None;
@@ -168,7 +170,18 @@ impl Admit for LinkAdmit {
                 reply: None,
                 why: "cannot save the record of who connects".into(),
             },
-            Ok(Accepted::Open { reply, transport, .. }) => Admission::Open { reply, transport },
+            Ok(Accepted::Open {
+                reply,
+                transport,
+                access: Access::Full,
+                ..
+            }) => Admission::Open { reply, transport },
+            // `accept_direct` lets no A2A proxy in; were it to, no direct
+            // path for it (`docs/a2a.md` §7.3).
+            Ok(Accepted::Open { access: Access::A2aOnly, .. }) => Admission::Refused {
+                reply: None,
+                why: "an A2A proxy has no direct path".into(),
+            },
             Ok(Accepted::NeedEntries { reply, .. }) => Admission::Refused {
                 reply: Some(reply),
                 why: "the device has seen more of the chain".into(),
@@ -416,20 +429,20 @@ pub(crate) fn on_channel_frame(
             }
         }
         Frame::Data { ch, payload } => {
-            if let Some((_, _, route)) = routes.get(&ch) {
+            if let Some((_, _, route, _)) = routes.get(&ch) {
                 let _ = route.send(Frame::Data { ch, payload });
             } else if let Some((device, _)) = pending.remove(&ch) {
                 accept(shared, ch, device, &payload, routes, out, text);
             }
         }
         Frame::Credit { ch, bytes } => {
-            if let Some((_, _, route)) = routes.get(&ch) {
+            if let Some((_, _, route, _)) = routes.get(&ch) {
                 let _ = route.send(Frame::Credit { ch, bytes });
             }
         }
         Frame::Close { ch, code, reason } => {
             pending.remove(&ch);
-            if let Some((_, _, route)) = routes.remove(&ch) {
+            if let Some((_, _, route, _)) = routes.remove(&ch) {
                 let _ = route.send(Frame::Close { ch, code, reason });
             }
         }
@@ -495,23 +508,38 @@ pub(crate) fn accept(
         chain_advanced(shared, &learnt, routes, out, text);
     }
     match outcome {
-        Ok(Accepted::Open { reply, transport, hello, .. }) => {
+        Ok(Accepted::Open {
+            reply,
+            transport,
+            hello,
+            access,
+            ..
+        }) => {
             // Saved above (a device not on record yet gets in only once it is).
             if recorded.as_ref().is_some_and(|r| !let_in(shared, &device, r)) {
                 return refuse(out, ch, AGENT_UNSAVED, "this device cannot save its record of who connects to it: check its disk");
             }
+            // An A2A proxy's channel is said every time, and the first one from
+            // a given proxy — new to the record of who connected — on the
+            // phone too (`docs/a2a.md` §7.3).
+            match access {
+                Access::Full => {}
+                Access::A2aOnly => a2a_connected(shared, &device, ch, matches!(recorded, Some(state::Recorded::New))),
+            }
             let _ = out.send(Frame::Data { ch, payload: reply });
             let (tx, rx) = mpsc::unbounded_channel();
             // The key it opened with: a renewal of the device's identity
-            // closes the channel ([`drop_removed`]).
+            // closes the channel ([`drop_removed`]); and what it was admitted
+            // for, which a chain change is held against.
             let key = transport.remote_static();
-            routes.insert(ch, (device.clone(), key, tx));
+            routes.insert(ch, (device.clone(), key, tx, access));
             // A device that speaks sequenced frames gets them (and may ask
             // for a direct path); an older one gets the plain channel.
             let paths = path::client_wants_paths(&hello.client);
             // A device that reads streams named per key epoch: from now on
-            // (remembered) the agent names them so.
-            if droppen_proto::stream::reads_epoch_names(&hello.client) {
+            // (remembered) the agent names them so. Not an A2A proxy's word:
+            // it reads no stream.
+            if access == Access::Full && droppen_proto::stream::reads_epoch_names(&hello.client) {
                 shared.sync.send(super::streams::Event::ReadsEpochNames);
             }
             let relay_hash = transport.handshake_hash();
@@ -527,8 +555,14 @@ pub(crate) fn accept(
             // again on any chain moved since, [`ChannelLapse::holds`]).
             let mut moved = shared.chain_version.subscribe();
             let lapse = lapse.expect("an open channel's lapse, registered at its admission");
-            let local: Arc<dyn bridge::Local> = Arc::new(AgentLocal::new(shared.clone(), lapse.clone()));
-            let direct = (paths && shared.direct).then(|| {
+            let local: Arc<dyn bridge::Local> = Arc::new(AgentLocal::new(shared.clone(), lapse.clone(), access));
+            // No direct path for an A2A proxy: its signalling is refused
+            // below, and `accept_direct` would not let it in anyway.
+            let direct_paths = match access {
+                Access::Full => paths && shared.direct,
+                Access::A2aOnly => false,
+            };
+            let direct = direct_paths.then(|| {
                 let (account, machine) = {
                     let st = shared.state.lock().expect("agent state");
                     (st.account.clone(), st.machine.clone())
@@ -546,7 +580,7 @@ pub(crate) fn accept(
                     relay_hash,
                 })
             });
-            tracing::info!(%device, ch, paths, direct = direct.is_some(), "channel open");
+            tracing::info!(%device, ch, paths, direct = direct.is_some(), ?access, "channel open");
             let shared = shared.clone();
             tokio::spawn(async move {
                 // Control lapses on an open channel too (local-aggregator
@@ -590,20 +624,21 @@ pub(crate) fn accept(
                     // requests at once, whatever closes the channel.
                     // Chain v3: and that this machine still accepts control
                     // from it (an accept list changed, an admin demoted,
-                    // this machine stopped running AI). And that its control
-                    // has not lapsed, on the chain as it is now. Host
-                    // identity renewal: and that the key it opened with is
-                    // still the one the chain names for it.
+                    // this machine stopped running AI) — an A2A proxy: still
+                    // takes A2A calls from it (`docs/a2a.md` §7.3). And that
+                    // its control has not lapsed, on the chain as it is now.
+                    // Host identity renewal: and that the key it opened with
+                    // is still the one the chain names for it.
                     let (current, fresh) = {
                         let st = shared.state.lock().expect("agent state");
                         let current = st
                             .chain
                             .as_ref()
-                            .is_some_and(|c| c.may_control(&device, &st.machine).is_ok() && c.holds_named_key(&device, &key));
+                            .is_some_and(|c| access.check(c, &device, &st.machine).is_ok() && c.holds_named_key(&device, &key));
                         (current, lapse.lock().expect("channel lapse").holds(&st, shared.clock.now_ms()))
                     };
                     if !current {
-                        tracing::info!(%device, ch, "a stream from a device that may no longer control this machine; closing its channel");
+                        tracing::info!(%device, ch, ?access, "a stream from a device that may no longer control this machine; closing its channel");
                         break;
                     }
                     if !fresh {

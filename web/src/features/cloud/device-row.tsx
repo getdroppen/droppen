@@ -80,6 +80,12 @@ export interface DeviceRowView {
    * a person dismissed (shown quietly, to undo).
    */
   reEnroll?: ReEnrollLine[];
+  /**
+   * The A2A proxies that could call this host's A2A and no longer can (docs/a2a.md §7.1; its `hostsToRotate` losses): a
+   * session such a proxy started could have read its identity key, so it renews it on its own — said here, with its
+   * renewal's line; one that cannot renew should be removed and added again.
+   */
+  a2aExposed?: string[];
   /** A host that renews its identity key here: where its renewal stands (docs/host-identity-rotation.md §4.4). */
   renewal?: RenewalStatus;
   /** It renews its identity key here at all (v3, the hub takes renewals, its Droppen declared it): the menu's "renew identity key". */
@@ -734,6 +740,17 @@ export function DeviceRow({
       {view.retiredLoginMs != null && status === "active" && (
         <span data-testid={`retired-login-${id}`} className="font-mono text-xs leading-4 text-muted">
           {t("its old identity key was used to sign in at {{time}}", { time: formatAsOf(view.retiredLoginMs) })}
+        </span>
+      )}
+      {view.a2aExposed && view.a2aExposed.length > 0 && viewerAdmin && status === "active" && (
+        <span data-testid={`a2a-exposed-${id}`} data-signal="warn" className="text-xs leading-4 text-warn-fg">
+          {view.renewable
+            ? t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key, so it renews its identity key.", {
+                ids: view.a2aExposed.join(", "),
+              })
+            : t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key, and it cannot renew it here. Remove it and add it again.", {
+                ids: view.a2aExposed.join(", "),
+              })}
         </span>
       )}
       {view.isolatedControllers && view.isolatedControllers.length > 0 && status === "active" && (

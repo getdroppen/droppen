@@ -23,11 +23,12 @@
  * each Start at Login state: `desktop-app.tsx`), `?fixture=welcome` (the
  * desktop app's first-run guide and its server's setup page, on each system
  * the app runs on: `welcome.tsx`) or `?fixture=updates` (the desktop app's
- * update page where it cannot update itself, `&place=`: `updates.tsx`), plus
- * `?theme=dark`. `?fixture=session-audit` is a synthetic transcript for
- * display audits (wide table and code, a failed step, statuses, a question,
- * compaction, an interruption, a cross-session title) with `&phase=after` and
- * `&state=working` for a folded run that grows.
+ * update page where it cannot update itself, `&place=`: `updates.tsx`),
+ * `?fixture=a2a` (Settings → A2A over a device with entries, tokens and tasks:
+ * `a2a.tsx`), plus `?theme=dark`. `?fixture=session-audit` is a synthetic
+ * transcript for display audits (wide table and code, a failed step, statuses,
+ * a question, compaction, an interruption, a cross-session title) with
+ * `&phase=after` and `&state=working` for a folded run that grows.
  * `web/src/index.css` excludes this directory from Tailwind's scan
  * (`@source not`), so nothing here can change the production stylesheet. That
  * also means every class below must already occur in `web/src`; the layout
@@ -86,6 +87,7 @@ import { AgentsTabStrip } from "@/features/settings/agents/agents-section";
 import { acpStatus, acpSignal, type AcpCheck } from "@/features/settings/agents/agents-tabs";
 import { SettingRow, SettingsSection } from "@/features/settings/layout";
 import { applyLanguage, type LanguagePref } from "@/i18n";
+import { mountA2a } from "./a2a";
 import { mountDesktopApp } from "./desktop-app";
 import { mountUpdates } from "./updates";
 import { mountWelcome } from "./welcome";
@@ -1531,6 +1533,8 @@ if (fixture === "new-chat") {
   await mountDesktopApp(query);
 } else if (fixture === "updates") {
   await mountUpdates(query);
+} else if (fixture === "a2a") {
+  await mountA2a(query);
 } else {
   if (fixture === "agents" || fixture === "diagrams" || fixture === "hostile" || fixture === "images" || fixture === "session-opening" || fixture === "landing")
     await applyLanguage((query.get("lang") as LanguagePref | null) ?? "en");

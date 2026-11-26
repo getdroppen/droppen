@@ -1823,7 +1823,11 @@ mod tests {
                 id: "d-a".into(),
                 sign_key: admin.verifying_key().to_bytes(),
                 dh_key: [3; 32],
-                flags: Flags { host: false, admin: true },
+                flags: Flags {
+                    host: false,
+                    admin: true,
+                    a2a: false,
+                },
             },
             None,
             1,
@@ -2120,7 +2124,11 @@ mod tests {
                 id: "d-a".into(),
                 sign_key: admin.sign_public(),
                 dh_key: admin.dh_public(),
-                flags: Flags { host: false, admin: true },
+                flags: Flags {
+                    host: false,
+                    admin: true,
+                    a2a: false,
+                },
             },
             None,
             1,
@@ -2139,7 +2147,11 @@ mod tests {
                     id: id.into(),
                     sign_key: k.sign_public(),
                     dh_key: k.dh_public(),
-                    flags: Flags { host: true, admin: false },
+                    flags: Flags {
+                        host: true,
+                        admin: false,
+                        a2a: false,
+                    },
                 }),
             );
             push(
@@ -2209,7 +2221,11 @@ mod tests {
                 id: "d-a".into(),
                 sign_key: admin.sign_public(),
                 dh_key: admin.dh_public(),
-                flags: Flags { host: false, admin: true },
+                flags: Flags {
+                    host: false,
+                    admin: true,
+                    a2a: false,
+                },
             },
             None,
             1,
@@ -2235,7 +2251,11 @@ mod tests {
                 id: "m-me".into(),
                 sign_key: me.sign_public(),
                 dh_key: me.dh_public(),
-                flags: Flags { host: true, admin: false },
+                flags: Flags {
+                    host: true,
+                    admin: false,
+                    a2a: false,
+                },
             }),
         );
         push(&mut chain, host_epoch("m-me", 0));
@@ -2246,7 +2266,11 @@ mod tests {
                 id: "m-2".into(),
                 sign_key: joined.sign_public(),
                 dh_key: joined.dh_public(),
-                flags: Flags { host: true, admin: false },
+                flags: Flags {
+                    host: true,
+                    admin: false,
+                    a2a: false,
+                },
             }),
         );
         push(&mut chain, epoch(0));

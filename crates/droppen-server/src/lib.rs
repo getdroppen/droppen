@@ -11,6 +11,8 @@
 //! * [`api`] — the router: each subsystem's routes on a state of its own,
 //!   made from [`api::AppState`], and the session list, detail, socket and
 //!   settings, which read several subsystems' state at once;
+//! * [`a2a_backend`] — the sessions behind the A2A server, its
+//!   `SessionBackend` over the providers;
 //! * [`archived_retention`] — the hourly pass that deletes archived session
 //!   data once its window has passed;
 //! * [`stream_source`] — what the link copies of this machine's sessions, the
@@ -25,8 +27,9 @@
 //! Its tests are the ones that need the whole program: the provider base's
 //! on the providers [`app::register_providers`] registers
 //! (`provider_tests`), the accounts' and the setup guide's on the logins
-//! [`app::logins`] builds (`accounts_tests`, `setup_tests`), and the routes
-//! through the router.
+//! [`app::logins`] builds (`accounts_tests`, `setup_tests`), the routes
+//! through the router, and the A2A proxy end to end, through a relay to this
+//! server's agent and its A2A server (`a2a_proxy_e2e`).
 //!
 //! # Shared contract plumbing
 //!
@@ -49,6 +52,9 @@
 
 pub use gotcha::{GotchaError, GotchaResult};
 
+pub mod a2a_backend;
+#[cfg(test)]
+mod a2a_proxy_e2e;
 #[cfg(test)]
 mod accounts_tests;
 pub mod api;

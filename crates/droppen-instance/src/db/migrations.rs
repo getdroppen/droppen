@@ -379,6 +379,107 @@ pub const SCHEMA: &[&str] = &[
          PRIMARY KEY (source, session_id, delivery_id)
      ) STRICT, WITHOUT ROWID;
      CREATE INDEX IF NOT EXISTS chat_deliveries_by_turn ON chat_deliveries (source, session_id, text_hash, at_ms)",
+    // 12 — the A2A server (`docs/a2a.md` §4; the server's `droppen_a2a::store`).
+    //
+    // An entry is an agent another one may hand tasks to; its settings are a
+    // payload, since nothing asks a question of them but by id. A token is
+    // kept as the digest of its secret only. A context is one session, which
+    // the backend names once the CLI has (`session_id` is `NULL` until then).
+    // A task is one turn of it: the columns are what a list filters and sorts
+    // by; the status message, artifacts and history are the JSON the protocol
+    // reads back. `dispatched` says whether its first message has gone to the
+    // backend yet (a task over its entry's `maxConcurrent` waits here), and
+    // `seq` is the number of its newest event, at which a stream's opening
+    // snapshot is taken. `a2a_messages` makes `(caller, messageId)` unique, so
+    // a client's retry finds the task its first attempt made or moved. An
+    // event is one `StreamResponse`, numbered per task and kept for a
+    // subscriber that fell behind and for push retries: `kind` is `status`,
+    // `progress` (a `WORKING` status message, never pushed) or `artifact`.
+    // Every task and context is looked up by its caller as well as its id,
+    // so one caller never reaches another's (§6). Instance tables; the config
+    // database gets empty copies.
+    "CREATE TABLE IF NOT EXISTS a2a_entries (
+         id         TEXT    NOT NULL PRIMARY KEY,
+         payload    TEXT    NOT NULL,
+         created_ms INTEGER NOT NULL,
+         updated_ms INTEGER NOT NULL
+     ) STRICT;
+     CREATE TABLE IF NOT EXISTS a2a_tokens (
+         id           TEXT    NOT NULL PRIMARY KEY,
+         name         TEXT    NOT NULL,
+         entries      TEXT    NOT NULL,
+         secret_hash  TEXT    NOT NULL,
+         created_ms   INTEGER NOT NULL,
+         last_used_ms INTEGER,
+         revoked_ms   INTEGER
+     ) STRICT;
+     CREATE TABLE IF NOT EXISTS a2a_contexts (
+         context_id TEXT    NOT NULL PRIMARY KEY,
+         entry      TEXT    NOT NULL,
+         caller     TEXT    NOT NULL,
+         source     TEXT    NOT NULL,
+         session_id TEXT,
+         cwd        TEXT    NOT NULL,
+         branch     TEXT,
+         created_ms INTEGER NOT NULL
+     ) STRICT;
+     CREATE INDEX IF NOT EXISTS a2a_contexts_by_session ON a2a_contexts (source, session_id);
+     CREATE INDEX IF NOT EXISTS a2a_contexts_by_caller ON a2a_contexts (caller, created_ms);
+     CREATE TABLE IF NOT EXISTS a2a_tasks (
+         id                TEXT    NOT NULL PRIMARY KEY,
+         context_id        TEXT    NOT NULL,
+         entry             TEXT    NOT NULL,
+         caller            TEXT    NOT NULL,
+         state             TEXT    NOT NULL,
+         status_message    TEXT,
+         status_ms         INTEGER NOT NULL,
+         artifacts         TEXT    NOT NULL,
+         history           TEXT    NOT NULL,
+         client_message_id TEXT    NOT NULL,
+         dispatched        INTEGER NOT NULL,
+         seq               INTEGER NOT NULL,
+         created_ms        INTEGER NOT NULL,
+         updated_ms        INTEGER NOT NULL
+     ) STRICT;
+     CREATE INDEX IF NOT EXISTS a2a_tasks_by_caller ON a2a_tasks (entry, caller, status_ms);
+     CREATE INDEX IF NOT EXISTS a2a_tasks_by_context ON a2a_tasks (context_id, created_ms);
+     CREATE INDEX IF NOT EXISTS a2a_tasks_by_state ON a2a_tasks (caller, state);
+     CREATE TABLE IF NOT EXISTS a2a_messages (
+         caller     TEXT    NOT NULL,
+         message_id TEXT    NOT NULL,
+         task_id    TEXT    NOT NULL,
+         created_ms INTEGER NOT NULL,
+         PRIMARY KEY (caller, message_id)
+     ) STRICT, WITHOUT ROWID;
+     CREATE TABLE IF NOT EXISTS a2a_task_events (
+         task_id    TEXT    NOT NULL,
+         seq        INTEGER NOT NULL,
+         kind       TEXT    NOT NULL,
+         payload    TEXT    NOT NULL,
+         created_ms INTEGER NOT NULL,
+         PRIMARY KEY (task_id, seq)
+     ) STRICT, WITHOUT ROWID;
+     CREATE TABLE IF NOT EXISTS a2a_push_configs (
+         task_id          TEXT    NOT NULL,
+         id               TEXT    NOT NULL,
+         url              TEXT    NOT NULL,
+         token            TEXT,
+         auth_scheme      TEXT,
+         auth_credentials TEXT,
+         created_ms       INTEGER NOT NULL,
+         PRIMARY KEY (task_id, id)
+     ) STRICT, WITHOUT ROWID",
+    // 13 — where each A2A push configuration's delivery stands
+    // (`droppen_a2a::push`): the number of the last event of its task it was
+    // told of, or gave up on. Delivery goes on from it after a restart, so a
+    // webhook is told every status change and artifact at least once. A row
+    // an older binary writes reads 0: it is told its task from the start.
+    "ALTER TABLE a2a_push_configs ADD COLUMN delivered_seq INTEGER NOT NULL DEFAULT 0",
+    // 14 — when an A2A context was closed (`docs/a2a.md` §6): its entry's
+    // source, directory, account, permission mode or isolation changed after
+    // it was opened, so no follow-up goes into its session again. `NULL`,
+    // which every row an older binary wrote reads, is open.
+    "ALTER TABLE a2a_contexts ADD COLUMN closed_ms INTEGER",
 ];
 
 /// Bring `conn` up to the newest step, and say nothing if it is already there.
@@ -679,6 +780,86 @@ mod tests {
             })
             .expect("the new table exists");
         assert_eq!((questions, rotations), (0, 1));
+    }
+
+    /// Step 12 adds the A2A tables to a database the previous release left at
+    /// step 11, and leaves the chat deliveries alone.
+    #[test]
+    fn a_database_at_step_eleven_gains_the_a2a_tables() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.db");
+        {
+            let conn = database_at(&path, 11);
+            conn.execute(
+                "INSERT INTO chat_deliveries (source, session_id, delivery_id, text_hash, at_ms, images, files)
+                 VALUES ('claude', 's', 'd', 'h', 1, '[]', '[]')",
+                [],
+            )
+            .expect("a delivery the previous release wrote");
+        }
+        let db = Db::open(&path);
+        assert_eq!(db.user_version(), SCHEMA.len() as i64);
+        let counts: Vec<i64> = db
+            .read(|conn| {
+                [
+                    "a2a_entries",
+                    "a2a_tokens",
+                    "a2a_contexts",
+                    "a2a_tasks",
+                    "a2a_messages",
+                    "a2a_task_events",
+                    "a2a_push_configs",
+                    "chat_deliveries",
+                ]
+                .iter()
+                .map(|table| conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0)))
+                .collect()
+            })
+            .expect("the new tables exist");
+        assert_eq!(counts, vec![0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    /// Step 13 gives the push configurations a step 12 database holds their
+    /// delivery cursor, at 0: each is told its task from the first event.
+    #[test]
+    fn a_database_at_step_twelve_gains_the_push_cursor() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.db");
+        {
+            let conn = database_at(&path, 12);
+            conn.execute(
+                "INSERT INTO a2a_push_configs (task_id, id, url, created_ms) VALUES ('t', 'p', 'https://hooks.example.com/a2a', 1)",
+                [],
+            )
+            .expect("a push configuration step 12 wrote");
+        }
+        let db = Db::open(&path);
+        assert_eq!(db.user_version(), SCHEMA.len() as i64);
+        let cursor: i64 = db
+            .read(|conn| conn.query_row("SELECT delivered_seq FROM a2a_push_configs WHERE task_id = 't'", [], |row| row.get(0)))
+            .expect("the new column");
+        assert_eq!(cursor, 0);
+    }
+
+    /// Step 14 leaves the contexts a step 13 database holds open.
+    #[test]
+    fn a_database_at_step_thirteen_keeps_its_contexts_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.db");
+        {
+            let conn = database_at(&path, 13);
+            conn.execute(
+                "INSERT INTO a2a_contexts (context_id, entry, caller, source, cwd, created_ms) VALUES ('c', 'main', 'a2a:token:t', 'claude', '/work', 1)",
+                [],
+            )
+            .expect("a context step 13 wrote");
+        }
+        let db = Db::open(&path);
+        assert_eq!(db.user_version(), SCHEMA.len() as i64);
+        let closed: Option<i64> = db
+            .read(|conn| conn.query_row("SELECT closed_ms FROM a2a_contexts WHERE context_id = 'c'", [], |row| row.get(0)))
+            .expect("the new column");
+        assert_eq!(closed, None);
     }
 
     /// The release gate: the binary this one replaces must still work against

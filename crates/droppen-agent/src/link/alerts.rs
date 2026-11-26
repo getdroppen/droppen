@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use droppen_proto::chain::{Action, ChainState, Entry, Signer};
@@ -25,14 +26,25 @@ use droppen_base::time::now_ms_u64;
 /// cannot hold any of it back. A host renewing its identity key
 /// (`docs/host-identity-rotation.md` §3.4 "告警") is a note with the new
 /// fingerprint, as the device list shows it.
+///
+/// An A2A proxy (`docs/a2a.md` §7.1, §7.3: the words say "A2A proxy") joining,
+/// and every change to which A2A proxies a host takes A2A calls from
+/// (`SetA2aAccept`), are said too: such a call starts sessions on that host.
 pub(crate) fn account_change(entry: &Entry, prev: Option<&Entry>) -> Option<String> {
-    account_change_in(entry, prev, None)
+    account_change_in(entry, prev, None, &BTreeSet::new())
 }
 
 /// [`account_change`], with what an ending renewal pause marker names
 /// (`paused`, from this agent's chain: [`pause_notice_edges`]): its start's
 /// removals, and for a completion only the control that comes back.
-pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Option<&[(String, Vec<String>)]>) -> Option<String> {
+/// `proxies`: the A2A proxies the chain names, whose paused edges are their
+/// A2A calls to a host, said as such (`docs/a2a.md` §7.1).
+pub(crate) fn account_change_in(
+    entry: &Entry,
+    prev: Option<&Entry>,
+    paused: Option<&[(String, Vec<String>)]>,
+    proxies: &BTreeSet<String>,
+) -> Option<String> {
     let signer = match &entry.draft.signer {
         Signer::Device(id) => id.clone(),
         Signer::Recovery => "the recovery words".into(),
@@ -40,6 +52,8 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
         Signer::Passkey(slot) => format!("passkey slot {slot}"),
     };
     let flags = |f: droppen_proto::chain::Flags| match (f.host, f.admin) {
+        // The chain refuses an A2A proxy with either other flag (`A2A_PLAIN`).
+        _ if f.a2a => "an A2A proxy: it calls the A2A of devices that accept it, and controls none",
         (true, true) => "runs AI, can manage the account",
         (true, false) => "runs AI",
         (false, true) => "can manage the account",
@@ -68,6 +82,12 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
             };
             format!("{host} now accepts control from {whom} (set by {signer})")
         }
+        Action::SetA2aAccept { host, devices } if devices.is_empty() => {
+            format!("{host} now takes A2A calls from no A2A proxy (set by {signer})")
+        }
+        Action::SetA2aAccept { host, devices } => {
+            format!("{host} now takes A2A calls from the A2A proxies {} (set by {signer})", devices.join(", "))
+        }
         Action::RotateHostKey(r) => format!(
             "device {} renewed its identity key{} (new fingerprint {}, written by {signer})",
             r.host,
@@ -83,28 +103,57 @@ pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Opt
         }
         Action::SetRenewalPolicy { always_assured: false } => format!("identity key renewals may now be automatic (set by {signer})"),
         Action::RenewalPause { phase, removals, .. } => {
-            // §3.4 rule 10: "control by {ids} over {host}", per host.
-            let edges = |removals: &[(String, Vec<String>)]| {
-                if removals.is_empty() {
-                    "the paused devices".to_string()
-                } else {
+            // §3.4 rule 10: "control by {ids} over {host}", per host — and, for an A2A proxy (`docs/a2a.md` §7.1), whose
+            // calls a pause holds too, "A2A calls by {ids} to {host}": never called control.
+            let said = |removals: &[(String, Vec<String>)]| {
+                let part = |a2a: bool, word: &str| {
                     removals
                         .iter()
-                        .map(|(host, ids)| format!("{} over {host}", ids.join(", ")))
+                        .filter_map(|(host, ids)| {
+                            let ids: Vec<&str> = ids.iter().filter(|id| proxies.contains(*id) == a2a).map(String::as_str).collect();
+                            (!ids.is_empty()).then(|| format!("{} {word} {host}", ids.join(", ")))
+                        })
                         .collect::<Vec<_>>()
                         .join("; ")
-                }
+                };
+                let (control, calls) = (part(false, "over"), part(true, "to"));
+                // Neither: a pause no edge of which is known here.
+                (
+                    if control.is_empty() && calls.is_empty() {
+                        "the paused devices".to_string()
+                    } else {
+                        control
+                    },
+                    calls,
+                )
+            };
+            let phrased = |verb_one: &str, verb_both: &str, removals: &[(String, Vec<String>)]| match said(removals) {
+                (control, calls) if calls.is_empty() => format!("control by {control} {verb_one}"),
+                (control, calls) if control.is_empty() => format!("A2A calls by {calls} {verb_both}"),
+                (control, calls) => format!("control by {control} and A2A calls by {calls} {verb_both}"),
             };
             match phase {
                 droppen_proto::chain::PausePhase::Start => {
-                    format!("control by {} is paused while identity keys are renewed (by {signer})", edges(removals))
+                    format!(
+                        "{} (by {signer})",
+                        phrased(
+                            "is paused while identity keys are renewed",
+                            "are paused while identity keys are renewed",
+                            removals
+                        )
+                    )
                 }
                 droppen_proto::chain::PausePhase::Completed if paused.is_some_and(|p| p.is_empty()) => {
                     format!("a renewal pause was completed; none of the control it paused comes back (by {signer})")
                 }
-                droppen_proto::chain::PausePhase::Completed => format!("control by {} resumes (by {signer})", edges(paused.unwrap_or(&[]))),
+                droppen_proto::chain::PausePhase::Completed => format!("{} (by {signer})", phrased("resumes", "resume", paused.unwrap_or(&[]))),
                 droppen_proto::chain::PausePhase::Cancelled => {
-                    format!("the pause of control by {} was ended (by {signer})", edges(paused.unwrap_or(&[])))
+                    let ended = match said(paused.unwrap_or(&[])) {
+                        (control, calls) if calls.is_empty() => format!("the pause of control by {control} was ended"),
+                        (control, calls) if control.is_empty() => format!("the pause of A2A calls by {calls} was ended"),
+                        (control, calls) => format!("the pause of control by {control} and of A2A calls by {calls} was ended"),
+                    };
+                    format!("{ended} (by {signer})")
                 }
             }
         }
@@ -162,7 +211,9 @@ pub(crate) fn part_of_a_batch(entry: &Entry, prev: Option<&Entry>) -> bool {
 /// marker applied): an ending marker names no removals, so its start's — and
 /// "resumes" only the control that comes back, never an edge the base has
 /// since dropped (a hand `SetAccept`, a removal, a host that stopped hosting)
-/// or another open pause still holds. `None` for anything else.
+/// or another open pause still holds. An A2A proxy's edge comes back as its
+/// calls do (`may_call_a2a`: a pause holds those too). `None` for anything
+/// else.
 pub(crate) fn pause_notice_edges(chain: &ChainState, entry: &Entry) -> Option<Vec<(String, Vec<String>)>> {
     let Action::RenewalPause { op, phase, .. } = &entry.draft.action else {
         return None;
@@ -175,7 +226,10 @@ pub(crate) fn pause_notice_edges(chain: &ChainState, entry: &Entry) -> Option<Ve
         removals
             .into_iter()
             .filter_map(|(host, ids)| {
-                let ids: Vec<String> = ids.into_iter().filter(|id| chain.may_control(id, &host).is_ok()).collect();
+                let ids: Vec<String> = ids
+                    .into_iter()
+                    .filter(|id| chain.may_control(id, &host).is_ok() || chain.may_call_a2a(id, &host).is_ok())
+                    .collect();
                 (!ids.is_empty()).then_some((host, ids))
             })
             .collect(),
@@ -199,6 +253,13 @@ pub(crate) fn alert_account_changes(shared: &Arc<Shared>, entries: &[Entry]) {
         let st = shared.state.lock().expect("agent state");
         entries.iter().map(|e| pause_notice_edges(st.chain.as_ref()?, e)).collect()
     };
+    // The A2A proxies this agent's chain names: a pause holds their calls, not control.
+    let proxies: BTreeSet<String> = {
+        let st = shared.state.lock().expect("agent state");
+        st.chain
+            .as_ref()
+            .map_or_else(BTreeSet::new, |c| c.devices().filter(|d| d.a2a).map(|d| d.info.id.clone()).collect())
+    };
     let me = shared.state.lock().expect("agent state").machine.clone();
     let mut noted = false;
     for ((entry, prev), paused) in entries.iter().zip(&prevs).zip(&paused) {
@@ -206,7 +267,9 @@ pub(crate) fn alert_account_changes(shared: &Arc<Shared>, entries: &[Entry]) {
         if matches!(&entry.draft.action, Action::AddMachine(m) if m.id == me) || matches!(&entry.draft.action, Action::AddDevice3(d) if d.id == me) {
             continue;
         }
-        let Some(what) = account_change_in(entry, prev.as_ref(), paused.as_deref()) else { continue };
+        let Some(what) = account_change_in(entry, prev.as_ref(), paused.as_deref(), &proxies) else {
+            continue;
+        };
         tracing::warn!(seq = entry.seq(), "account change: {what}");
         // Kept, and published in the encrypted status stream: every device
         // reads what this machine saw change in the account.
@@ -238,6 +301,22 @@ pub(crate) fn raise_alarm(shared: &Arc<Shared>, what: String) {
     shared.save();
     shared.sync.send(super::streams::Event::Alarms(alarms));
     shared.host.account_change(Arc::new(shared.paths.clone()), "Droppen: device chain alarm".into(), what);
+}
+
+/// An A2A proxy's channel to this device opened (`docs/a2a.md` §7.3): logged
+/// every time, and the first time a given proxy connects — `first`: new to
+/// the record of who ever opened a channel here, and saved — the phone hears
+/// it once too (Web Push and Bark): such a proxy starts sessions here through
+/// the A2A entries that allow it.
+pub(crate) fn a2a_connected(shared: &Arc<Shared>, device: &str, ch: u32, first: bool) {
+    tracing::info!(%device, ch, first, "an A2A proxy connected");
+    if first {
+        shared.host.account_change(
+            Arc::new(shared.paths.clone()),
+            "Droppen: A2A proxy connected".into(),
+            format!("an A2A proxy ({device}) connected to this device for the first time: it can start sessions here through the A2A entries that allow it"),
+        );
+    }
 }
 
 /// The hub sends each entry once a connection: an activation held back as too

@@ -18,7 +18,7 @@
  *   --theme <t>        light | dark | both (default both)
  *   --viewport <v>     desktop | mobile | both (default both)
  *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | connection-log | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | both (default both: every fixture)
+ *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | connection-log | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | a2a | both (default both: every fixture)
  *   --url <url>        skip the fixture and audit a running page
  *   --check            exit 1 if any target invariant fails
  */
@@ -76,6 +76,7 @@ const runSessionFromCopy = which === "both" || which === "session-from-copy";
 const runWelcome = which === "both" || which === "welcome";
 const runDesktopApp = which === "both" || which === "desktop-app";
 const runUpdates = which === "both" || which === "updates";
+const runA2a = which === "both" || which === "a2a";
 
 await fs.mkdir(out, { recursive: true });
 
@@ -1919,6 +1920,156 @@ async function auditUpdates(theme, view) {
   await page.close();
 }
 
+/** What every state of the A2A section is held to, measured in the page (`[data-fixture-root]`). */
+function a2aSnapshot(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector("[data-fixture-root]");
+    const visible = (e) => {
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== "hidden";
+    };
+    const all = [...root.querySelectorAll("*")].filter(visible);
+    // The neutral tokens as this theme computes them (`index.css`: the ink is a
+    // near-black, not a pure grey), as the connection log's audit reads them.
+    const probe = document.body.appendChild(document.createElement("span"));
+    const tokens = new Set(
+      ["bg", "panel", "raised", "hover", "border", "border-strong", "fg", "muted", "faint", "mark"].map((token) => {
+        probe.style.color = `var(--color-${token})`;
+        return /rgba?\(([\d.]+), ([\d.]+), ([\d.]+)/.exec(getComputedStyle(probe).color)?.slice(1, 4).join(",") ?? "";
+      }),
+    );
+    probe.remove();
+    // A colour that is neither a grey nor a neutral token, at any opacity, and not transparent (V4/V5).
+    const tinted = (value) => {
+      const m = /rgba?\(([\d.]+), ([\d.]+), ([\d.]+)(?:, ([\d.]+))?\)/.exec(value);
+      if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return false;
+      const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+      return Math.max(r, g, b) - Math.min(r, g, b) >= 3 && !tokens.has(`${m[1]},${m[2]},${m[3]}`);
+    };
+    const SIGNAL = "[data-signal],[data-edge],[data-activity],[data-unread],[data-pane-state],[data-diff],[data-allow-color]";
+    const name = (e) => `${e.tagName.toLowerCase()}${e.className && typeof e.className === "string" ? "." + e.className.split(/\s+/).slice(0, 3).join(".") : ""}`;
+    const radius = all.filter((e) => !e.closest("[data-shape]") && parseFloat(getComputedStyle(e).borderTopLeftRadius) > 0).map(name);
+    const shadow = all
+      .filter((e) => {
+        const value = getComputedStyle(e).boxShadow;
+        if (value === "none") return false;
+        // Every shadow layer an inset 1–2px rule: blur and spread 0 (V2).
+        return value.split(/,(?![^(]*\))/).some((layer) => !/inset/.test(layer) && !/0px 0px 0px 0px/.test(layer));
+      })
+      .map(name);
+    const colour = all
+      .filter((e) => !e.closest(SIGNAL))
+      .filter((e) => {
+        const s = getComputedStyle(e);
+        return tinted(s.color) || tinted(s.backgroundColor) || (parseFloat(s.borderTopWidth) > 0 && tinted(s.borderTopColor));
+      })
+      .map(name);
+    const primaries = all.filter((e) => e.matches("[data-variant=primary]")).length;
+    // Not a select's or a checkbox's own hidden input (`aria-hidden`).
+    const fields = [...root.querySelectorAll("[data-a2a-entry-form] input, [data-a2a-entry-form] button[aria-haspopup], [data-a2a-token-form] input, [data-a2a-tasks] button[aria-haspopup]")]
+      .filter((e) => visible(e) && e.getAttribute("aria-hidden") !== "true" && e.type !== "checkbox")
+      .map((e) => ({ el: name(e), h: Math.round(e.getBoundingClientRect().height) }));
+    const buttons = [...root.querySelectorAll("button[data-variant]")]
+      .filter(visible)
+      .filter((e) => (e.textContent ?? "").trim() !== "" && !e.closest("[data-a2a-card-url]"))
+      .map((e) => ({ text: (e.textContent ?? "").trim().slice(0, 30), h: Math.round(e.getBoundingClientRect().height) }));
+    const cards = [...root.querySelectorAll("[data-a2a-entry]")].map((e) => ({
+      id: e.getAttribute("data-a2a-entry"),
+      url: e.querySelector("[data-a2a-card-url]")?.getAttribute("data-a2a-card-url") ?? null,
+    }));
+    const secret = root.querySelector("[data-a2a-secret] input")?.value ?? null;
+    const listed = [...root.querySelectorAll("[data-a2a-token]")].map((e) => e.textContent ?? "").join("\n");
+    return {
+      height: (() => {
+        const sheet = root.querySelector("[data-sheet]");
+        return Math.ceil(sheet ? sheet.getBoundingClientRect().top + sheet.scrollHeight : root.getBoundingClientRect().bottom);
+      })(),
+      warning: root.querySelector('[data-a2a-warning][data-signal="warn"]')?.textContent ?? null,
+      radius,
+      shadow,
+      colour,
+      primaries,
+      fields,
+      buttons,
+      cards,
+      secret,
+      secretListed: secret !== null && listed.includes(secret),
+      overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
+    };
+  });
+}
+
+/**
+ * Settings › A2A (`?fixture=a2a`, `features/settings/a2a-section.tsx`): the
+ * list, the new-entry form and a new token's one-time secret, each reached by
+ * clicking as a person does, in each theme and at both widths. Held to the
+ * visual language (V1 radius, V2 shadow, V4 colour only on a signal, V10 one
+ * primary), the settings sizes (32px fields, 40px on a phone; 28px actions),
+ * the warning, the entries' card URLs, and a secret that is not in the list.
+ * Captured: `a2a-<state>-<theme>-<viewport>.png`, as tall as the section.
+ */
+async function auditA2a(theme, view) {
+  const page = await browser.newPage({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: 1,
+    hasTouch: view.name === "mobile",
+    isMobile: view.name === "mobile",
+  });
+  const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "a2a", id, actual, expected });
+  const field = view.name === "mobile" ? 40 : 32;
+  // From the top, whatever a click scrolled into view.
+  const toTop = () => page.evaluate(() => document.querySelectorAll("[data-fixture-root] *").forEach((e) => e.scrollTop && (e.scrollTop = 0)));
+  const capture = async (state) => {
+    await page.waitForTimeout(250);
+    await toTop();
+    let seen = await a2aSnapshot(page);
+    if (seen.height > view.height) {
+      await page.setViewportSize({ width: view.width, height: seen.height });
+      await toTop();
+      await page.waitForTimeout(150);
+      seen = await a2aSnapshot(page);
+    }
+    await page.screenshot({ path: `${out}/a2a-${state}-${theme}-${view.name}.png`, animations: "disabled" });
+    await page.setViewportSize({ width: view.width, height: view.height });
+    results.push({ mode: "a2a", state, theme, viewport: view.name, ...seen });
+    const where = { state };
+    if (seen.radius.length) fail("a2a.radius", { ...where, elements: seen.radius }, "no border radius outside [data-shape]");
+    if (seen.shadow.length) fail("a2a.shadow", { ...where, elements: seen.shadow }, "no drop shadow");
+    if (seen.colour.length) fail("a2a.colour", { ...where, elements: seen.colour.slice(0, 8) }, "colour only inside a signal");
+    if (seen.primaries > 1) fail("a2a.primary", { ...where, primaries: seen.primaries }, "at most one primary action");
+    const badFields = seen.fields.filter((f) => f.h !== field);
+    if (badFields.length) fail("a2a.field-height", { ...where, fields: badFields }, `${field}px fields`);
+    const badButtons = seen.buttons.filter((b) => b.h !== 28);
+    if (badButtons.length) fail("a2a.button-height", { ...where, buttons: badButtons }, "28px actions");
+    if (!seen.warning || !/Anyone holding a token/.test(seen.warning)) fail("a2a.warning", { ...where, warning: seen.warning }, "the token warning, stated plainly");
+    const badCards = seen.cards.filter((c) => !c.url || !c.url.endsWith(`/a2a/agents/${c.id}`) || !/^https?:\/\//.test(c.url));
+    if (seen.cards.length < 3 || badCards.length) fail("a2a.card-url", { ...where, cards: seen.cards }, "each entry's <origin>/a2a/agents/<id>");
+    if (seen.overflow.doc > seen.overflow.win + 1) fail("a2a.overflow", { ...where, ...seen.overflow }, "no horizontal overflow");
+    return seen;
+  };
+  await page.goto(`${base}ui-audit/index.html?fixture=a2a&theme=${theme}`);
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForSelector("[data-a2a-entry]");
+  await page.waitForSelector("[data-a2a-task]");
+  await capture("list");
+
+  await page.getByRole("button", { name: "add entry" }).click();
+  await page.waitForSelector("[data-a2a-entry-form]");
+  const form = await capture("form");
+  if (form.fields.length < 6) fail("a2a.form-fields", form.fields, "the entry form's fields measured");
+
+  await page.locator("[data-a2a-entry-form]").getByRole("button", { name: "cancel" }).click();
+  await page.getByRole("button", { name: "new token" }).click();
+  await page.locator("[data-a2a-token-form] input").first().fill("fixture-client");
+  await page.locator("[data-a2a-token-form] [role=checkbox]").first().click();
+  await page.locator("[data-a2a-token-form]").getByRole("button", { name: "create token" }).click();
+  await page.waitForSelector("[data-a2a-secret]");
+  const secret = await capture("secret");
+  if (!secret.secret?.startsWith("dpa_")) fail("a2a.secret", secret.secret, "the new token's secret, shown");
+  if (secret.secretListed) fail("a2a.secret-listed", true, "the secret nowhere in the token list");
+  await page.close();
+}
+
 try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
@@ -1938,6 +2089,7 @@ try {
         if (runWelcome) await auditWelcome(theme, view);
         if (runDesktopApp) await auditDesktopApp(theme, view);
         if (runUpdates) await auditUpdates(theme, view);
+        if (runA2a) await auditA2a(theme, view);
       }
     }
   }

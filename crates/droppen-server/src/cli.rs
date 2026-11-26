@@ -43,6 +43,8 @@ pub enum Command {
     Plugin(droppen_plugins::cli::PluginArgs),
     /// Join, run, inspect or leave the cloud agent.
     Agent(agent::AgentArgs),
+    /// Run the A2A proxy: an a2a device that carries A2A requests to your devices.
+    A2aProxy(A2aProxyArgs),
     /// Send a push notification from a session.
     #[command(hide = true, override_usage = droppen_notify::notify::cli::USAGE_LINE)]
     Notify(droppen_notify::notify::cli::NotifyArgs),
@@ -59,6 +61,16 @@ pub enum Command {
     /// Resident pipe owned by an AI session (started by the server).
     #[command(hide = true)]
     SessionShim(droppen_provider::shim::SessionShimArgs),
+}
+
+/// `a2a-proxy`'s one flag: its configuration is the environment
+/// (`droppen_a2a_proxy::config`), as a container's is.
+#[derive(Debug, Default, PartialEq, Eq, Args)]
+pub struct A2aProxyArgs {
+    /// Check the running proxy's health on this computer (`GET /healthz` on
+    /// `PORT`) and exit 0 when it answers: the container's health check.
+    #[arg(long)]
+    pub health: bool,
 }
 
 /// Arguments a command takes and ignores.
@@ -119,6 +131,7 @@ impl Cli {
             .mut_subcommand("open", |command| command.after_long_help(long(droppen_auth::cli::OPEN_USAGE)))
             .mut_subcommand("plugin", |command| command.after_long_help(long(droppen_plugins::cli::USAGE)))
             .mut_subcommand("agent", |command| command.after_long_help(long(agent::USAGE)))
+            .mut_subcommand("a2a-proxy", |command| command.after_long_help(long(A2A_PROXY_USAGE)))
             .mut_subcommand("replay", |command| command.after_long_help(long(droppen_provider_claude_code::record::replay::USAGE)))
     }
 
@@ -174,6 +187,18 @@ impl Command {
             // The cloud agent. Outside `serve` entirely, so an instance nobody
             // enrolls is unchanged.
             Command::Agent(args) => args.run().await.map_err(GotchaError::message),
+            // The A2A proxy: a device of its own, not an instance — it reads
+            // its environment and serves until stopped.
+            Command::A2aProxy(args) if args.health => {
+                let port = droppen_a2a_proxy::config::port_from_env().map_err(GotchaError::message)?;
+                droppen_a2a_proxy::check_health(port).map_err(GotchaError::message)
+            }
+            Command::A2aProxy(_) => {
+                let config = droppen_a2a_proxy::Config::from_env().map_err(GotchaError::message)?;
+                droppen_a2a_proxy::run(config, droppen_http::SERVER_VERSION)
+                    .await
+                    .map_err(GotchaError::message)
+            }
             // The other half of the self-upgrade health check: prove this build
             // can load the configuration it is about to be started with, which
             // `--version` alone says nothing about. Hidden from the usage string
@@ -218,6 +243,7 @@ USAGE:
     remote-hand-server open [--print] [--instance <name>]
     remote-hand-server setup-code [--instance <name>]
     remote-hand-server agent enroll <code>|- --hub <url> | run | status [--instance <name>]
+    remote-hand-server a2a-proxy [--health]
     remote-hand-server plugin list | enable <id> | disable <id> | verify <id>
                               | export <id> [--out <file>]
                               | import <id> [<file>] [--replace]
@@ -251,6 +277,12 @@ other devices), `agent status` says where it stands, `agent unenroll` leaves.
 `remote-hand-server agent` alone prints the details. An instance that is never
 enrolled serves exactly as before.
 
+`a2a-proxy` runs the A2A proxy: a device of your account of its own (an a2a
+device) that takes standard A2A requests on /a2a/<device>/agents/<entry>/… and
+carries each, end-to-end encrypted, to that device. Its configuration is the
+environment (DROPPEN_DATA_DIR, DROPPEN_A2A_PROXY_TOKEN, DROPPEN_HUB, PORT).
+`remote-hand-server a2a-proxy --help` prints the details.
+
 `plugin` manages the plugins installed in one instance: `install <file.tgz>`
 unpacks and checks a package under <data>/instances/<instance>/plugin-packages/
 and switches it on, `uninstall` removes the code (documents and the switch
@@ -278,6 +310,46 @@ session happen again through the real rendering pipeline.
 
 Configuration comes from configurations/application.toml and the APP_ prefix,
 e.g. APP_SERVER__PORT=9000, APP_HOME_DIR=/tmp/fake-home.";
+
+/// `a2a-proxy --help`'s prose, after the options clap lists.
+const A2A_PROXY_USAGE: &str = "\
+USAGE:
+    remote-hand-server a2a-proxy
+    remote-hand-server a2a-proxy --health
+
+The A2A proxy (docs/a2a.md section 7): an a2a device of your Droppen account,
+for A2A clients that cannot reach your devices themselves (a service in the
+cloud). It takes standard A2A requests over HTTP on
+/a2a/<device>/agents/<entry>/... (the Agent Card, JSON-RPC and HTTP+JSON) and
+carries each over an end-to-end channel, through a relay that sees only
+ciphertext, to that device's own A2A server. The device decides what it
+serves: its A2A entries, and which a2a devices they let in.
+
+On its first start the proxy claims the code, keeps its new identity in
+DROPPEN_DATA_DIR and logs its fingerprint: paste it into the page, which adds
+the proxy to the account only if it matches. The proxy waits until its own
+verified device chain names it, then carries requests.
+
+Configuration, from the environment:
+    DROPPEN_DATA_DIR          required: a persistent volume (the proxy's keys
+                              and its verified device chain, mode 0600)
+    DROPPEN_A2A_PROXY_TOKEN   required: the Bearer token clients present, at
+                              least 32 characters (openssl rand -hex 32)
+    DROPPEN_HUB               the hub (default https://api.droppen.app)
+    PORT                      where to listen (default 8080)
+    DROPPEN_ENROLL_CODE       the first start only: the DA1- code from
+                              my.droppen.app (Add an A2A proxy) that joins the
+                              proxy to your account; set it on this service
+                              alone, and remove it once the proxy has joined
+    DROPPEN_A2A_PROXY_BASE    optional: the proxy's own address for the Agent
+                              Card (default: the request's Host, over http)
+    DROPPEN_A2A_PROXY_ALIASES optional: name=device,... names for devices
+    RUST_LOG                  the log filter (default info)
+
+GET /healthz answers without a token: the proxy is up, and whether it has
+joined its account. `--health` asks it on this computer and exits 0 when it
+answers (the container image's HEALTHCHECK). docs/a2a-proxy.md says how to
+deploy it.";
 
 
 #[cfg(test)]
@@ -363,6 +435,7 @@ pub(crate) mod tests {
             (vec!["open", "--print"], "open"),
             (vec!["plugin", "list"], "plugin"),
             (vec!["agent", "status"], "agent"),
+            (vec!["a2a-proxy"], "a2a-proxy"),
             (vec!["notify", "title"], "notify"),
             (vec!["replay", "--log", "x", "--home", "y"], "replay"),
             (vec!["export-openapi", "--out", "x"], "export-openapi"),
@@ -376,6 +449,7 @@ pub(crate) mod tests {
                 | (Command::Open(_), "open")
                 | (Command::Plugin(_), "plugin")
                 | (Command::Agent(_), "agent")
+                | (Command::A2aProxy(_), "a2a-proxy")
                 | (Command::Notify(_), "notify")
                 | (Command::Replay(_), "replay")
                 | (Command::ExportOpenapi(_), "export-openapi")

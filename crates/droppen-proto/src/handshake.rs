@@ -34,6 +34,10 @@
 //!    ([`crate::chain::ChainState::may_control`], "谁可以控制我"): an admin
 //!    device always; any other device — another host included — only when an
 //!    admin has said so for this host. A device never controls itself.
+//!    [`accept_with_a2a`] lets in one more kind of device where that fails:
+//!    an A2A proxy this host takes A2A calls from
+//!    ([`crate::chain::ChainState::may_call_a2a`], `docs/a2a.md` §7.3), as
+//!    [`Access::A2aOnly`]. [`accept`] and [`accept_direct`] never do.
 //!
 //! 5. Require the agent's view to be **fresh**
 //!    ([`crate::chain::ChainState::freshness`]): an admin device must have
@@ -318,15 +322,43 @@ pub struct AgentSide<'a> {
     pub freshness_max_age_ms: u64,
 }
 
+/// What a channel an agent let in may reach: the admission's verdict, which
+/// everything that serves the channel matches on (`docs/a2a.md` §7.1: "准入
+/// 结果是类型"). The chain fixes which one a device gets — an A2A proxy is
+/// never anything but [`Access::A2aOnly`] — and [`Access::check`] says
+/// whether it still holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// The device may control this host ([`ChainState::may_control`]): what
+    /// any channel was before A2A proxies.
+    Full,
+    /// An A2A proxy this host takes A2A calls from
+    /// ([`ChainState::may_call_a2a`]): the A2A binding's routes and nothing
+    /// else, and never a direct path.
+    A2aOnly,
+}
+
+impl Access {
+    /// Whether `device` still has this access to `host` on `chain`, as at
+    /// its admission: the rule it was let in by, asked again.
+    pub fn check(self, chain: &ChainState, device: &str, host: &str) -> Result<(), ChainError> {
+        match self {
+            Access::Full => chain.may_control(device, host),
+            Access::A2aOnly => chain.may_call_a2a(device, host),
+        }
+    }
+}
+
 /// What [`accept`] decided. `applied` is always how many chain entries the
 /// hello taught the agent — persist them whatever the outcome.
 pub enum Accepted {
-    /// Send `reply`; the channel is open.
+    /// Send `reply`; the channel is open, with `access`.
     Open {
         reply: Vec<u8>,
         transport: Box<Transport>,
         hello: HelloBody,
         applied: usize,
+        access: Access,
     },
     /// Send `reply`, then close: the device must resend with older entries.
     NeedEntries { reply: Vec<u8>, from: u64, applied: usize },
@@ -340,15 +372,29 @@ pub enum Accepted {
 }
 
 /// The agent's handling of a first message from device `device` (the id the
-/// hub's `OPEN` named). See the module docs for the order of checks.
+/// hub's `OPEN` named). See the module docs for the order of checks. Only a
+/// device that may control this host gets in ([`Access::Full`]): an A2A
+/// proxy is refused, as by an agent that never heard of one.
 pub fn accept(agent: AgentSide<'_>, device: &str, message: &[u8], now_ms: u64) -> Result<Accepted, HandshakeError> {
+    accept_channel(agent, device, message, now_ms, false)
+}
+
+/// [`accept`], and an A2A proxy this host takes A2A calls from as well
+/// (`docs/a2a.md` §7.3), as [`Access::A2aOnly`] — for an agent that serves
+/// such a channel the A2A routes and nothing else. Every other check is
+/// [`accept`]'s, in its order.
+pub fn accept_with_a2a(agent: AgentSide<'_>, device: &str, message: &[u8], now_ms: u64) -> Result<Accepted, HandshakeError> {
+    accept_channel(agent, device, message, now_ms, true)
+}
+
+fn accept_channel(agent: AgentSide<'_>, device: &str, message: &[u8], now_ms: u64, a2a: bool) -> Result<Accepted, HandshakeError> {
     let binding = Binding {
         account: agent.chain.account().into(),
         device: device.into(),
         machine: agent.machine.into(),
     };
     let prologue = binding.prologue()?;
-    accept_with_prologue(agent, device, &prologue, message, now_ms)
+    accept_with_prologue(agent, device, &prologue, message, now_ms, a2a)
 }
 
 /// A device's first message on a direct path ([`crate::path`]): admitted by
@@ -356,16 +402,27 @@ pub fn accept(agent: AgentSide<'_>, device: &str, message: &[u8], now_ms: u64) -
 /// chain, the freshness gate, the replay guard — under the direct prologue,
 /// which binds it to the hub channel it grew from and to both DTLS
 /// certificates. `bind` must name this agent's account and machine and the
-/// device the hub channel was authorised for.
+/// device the hub channel was authorised for. Only a device that may control
+/// this host gets one: an A2A proxy never has a direct path (`docs/a2a.md`
+/// §7.3).
 pub fn accept_direct(agent: AgentSide<'_>, device: &str, bind: &DirectBinding, message: &[u8], now_ms: u64) -> Result<Accepted, HandshakeError> {
     if bind.binding.account != agent.chain.account() || bind.binding.machine != agent.machine || bind.binding.device != device {
         return Err(HandshakeError::Unauthorized);
     }
     let prologue = bind.prologue()?;
-    accept_with_prologue(agent, device, &prologue, message, now_ms)
+    accept_with_prologue(agent, device, &prologue, message, now_ms, false)
 }
 
-fn accept_with_prologue(agent: AgentSide<'_>, device: &str, prologue: &[u8], message: &[u8], now_ms: u64) -> Result<Accepted, HandshakeError> {
+/// The checks every admission makes, in the module docs' order; `a2a`: an A2A
+/// proxy the host takes A2A calls from gets in too, as [`Access::A2aOnly`].
+fn accept_with_prologue(
+    agent: AgentSide<'_>,
+    device: &str,
+    prologue: &[u8],
+    message: &[u8],
+    now_ms: u64,
+    a2a: bool,
+) -> Result<Accepted, HandshakeError> {
     if !agent.clock.is_live() {
         return Err(HandshakeError::HistoryClock);
     }
@@ -436,10 +493,13 @@ fn accept_with_prologue(agent: AgentSide<'_>, device: &str, prologue: &[u8], mes
         .chain
         .authorize_device(device, &hello.initiator_static)
         .map_err(|_| HandshakeError::Unauthorized)?;
-    agent
-        .chain
-        .may_control(device, agent.machine)
-        .map_err(|e| HandshakeError::NotAccepted(e.to_string()))?;
+    // Control first; calling this host's A2A only where control is refused,
+    // and only where the caller serves that and nothing else.
+    let access = match agent.chain.may_control(device, agent.machine) {
+        Ok(()) => Access::Full,
+        Err(_) if a2a && Access::A2aOnly.check(agent.chain, device, agent.machine).is_ok() => Access::A2aOnly,
+        Err(e) => return Err(HandshakeError::NotAccepted(e.to_string())),
+    };
     match agent.chain.freshness(device, agent.attestations, now_ms, agent.freshness_max_age_ms)? {
         Freshness::Fresh => {}
         Freshness::Behind { .. } => {
@@ -467,6 +527,7 @@ fn accept_with_prologue(agent: AgentSide<'_>, device: &str, prologue: &[u8], mes
         transport: Box::new(transport),
         hello: body,
         applied,
+        access,
     })
 }
 
@@ -1210,5 +1271,72 @@ mod tests {
                 })
             ));
         }
+    }
+
+    /// `docs/a2a.md` §7.3: an A2A proxy that m-1 takes A2A calls from gets
+    /// in through [`accept_with_a2a`] as [`Access::A2aOnly`], and through
+    /// nothing else — not [`accept`], which an agent that serves it no A2A
+    /// policy calls, nor a direct path. A proxy m-1 does not list is refused
+    /// either way; a device that may control m-1 is [`Access::Full`] on
+    /// both. [`Access::check`] asks again what let each in.
+    #[test]
+    fn an_a2a_proxy_gets_in_a2a_only_and_only_where_the_agent_takes_it() {
+        use crate::a2a_regressions::{proxy_keys, with_proxies};
+        use crate::path::DirectBinding;
+        let f = fixture();
+        let (state, _) = with_proxies(&f);
+        let now = 5_000;
+        let attestations = vec![Attestation::create(&state, "dev-0", &f.devices[0].0, now)];
+        let open = |device: &str, key: &DhKeypair, a2a: bool| {
+            let (_, hello) = start(&state, key, device, "m-1", now, b"").unwrap();
+            let mut agent = Agent::new(attestations.clone(), 8);
+            agent.clock = ChainClock::live(now, state.seq() + 1);
+            let mut view = state.clone();
+            let side = agent.side(&mut view, &f.machine.1);
+            let accepted = if a2a {
+                accept_with_a2a(side, device, &hello, now)
+            } else {
+                accept(side, device, &hello, now)
+            };
+            accepted.map(|accepted| match accepted {
+                Accepted::Open { access, .. } => Some(access),
+                _ => None,
+            })
+        };
+        let (a1, a2) = (proxy_keys(0), proxy_keys(1));
+        assert_eq!(open("a-1", &a1.1, true), Ok(Some(Access::A2aOnly)));
+        assert!(
+            matches!(open("a-1", &a1.1, false), Err(HandshakeError::NotAccepted(_))),
+            "no A2A policy, no proxy"
+        );
+        assert_eq!(open("a-2", &a2.1, true), Ok(Some(Access::A2aOnly)), "no list is needed");
+        assert_eq!(open("dev-0", &f.devices[0].1, true), Ok(Some(Access::Full)));
+        assert_eq!(open("dev-0", &f.devices[0].1, false), Ok(Some(Access::Full)));
+        // A direct path: never for a proxy, whoever asks.
+        let bind = DirectBinding {
+            binding: Binding {
+                account: state.account().into(),
+                device: "a-1".into(),
+                machine: "m-1".into(),
+            },
+            relay_hash: [1; 32],
+            nonce: [2; 32],
+            device_fp: [3; 32],
+            agent_fp: [4; 32],
+        };
+        let (_, hello) = start_direct(&state, &a1.1, &bind, now, b"").unwrap();
+        let mut agent = Agent::new(attestations.clone(), 8);
+        agent.clock = ChainClock::live(now, state.seq() + 1);
+        let mut view = state.clone();
+        assert!(matches!(
+            accept_direct(agent.side(&mut view, &f.machine.1), "a-1", &bind, &hello, now),
+            Err(HandshakeError::NotAccepted(_))
+        ));
+        // What let each in, asked again.
+        assert_eq!(Access::A2aOnly.check(&state, "a-1", "m-1"), Ok(()));
+        assert!(Access::Full.check(&state, "a-1", "m-1").is_err(), "a proxy controls nothing");
+        assert_eq!(Access::A2aOnly.check(&state, "a-2", "m-1"), Ok(()), "no list is needed");
+        assert!(Access::A2aOnly.check(&state, "dev-0", "m-1").is_err(), "an admin calls no A2A as a proxy");
+        assert_eq!(Access::Full.check(&state, "dev-0", "m-1"), Ok(()));
     }
 }

@@ -2,13 +2,14 @@
 //! every route the server registers: read off the router it serves and off
 //! its source, which only the server has.
 
-use droppen_agent::bridge::{classify, refusal, Refusal, RouteClass, Standing, View, LOCAL_PREFIX, ROUTES};
+use droppen_agent::bridge::{classify, refusal, Access, Refusal, RouteClass, Standing, View, LOCAL_PREFIX, ROUTES};
 use droppen_agent::testing::plugin_route;
 
 const ADMIN: Standing = Standing {
     admin: true,
     view: View::Fresh,
     controls: true,
+    access: Access::Full,
 };
 
 /// `(METHOD, path template)` of every route the server's source
@@ -48,6 +49,7 @@ fn registered_in_source() -> std::collections::BTreeSet<(String, String)> {
         root.join("crates/droppen-provider-acp/src"),
         root.join("crates/droppen-provider-claude-code/src"),
         root.join("crates/droppen-drive/src"),
+        root.join("crates/droppen-a2a/src"),
     ];
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {
@@ -151,4 +153,26 @@ async fn every_route_the_server_registers_is_classified() {
         };
         assert_eq!(judged, expected, "{method} {sent}");
     }
+}
+
+/// No device reaches the A2A server over a channel, admin or not, by any
+/// spelling of its paths (`docs/a2a.md` §2): its callers are A2A tokens on
+/// this device's loopback until the a2a devices of §7.
+#[test]
+fn no_device_reaches_the_a2a_server() {
+    for (method, path) in [
+        ("GET", "/a2a/agents/main/.well-known/agent-card.json"),
+        ("POST", "/a2a/agents/main/jsonrpc"),
+        ("POST", "/a2a/agents/main/jsonrpc/"),
+        ("POST", "/a2a/agents/main/rest/message:send"),
+        ("POST", "/a2a/agents/main/rest/tasks/t-1:cancel"),
+        ("GET", "/a2a"),
+        ("POST", "/%61%32%61/agents/main/jsonrpc"),
+    ] {
+        assert_eq!(refusal(method, path, ADMIN), Some(Refusal::NotFromCloud), "{method} {path}");
+    }
+    assert_eq!(classify("GET", "/api/a2a/tasks"), Some(RouteClass::Use));
+    assert_eq!(classify("GET", "/api/a2a/contexts"), Some(RouteClass::Use));
+    assert_eq!(classify("POST", "/api/a2a/tokens"), Some(RouteClass::Posture));
+    assert_eq!(classify("PATCH", "/api/a2a/entries/main"), Some(RouteClass::Posture));
 }

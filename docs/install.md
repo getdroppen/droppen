@@ -69,6 +69,14 @@ whatever the network's own name resolution says, so a device on the same
 network that controls it can still reach the routes that answer without a
 session (sign-in, first-run setup, status); everything else needs a session.
 
+## A2A proxy (a container, optional)
+
+An A2A proxy lets an A2A client that cannot reach your computers itself — a
+service in the cloud — start sessions on the computers that accept it. It is
+not the server: it is a container of its own, run beside the client, with a
+persistent volume for its identity. The image, its variables and the Railway
+walkthrough are in [a2a-proxy.md](a2a-proxy.md).
+
 ## Windows
 
 Droppen does not run on Windows yet. A browser on Windows can already use

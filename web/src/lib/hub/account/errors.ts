@@ -111,6 +111,11 @@ export function hostAdminRefused(): AccountError {
   return new AccountError("invalidEntry", "a device that runs AI cannot be a full device (yet)", undefined, RULES.hostNotAdmin);
 }
 
+/** Why an A2A proxy is made neither a full device nor a device that runs AI (docs/a2a.md §7.1): it joins as one and stays one. */
+export function a2aPlainRefused(): AccountError {
+  return new AccountError("invalidEntry", "an A2A proxy can be neither a full device nor a device that runs AI", undefined, RULES.a2aPlain);
+}
+
 /**
  * Why a new host cannot be added yet on a chain that holds a v3 entry: the
  * hub does not take v3 entries now (`chain_v3.writable`). `null` when it does,
