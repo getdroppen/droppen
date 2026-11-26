@@ -379,7 +379,8 @@ async function chainV3Vectors() {
     ["recoveryJoinT", { type: "recovery" }, rk5.signing, { type: "recoveryJoin3", device: v3(devT, false, true) }],
     ["approveT", byDev(dev0), dev0.key, { type: "approveDevice", id: devT.id }],
     ["removeT", byDev(dev0), dev0.key, { type: "removeDevice3", id: devT.id }],
-    // The removed A2A bits rc.1 wrote: an A2A device, the host's list for it, then the empty list that clears it.
+    // The removed A2A bits rc.1 wrote: an A2A device and the host's list for it. (The empty list stays in the unit
+    // tests: it narrows, so the host's next machine key would owe an entry of its own.)
     ["addA2a", byDev(dev0), dev0.key, { type: "addDevice3", device: v3(devA, false, false, true) }],
     ["a2aAccept", byDev(dev0), dev0.key, { type: "setA2aAccept", host: m1.id, devices: [devA.id] }],
   ];
