@@ -97,7 +97,7 @@ fi
 grep -qF "test release" "$notes" || die "$notes does not say \"test release\" (the English half of the banner)"
 grep -qF "测试版本" "$notes" || die "$notes does not say \"测试版本\" (the Chinese half of the banner)"
 for name in "Droppen-$version.dmg" "Droppen-$version-x86_64.AppImage" "Droppen-$version-aarch64.AppImage" \
-  "droppen_${version}_amd64.deb" "droppen_${version}_arm64.deb"; do
+  "droppen_${version}_amd64.deb" "droppen_${version}_arm64.deb" "Droppen-$version-linux-sources.tar"; do
   if grep -qF "$name" "$notes"; then
     die "$notes names $name: a prerelease is server-only, so its notes must not name the app's files"
   fi
@@ -117,11 +117,16 @@ lock=Cargo.lock
 work=$(mktemp -d "${TMPDIR:-/tmp}/cut-rc.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
-# The package's version, the first column-0 `version = ` line (the package's;
-# dependencies are indented), as `sed -n 's/^version = //p'` in the workflow
-# reads it.
-awk -v v="$version" '!done && /^version = / { print "version = \"" v "\""; done = 1; next } { print }' "$cargo" > "$work/Cargo.toml" \
-  || die "cannot rewrite $cargo"
+# The package's version, from the `[package]` table's column-0 `version = `
+# line: a `[workspace.package]` version above it, or a dependency's, is not the
+# package's. `sed -n 's/^version = //p'` in the workflow reads the first such
+# line, which is this one.
+awk -v v="$version" '
+  /^\[/ { section = $0 }
+  !done && section == "[package]" && /^version = / { print "version = \"" v "\""; done = 1; next }
+  { print }
+  END { if (!done) exit 3 }
+' "$cargo" > "$work/Cargo.toml" || die "$cargo has no version = line in its [package] table"
 grep -qx "version = \"$version\"" "$work/Cargo.toml" || die "$cargo has no version = line"
 
 # Cargo.lock, only the droppen-server package's block: name and version sit
@@ -137,17 +142,27 @@ mv "$work/Cargo.toml" "$cargo"
 mv "$work/Cargo.lock" "$lock"
 
 git add "$cargo" "$lock" "$notes"
-git commit -s -m "chore: release $tag" || die "cannot commit the version bump"
+# The branch may already carry this version and its notes (the bump committed
+# but the tag push failed, or someone prepared it): then there is nothing to
+# commit, and the tag is still made.
+if ! git diff --cached --quiet; then
+  git commit -s -m "chore: release $tag" || die "cannot commit the version bump"
+else
+  echo "cut-rc: the branch already carries $tag and its notes: nothing to commit"
+fi
 git tag -a "$tag" -m "Droppen $tag" || die "cannot create the tag $tag"
 
 failed=0
-if ! git push origin "refs/heads/$branch"; then
+# The tag is pushed only once the branch carries its commit: a tag on a commit
+# the branch does not have is admitted by nothing.
+if git push origin "refs/heads/$branch"; then
+  if ! git push origin "refs/tags/$tag"; then
+    failed=1
+    echo "cut-rc: the tag push failed; the local commit and tag $tag are kept. Retry: git push origin $tag" >&2
+  fi
+else
   failed=1
-  echo "cut-rc: the branch push failed; the local commit and tag $tag are kept. Push the branch, then: git push origin $tag" >&2
-fi
-if ! git push origin "refs/tags/$tag"; then
-  failed=1
-  echo "cut-rc: the tag push failed; the local commit and tag $tag are kept. Retry: git push origin $tag" >&2
+  echo "cut-rc: the branch push failed; the local commit and tag $tag are kept. Push the branch, then the tag: git push origin refs/heads/$branch && git push origin $tag" >&2
 fi
 
 echo "pull request: $pr_url"

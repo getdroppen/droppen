@@ -153,6 +153,26 @@ jobs:
             exit 1
           fi
           plain=${version#v}
+          # An rc continues from the newest one of its base version: a re-used
+          # version or a hand-made tag must not move the series back. Equal is
+          # allowed (a re-run of the same tag). Only for a tag: a branch's
+          # source version may sit behind while it is being written.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            case "$plain" in
+              *-*)
+                base=${plain%%-*}
+                if ! rc_tags=$(gh api --paginate "repos/$DROPPEN_RELEASE_REPO/git/matching-refs/tags/v$base-rc." --jq '.[].ref'); then
+                  echo "::error::cannot read the existing rc tags of $base from $DROPPEN_RELEASE_REPO"
+                  exit 1
+                fi
+                newest=$(printf '%s\n' "$rc_tags" | sed -n 's#^refs/tags/v##p' | sed 's/\^{}$//' | sort -V | tail -n 1)
+                if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$plain" | sort -V | tail -n 1)" != "$plain" ]; then
+                  echo "::error::$version is older than v$newest: an rc continues from the newest one for $base"
+                  exit 1
+                fi
+                ;;
+            esac
+          fi
           notes=docs/releases/$version.md
           if [ -f "$notes" ]; then
             snapshot=false
@@ -189,7 +209,7 @@ jobs:
                   echo "::error::$notes does not say \"测试版本\": a prerelease's notes carry the bilingual banner (\"test release\" and \"测试版本\")"
                   exit 1
                 }
-                for name in "Droppen-$plain.dmg" "${linux_files[@]}"; do
+                for name in "Droppen-$plain.dmg" "${linux_files[@]}" "Droppen-$plain-linux-sources.tar"; do
                   if grep -qF "$name" "$notes"; then
                     echo "::error::$notes names $name: a prerelease is server-only, so its notes must not name the app's files"
                     exit 1
@@ -304,7 +324,9 @@ jobs:
       # What may be released, for a tag. A stable version must be on main (a
       # run on main is on main). An RC may be on an open pull request's branch
       # instead, so a branch is tried without merging; release-rc-commit.sh
-      # refuses a fork and a pull request that is closed or is not to main.
+      # refuses a fork and a pull request that is closed or is not to main. An
+      # RC on main is still accepted, as every rc was before this: the pull
+      # request of a merged rc is closed, and its run must re-run.
       # The tag ruleset decides who may tag, this what may be.
       - name: A tag of a commit on main, or of an open pull request's branch
         id: admit
@@ -316,7 +338,12 @@ jobs:
           set -euo pipefail
           case "$VERSION" in
             *-*)
-              .github/scripts/release-rc-commit.sh "$GITHUB_SHA"
+              git fetch --no-tags --filter=blob:none origin +refs/heads/main:refs/remotes/origin/main
+              if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+                echo "ok: $GITHUB_SHA is on main"
+              else
+                .github/scripts/release-rc-commit.sh "$GITHUB_SHA"
+              fi
               ;;
             *)
               git fetch --no-tags --filter=blob:none origin +refs/heads/main:refs/remotes/origin/main

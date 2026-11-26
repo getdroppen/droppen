@@ -14,6 +14,8 @@
 # would run it with the release secrets without the main-side review a merge
 # gives). The commit need not be the head: a maintainer re-runs a release after
 # the branch moved on, and the tag still points at the commit that was there.
+# The workflow calls this only when the commit is not on main; a commit on main
+# is accepted there, so a merged rc still re-runs.
 #
 # GitHub's commit→pull-request association is queried, every page of it
 # (--paginate); the first qualifying pull request is the one reported. On
@@ -71,7 +73,10 @@ if [ -z "$first" ]; then
   if [ -n "$closed" ]; then
     die "$sha is on pull request $closed only, which is closed: only an open pull request is released"
   fi
-  die "$sha is on no pull request: open one to main from this repository's branch"
+  # A fork's head commit is not associated with its pull request in this
+  # repository's API (GitHub returns no association for it), so the fork case
+  # above is a bonus and this message carries the advice.
+  die "$sha is on no pull request: open one to main from a branch of this repository (push a fork's branch here first)"
 fi
 
 number=${first%%$'\t'*}
