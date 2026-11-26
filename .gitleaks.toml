@@ -58,7 +58,7 @@ regexes = ['''^sk-test-0123456789abcdef$''']
 description = "the made-up A2A proxy token in its tests"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''^crates/droppen-a2a-proxy/src/lib\.rs$''']
+paths = ['''^crates/droppen-a2a-proxy/src/config\.rs$''', '''^crates/droppen-a2a-proxy/src/lib\.rs$''']
 regexTarget = "secret"
 regexes = ['''^0123456789abcdef0123456789abcdef$''']
 
