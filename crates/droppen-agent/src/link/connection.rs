@@ -126,25 +126,6 @@ impl Running {
     pub fn with_state<T>(&self, f: impl FnOnce(&AgentState) -> T) -> T {
         f(&self.shared.state.lock().expect("agent state"))
     }
-
-    /// Moves on whenever this link's verified chain advanced, from wherever
-    /// it learnt of it (the hub, a device's hello, a direct hello) — the same
-    /// signal every open channel is swept on. Ends with the link.
-    pub fn chain_changes(&self) -> tokio::sync::watch::Receiver<u64> {
-        self.shared.chain_version.subscribe()
-    }
-
-    /// Take `entries` as if the hub had sent them, and act on what took
-    /// effect as on any chain advance ([`super::admit::chain_moved`]). For
-    /// tests: `false` when not every entry took.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn take_entries(&self, entries: &[droppen_proto::chain::Entry]) -> bool {
-        let absorbed = self.shared.state.lock().expect("agent state").absorb(entries, now_ms_u64());
-        if absorbed.applied > 0 {
-            super::admit::chain_moved(&self.shared, &absorbed.news, None);
-        }
-        absorbed.error.is_none()
-    }
 }
 
 /// How long [`Running::stop`] waits for the device role before ending it.
@@ -645,12 +626,7 @@ pub(crate) async fn connection(shared: &Arc<Shared>) -> Result<(), String> {
     // However this connection ends — an error, or the link stopping it
     // mid-way — it is no longer the hub connection.
     let _session = super::rotation::SessionGuard(&shared.rotation);
-    let mut features: Vec<String> = vec![
-        super::CHAIN_V3_FEATURE.into(),
-        super::POLICY_FEATURE.into(),
-        super::ROTATE_FEATURE.into(),
-        super::A2A_FEATURE.into(),
-    ];
+    let mut features: Vec<String> = vec![super::CHAIN_V3_FEATURE.into(), super::POLICY_FEATURE.into(), super::ROTATE_FEATURE.into()];
     if shared.relays.lock().expect("relays").is_some() {
         features.push(super::relays::FEATURE.into());
     }

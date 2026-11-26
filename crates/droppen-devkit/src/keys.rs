@@ -437,11 +437,7 @@ impl Device {
             id: device.into(),
             sign_key,
             dh_key,
-            flags: droppen_proto::chain::Flags {
-                host: false,
-                admin,
-                a2a: false,
-            },
+            flags: droppen_proto::chain::Flags { host: false, admin },
         }))
         .await?;
         let chain = self.chain.as_ref().ok_or("no chain")?;
@@ -902,11 +898,7 @@ impl Device {
             id: machine.id.clone(),
             sign_key: machine.sign_key,
             dh_key: machine.dh_key,
-            flags: Flags {
-                host: true,
-                admin: false,
-                a2a: false,
-            },
+            flags: Flags { host: true, admin: false },
         })];
         actions.extend(key_epochs(user, vec![(machine.id.clone(), commit)]));
         self.append_batch(actions).await?;
@@ -936,8 +928,7 @@ impl Device {
 
     /// Chain v3, S1-4 (as the web's `mailHostKey`): seal host `host`'s key
     /// epoch `epoch` to every current device that is not an admin and that
-    /// the host accepts control from — never an A2A proxy, which controls
-    /// nothing (`docs/a2a.md` §7.1) — and mail it (purpose 5). A host's
+    /// the host accepts control from, and mail it (purpose 5). A host's
     /// device role that has not signed in at the hub yet is `waiting` (it
     /// asks for its keys once it does). A mail that does not go is said in
     /// `failed` (and logged), the others still sent: the device asks for it
@@ -947,7 +938,7 @@ impl Device {
         let mut out = HostKeyMail::default();
         for d in chain.devices() {
             let id = &d.info.id;
-            if !d.is_active() || d.admin || d.a2a || *id == self.id || chain.may_control(id, host).is_err() {
+            if !d.is_active() || d.admin || *id == self.id || chain.may_control(id, host).is_err() {
                 continue;
             }
             match self.seal_host_key_to(id, &d.info.dh_key, host, epoch, mk).await {
@@ -1002,10 +993,6 @@ impl Device {
         if recipient.admin {
             return Err(format!("{to} manages the account: it reads the hosts' keys with the user key"));
         }
-        // `docs/a2a.md` §7.1: an A2A proxy controls nothing, so it holds no host's key.
-        if recipient.a2a {
-            return Err(format!("{to} is an A2A proxy: it is sealed no host's key"));
-        }
         let dh = recipient.info.dh_key;
         let hosts: Vec<String> = chain.hosts_admitting(to).map(|h| h.info.id.clone()).collect();
         let mut sent = 0;
@@ -1030,8 +1017,7 @@ impl Device {
                 continue;
             }
             self.ack(id).await?;
-            // An A2A proxy's request is acknowledged and dropped: it holds no host's key.
-            let asks = self.chain.as_ref().and_then(|c| c.device(&sender)).is_some_and(|d| !d.admin && !d.a2a);
+            let asks = self.chain.as_ref().and_then(|c| c.device(&sender)).is_some_and(|d| !d.admin);
             if asks && !answered.contains(&sender) {
                 self.send_host_keys(&sender).await?;
                 answered.push(sender);
@@ -1280,11 +1266,7 @@ mod tests {
             id: id.into(),
             sign_key: k.sign_public(),
             dh_key: k.dh_public(),
-            flags: Flags {
-                host,
-                admin: !host,
-                a2a: false,
-            },
+            flags: Flags { host, admin: !host },
         };
         let genesis = if v3 {
             genesis3_draft(ACCOUNT, ak.sign_public(), v3_device("d-1", &d1, false), recovery, 1)

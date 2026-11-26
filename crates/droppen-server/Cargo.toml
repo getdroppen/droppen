@@ -74,9 +74,6 @@ droppen-provider-claude-code = { path = "../droppen-provider-claude-code" }
 droppen-drive = { path = "../droppen-drive" }
 # The first-run guide: detection, installs and sign-ins, folders and progress.
 droppen-setup = { path = "../droppen-setup" }
-# The A2A server: `/a2a/*`, `/api/a2a/*`, its store, and the SessionBackend
-# port `a2a_backend` implements on the providers.
-droppen-a2a = { path = "../droppen-a2a" }
 # The device role: verified copies of the account's other machines.
 droppen-aggregator = { path = "../droppen-aggregator" }
 # The machine role: identity, enrollment, the hub link, chain, relays, streams.
@@ -86,8 +83,6 @@ droppen-notify = { path = "../droppen-notify" }
 # The link to Droppen: the link routes, the remote-view gate, link control and
 # the aggregator gateway.
 droppen-cloud = { path = "../droppen-cloud" }
-# `droppen a2a-proxy`.
-droppen-a2a-proxy = { path = "../droppen-a2a-proxy" }
 gotcha = { workspace = true }
 # Named by no code here (the routes reach axum through gotcha), but the one
 # dependency that keeps axum's default features in the binary: gotcha takes
@@ -166,9 +161,6 @@ droppen-aggregator = { path = "../droppen-aggregator", features = ["test-support
 # route classification reach of the agent's files (`droppen_agent::testing`), and
 # transcripts made the way the loader makes them (`streams::test_transcripts`).
 droppen-agent = { path = "../droppen-agent", features = ["test-support"] }
-# The A2A server over a fake session backend, for the test that the link's
-# device chain decides its A2A proxies (`api::cloud_control`).
-droppen-a2a = { path = "../droppen-a2a", features = ["test-support"] }
 # A link whose frames are all queued at once, for the terminal tests
 # (`droppen_pty::client::Link::preloaded`), and the server binary their
 # shims are spawned from (`droppen_pty::testing::shims_run_from`).
@@ -211,12 +203,3 @@ droppen-notify = { path = "../droppen-notify", features = ["test-support"] }
 # What the tests of the cloud routes, the remote-view gate and link control
 # (`api::cloud_routes`, `api::cloud_control`) reach of cloud (`droppen_cloud::testing`).
 droppen-cloud = { path = "../droppen-cloud", features = ["test-support"] }
-# The A2A proxy end to end (`a2a_proxy_e2e`), on droppen-client's stand
-# (`tests/support`): a relay in this process (the library the relay binary
-# runs), the test hub's ticket key and the admin's signatures (`ed25519-dalek`),
-# and the stand's `wss://` front (`rustls`, `tokio-rustls`; ring only, as
-# everywhere in this workspace).
-droppen-relay-core = { path = "../droppen-relay-core" }
-ed25519-dalek = "2"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }

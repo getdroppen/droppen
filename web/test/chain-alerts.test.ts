@@ -74,10 +74,10 @@ test("alerts: every kind another admin's change raises — from the upgrade to c
   const paused = [{ host: "m-1", ids: [d.deviceId] }];
   assert.deepEqual(seen, [
     { ...none, kind: "upgrade", by, subject: null, remove: by },
-    { ...none, kind: "addDevice", by, subject: b.deviceId, remove: null, flags: { host: false, admin: false, a2a: false } },
-    { ...none, kind: "addDevice", by, subject: d.deviceId, remove: d.deviceId, flags: { host: false, admin: false, a2a: false } },
+    { ...none, kind: "addDevice", by, subject: b.deviceId, remove: null, flags: { host: false, admin: false } },
+    { ...none, kind: "addDevice", by, subject: d.deviceId, remove: d.deviceId, flags: { host: false, admin: false } },
     { ...none, kind: "setAdmin", by, subject: b.deviceId, remove: null, on: true },
-    { ...none, kind: "addDevice", by, subject: "m-2", remove: "m-2", flags: { host: true, admin: false, a2a: false } },
+    { ...none, kind: "addDevice", by, subject: "m-2", remove: "m-2", flags: { host: true, admin: false } },
     { ...none, kind: "setHost", by, subject: "m-2", remove: null, on: false },
     { ...none, kind: "setAccept", by, subject: "m-1", remove: null, accept: { type: "devices", ids: [d.deviceId] } },
     { ...none, kind: "setRecoveryKey", by, subject: null, remove: by },
@@ -158,7 +158,7 @@ test("alerts: a recovery join waits in its own banner — no alert, and nothing 
   await c.sync();
   assert.deepEqual(
     c.alerts().map((x) => [x.seq, x.kind, x.by, x.subject, x.remove, x.flags]),
-    [[joinSeq, "recoveryJoin", null, z.deviceId, z.deviceId, { host: false, admin: true, a2a: false }]],
+    [[joinSeq, "recoveryJoin", null, z.deviceId, z.deviceId, { host: false, admin: true }]],
     "activated: the join is an alert, by the recovery words",
   );
   c.acknowledge(joinSeq);

@@ -71,7 +71,6 @@ pub fn features(direct: bool) -> Vec<&'static str> {
         droppen_proto::stream::STREAMS_FEATURE,
         super::CHAIN_V3_FEATURE,
         super::POLICY_FEATURE,
-        super::A2A_FEATURE,
     ];
     if direct {
         f.push("direct/1");

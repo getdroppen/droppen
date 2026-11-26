@@ -49,7 +49,7 @@ const by = (id: string): Signer => ({ type: "device", id });
 const sign = (seed: string) => importEd25519Private(h(seed));
 const k0 = () => sign(V.chain.devices[0].signSeed);
 const k2 = () => sign(V.chain.devices[2].signSeed);
-const dev3 = (id: string, host: boolean, admin: boolean) => ({ id, signKey: h(extra(id).signKey), dhKey: h(extra(id).dhKey), flags: { host, admin, a2a: false } });
+const dev3 = (id: string, host: boolean, admin: boolean) => ({ id, signKey: h(extra(id).signKey), dhKey: h(extra(id).dhKey), flags: { host, admin } });
 const slotOf = (i: number): { slot: PasskeySlot; key: Promise<CryptoKey> } => {
   const p = V.chainV3.passkeys[i];
   return {

@@ -471,10 +471,8 @@ pub struct FirstUnreadQuery {
 /// mode.
 ///
 /// They are not cosmetic: the values become CLI arguments, so an unbounded
-/// `model` could read as a flag rather than as a model name. Public for the
-/// one surface outside the drive that stores flags for later spawns: an A2A
-/// entry (the server's `a2a_backend`).
-pub fn validate_flags(rule: ModelRule, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), String> {
+/// `model` could read as a flag rather than as a model name.
+pub(crate) fn validate_flags(rule: ModelRule, model: Option<&str>, effort: Option<&str>, permission: Option<&str>) -> Result<(), String> {
     if model.is_some_and(|model| !rule.admits(model)) {
         return Err("invalid model".to_string());
     }
@@ -492,9 +490,8 @@ pub fn validate_flags(rule: ModelRule, model: Option<&str>, effort: Option<&str>
     Ok(())
 }
 
-/// `z.string().min(1).max(100_000)`, the bound on every prompt, an A2A task's
-/// included (the server's `a2a_backend`).
-pub fn validate_text(text: &str) -> Result<(), String> {
+/// `z.string().min(1).max(100_000)`, the bound on every prompt.
+pub(crate) fn validate_text(text: &str) -> Result<(), String> {
     match text.chars().count() {
         0 => Err("text is empty".to_string()),
         n if n > 100_000 => Err("text is too long".to_string()),
@@ -601,12 +598,7 @@ pub async fn new_session(State(state): State<DriveState>, ApiJson(body): ApiJson
 
 /// Everything [`new_session`] does once its body is valid and, for a named
 /// message, its id is claimed.
-///
-/// Public for the one other caller that starts a session the way the route
-/// does, with a message id it claimed itself: the A2A backend (the server's
-/// `a2a_backend`, `docs/a2a.md` §3.1), whose `clientMessageId` is not a
-/// client's UUID and whose body it has checked against its entry.
-pub async fn start_session(state: DriveState, body: NewSession, qid: Option<String>) -> Result<NewSessionResult, ApiError> {
+async fn start_session(state: DriveState, body: NewSession, qid: Option<String>) -> Result<NewSessionResult, ApiError> {
     let drive = &state.drive;
     // The first message's attachments pass the gate a later message's do
     // ([`deliver_message`]): every one proven to come from `/api/uploads`, and
@@ -1013,10 +1005,7 @@ struct QuestionSettled<'a> {
 }
 
 /// Answer or dismiss one question, wherever it stands.
-///
-/// Public for the A2A backend (the server's `a2a_backend`), which answers a
-/// task's question exactly as the answer route does, an expired one included.
-pub async fn settle_question(
+async fn settle_question(
     drive: &crate::Drive,
     source: Source,
     id: &str,

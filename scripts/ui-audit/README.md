@@ -23,7 +23,7 @@ pnpm ui-audit --fixture devices   # only the devices page
 Options:
 
 - `--out <dir>` (default `/tmp/droppen-ui-audit-<date>`)
-- `--fixture settings|devices|agents|new-chat|cloud-bar|connection-log|session-opening|no-copy|session-from-copy|welcome|desktop-app|updates|a2a|both` (default `both`)
+- `--fixture settings|devices|agents|new-chat|cloud-bar|connection-log|session-opening|no-copy|session-from-copy|welcome|desktop-app|updates|both` (default `both`)
 - `--theme light|dark|both`, `--viewport desktop|mobile|both`
 - `--channel chrome` — use a system Chrome instead of the bundled Chromium
 - `--url <url>` — measure a running page instead of the fixture (no target
@@ -53,17 +53,6 @@ can see:
   selected row visually distinct from a normal one, a check, an empty-state
   sentence;
 - no border radius and no drop shadow on controls.
-
-The `a2a` fixture (Settings › A2A, `features/settings/a2a-section.tsx`, over
-a device that answers the A2A management API with synthetic entries, tokens
-and tasks) is captured in three states, each reached by clicking: the list,
-the new-entry form, and a new token's one-time secret. Each is held to no
-radius and no drop shadow, colour only inside a signal (the neutral tokens as
-the theme computes them), at most one primary action, 32px fields (40px on a
-phone) and 28px actions, the token warning, an Agent Card URL of
-`<origin>/a2a/agents/<id>` on every entry, and a secret that appears nowhere in
-the token list. Outputs `a2a-<list|form|secret>-<theme>-<viewport>.png`, as
-tall as the section.
 
 The `devices` fixture adds: two or more card columns at desktop, one 1px card
 frame, 16px card padding, a card at least 88px tall, a hover that changes the

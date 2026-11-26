@@ -4,7 +4,6 @@
  * translation. A chunk of its own, downloaded only by a page that shows ja
  * (`index.ts`).
  */
-import { a2aJa } from "./a2a.ja";
 import { cloudDevicesJa } from "./cloud-devices.ja";
 import { crossDeviceJa } from "./cross-device.ja";
 import { hostsJa } from "./hosts.ja";
@@ -18,7 +17,6 @@ import { updatesJa } from "./updates.ja";
 import { welcomeJa } from "./welcome.ja";
 
 const translations: Record<string, string> = {
-  ...a2aJa,
   ...onboardingJa,
   ...crossDeviceJa,
   ...linkJa,

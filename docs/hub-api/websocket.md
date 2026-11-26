@@ -2,8 +2,8 @@
 
 | path | served by | who connects | carries |
 |---|---|---|---|
-| `/v1/client` | the hub | a device (the web app, `droppen-client`: the test device, the local install's device role and an A2A proxy) | control text, droppen-proto frames |
-| `/v1/agent` | the hub | a machine's agent; an A2A proxy only to enroll | control text, droppen-proto frames |
+| `/v1/client` | the hub | a device (the web app, `droppen-client`: the test device and the local install's device role) | control text, droppen-proto frames |
+| `/v1/agent` | the hub | a machine's agent | control text, droppen-proto frames |
 | `/v1/relay` | the hub | a relay (`droppen-relay`) | control text only |
 | `/v1/connect` | a relay | a device or an agent, with a ticket | control text, a subset of the frames |
 
@@ -25,7 +25,7 @@ nonce, time_ms}` (label `rh/v1 hub-login`):
 
 | role | socket | `account` | `id` | `hub` | signed with |
 |---|---|---|---|---|---|
-| `Device` | `/v1/client`; an A2A proxy's `enroll_proof` on `/v1/agent` | the account | the device (for an A2A proxy enrolling, the one it was assigned) | the hub origin dialled | the device key |
+| `Device` | `/v1/client` | the account | the device | the hub origin dialled | the device key |
 | `Agent` | `/v1/agent` | the account | the machine | the hub origin dialled | the machine key |
 | `Relay` | `/v1/relay` | `""` | the relay id | the hub origin dialled | the relay's key |
 | `RelayDevice`, `RelayAgent` | `/v1/connect` | the ticket's account | the ticket's id | **the relay's** origin | the key the ticket names |
@@ -58,20 +58,6 @@ A sign-in also records when the device was last seen and, if the upgrade's
 `User-Agent` names a known device or browser, the device's short name
 (`GET /v1/me` `devices[].ua_label` in http.md); the `User-Agent` itself is not
 kept.
-
-**An A2A proxy** (README, "An A2A proxy's session") signs in here as any
-device does, with its device session, before the chain names it and after.
-After `welcome` it gets a `presence` snapshot of only the hosts that take
-its A2A calls (none before the chain names it), then only those hosts'
-changes; when the chain lets it call another host (it joined, or a
-`SetA2aAccept` named it) it gets a `presence` with that host. It never gets
-`plan`, `main_device`, `device_registered`, `sign_in_changed`, `rotation`,
-`host_dispute` or `mail`. `chain_sub` works as for any device, and
-`stream_unsub` is harmless; a `CHAIN` append, an `ATTEST` or a stream `SUB`
-from it is answered `error {code: "a2a_only"}` and a close with 4403. While
-the hub still carries channels, its `OPEN` is routed only to a host that
-takes its A2A calls and whose agent declared `a2a/1`, and is otherwise
-answered `CLOSE` like any refused route.
 
 **Device → hub**
 
@@ -228,39 +214,6 @@ the device checks (`GET /v1/enrollments/{token}`) before it adds the host
 (`[AddDevice3{host}, KeyEpochs]`; v2: `AddMachine`). Until the machine is in
 the chain its stream writes are dropped.
 
-`enroll.kind` (optional) says what claims the code: `"machine"`, or none, a
-computer, as above; `"a2a"`, an A2A proxy. It must be the kind the code was
-registered with (`POST /v1/enrollments`), else `error {code:
-"enrollment_kind"}`: the claim is refused and nothing is assigned, the
-socket stays open, and it counts as a try and as a claim
-(`GET /v1/enrollments/{token}` `claims`). Any other value is `error
-bad_kind` and a close with 4400. `enroll_assigned` carries `machine` for a
-computer's code and `device` for an A2A proxy's, exactly one of them.
-`enroll_proof.kind` (optional) must be the claim's kind, else `error
-enrollment_kind` and a close with 4400.
-
-**An A2A proxy enrolls** here (`droppen-client`'s `enroll::claim_a2a`; README,
-"An A2A proxy's session") and is not signed in by it:
-
-```
-hub   → challenge {nonce, hub, version: 1}
-proxy → enroll {token, kind: "a2a"}
-hub   → enroll_assigned {account, device}        (or error unknown_enrollment | enrollment_kind; 3 tries per connection)
-proxy → enroll_proof {kind: "a2a", sign_key, dh_key, time_ms, sig, proof}
-hub   → enrolled {account, device}, then a close with 1000 ("enrolled")
-```
-
-`sig` is a `HubLogin {role: Device, account, id: <the assigned device>, hub:
-<the origin dialled>, nonce, time_ms}` signature under `sign_key` (a
-computer's stays `role: Agent`); `proof` is kept for the page, which checks
-it against the code (`GET /v1/enrollments/{token}`): the hub never holds the
-code's secret. The refusals are a computer's: `denied` (4401: the signature
-or the clock), `enrollment_gone` (4409), `bad_keys` and `weak_keys` (4400).
-The hub makes a **device** row, never a machine row: the proxy never signs
-in as an agent (`login {role: "agent"}` with its id is `denied`), and it is
-not signed in on this socket at all — it signs in later as a device on
-`/v1/client`, with a device session (`POST /v1/session`).
-
 **A removed machine** (its account's chain has a `RemoveMachine` naming it)
 is cut off and stays out: its live connection gets the `CHAIN` frame with
 the removal first, then `error {code: "removed"}` and a close with 4403, and
@@ -279,9 +232,9 @@ or is in it, signs in as before.
 | `t` | fields | |
 |---|---|---|
 | `login` | `role: "agent"`, `account`, `id`, `time_ms`, `sig` | sign in as an enrolled machine |
-| `enroll` | `token` (16-byte hex), `kind?` (`"machine"` or `"a2a"`) | claim an enrollment code |
-| `enroll_proof` | `kind?`, `sign_key`, `dh_key`, `time_ms`, `sig`, `proof` (32-byte hex each but `sig`) | finish it |
-| `agent_info` | `version` (≤ 64 characters kept), `features` | what it speaks: `relays/1` (it attaches to the account's relays; devices hear it as `presence.relays`); `chain/3` (it reads chain v3: until it says so, the hub sends it no v3 chain entry); `policy/1` (it refuses the admin-only routes to devices that are not admins); `a2a/1` (it takes A2A calls from the A2A proxies its chain lets call it: the hub routes an A2A proxy to a host, and names the host in its tickets, only once its agent declared it). An account goes to v3 only once every current host declared both, and a host joins a v3 account only once it declared them (`GET /v1/me` `chain_v3`). Send it before `chain_sub` |
+| `enroll` | `token` (16-byte hex) | claim an enrollment code |
+| `enroll_proof` | `sign_key`, `dh_key`, `time_ms`, `sig`, `proof` (32-byte hex each but `sig`) | finish it |
+| `agent_info` | `version` (≤ 64 characters kept), `features` | what it speaks: `relays/1` (it attaches to the account's relays; devices hear it as `presence.relays`); `chain/3` (it reads chain v3: until it says so, the hub sends it no v3 chain entry); `policy/1` (it refuses the admin-only routes to devices that are not admins). An account goes to v3 only once every current host declared both, and a host joins a v3 account only once it declared them (`GET /v1/me` `chain_v3`). Send it before `chain_sub` |
 | `chain_sub` | `from` | as on `/v1/client` |
 | `mail_ack` | `id` | done with a mail: it is deleted (only its own machine keys, purpose 2: the rest of its mailbox is its device role's) |
 | `mail_release` | `id` | cannot judge a mail yet and will not hold it: it stays for the next sign-in |
@@ -307,8 +260,7 @@ device role's (`GET /v1/mailbox`).
 | `t` | fields | |
 |---|---|---|
 | `challenge`, `welcome`, `error` | as on `/v1/client` | |
-| `enroll_assigned` | `account`, and `machine` (a computer's code) or `device` (an A2A proxy's) | the ids this enrollment gets |
-| `enrolled` | `account`, `device` | an A2A proxy's enrollment is done: its device row is made; the hub closes the socket (1000) |
+| `enroll_assigned` | `account`, `machine` | the ids this enrollment gets |
 | `mail` | `id`, `sender`, `purpose`, `epoch`, `sealed` | a sealed key for this machine (pushed; answer each) |
 | `plan` | `plan`, `retention_days`, `storage_bytes`, `usage_bytes`, `machine_usage_bytes`, `grace_until_ms?` | keep the offline copy within `retention_days` and its share of `storage_bytes` |
 | `relay_set` | `relays: [{id, origin}]`, `emergency: [{id, origin}]`, `limit`, `directory: [{id, origin, state}]` | the relays to attach to (the set's members that are listed, and any emergency grants), `relay.max`, and every listed relay to measure; again whenever it changes. Once the agent's `agent_info` names `relays/1` the hub keeps the set itself — one working public relay, two with the account's standby preference (`relay.max` allowing), nearest first by the agents' `relay_state` round trips — and replaces a member that drains, goes down or loses its control link at once: no device has to ask. A member it drops is left once no channel is open on it |
@@ -483,7 +435,7 @@ that closes the connection (4400).
 
 | code | meaning | from |
 |---|---|---|
-| 1000 | normal (a relay deregistered; an A2A proxy enrolled, `enrolled`; the server is done) | all |
+| 1000 | normal (a relay deregistered; the server is done) | all |
 | 1009 | a control message too large | hub, relay |
 | 1011 | the server cannot serve now (database, chain); reconnect later | hub |
 | 1012 | the server is restarting; reconnect | hub, relay |
@@ -493,7 +445,7 @@ that closes the connection (4400).
 | 4005 | this host's identity key was renewed (`error rotated` with the new key's fingerprint before it): sign in with the new key. Only to a renewed host's agent and device connections | hub |
 | 4400 | a message or frame the server does not understand, or one not allowed here | hub, relay |
 | 4401 | sign-in refused, or not signed in in time (renew the session, then reconnect); `rotated`: signed with a key a renewal retired (after one `chain_sub`, or 10 s) | hub, relay |
-| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay; a host's device role while its identity key is being renewed, or an isolated host's agent connection (`rotation_pending`); the account suspended or deleted (`account_suspended`, `account_deleted`; on a relay, the account-wide `revoke` of a deleted account); an A2A proxy's `CHAIN`, `ATTEST` or `SUB` (`a2a_only`) | hub, relay |
+| 4403 | removed from the account (device or machine), revoked (relay), or a retired relay; a host's device role while its identity key is being renewed, or an isolated host's agent connection (`rotation_pending`); the account suspended or deleted (`account_suspended`, `account_deleted`; on a relay, the account-wide `revoke` of a deleted account) | hub, relay |
 | 4409 | the enrollment was already completed | hub (`/v1/agent`) |
 | 4419 | the ticket ran out and was not renewed | relay |
 | 4429 | too many attempts (enrollment, relay registration), or over the account's connections on a relay | hub, relay |
@@ -529,7 +481,6 @@ Codes 4408 and 4412 from the agent are end to end: the hub and relays pass
 | `denied` | 4401 | the sign-in does not verify |
 | `removed` | 4403 | the device or machine was removed from the account (the chain names it removed); do not reconnect as it |
 | `forbidden` | 4403 | `SUB` from a device not current in the chain |
-| `a2a_only` | 4403 | a `CHAIN` append, an `ATTEST` or a stream `SUB` from an A2A proxy on `/v1/client`: it reads the chain and nothing else |
 | `host_devices_off` | 4403 | a host signing in as a device while the hub runs `DROPPEN_HUB_CHAIN_V3=off` |
 | `account_suspended` | 4403 | the hub's operator suspended the account (README "Suspended accounts"): every connection of it is closed, and every sign-in refused, until that is lifted |
 | `account_deleted` | 4403 | the account was deleted (http.md `DELETE /v1/account`): every connection of it is closed; do not reconnect — its devices and machines are gone, and a device session renewal signed with its key answers `410 account_deleted` (http.md `POST /v1/session`). The web app wipes its keys for the account on either |
@@ -537,9 +488,7 @@ Codes 4408 and 4412 from the agent are end to end: the hub and relays pass
 | `rotation_pending` | 4403 | a host signing in as a device (or signed in as one) while its identity key is being renewed: retry once the renewal is committed or withdrawn; or, on `/v1/agent`, the host was just isolated (http.md, identity key renewals): its channels through the hub end with the connection; sign in again (the hub routes nothing new to it until the isolation clears) |
 | `too_large` | 1009 | a control message over 16 KiB (on `/v1/relay`: over 4 KiB before sign-in) |
 | `bad_token`, `bad_keys`, `weak_keys` | 4400 | a malformed enrollment |
-| `bad_kind` | 4400 | an `enroll.kind` other than `machine` or `a2a` |
 | `unknown_enrollment` | — | no such code, or expired or used: try another |
-| `enrollment_kind` | — or 4400 | `enroll`: the code was registered as the other kind; the claim is refused, nothing is assigned, and it counts as a try and as a claim. `enroll_proof`: a `kind` that is not the claim's (4400) |
 | `enrollment_gone` | 4409 | |
 | `too_many_attempts` | 4429 | |
 | `chain_unavailable`, `unavailable` | 1011 | |

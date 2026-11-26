@@ -367,8 +367,6 @@ export function alertLevel(alert: ChainAlert): "confirm" | "high" | "info" {
   // Renewals confirmed on the device turned off (or never on): "is this you?" on every device. Turned on: a note.
   if (alert.kind === "renewalPolicy") return alert.on ? "info" : "confirm";
   if (alert.kind === "passkey") return alert.passkey === "join" || alert.passkey === "slotSet" ? "confirm" : "info";
-  // A host taking A2A calls from an A2A proxy (docs/a2a.md §7.3): "is this you?" — taking none, a note.
-  if (alert.kind === "a2aAccept") return alert.a2a?.length ? "confirm" : "info";
   return "confirm";
 }
 
@@ -381,8 +379,6 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
       const f = alert.flags;
       // A full device (chain v2's every addition, v3's admin) is what a browser or phone is: no more to say. A host is never one (review D1).
       if (!f || (f.admin && !f.host)) return t("{{by}} added {{device}} to this account", { by, device });
-      // An A2A proxy (docs/a2a.md §7.1, §7.3): never a host nor an admin — it only calls the A2A of devices that accept it.
-      if (f.a2a) return t("{{by}} added {{device}} to this account as an A2A proxy: it can call the A2A of devices that accept it", { by, device });
       if (f.host) return t("{{by}} added {{device}} to this account: it can run AI", { by, device });
       return t("{{by}} added {{device}} to this account as a limited device", { by, device });
     }
@@ -406,10 +402,6 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
       if (a?.type === "devices") return t("{{by}} let {{ids}} control {{host}}", { by, host: device, ids: a.ids.join(", ") });
       return t("{{by}} set {{host}} to take control only from your full devices", { by, host: device });
     }
-    case "a2aAccept":
-      return alert.a2a?.length
-        ? t("{{by}} let the A2A proxies {{ids}} call the A2A of {{host}}", { by, host: device, ids: alert.a2a.join(", ") })
-        : t("{{by}} set {{host}} to take A2A calls from no A2A proxy", { by, host: device });
     case "passkey":
       switch (alert.passkey) {
         case "slotSet":
@@ -422,25 +414,13 @@ export function alertText(alert: ChainAlert, t: (key: string, opts?: Record<stri
           return t("{{device}} activated itself with a passkey", { device });
       }
     case "renewalPause": {
-      // Host identity rotation §3.4 rule 10: control paused over hosts while identity keys are renewed, a note. An A2A
-      // proxy's edge is its A2A calls to the host (docs/a2a.md §7.1), said as such, never as control.
-      const removals = alert.pause?.removals ?? [];
-      const control = removals.filter((r) => r.ids.length > 0).map((r) => t("{{ids}} over {{host}}", { ids: r.ids.join(", "), host: r.host })).join("; ");
-      const calls = removals.filter((r) => (r.a2a?.length ?? 0) > 0).map((r) => t("{{ids}} to {{host}}", { ids: r.a2a!.join(", "), host: r.host })).join("; ");
-      const edges = control || (calls ? "" : "?");
+      // Host identity rotation §3.4 rule 10: control paused over hosts while identity keys are renewed, a note.
+      const edges = (alert.pause?.removals ?? []).map((r) => t("{{ids}} over {{host}}", { ids: r.ids.join(", "), host: r.host })).join("; ") || "?";
       if (alert.pause?.phase === "completed") {
-        if (removals.length === 0) return t("a renewal pause was completed; none of the control it paused comes back (by {{by}})", { by });
-        if (calls && control) return t("control by {{edges}} and A2A calls by {{calls}} resume (by {{by}})", { edges, calls, by });
-        if (calls) return t("A2A calls by {{calls}} resume (by {{by}})", { calls, by });
+        if (alert.pause.removals.length === 0) return t("a renewal pause was completed; none of the control it paused comes back (by {{by}})", { by });
         return t("control by {{edges}} resumes (by {{by}})", { edges, by });
       }
-      if (alert.pause?.phase === "cancelled") {
-        if (calls && control) return t("the pause of control by {{edges}} and of A2A calls by {{calls}} was ended (by {{by}})", { edges, calls, by });
-        if (calls) return t("the pause of A2A calls by {{calls}} was ended (by {{by}})", { calls, by });
-        return t("the pause of control by {{edges}} was ended (by {{by}})", { edges, by });
-      }
-      if (calls && control) return t("control by {{edges}} and A2A calls by {{calls}} are paused while identity keys are renewed (by {{by}})", { edges, calls, by });
-      if (calls) return t("A2A calls by {{calls}} are paused while identity keys are renewed (by {{by}})", { calls, by });
+      if (alert.pause?.phase === "cancelled") return t("the pause of control by {{edges}} was ended (by {{by}})", { edges, by });
       return t("control by {{edges}} is paused while identity keys are renewed (by {{by}})", { edges, by });
     }
     case "renewalPolicy":

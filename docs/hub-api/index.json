@@ -94,7 +94,7 @@
       "server": "hub",
       "kind": "websocket",
       "c2s": ["login", "enroll", "enroll_proof", "chain_sub", "mail_ack", "mail_release", "agent_info", "relay_tickets", "relay_state", "stream_list", "stream_delete", "rotation_stage", "rotation_ack", "rotation_unknown"],
-      "s2c": ["challenge", "welcome", "enroll_assigned", "enrolled", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets", "rotation_staged", "rotation_refused", "rotation_pending"]
+      "s2c": ["challenge", "welcome", "enroll_assigned", "mail", "error", "plan", "stream_refused", "stream_watched", "stream_list", "relay_set", "relay_tickets", "rotation_staged", "rotation_refused", "rotation_pending"]
     },
     "/v1/relay": {
       "server": "hub",

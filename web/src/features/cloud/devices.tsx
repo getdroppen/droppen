@@ -1,12 +1,12 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeftIcon, ArrowRightIcon, CaretRightIcon, CircleNotchIcon, DevicesIcon, HardDrivesIcon, KeyIcon, PlugsConnectedIcon, PlusIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, ArrowRightIcon, CaretRightIcon, CircleNotchIcon, DevicesIcon, HardDrivesIcon, KeyIcon, PlusIcon } from "@phosphor-icons/react";
 import { osLabel, versionLabel } from "@/features/machines/device-facts";
 import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { needsYou, recentSessions } from "@/features/machines/needs-you";
 import { NeedsYouLedger } from "@/features/machines/needs-you-ledger";
 import { type DeviceRecord, hex } from "@/lib/e2e";
-import { a2aHostsOf, type CloudAccount, deviceFingerprint, hasRunAi, hostsExposedBy, limitedDevice, type ReEnrollLine, type RotationReport } from "@/lib/hub/account";
+import { type CloudAccount, deviceFingerprint, hasRunAi, hostsExposedBy, limitedDevice, type ReEnrollLine, type RotationReport } from "@/lib/hub/account";
 import { chainV3Writable } from "@/lib/hub/api";
 import { hubOrigin } from "@/lib/hub/config";
 import type { MachineKeyCourier } from "@/lib/hub/deliver";
@@ -19,7 +19,6 @@ import type { MachineInfo } from "@/lib/machines/runtime";
 import { useStore } from "@/lib/machines/store";
 import { cn } from "@/lib/cn";
 import { copyWarning, offlineSince, retentionOf } from "@/lib/hub/plan";
-import { AddA2aProxy } from "./add-a2a-proxy";
 import { AddComputer, NewDeviceReady } from "./add-computer";
 import { useAgentKeyState, usePresenceVersion, useShellCopies } from "./context";
 import { DeviceRow, type DeviceRowView, shortDeviceId } from "./device-row";
@@ -105,9 +104,6 @@ export type Section =
   | { kind: "addBrowser" }
   /** The 「添加可运行 AI 的设备」 guide; `code`: opened on its one-time code (a device with no browser). */
   | { kind: "addComputer"; code?: boolean }
-  /** 「添加 A2A 代理」 (docs/a2a.md §7.2). */
-  | { kind: "addA2a" }
-  /** Which devices take A2A proxy `proxy`'s calls, changed from its row. */
   | { kind: "remove"; device: string }
   /** Making a limited device a full device: confirmed first (§3.7). */
   | { kind: "grant"; device: string }
@@ -229,10 +225,6 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   // Hosts whose identity a device that could control them may have kept (review D3), each device with what the host's status says of it —
   // those that cannot renew their identity key; the others renew it (docs/host-identity-rotation.md §4).
   const reEnroll = viewerAdmin ? account.reEnrollWarnings((h) => statuses.get(h)?.controllers) : new Map<string, ReEnrollLine[]>();
-  // Hosts an A2A proxy that could call them no longer can (docs/a2a.md §7.1): exposed as to a lost controller, so they renew their
-  // identity key (or, one that cannot, should be added again) — the A2A proxies among each one's losses, said on its row.
-  const exposures = viewerAdmin && upgraded && chain ? account.hostsToRotate?.() : undefined;
-  const a2aLost = (host: string) => [...(exposures?.get(host)?.lost.keys() ?? [])].filter((d) => chain?.deviceRecord(d)?.a2a === true).sort();
   const renewals = useRenewals();
   // The hosts no other host may be made to accept until they renewed their identity key (§7 decision 8).
   const mustRenew = hostIds.filter((h) => account.mustRenewFirst?.(h) === true);
@@ -249,7 +241,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   }, [asked, account]);
   // Just signed up — the chain read, this a full device, no device that runs AI in it: the first-run card, and 「更多设置」 folded.
   const noHostYet = chain != null && viewerAdmin && hostIds.length === 0;
-  const adding = section.kind === "add" || section.kind === "addBrowser" || section.kind === "addComputer" || section.kind === "addA2a";
+  const adding = section.kind === "add" || section.kind === "addBrowser" || section.kind === "addComputer";
   const cardNow = noHostYet && !adding;
   // The card goes once a device that runs AI joins: said, once, as the guide says it (the guide, open, says it itself).
   const [cardUp, setCardUp] = useState(cardNow);
@@ -317,16 +309,9 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
       fingerprint: prints.get(id) ?? "",
       // A device that runs AI goes by its own name; a browser or phone by what the hub made of its User-Agent (only its words: `uaLabelOf`).
       // One waiting for approval gets none: a device coming back with the recovery words chose its own User-Agent (`deviceName`).
-      // An A2A proxy goes by what it is (it has no browser): "A2A proxy aaaa…".
-      name: d.host
-        ? shownName(id, statuses.get(id) ?? null)
-        : d.status.type === "pending"
-          ? null
-          : d.a2a
-            ? t("A2A proxy {{id}}", { id: shortDeviceId(id) })
-            : (uaLabelOf(seenDevice?.uaLabel) ?? (self ? ownLabel() : null)),
+      name: d.host ? shownName(id, statuses.get(id) ?? null) : d.status.type === "pending" ? null : (uaLabelOf(seenDevice?.uaLabel) ?? (self ? ownLabel() : null)),
       self,
-      kind: d.a2a ? "a2a" : d.host || ranAi ? "computer" : self ? (phone ? "phone" : "browser") : "browserOrPhone",
+      kind: d.host || ranAi ? "computer" : self ? (phone ? "phone" : "browser") : "browserOrPhone",
       status: d.status.type,
       host,
       stoppedHost: !d.host && d.status.type === "active" && ranAi,
@@ -338,11 +323,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
       lastSeenMs: lastSeen.length ? Math.max(...lastSeen) : null,
       limited,
       accept: d.host && chain ? chain.acceptPolicy(id) : null,
-      // A2A (docs/a2a.md §7): whom a host takes A2A calls from, and who takes an A2A proxy's.
-      a2aProxies: d.host && chain ? chain.allDevices().filter((p) => p.a2a && p.status.type === "active").map((p) => p.info.id).sort() : undefined,
-      a2aHosts: d.a2a && chain ? a2aHostsOf(chain, id).sort() : undefined,
       reEnroll: d.host ? reEnroll.get(id) : undefined,
-      a2aExposed: d.host ? a2aLost(id) : undefined,
       renewal: d.host && renewals ? renewals.status(id) : undefined,
       renewable: d.host && upgraded && account.renews?.(id) === true,
       renewalsOn: d.host && renewals?.view?.enabled === true,
@@ -499,7 +480,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
             paused={chain.pausedEdges?.(id) ?? []}
             declaresPolicy={me?.view?.machines.find((m) => m.id === id)?.readsV3}
             candidates={devices
-              .filter((x) => x.status.type === "active" && !x.admin && !x.a2a && x.info.id !== id)
+              .filter((x) => x.status.type === "active" && !x.admin && x.info.id !== id)
               .map((x) => ({ id: x.info.id, host: x.host, limited: limitedDevice({ viewer: account.deviceId, viewerAdmin, device: x, upgraded, ranAi: hasRunAi(chain, x) }) !== null }))}
             upgraded={upgraded}
             mustRenew={mustRenew}
@@ -622,12 +603,6 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
           />
         </section>
       )}
-      {section.kind === "addA2a" && (
-        <section data-testid="add-a2a-section">
-          <AddHead title={t("add an A2A proxy")} onBack={() => setSection({ kind: "add" })} />
-          <AddA2aProxy account={account} link={link} onDone={() => setSection({ kind: "list" })} />
-        </section>
-      )}
       {firstRun && <FirstHostCard onGuide={() => setSection({ kind: "addComputer" })} onCode={() => setSection({ kind: "addComputer", code: true })} pairWith={pairWith} />}
       {justJoined && (
         <section data-testid="first-host-joined">
@@ -738,23 +713,12 @@ function AddHead({ title, onBack }: { title: string; onBack: () => void }) {
   );
 }
 
-/**
- * 「添加设备」: a browser or phone (paired from here), or a device that runs AI
- * (its guide) — the two cells — and below them, across, an A2A proxy (docs/a2a.md
- * §7.2), which few accounts need.
- */
-export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" | "addComputer" | "addA2a") => void; onCancel: () => void }) {
+/** 「添加设备」: a browser or phone (paired from here), or a device that runs AI (its guide). */
+export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" | "addComputer") => void; onCancel: () => void }) {
   const { t } = useTranslation();
   const choices = [
     { kind: "addBrowser" as const, testId: "add-browser", Icon: DevicesIcon, title: t("a browser or phone"), body: t("Sign in to this account on it, then scan its QR code, paste its text or type the code it shows.") },
     { kind: "addComputer" as const, testId: "add-computer", Icon: HardDrivesIcon, title: t("a device that runs AI"), body: t("The device your AI CLIs run on, with Droppen installed: your sessions run there, and you open it from here.") },
-    {
-      kind: "addA2a" as const,
-      testId: "add-a2a",
-      Icon: PlugsConnectedIcon,
-      title: t("an A2A proxy"),
-      body: t("For an A2A client that cannot reach your devices, such as a service in the cloud: it starts sessions on the devices that take its calls, and controls nothing else."),
-    },
   ];
   return (
     <section data-testid="add-chooser">
@@ -771,10 +735,7 @@ export function AddChooser({ onPick, onCancel }: { onPick: (kind: "addBrowser" |
             type="button"
             data-testid={testId}
             onClick={() => onPick(kind)}
-            className={cn(
-              "group flex items-start gap-3 border-border px-6 py-4 text-left first:border-r hover:bg-hover max-md:px-4 max-md:first:border-r-0 max-md:first:border-b",
-              kind === "addA2a" && "col-span-2 border-t max-md:col-span-1",
-            )}
+            className="group flex items-start gap-3 border-border px-6 py-4 text-left first:border-r hover:bg-hover max-md:px-4 max-md:first:border-r-0 max-md:first:border-b"
           >
             <Icon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted group-hover:text-fg" />
             <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -1042,25 +1003,13 @@ function RemoveDevice({
   const [report, setReport] = useState<RotationReport | null>(null);
   const v3 = account.chain?.isV3 === true;
   // What its removal rotates (§3.3): a device that ever held the user key (by the chain's history, review 1) —
-  // everything; one a computer accepts control from — that computer's machine keys, always (review D2); an A2A
-  // proxy a computer takes calls from — the machine keys, always (a session it started there could read them off
-  // the disk: docs/a2a.md §7.1); any other, machine keys only if asked; chain v2's machine held its own key alone.
+  // everything; one a computer accepts control from — that computer's machine keys, always (review D2);
+  // any other, machine keys only if asked; chain v2's machine held its own key alone.
   const heldUserKey = record ? account.heldUserKey(device) : true;
-  // The computers an A2A proxy could call: exposed to it, said by name.
-  const a2aHosts = (v3 && record?.a2a ? account.a2aHostsOf?.(device) : undefined) ?? [];
   // The account's recovery words go with it only when it knows the current ones (v3) — as the chain will rule.
   const voidsWords = account.chain?.voidsRecoveryWords(device, "removal") ?? false;
-  const rotation: "all" | "machine" | "a2a" | "choice" | "none" = heldUserKey
-    ? "all"
-    : !v3
-      ? "none"
-      : account.controlsAHost(device)
-        ? "machine"
-        : a2aHosts.length
-          ? "a2a"
-          : "choice";
-  // The devices that run AI it could control or call the A2A of (and those that let them control them) renew their identity key after it
-  // (§4.1, §4.4; docs/a2a.md §7.1).
+  const rotation: "all" | "machine" | "choice" | "none" = heldUserKey ? "all" : !v3 ? "none" : account.controlsAHost(device) ? "machine" : "choice";
+  // The devices that run AI it could control (and those that let them control them) renew their identity key after it (§4.1, §4.4).
   const renewing = v3 && account.chain ? hostsExposedBy(account.chain, device).filter((h) => account.renews?.(h) === true) : [];
   if (report) {
     return (
@@ -1089,21 +1038,10 @@ function RemoveDevice({
           ? t("It loses access at once. The keys it held are retired: a new user key goes to the other devices and a new content key to each device that runs AI. What it already copied cannot be taken back.")
           : rotation === "machine"
             ? t("It loses access at once. It never held the user key, but a device that runs AI accepts its control: the content keys are rotated. What it already copied cannot be taken back.")
-            : rotation === "a2a"
-              ? t("It loses access at once. It never held a key, but it is an A2A proxy that devices that run AI take calls from: the content keys are rotated. What it already copied cannot be taken back.")
-              : rotation === "choice"
-                ? t("It loses access at once. It never held the user key, and no device accepts its control now: rotating the content keys covers any it was handed before.")
-                : t("It loses access at once. It held only its own content key, which goes with it.")}
+            : rotation === "choice"
+              ? t("It loses access at once. It never held the user key, and no device accepts its control now: rotating the content keys covers any it was handed before.")
+              : t("It loses access at once. It held only its own content key, which goes with it.")}
       </p>
-      {a2aHosts.length > 0 && (
-        // docs/a2a.md §7.1: an A2A call starts a session on the host as its user, whatever the entry's permission mode.
-        <p className="text-xs leading-5 text-warn-fg" data-signal="warn" data-testid="remove-a2a-exposed">
-          {t(
-            "{{device}} is an A2A proxy that could call the A2A of {{hosts}}. A session it started there could read any file the user can read on that device, its identity key included, so it exposed {{hosts}}: their content keys are rotated now, and they renew their identity key after it, with every device that lets them control it (one that cannot renew should be removed and added again).",
-            { device, hosts: a2aHosts.join(", ") },
-          )}
-        </p>
-      )}
       {voidsWords && (
         <p className="text-xs text-fg" data-testid="remove-voids-words">
           {t("The account's recovery words stop working with it: it set them, or came back with them. Make new recovery words afterwards.")}
@@ -1122,9 +1060,7 @@ function RemoveDevice({
               ? t("also rotate the content keys (always, for a device that held the user key)")
               : rotation === "machine"
                 ? t("also rotate the content keys (always, for a device another device accepts control from)")
-                : rotation === "a2a"
-                  ? t("also rotate the content keys (always, for an A2A proxy a device took calls from)")
-                  : t("also rotate the content keys")
+                : t("also rotate the content keys")
           }
         />
       )}

@@ -76,9 +76,6 @@ const SPEAKS = [
   ["crates/droppen-relay-core/src/traffic.rs", [["/v1/relay", "client"]]],
   ["crates/droppen-relay-core/src/lib.rs", [["/v1/relay", "client"]]],
   ["crates/droppen-relay-core/src/", [["/v1/connect", "server"]]],
-  // An A2A proxy claiming its enrollment code: the agents' socket, where
-  // every claim goes (`enroll`, `enroll_proof` with `kind: "a2a"`).
-  ["crates/droppen-client/src/enroll.rs", [["/v1/agent", "client"]]],
   ["crates/droppen-client/src/", [["/v1/client", "client"], ["/v1/connect", "client"]]],
   ["crates/droppen-devkit/src/agent.rs", [["/v1/agent", "client"], ["/v1/connect", "client"]]],
   ["crates/droppen-devkit/src/", [["/v1/client", "client"], ["/v1/agent", "client"], ["/v1/connect", "client"]]],

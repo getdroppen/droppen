@@ -16,7 +16,6 @@ import { useShowHiddenFiles } from "@/features/files/use-files-prefs";
 import { AccessSection } from "@/features/settings/access-section";
 import { SettingsUpdatesRow } from "@/features/updates/updates-row";
 import { ScheduleSection } from "@/features/settings/schedule-section";
-import { A2aSection } from "@/features/settings/a2a-section";
 import { askedSection, SECTION_LABEL, sectionsFor, type SectionId } from "@/features/settings/sections";
 import {
   SettingField,
@@ -714,7 +713,6 @@ const SECTION_VIEW: Record<SectionId, () => ReactNode> = {
   access: AccessSection,
   plugins: PluginsSection,
   "scheduled tasks": ScheduleSection,
-  a2a: A2aSection,
   "desktop app": DesktopAppSection,
 };
 

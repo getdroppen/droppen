@@ -808,7 +808,7 @@ mod tests {
             id: id.into(),
             sign_key: sign.verifying_key().to_bytes(),
             dh_key: dh,
-            flags: Flags { host, admin, a2a: false },
+            flags: Flags { host, admin },
         };
         let genesis = droppen_proto::chain::genesis3_draft(
             "a-1",

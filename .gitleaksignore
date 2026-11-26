@@ -1,0 +1,12 @@
+# gitleaks findings that are fixtures, not secrets.
+#
+# One fingerprint a line, as gitleaks prints it:
+#   <commit>:<file>:<rule>:<line>
+# The scan walks the whole history, so a finding stays after a later commit
+# marks its line `gitleaks:allow`; the commit that introduced it is listed
+# here. Remove an entry once the commit is no longer in any branch's history.
+
+# The 32-hex placeholder token of the session-proxy configuration tests: hex
+# has an entropy of exactly 4.0, which generic-api-key takes for a key.
+e5a577ca22e5d9a8496eb9eb16d08f024acfcc2e:crates/droppen-session-proxy/src/config.rs:generic-api-key:152
+e5a577ca22e5d9a8496eb9eb16d08f024acfcc2e:crates/droppen-session-proxy/src/lib.rs:generic-api-key:198

@@ -452,36 +452,6 @@ impl AgentState {
         self.controllers_from_ms = noted.from_ms;
     }
 
-    /// Whether this machine takes A2A calls from `device` on its verified
-    /// chain now (`docs/a2a.md` §7.3): a current A2A proxy, on this host's
-    /// `SetA2aAccept` list — the rule its channel was let in by
-    /// ([`droppen_proto::handshake::Access::A2aOnly`]), asked again. What
-    /// the A2A server asks of a request bridged from one.
-    pub fn takes_a2a_calls_from(&self, device: &str) -> bool {
-        self.chain.as_ref().is_some_and(|chain| {
-            chain.a2a_device(device).is_some() && droppen_proto::handshake::Access::A2aOnly.check(chain, device, &self.machine).is_ok()
-        })
-    }
-
-    /// Every A2A proxy [`AgentState::takes_a2a_calls_from`] admits, by id:
-    /// its id and its fingerprint, as "My devices" shows it.
-    pub fn a2a_callers(&self) -> Vec<(String, String)> {
-        let Some(chain) = self.chain.as_ref() else {
-            return Vec::new();
-        };
-        chain
-            .devices()
-            .filter_map(|d| chain.a2a_device(&d.info.id))
-            .filter(|d| self.takes_a2a_calls_from(&d.info.id))
-            .map(|d| {
-                (
-                    d.info.id.clone(),
-                    droppen_proto::identity::device_fingerprint_text(&d.info.sign_key, &d.info.dh_key),
-                )
-            })
-            .collect()
-    }
-
     /// Which devices ever opened a channel to this machine, with this
     /// agent's chain as it is now; `None` before it has a chain.
     pub fn controllers(&self) -> Option<Controllers> {
@@ -1077,7 +1047,7 @@ mod tests {
             id: id.into(),
             sign_key: k.sign_public(),
             dh_key: k.dh_public(),
-            flags: Flags { host, admin, a2a: false },
+            flags: Flags { host, admin },
         };
         let genesis = genesis3_draft("a-1", ak.sign_public(), device("d-1", &admin, false, true), None, 1_000).sign(ak.signing_key());
         let mut hub = ChainState::verify(std::slice::from_ref(&genesis), None, &mut ChainClock::history()).unwrap();

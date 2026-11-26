@@ -474,14 +474,14 @@ const SHAPED: Readonly<Record<string, RegExp>> = {
  */
 const ROUTE_WORDS = new Set(
   (
-    "a2a access account accounts acp add agents agg aggregator answer api api-chats apps archive auth batch cancel chain challenge " +
-    "chat-provider chats check checklist claim client cloud code commands composer-prefs config connect contexts continue default devices " +
-    "dismiss disputes docs download email enabled enrollments entries env events finish first-unread fs git github gone-cwds grant history " +
+    "access account accounts acp add agents agg aggregator answer api api-chats apps archive auth batch cancel chain challenge " +
+    "chat-provider chats check checklist claim client cloud code commands composer-prefs config connect continue default devices " +
+    "dismiss disputes docs download email enabled enrollments env events finish first-unread fs git github gone-cwds grant history " +
     "install interrupt keys limit-events link list local-open login logout mailbox main-device me media message messages models new " +
     "notify options order pages pairings passkey passkeys password pin ping plugins practice-folder prefs progress projects push questions " +
     "queue quota re-enroll-fresh read reauth receipts recent recent-cwds relay-id relays rescan resend rest return rotations " +
     "scheduled-tasks screens search seen self-upgrade server session sessions settings setup setup-token signup start stats status " +
-    "steer stop streams subscriptions tasks terminals test ticket tickets title tokens tools unlink update upload uploads usage usage-login " +
+    "steer stop streams subscriptions tasks terminals test ticket tickets title tools unlink update upload uploads usage usage-login " +
     "usage-verify use v1 vapid verify waitlist ws rh direct rotate"
   ).split(" "),
 );

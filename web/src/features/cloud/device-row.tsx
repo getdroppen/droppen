@@ -1,7 +1,7 @@
 /*
  * One device in 「我的设备」's list (docs/local-aggregator.md §3.7): a name a
  * person knows it by, what it is as badges (本设备 · 可运行 AI · 完整设备 or
- * 受限设备 · A2A 代理), whether it is up and when it was last seen, and — for a device
+ * 受限设备), whether it is up and when it was last seen, and — for a device
  * that runs AI — how many of its sessions need you and the way into it.
  * What only a careful look needs (its id, fingerprint, path, system, who may
  * control it, its latest sessions, a re-enroll warning's evidence) is behind
@@ -15,7 +15,7 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu } from "@base-ui/react/menu";
-import { ArrowRightIcon, CaretRightIcon, DeviceMobileIcon, DevicesIcon, DotsThreeIcon, GlobeIcon, HardDrivesIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
+import { ArrowRightIcon, CaretRightIcon, DeviceMobileIcon, DevicesIcon, DotsThreeIcon, GlobeIcon, HardDrivesIcon } from "@phosphor-icons/react";
 import type { components } from "@/api/schema";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,13 +46,8 @@ export interface DeviceRowView {
    */
   name: string | null;
   self: boolean;
-  /**
-   * What it is, for its icon: a computer with Droppen, a phone, a browser, or
-   * (another browser or phone: the hub is not told which) either; or an A2A
-   * proxy (docs/a2a.md §7: it calls the A2A of the devices that take its calls,
-   * and is never a full device nor one that runs AI).
-   */
-  kind: "computer" | "phone" | "browser" | "browserOrPhone" | "a2a";
+  /** What it is, for its icon: a computer with Droppen, a phone, a browser, or (another browser or phone: the hub is not told which) either. */
+  kind: "computer" | "phone" | "browser" | "browserOrPhone";
   status: "active" | "pending" | "removed";
   /** 「可运行 AI」 now. */
   host: boolean;
@@ -78,10 +73,6 @@ export interface DeviceRowView {
   limited: { block: PromoteBlock | null } | null;
   /** A host's accept policy (who may control it besides the full devices). */
   accept: Accept | null;
-  /** An A2A proxy: the devices that run AI that take its calls (`setA2aAccept`). */
-  a2aHosts?: string[];
-  /** A host: the A2A proxies that may call its A2A (its `setA2aAccept` list). */
-  a2aProxies?: string[];
   /**
    * A host a device that could control it no longer can (review D3): it may
    * have kept the computer's identity key — re-enroll it for a new one. One
@@ -89,12 +80,6 @@ export interface DeviceRowView {
    * a person dismissed (shown quietly, to undo).
    */
   reEnroll?: ReEnrollLine[];
-  /**
-   * The A2A proxies that could call this host's A2A and no longer can (docs/a2a.md §7.1; its `hostsToRotate` losses): a
-   * session such a proxy started could have read its identity key, so it renews it on its own — said here, with its
-   * renewal's line; one that cannot renew should be removed and added again.
-   */
-  a2aExposed?: string[];
   /** A host that renews its identity key here: where its renewal stands (docs/host-identity-rotation.md §4.4). */
   renewal?: RenewalStatus;
   /** It renews its identity key here at all (v3, the hub takes renewals, its Droppen declared it): the menu's "renew identity key". */
@@ -256,8 +241,8 @@ export function rowMenuItems(
         onSelect: ctx.onPromote,
       });
     }
-    // Mail, not the chain: neither a change under way nor a hold stops it; one sending at a time. An A2A proxy holds no key to send.
-    if (!view.self && view.kind !== "a2a") {
+    // Mail, not the chain: neither a change under way nor a hold stops it; one sending at a time.
+    if (!view.self) {
       add({ id: `resend-${id}`, label: t("re-send keys"), hint: t("send this device every key again (if it missed new ones)"), blocked: null, busy: ctx.resending, onSelect: ctx.onResend });
     }
   }
@@ -374,21 +359,11 @@ function RowBadges({ view }: { view: DeviceRowView }) {
       </Badge>,
     );
   }
-  if (view.kind === "a2a" && view.status === "active") {
-    badges.push(
-      <Badge key="a2a" data-testid={`a2a-${view.id}`} variant="outline" title={roleText(view, t) ?? undefined} className={badge}>
-        {t("A2A proxy")}
-      </Badge>,
-    );
-  }
   return <>{badges.slice(0, 2)}</>;
 }
 
 /** What a full or a limited device may do, in words: the badge's tooltip, and said in the details too (a finger does not hover). */
 function roleText(view: DeviceRowView, t: T): string | null {
-  if (view.kind === "a2a" && view.status === "active") {
-    return t("An A2A proxy: it calls the A2A of the devices that take its calls, for an A2A client that cannot reach them. It controls no device and holds none of your keys.");
-  }
   if (view.limited) return t("It can control the devices that let it and read their offline copies, but cannot add or remove devices.");
   if (view.full && view.status === "active") return t("A full device holds the account's keys: it can read everything and add or remove devices.");
   return null;
@@ -469,9 +444,6 @@ function RowDetailsBody({
   // The list as set (its base), and apart from it what a renewal pause holds now: a widened list cannot hide behind a pause.
   if (view.host && view.accept) facts.push({ key: "control", label: t("who can control it"), value: acceptText(view.accept, t) });
   if (view.host && view.pausedControllers?.length) facts.push({ key: "paused", label: t("paused now"), value: view.pausedControllers.join(", ") });
-  // A2A (docs/a2a.md §7): who may call a host's A2A, and whom an A2A proxy calls.
-  if (view.host && view.a2aProxies?.length) facts.push({ key: "a2a-proxies", label: t("A2A proxies"), value: view.a2aProxies.join(", ") });
-  if (view.kind === "a2a" && view.a2aHosts) facts.push({ key: "a2a-hosts", label: t("devices that take its calls"), value: view.a2aHosts.length ? view.a2aHosts.join(", ") : t("no device yet") });
   const recent = view.recent ?? [];
   const seen =
     view.lastSeenMs !== null && !view.self && view.presence !== "online" && view.status !== "removed" ? (
@@ -630,7 +602,7 @@ export function ReEnrollWarning({
   );
 }
 
-const ICONS = { computer: HardDrivesIcon, phone: DeviceMobileIcon, browser: GlobeIcon, browserOrPhone: DevicesIcon, a2a: PlugsConnectedIcon } as const;
+const ICONS = { computer: HardDrivesIcon, phone: DeviceMobileIcon, browser: GlobeIcon, browserOrPhone: DevicesIcon } as const;
 
 /**
  * One row of 「我的设备」: a fixed 56px line — name, state as a dot and a
@@ -762,17 +734,6 @@ export function DeviceRow({
       {view.retiredLoginMs != null && status === "active" && (
         <span data-testid={`retired-login-${id}`} className="font-mono text-xs leading-4 text-muted">
           {t("its old identity key was used to sign in at {{time}}", { time: formatAsOf(view.retiredLoginMs) })}
-        </span>
-      )}
-      {view.a2aExposed && view.a2aExposed.length > 0 && viewerAdmin && status === "active" && (
-        <span data-testid={`a2a-exposed-${id}`} data-signal="warn" className="text-xs leading-4 text-warn-fg">
-          {view.renewable
-            ? t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key, so it renews its identity key.", {
-                ids: view.a2aExposed.join(", "),
-              })
-            : t("{{ids}}, A2A proxies that could call its A2A, were removed or let go: a session they started could have read its identity key, and it cannot renew it here. Remove it and add it again.", {
-                ids: view.a2aExposed.join(", "),
-              })}
         </span>
       )}
       {view.isolatedControllers && view.isolatedControllers.length > 0 && status === "active" && (

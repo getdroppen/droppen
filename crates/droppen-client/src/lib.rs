@@ -17,39 +17,13 @@
 //! - [`streams`]: reading one stream whole, verified, and folding what it holds.
 //! - [`follow`]: following one stream for good, from a cursor (sans-IO).
 //! - [`tap`]: the opt-in capture of hub-API traffic for the contract check.
-//!
-//! A standalone device — one with no page and no agent, the a2a proxy
-//! (`docs/a2a.md` §7.4) — is built from these:
-//!
-//! - [`identity`] and [`verified`]: its keys, and its verified, pinned view
-//!   of the chain, kept under its data directory ([`files`]);
-//! - [`hub`]: its device session and the routes it reads (the chain, the
-//!   relays, tickets);
-//! - [`relays`]: its relay connections, tickets renewed before they run
-//!   out, presence followed;
-//! - [`channel`]: one end-to-end channel to a host, opened through a relay;
-//! - [`rpc`]: HTTP requests over a channel's pipes, answers streamed;
-//! - [`failure`]: why a request did not get through, sorted;
-//! - [`device`]: all of it together ([`device::StandaloneDevice`]);
-//! - [`enroll`]: claiming an enrollment code at the hub, as an A2A proxy
-//!   joins its account.
 
-pub mod channel;
-pub mod device;
-pub mod enroll;
-pub mod failure;
-pub mod files;
 pub mod follow;
 pub mod http;
-pub mod hub;
-pub mod identity;
 pub mod link;
-pub mod relays;
-pub mod rpc;
 pub mod session;
 pub mod streams;
 pub mod tap;
-pub mod verified;
 
 /// What most calls here return: an error in words.
 pub type Result<T> = std::result::Result<T, String>;

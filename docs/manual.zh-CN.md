@@ -83,8 +83,6 @@ Droppen —— 远程浏览与管理本机的 Claude Code / Codex 会话。
   - **提前轮换**：池内账号的某个相关窗口（`5h`、`weekly`，及会话模型家族自己的周窗口）在 15 分钟内的读数里已用到 `DROPPEN_ROTATE_AHEAD_PERCENT`（默认 95，设 `0` 关闭）且尚未重置时，会话在安静点（一轮正常结束后、或空闲会话开始下一轮前，且没有后台子任务在跑）就换到所有相关窗口都低于阈值 −10 的已知读数账号，下一条消息用 `--resume` 在新账号下跑、不加续写提示，每会话 30 分钟最多一次、手动改绑后 30 分钟内不动，记录为 `SessionRotation.trigger: "ahead"` 并推送「已提前从 A 切换到 B（A 的 5 小时额度已用 96%，23:10 重置）」；新建会话的默认账号快用完时同样改用这样的账号。
   - 账号数据存在机器级的 SQLite 库 `~/.config/remote-hand/state.db`（mode 0600）的 `accounts` / `session_accounts` 表里；老的 `~/.config/remote-hand/accounts.json` 不再被读入（0.2.125 及更新的安装早已把这些数据放进数据库，更老的安装需要重新添加账号）。Droppen 永远不读、不写、不复制 `~/.claude/.credentials.json` 和 `~/.codex/auth.json`——codex 账号靠自定义 provider 的 `env_key` 注入，正是为了不碰后者。
 
-- **A2A**：本机程序实现 [A2A v1.0](https://a2a-protocol.org/latest/specification/) 的服务端，让外部 agent（第一个是 dont-do）把任务交给本机一个目录、跑成会话，中途回答它的提问，最后把结果（含 PR 链接）交回。入口在「设置 › A2A」里建，决定用哪个目录、哪个 provider、哪个账号和什么权限模式，消息只带任务；入口默认停用，token 只在创建时显示一次、只收本机回环、按入口限定并可吊销。任务列表和会话列表上的「来自 A2A」标记都在本机看。客户端在云端、够不着本机时，用 `droppen a2a-proxy`（只调用、不受控的一种设备）经中继转发；它自己的部署见 [a2a-proxy.md](a2a-proxy.md)。设计见 [a2a.md](a2a.md)，官方 TCK 的跑法见 [a2a-compat.md](a2a-compat.md)。
-
 ## 架构
 
 - `crates/droppen-server/`：Rust + [gotcha](https://crates.io/crates/gotcha)（axum + OpenAPI 派生），监听 `127.0.0.1:8700`，OpenAPI 文档位于 `/openapi.json`。**单个可执行文件**：前端产物在编译期由 rust-embed 打进二进制，运行时不需要任何 Node 依赖。框架填不上的洞（额外状态码、zod 的两种「可缺省」、spec 导出、优雅停机、静态资源）集中在少数几个模块里，见 [`crates/droppen-server/README.md`](../crates/droppen-server/README.md)。同一个二进制还负责**看住自己**：`remote-hand-server up` 是一圈极简的 supervisor loop，起一个 `serve` 子进程守着——干净退出就立刻重新拉起（自我更新正是这样切进新二进制的），反复起不来就退避并逐级回滚，同时用 `waitpid(-1)` 收掉所有被过继过来的孤儿进程。
@@ -137,8 +135,6 @@ pnpm typecheck
 
 ## 运维
 
-
-A2A 代理是账户里的一种独立设备（`droppen a2a-proxy` 子命令与镜像），部署在客户端旁边：持久卷、它自己的 Bearer token、加入用的 `DA1-` 码。`GET /healthz` 无鉴权、只报告存活与是否已加入。完整变量与 Railway 步骤见 [a2a-proxy.md](a2a-proxy.md)。
 服务端由自己的 supervisor 看护:进程模型、二进制的播种与回滚、自我更新,与部署在哪无关。
 
 `remote-hand-server up` 是一圈只做三件事的 supervisor loop:**重启**(serve 子进程干净退出就
@@ -590,7 +586,6 @@ docker run -p 8080:8080 \
 
 ## 安全边界
 
-- **一个 A2A 调用方等于这台机器上该用户的数据访问权。** 会话以你的身份跑，只读工具也能读任意文件（包括本程序的设备钥）并把内容写进结果带走；只交给你信任的 token / 代理。bypass 类权限模式的入口必须列出允许的代理；吊销 token、移除代理、停用入口都会立刻取消它们未结束的任务；push 只发到入口列出的 https 源。
 - droppen.app 上的网页由闭源的 Hub 下发。它是 `web/` 的可复现构建，每次发版附带逐文件哈希清单；`node scripts/verify-web.mjs` 检查站点此刻下发的字节是否与之相同。它证明不了有针对性的一次性投递，高保障请用本机界面。见 [`docs/web-integrity.md`](web-integrity.md)。
 - 裸机运行只绑定 `127.0.0.1`；公网部署请置于反向代理/隧道之后并自行加鉴权层。
 - 跨源请求默认拒绝（同 host 与白名单 Origin 除外），防 CSRF 读写。

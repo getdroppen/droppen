@@ -66,14 +66,6 @@ pub const POLICY_FEATURE: &str = "policy/1";
 /// host declares it; the hub's own `welcome` offering it is what lets this
 /// agent send the rotation messages at all.
 pub const ROTATE_FEATURE: &str = "rotate/1";
-/// What this agent declares once it takes an A2A proxy's channel as its
-/// chain says and serves it the A2A routes and nothing else (`docs/a2a.md`
-/// §7.1, §7.3): the channel admission ([`handshake::accept_with_a2a`]), the
-/// bridge's A2A policy ([`bridge::refusal`]) and the guard's mark. An
-/// account adds an A2A proxy only once every host declares it.
-///
-/// [`handshake::accept_with_a2a`]: droppen_proto::handshake::accept_with_a2a
-pub const A2A_FEATURE: &str = "a2a/1";
 
 mod answers;
 pub mod bridge;

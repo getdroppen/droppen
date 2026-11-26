@@ -61,13 +61,7 @@ export type AccountErrorKind =
    */
   | "exposed"
   /** A pause's end would give back other control than the person was shown (M7): ask again. */
-  | "pauseChanged"
-  /** The fingerprint pasted from an A2A proxy's log is not the one of the device that claimed its code (docs/a2a.md §7.2): nothing is added. */
-  | "fingerprintMismatch"
-  /** The hub saw an A2A proxy's code claimed more than once, or does not say how often (docs/a2a.md §7.2): nothing is added. */
-  | "claims"
-  /** The hub did not take an A2A proxy's code as one (`POST /v1/enrollments` answered without `kind: "a2a"`: a hub from before them): nothing is started. */
-  | "noA2aProxies";
+  | "pauseChanged";
 
 export class AccountError extends Error {
   /** The message as an i18n key (the English, with `{{name}}` where `vars` go). */
@@ -115,11 +109,6 @@ export class MovingCheckpoint extends AccountError {
  */
 export function hostAdminRefused(): AccountError {
   return new AccountError("invalidEntry", "a device that runs AI cannot be a full device (yet)", undefined, RULES.hostNotAdmin);
-}
-
-/** Why an A2A proxy is made neither a full device nor a device that runs AI (docs/a2a.md §7.1): it joins as one and stays one. */
-export function a2aPlainRefused(): AccountError {
-  return new AccountError("invalidEntry", "an A2A proxy can be neither a full device nor a device that runs AI", undefined, RULES.a2aPlain);
 }
 
 /**

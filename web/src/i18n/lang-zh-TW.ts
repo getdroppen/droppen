@@ -4,7 +4,6 @@
  * translation. A chunk of its own, downloaded only by a page that shows zh-TW
  * (`index.ts`).
  */
-import { a2aZhTW } from "./a2a.zh-TW";
 import { cloudDevicesZhTW } from "./cloud-devices.zh-TW";
 import { crossDeviceZhTW } from "./cross-device.zh-TW";
 import { hostsZhTW } from "./hosts.zh-TW";
@@ -18,7 +17,6 @@ import { updatesZhTW } from "./updates.zh-TW";
 import { welcomeZhTW } from "./welcome.zh-TW";
 
 const translations: Record<string, string> = {
-  ...a2aZhTW,
   ...onboardingZhTW,
   ...crossDeviceZhTW,
   ...linkZhTW,

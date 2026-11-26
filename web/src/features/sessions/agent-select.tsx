@@ -32,14 +32,11 @@ export function AgentSelect({
   choices,
   onChange,
   onManage,
-  variant = "chip",
 }: {
   value: string;
   choices: readonly AgentChoice[];
   onChange: (key: string) => void;
   onManage: () => void;
-  /** The composer's 24px chip, or a form's 32px field (the A2A entry form). */
-  variant?: "chip" | "field";
 }) {
   const { t } = useTranslation();
   const selected = choices.find((choice) => choice.key === value);
@@ -55,15 +52,15 @@ export function AgentSelect({
       }}
     >
       <SelectTrigger
-        variant={variant}
+        variant="chip"
         aria-label={t("agent")}
         title={selected?.failing ? `${selected.label}: ${selected.failing}` : t("agent")}
-        data-chip={variant === "chip" ? "agent" : undefined}
+        data-chip="agent"
         data-signal={selected?.failing ? "failed" : undefined}
         iconClassName={selected?.failing ? "text-danger" : undefined}
         className={cn(selected?.failing && "text-danger hover:text-danger data-[popup-open]:text-danger")}
       >
-        <SelectValue className={variant === "chip" ? "max-w-48" : undefined}>
+        <SelectValue className="max-w-48">
           {() =>
             selected ? (
               <span className="flex min-w-0 items-center gap-1.5">
@@ -76,7 +73,7 @@ export function AgentSelect({
           }
         </SelectValue>
       </SelectTrigger>
-      <SelectContent variant={variant} className="min-w-[max(var(--anchor-width),16rem)]">
+      <SelectContent variant="chip" className="min-w-[max(var(--anchor-width),16rem)]">
         {groups.map((group, index) => (
           <Fragment key={group}>
             {index > 0 && <BaseSelect.Separator className="my-1.5 h-px bg-border" />}
