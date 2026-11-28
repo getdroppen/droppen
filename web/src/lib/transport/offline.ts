@@ -140,6 +140,7 @@ export function offlineState(row: SessionSummary, reason: string) {
     rotation: null,
     receipts: [],
     questions: [],
+    permissions: [],
     fromCopy: true as const,
   };
 }

@@ -246,10 +246,21 @@ async fn launch(agent: &AcpAgent, workdir: &Path, home: &Path) -> Result<Started
     if program.as_os_str().is_empty() {
         return Err(InjectError::message(format!("{} has no executable. {INSTALL_HINT}", agent.name)));
     }
-    let env = agent.environment(acp_base_env(home));
-    // Resolve bare command names against `env["PATH"]` explicitly so `spawn`
-    // matches `check_acp_agent` and `acp_agents` consistently across platforms.
-    let resolved = resolve_on_path(agent.command.trim(), &env).unwrap_or_else(|| program.clone());
+    let base_env = agent.environment(clean_env_bare());
+    // Keep the server's exact `clean_env_bare()` PATH whenever the executable is
+    // already reachable there (explicit path or already on PATH), and only
+    // append the `droppen-search-path` fallback directories (`~/.local/bin`,
+    // Homebrew, …) when a bare command is found via that fallback.
+    let (resolved, env) = match resolve_on_path(agent.command.trim(), &base_env) {
+        Some(path) => (path, base_env),
+        None => {
+            let fallback_env = agent.environment(acp_base_env(home));
+            match resolve_on_path(agent.command.trim(), &fallback_env) {
+                Some(path) => (path, fallback_env),
+                None => (program.clone(), base_env),
+            }
+        }
+    };
     let mut child = tokio::process::Command::new(&resolved)
         .args(&agent.args)
         .current_dir(workdir)
