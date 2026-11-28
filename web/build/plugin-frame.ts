@@ -63,8 +63,12 @@ export const PLUGIN_FRAME_HTML = `<!doctype html>
 
 /** Bundle `src/plugins/frame/runtime-entry.tsx` into one self-contained ESM string with Vite's esbuild. */
 async function bundleFrameRuntime(webRoot: string): Promise<string> {
-  const require = createRequire(join(webRoot, "package.json"));
-  const esbuild = require("esbuild") as {
+  const webRequire = createRequire(join(webRoot, "package.json"));
+  // `esbuild` is a dependency of `vite`, not a direct dependency of `@droppen/web`,
+  // so under pnpm's strict node_modules (e.g. `--filter "@droppen/web..."` in CI
+  // and release notices jobs) it must be resolved from Vite's package root.
+  const viteRequire = createRequire(webRequire.resolve("vite/package.json"));
+  const esbuild = viteRequire("esbuild") as {
     build(options: Record<string, unknown>): Promise<{ outputFiles: { text: string }[] }>;
   };
   const result = await esbuild.build({
