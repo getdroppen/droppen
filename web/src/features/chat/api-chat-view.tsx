@@ -30,6 +30,7 @@ async function streamTurn(
   id: string,
   text: string,
   onDelta: (t: string) => void,
+  signal?: AbortSignal,
 ): Promise<{ error: string | null }> {
   const res = await transportFor(machine).fetch(new Request(`/api/api-chats/${id}/message`, {
     method: "POST",
@@ -37,6 +38,7 @@ async function streamTurn(
     // bearer token and the 401 handling its middleware does are by hand.
     headers: { "content-type": "application/json", ...authHeader() },
     body: JSON.stringify({ text }),
+    signal,
   }));
   if (res.status === 401) noteUnauthorized(`/api/api-chats/${id}/message`);
   if (!res.ok || !res.body) {
@@ -44,25 +46,34 @@ async function streamTurn(
     return { error: `HTTP ${res.status}${body ? ` — ${body}` : ""}` };
   }
   const reader = res.body.getReader();
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   const decoder = new TextDecoder();
   let buffer = "";
   let error: string | null = null;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.startsWith("data:")) continue;
-      try {
-        const evt = JSON.parse(line.slice(5).trim()) as StreamEvent;
-        if (evt.type === "delta" && evt.text) onDelta(evt.text);
-        if (evt.type === "error") error = evt.error ?? "chat request failed";
-      } catch {
-        // partial line; ignored
+  try {
+    for (;;) {
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done || signal?.aborted) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        try {
+          const evt = JSON.parse(line.slice(5).trim()) as StreamEvent;
+          if (evt.type === "delta" && evt.text) onDelta(evt.text);
+          if (evt.type === "error") error = evt.error ?? "chat request failed";
+        } catch {
+          // partial line; ignored
+        }
       }
     }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
   return { error };
 }
@@ -70,7 +81,8 @@ async function streamTurn(
 export function ApiChatView() {
   // The home's `/chat/api/$id` or another machine's: the same page.
   const { id } = useParams({ strict: false }) as { id: string };
-  return <ApiChatViewInner id={id} />;
+  const machine = useMachine();
+  return <ApiChatViewInner key={`${machine}:${id}`} id={id} />;
 }
 
 export function ApiChatViewInner({ id }: { id: string }) {
@@ -88,6 +100,9 @@ export function ApiChatViewInner({ id }: { id: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const busyRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const { data: chat, isPending } = useQuery({
     queryKey: mq(machine, "api-chat", id),
@@ -108,16 +123,30 @@ export function ApiChatViewInner({ id }: { id: string }) {
   const send = async (message: string) => {
     if (busyRef.current) return;
     busyRef.current = true;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setSendError(null);
     setPendingUser(message);
     setStreaming("");
     let acc = "";
-    const { error } = await streamTurn(machine, id, message, (delta) => {
-      acc += delta;
-      setStreaming(acc);
-    }).catch((e: Error) => ({ error: e.message }));
+    const { error } = await streamTurn(
+      machine,
+      id,
+      message,
+      (delta) => {
+        if (controller.signal.aborted) return;
+        acc += delta;
+        setStreaming(acc);
+      },
+      controller.signal,
+    ).catch((e: Error) => ({ error: controller.signal.aborted ? null : e.message }));
     await queryClient.invalidateQueries({ queryKey: mq(machine, "api-chat", id) });
     await queryClient.invalidateQueries({ queryKey: mq(machine, "chats") });
+    if (abortRef.current === controller) abortRef.current = null;
+    if (controller.signal.aborted) {
+      busyRef.current = false;
+      return;
+    }
     setStreaming(null);
     setPendingUser(null);
     if (error) setSendError(error);

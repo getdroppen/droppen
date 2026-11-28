@@ -1168,6 +1168,7 @@ export class HubShell implements AppShell {
     this.held.clear();
     this.list.set([]);
     this.pages.close();
+    this.opts.relays.stop?.();
   }
 
   /** For diagnostics (and the acceptance harness's latency probe): the machine in view's channel, copy and transport. */

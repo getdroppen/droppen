@@ -634,3 +634,32 @@ test("a list that starts on a socket a feed opened gets a new connection if more
   sockets[1]!.frame({ type: "sessions:snapshot", sessions: [{ id: "now" }] });
   assert.deepEqual(frames, [{ type: "sessions:snapshot", sessions: [{ id: "now" }] }]);
 });
+
+test("kick during an in-flight socketUrl never opens an orphaned socket", async (t) => {
+  const sockets: FakeSocket[] = [];
+  const resolvers: ((url: string) => void)[] = [];
+  const hub = new FeedHub({
+    socketUrl: () => new Promise<string>((resolve) => void resolvers.push(resolve)),
+    openSocket: (url) => {
+      const socket = new FakeSocket(url);
+      sockets.push(socket);
+      return socket;
+    },
+    noteFailure: () => undefined,
+    inflate: null,
+  });
+  t.after(() => hub.stop());
+  hub.start({ onFrame: () => undefined, onOpen: () => undefined, onClose: () => undefined });
+  assert.equal(resolvers.length, 1);
+  // Kick while the first ticket fetch is still pending.
+  hub.kick();
+  assert.equal(resolvers.length, 2);
+  // Resolving the superseded attempt must be ignored; only the latest opens a socket.
+  resolvers[0]!("ws://stale");
+  await flush();
+  assert.equal(sockets.length, 0);
+  resolvers[1]!("ws://fresh");
+  await flush();
+  assert.equal(sockets.length, 1);
+  assert.equal(sockets[0]!.url, "ws://fresh");
+});

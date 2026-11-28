@@ -521,6 +521,9 @@ export class SessionFeed {
     // Whatever was in flight is the next attach's to say; a count left over
     // from before would otherwise flash on the way back.
     this.drafts.clear();
+    // Invalidate any in-flight `loadEarlier` / `refreshState` from this run so
+    // it cannot mutate state or clear `loadingEarlier` for a subsequent attach.
+    this.epoch++;
     this.loadingEarlier = false;
     // Nothing is being waited for with no socket; the next attach says what it waits on.
     this.patch({ isLoadingEarlier: false, opening: null });

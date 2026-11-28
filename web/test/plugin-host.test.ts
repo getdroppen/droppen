@@ -178,6 +178,20 @@ test("watchers hear the feed's plugin-doc frames for their document, and every r
   assert.deepEqual(heard, [4, null]);
 });
 
+test("pluginEventsFor isolates plugin events per machine", async () => {
+  const { pluginEventsFor } = await import("../src/plugins/events.js");
+  const localHeard: (number | null)[] = [];
+  const remoteHeard: (number | null)[] = [];
+  const stopLocal = pluginEventsFor(LOCAL).onDoc((e) => localHeard.push(e.revision));
+  const stopRemote = pluginEventsFor("m-remote").onDoc((e) => remoteHeard.push(e.revision));
+  pluginEventsFor(LOCAL).takeFrame({ type: "plugin-doc", plugin: "tasks", name: "state", revision: 1 });
+  pluginEventsFor("m-remote").takeFrame({ type: "plugin-doc", plugin: "tasks", name: "state", revision: 2 });
+  stopLocal();
+  stopRemote();
+  assert.deepEqual(localHeard, [1]);
+  assert.deepEqual(remoteHeard, [2]);
+});
+
 test("plugin pages route by the longest matching prefix", async () => {
   const { matchRoute } = await import("../src/plugins/routing.js");
   const routes = [{ path: "" }, { path: "weekly" }, { path: "weekly/print" }];

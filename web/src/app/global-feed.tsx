@@ -16,7 +16,7 @@ import { homeMachine, isOpen, perMachine, transportFor } from "@/lib/machines/re
 import { noteWsFailure } from "@/lib/ws-url";
 import { browserInflate, compressionAllowed, FeedHub } from "./feed-hub";
 import { loadSessionList, saveSessionList } from "@/features/sessions/feed-persist";
-import { pluginEvents } from "@/plugins/events";
+import { pluginEventsFor } from "@/plugins/events";
 import type { PluginStatus } from "@/plugins/types";
 
 /**
@@ -413,7 +413,7 @@ function startList(machine: MachineKey, store: GlobalFeedStore): () => void {
   const feedHub = feedHubFor(machine);
   // Plugins live on the home machine (`lib/machines/registry.ts`): their
   // documents' news is only ever its feed's.
-  const plugins = machine === homeMachine() ? pluginEvents : null;
+  const plugins = machine === homeMachine() ? pluginEventsFor(machine) : null;
   feedHub.start({
     onOpen: () => store.publish({ connected: true }),
     onClose: () => store.publish({ connected: false }),

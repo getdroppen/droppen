@@ -66,6 +66,10 @@ export interface GatewayLinkOptions {
   backoffMs?: readonly number[];
   /** How often the page pings while open (ms). */
   pingMs?: number;
+  /** How long without any inbound frame before a silent socket is dropped and reconnected (ms). */
+  silenceMs?: number;
+  /** Clock for silence detection (tests). */
+  now?: () => number;
   /**
    * Every third attempt in a row that failed: the gateway may be refusing
    * this page (its access was taken away between two looks) — the caller
@@ -84,6 +88,7 @@ export interface GatewayFrom {
 
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
 const PING_MS = 25_000;
+const SILENCE_MS = 60_000;
 const AGAIN_MS = 1000;
 const OPEN = 1;
 
@@ -145,6 +150,9 @@ export class GatewayLink {
   private readonly subs = new Map<number, Sub>();
   private next = 1;
   private failures = 0;
+  private connectGen = 0;
+  private connecting = false;
+  private lastHeard = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private ping: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
@@ -152,6 +160,10 @@ export class GatewayLink {
   private readonly byeListeners = new Set<(bye: GatewayBye) => void>();
 
   constructor(private readonly opts: GatewayLinkOptions) {}
+
+  private now(): number {
+    return (this.opts.now ?? Date.now)();
+  }
 
   /** Whether the socket is open now, as it changes. */
   get open(): Store<boolean> {
@@ -170,7 +182,7 @@ export class GatewayLink {
   }
 
   start(): void {
-    if (this.stopped || this.socket || this.timer !== undefined) return;
+    if (this.stopped || this.socket || this.connecting || this.timer !== undefined) return;
     void this.connect();
   }
 
@@ -195,6 +207,8 @@ export class GatewayLink {
   /** Stop: close the socket, never reconnect. */
   close(): void {
     this.stopped = true;
+    this.connectGen += 1;
+    this.connecting = false;
     clearTimeout(this.timer);
     this.timer = undefined;
     this.drop();
@@ -223,22 +237,28 @@ export class GatewayLink {
   }
 
   private async connect(): Promise<void> {
+    const gen = ++this.connectGen;
+    this.connecting = true;
     const dialledAt = performance.now();
     connLog.emit("gateway.connecting", { failures: this.failures });
     let url: string;
     try {
       url = await this.opts.socketUrl();
     } catch (error) {
+      if (gen !== this.connectGen) return;
+      this.connecting = false;
       connLog.emit("gateway.close", { stage: "ticket", ...errorFields(error) });
       return this.retry();
     }
-    if (this.stopped) return;
+    if (this.stopped || gen !== this.connectGen) return;
+    this.connecting = false;
     const socket = this.opts.openSocket(url);
     this.socket = socket;
     let openedAt: number | null = null;
     socket.onopen = () => {
       if (this.socket !== socket) return;
       openedAt = performance.now();
+      this.lastHeard = this.now();
       connLog.emit("gateway.open", { ms: openedAt - dialledAt, subs: this.subs.size });
       this.failures = 0;
       this.openStore.set(true);
@@ -248,10 +268,21 @@ export class GatewayLink {
         socket.send(wire(s, sub));
       }
       clearInterval(this.ping);
-      this.ping = setInterval(() => this.send(JSON.stringify({ t: "ping" })), this.opts.pingMs ?? PING_MS);
+      const silenceMs = this.opts.silenceMs ?? SILENCE_MS;
+      this.ping = setInterval(() => {
+        if (this.socket !== socket) return;
+        if (this.now() - this.lastHeard > silenceMs) {
+          connLog.emit("gateway.close", { stage: "silence", openMs: openedAt === null ? null : performance.now() - openedAt });
+          this.drop();
+          if (!this.stopped) this.retry();
+          return;
+        }
+        this.send(JSON.stringify({ t: "ping" }));
+      }, this.opts.pingMs ?? PING_MS);
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket || typeof event.data !== "string") return;
+      this.lastHeard = this.now();
       let message: Record<string, unknown>;
       try {
         message = JSON.parse(event.data) as Record<string, unknown>;
