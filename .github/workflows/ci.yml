@@ -135,8 +135,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package.json', 'pnpm-lock.yaml') }}
       - run: pnpm --filter @droppen/e2e exec playwright install --with-deps chromium
-      - run: pnpm ui-audit --check
+      - run: pnpm ui-audit --check --no-screenshots
 
   # The public web build (what droppen.app serves) is reproducible: two fresh
   # checkouts in different directories, built apart under different time
@@ -237,8 +242,12 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
       CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
       CARGO_BUILD_JOBS: "4"
+      # Link the workspace's ~70 test binaries with mold rather than GNU ld.
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - uses: actions/checkout@v4
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mold
       # The action has no releases: pinned to a commit of its master branch,
       # which takes the toolchain as an input (the `@stable` branch only
       # fills in that input).
@@ -253,6 +262,7 @@ jobs:
           tool: cargo-nextest@0.9.148
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          shared-key: "server-v2"
           workspaces: . -> target
           # Preserve compiled dependencies even when clippy or a test fails.
           cache-on-failure: true

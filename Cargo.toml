@@ -48,16 +48,13 @@ opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
 
-# The tests are the same story, only more so: the vector generators verify
-# thousands of Ed25519 signatures, the link simulations encrypt tens of
-# megabytes, and the source scans `syn`-parse the whole tree. Unoptimized,
-# that tail is the whole server job (issue #671: the three vector tests alone
-# took 124-131s each in CI). Optimizing the dependencies alone, as for argon2
-# above, leaves this workspace's code a debug build — a backtrace through it
-# is still one — while the crypto and the parser stop dominating; the three
-# vector tests drop from 25s to a fraction of a second and the suite more than
-# halves.
-# `"*"` does not match workspace members, which is the point: the `dev`
-# profile and this workspace's own code stay unoptimized.
-[profile.test.package."*"]
+# Dependencies compile at opt-level 1 in `dev` — and `test` inherits `dev` —
+# while this workspace's own crates stay unoptimized debug builds so backtraces
+# through Droppen code stay exact. Optimizing dependencies once at the `dev`
+# level keeps crypto/parser-heavy tests fast (issue #671: vector tests 124s ->
+# <1s) *and* lets `cargo clippy`, `cargo nextest`, and `cargo doc` share one
+# compiled dependency set instead of compiling all dependencies twice.
+# `"*"` does not match workspace members; explicit `argon2`/`blake2` overrides
+# above stay at opt-level 3.
+[profile.dev.package."*"]
 opt-level = 1

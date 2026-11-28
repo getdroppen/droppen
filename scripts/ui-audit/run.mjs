@@ -14,17 +14,22 @@
  *                                     # measure a running page (no fixture)
  *
  * Options:
- *   --out <dir>        where measurements/screenshots go (default /tmp/droppen-ui-audit-<date>)
- *   --theme <t>        light | dark | both (default both)
- *   --viewport <v>     desktop | mobile | both (default both)
- *   --channel <name>   Playwright browser channel, e.g. chrome (default: bundled Chromium)
- *   --fixture <f>      settings | devices | agents | new-chat | cloud-bar | connection-log | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | both (default both: every fixture)
- *   --url <url>        skip the fixture and audit a running page
- *   --check            exit 1 if any target invariant fails
+ *   --out <dir>          where measurements/screenshots go (default /tmp/droppen-ui-audit-<date>)
+ *   --theme <t>          light | dark | both (default both)
+ *   --viewport <v>       desktop | mobile | both (default both)
+ *   --channel <name>     Playwright browser channel, e.g. chrome (default: bundled Chromium)
+ *   --fixture <f>        settings | devices | agents | new-chat | cloud-bar | connection-log | session-opening | no-copy | session-from-copy | welcome | desktop-app | updates | both (default both: every fixture)
+ *   --url <url>          skip the fixture and audit a running page
+ *   --check              exit 1 if any target invariant fails
+ *   --no-screenshots     skip writing PNG screenshots (all measurements and checks still run)
+ *   --concurrency <n>    parallel theme×viewport workers (default 4)
+ *   --dev                serve the fixture through Vite dev server instead of a prebuilt bundle
  */
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { createServer as createHttpServer } from "node:http";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 const repo = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -63,6 +68,9 @@ if (!views.length) {
 const channel = flag("channel", process.env.UI_AUDIT_CHANNEL ?? "");
 const liveUrl = flag("url", "");
 const check = has("check");
+const screenshots = !has("no-screenshots");
+const useDevServer = has("dev");
+const concurrency = Math.max(1, Number.parseInt(flag("concurrency", "4"), 10) || 4);
 const which = flag("fixture", "both");
 const runSettings = which === "both" || which === "settings";
 const runDevices = which === "both" || which === "devices";
@@ -79,21 +87,109 @@ const runUpdates = which === "both" || which === "updates";
 
 await fs.mkdir(out, { recursive: true });
 
-/** Start the app's own Vite server (fixture mode only). */
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+/** Start a minimal in-memory cached static file server for the prebuilt fixture. */
+async function startStaticServer(rootDir) {
+  const fileCache = new Map();
+  const httpServer = createHttpServer(async (req, res) => {
+    try {
+      const urlPath = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+      const rel = decodeURIComponent(urlPath).replace(/^\/+/, "");
+      const filePath = path.resolve(rootDir, rel);
+      if (!filePath.startsWith(rootDir + path.sep) && filePath !== rootDir) {
+        res.statusCode = 403;
+        res.end();
+        return;
+      }
+      let entry = fileCache.get(filePath);
+      if (!entry) {
+        const body = await fs.readFile(filePath);
+        const type = MIME[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+        entry = { body, type };
+        fileCache.set(filePath, entry);
+      }
+      res.setHeader("Content-Type", entry.type);
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.end(entry.body);
+    } catch {
+      res.statusCode = 404;
+      res.end();
+    }
+  });
+  await new Promise((resolve, reject) => {
+    httpServer.once("error", reject);
+    httpServer.listen(0, "127.0.0.1", resolve);
+  });
+  const addr = httpServer.address();
+  return {
+    base: `http://127.0.0.1:${addr.port}/`,
+    close: () => new Promise((resolve) => httpServer.close(resolve)),
+  };
+}
+
+/** Start the fixture server (prebuilt static bundle by default; Vite dev server with `--dev`). */
 let server = null;
+let distDir = null;
 let base = liveUrl;
 if (!liveUrl) {
-  process.env.DROPPEN_DEV_PROXY ??= "http://127.0.0.1:9";
-  const { createServer } = await import(requireFromWeb.resolve("vite"));
-  server = await createServer({
-    configFile: path.join(web, "vite.config.ts"),
-    root: web,
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await server.listen();
-  const urls = server.resolvedUrls?.local ?? [];
-  base = urls[0];
-  if (!base) throw new Error("the Vite server did not report a local URL");
+  if (useDevServer) {
+    process.env.DROPPEN_DEV_PROXY ??= "http://127.0.0.1:9";
+    const { createServer } = await import(pathToFileURL(requireFromWeb.resolve("vite")).href);
+    server = await createServer({
+      configFile: path.join(web, "vite.config.ts"),
+      root: web,
+      server: { host: "127.0.0.1", port: 0 },
+    });
+    await server.listen();
+    const urls = server.resolvedUrls?.local ?? [];
+    base = urls[0];
+    if (!base) throw new Error("the Vite server did not report a local URL");
+  } else {
+    distDir = await fs.mkdtemp(path.join(os.tmpdir(), "droppen-ui-audit-dist-"));
+    const [{ build }, { default: react }, { default: tailwindcss }] = await Promise.all([
+      import(pathToFileURL(requireFromWeb.resolve("vite")).href),
+      import(pathToFileURL(requireFromWeb.resolve("@vitejs/plugin-react")).href),
+      import(pathToFileURL(requireFromWeb.resolve("@tailwindcss/vite")).href),
+    ]);
+    await build({
+      configFile: false,
+      root: web,
+      publicDir: path.join(web, "public"),
+      plugins: [react(), tailwindcss()],
+      worker: { format: "es" },
+      resolve: { alias: [{ find: "@", replacement: path.join(web, "src") }] },
+      build: {
+        target: "esnext",
+        outDir: distDir,
+        emptyOutDir: true,
+        rollupOptions: { input: path.join(web, "ui-audit/index.html") },
+        minify: false,
+        sourcemap: false,
+        reportCompressedSize: false,
+      },
+      logLevel: "silent",
+    });
+    const staticServer = await startStaticServer(distDir);
+    base = staticServer.base;
+    server = staticServer;
+  }
   console.log(`ui-audit: fixture at ${base}ui-audit/index.html`);
 }
 
@@ -103,6 +199,21 @@ const browser = await chromium.launch({ headless: true, ...(channel ? { channel 
 
 const results = [];
 const failures = [];
+
+/** Capture a screenshot unless `--no-screenshots` was passed (measurements still run). */
+const snap = (target, options) => (screenshots ? target.screenshot(options) : Promise.resolve());
+
+/** Run async tasks with bounded concurrency. */
+async function runPool(tasks, limit) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (next < tasks.length) {
+      const i = next++;
+      await tasks[i]();
+    }
+  });
+  await Promise.all(workers);
+}
 
 /** Everything measured on one page load. */
 async function measure(page) {
@@ -177,16 +288,8 @@ async function measure(page) {
   });
 }
 
-async function auditSettings(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    // A phone is a coarse pointer, not just a narrow window: the spec's
-    // touch sizes key off `pointer: coarse`, which a 390px desktop context
-    // does not match.
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditSettings(theme, view, context) {
+  const page = await context.newPage();
   await page.goto(`${base}ui-audit/index.html?fixture=settings&theme=${theme}`);
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(200);
@@ -261,7 +364,7 @@ async function auditSettings(theme, view) {
       triggerAttrs: trigger ? Object.fromEntries([...trigger.attributes].map((a) => [a.name, a.value])) : null,
     };
   });
-  await page.screenshot({ path: `${out}/select-open-${theme}-${view.name}.png` });
+  await snap(page, { path: `${out}/select-open-${theme}-${view.name}.png` });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(350);
   await page.waitForFunction(() => !document.querySelector('[role="listbox"]'), undefined, { timeout: 2000 }).catch(() => undefined);
@@ -274,10 +377,10 @@ async function auditSettings(theme, view) {
     const list = lists.at(-1);
     return { text: (list?.innerText ?? "").trim(), html: (list?.innerHTML ?? "").trim(), open: lists.length > 0 };
   });
-  await page.screenshot({ path: `${out}/select-empty-${theme}-${view.name}.png` });
+  await snap(page, { path: `${out}/select-empty-${theme}-${view.name}.png` });
   await page.keyboard.press("Escape");
 
-  await page.screenshot({ path: `${out}/settings-${theme}-${view.name}.png` });
+  await snap(page, { path: `${out}/settings-${theme}-${view.name}.png` });
 
   const record = { mode: "fixture", theme, viewport: view.name, inputFocus, tabFocus, checkboxFocus, before, select: { baseBorder, hoverBorder, open }, empty };
   results.push(record);
@@ -436,13 +539,13 @@ async function auditLive(view) {
   // 1440×20602 and mostly blank, because the scroll container inside the fixed
   // body never paints below the fold, and it is too tall for a model to accept.
   try {
-    await page.screenshot({ path: `${out}/live-${view.name}.png` });
+    await snap(page, { path: `${out}/live-${view.name}.png` });
     const step = Math.max(64, viewport - Math.ceil(overlap));
     if (height > viewport && viewport > 0) {
       let part = 2;
       for (let top = step; top < height; top += step) {
         await scrollLive(page, element, Math.min(top, height - viewport));
-        await page.screenshot({ path: `${out}/live-${view.name}-${part}.png` });
+        await snap(page, { path: `${out}/live-${view.name}-${part}.png` });
         part += 1;
       }
     }
@@ -452,13 +555,8 @@ async function auditLive(view) {
   await page.close();
 }
 
-async function auditDevices(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditDevices(theme, view, context) {
+  const page = await context.newPage();
   await page.goto(`${base}ui-audit/index.html?fixture=devices&theme=${theme}`);
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(250);
@@ -528,11 +626,11 @@ async function auditDevices(theme, view) {
     });
 
   const before = await snapshot();
-  await page.screenshot({ path: `${out}/devices-${theme}-${view.name}.png` });
+  await snap(page, { path: `${out}/devices-${theme}-${view.name}.png` });
   await page.locator('li[data-testid^="device-"] summary').first().hover();
   await page.waitForTimeout(200);
   const hover = await snapshot();
-  await page.screenshot({ path: `${out}/devices-hover-${theme}-${view.name}.png` });
+  await snap(page, { path: `${out}/devices-hover-${theme}-${view.name}.png` });
   results.push({ mode: "devices", theme, viewport: view.name, before, hover });
 
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "devices", id, actual, expected });
@@ -580,13 +678,8 @@ async function auditDevices(theme, view) {
  * chat start answers `400` for. The api tab is clicked, because no query
  * selects a backend.
  */
-async function auditNewChat(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditNewChat(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "new-chat", id, actual, expected });
   const snapshots = {};
   for (const state of ["claude", "api", "signed-out", "list", "attached", "refused"]) {
@@ -680,7 +773,7 @@ async function auditNewChat(theme, view) {
         overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
       };
     });
-    await page.screenshot({ path: `${out}/new-chat-${state}-${theme}-${view.name}.png` });
+    await snap(page, { path: `${out}/new-chat-${state}-${theme}-${view.name}.png` });
   }
   results.push({ mode: "new-chat", theme, viewport: view.name, snapshots });
 
@@ -739,13 +832,8 @@ async function auditNewChat(theme, view) {
  * desktop sheet, one on a phone — with the text kept to the 48rem column; the
  * details dialog with its error well; the empty state's preset cards.
  */
-async function auditAgents(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditAgents(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "agents", id, actual, expected });
   const desktop = view.name === "desktop";
   const snapshot = () =>
@@ -793,7 +881,7 @@ async function auditAgents(theme, view) {
     await page.evaluate(() => document.fonts.ready);
     await page.waitForTimeout(250);
     const before = await snapshot();
-    await page.screenshot({ path: `${out}/agents-${which}-${theme}-${view.name}.png` });
+    await snap(page, { path: `${out}/agents-${which}-${theme}-${view.name}.png` });
     results.push({ mode: "agents", view: which, theme, viewport: view.name, before });
     if (which === "cards") {
       const tabs = before.tabs;
@@ -1016,22 +1104,17 @@ async function loadCloudBar(page, view, theme, lang, states = null) {
   return cloudBarSnapshot(page);
 }
 
-async function auditCloudBar(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditCloudBar(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "cloud-bar", id, actual, expected });
 
   for (const lang of CLOUD_BAR_LANGS) {
     const before = await loadCloudBar(page, view, theme, lang);
-    await page.screenshot({ path: `${out}/cloud-bar${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
+    await snap(page, { path: `${out}/cloud-bar${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
     let focus = null;
     if (lang === "en") {
       for (const state of before.states) {
-        await page.locator(`[data-audit-row="${state.name}"] [data-cloud-bar]`).screenshot({ path: `${out}/cloud-bar-${state.name}-${theme}-${view.name}.png` });
+        await snap(page.locator(`[data-audit-row="${state.name}"] [data-cloud-bar]`), { path: `${out}/cloud-bar-${state.name}-${theme}-${view.name}.png` });
       }
       // Keyboard focus on the countdown, as a keyboard user gets it.
       const retry = page.locator('[data-audit-row="device-retry"] [data-testid="retry-now"]');
@@ -1040,7 +1123,7 @@ async function auditCloudBar(theme, view) {
         const s = getComputedStyle(e);
         return { focusVisible: e.matches(":focus-visible"), width: s.outlineWidth, style: s.outlineStyle, color: s.outlineColor, offset: s.outlineOffset };
       });
-      await page.locator('[data-audit-row="device-retry"] [data-cloud-bar]').screenshot({ path: `${out}/cloud-bar-focus-${theme}-${view.name}.png` });
+      await snap(page.locator('[data-audit-row="device-retry"] [data-cloud-bar]'), { path: `${out}/cloud-bar-focus-${theme}-${view.name}.png` });
       if (!focus.focusVisible || focus.style === "none" || parseFloat(focus.width) < 2) fail("cloud-bar.focus", focus, "2px visible outline on the countdown");
     }
     results.push({ mode: "cloud-bar", lang, theme, viewport: view.name, before, focus });
@@ -1073,21 +1156,16 @@ const CATCH_UP_WORDS = {
  * language, and in English and Chinese each state's strip with what is under
  * it. Each state's words' free space in their line is in measurements.json.
  */
-async function auditCatchUp(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditCatchUp(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "cloud-bar-catch-up", id, actual, expected });
   for (const lang of CLOUD_BAR_LANGS) {
     const before = await loadCloudBar(page, view, theme, lang, "catch-up");
     const tag = lang === "en" ? "" : `-${lang}`;
-    await page.screenshot({ path: `${out}/cloud-bar-catch-up${tag}-${theme}-${view.name}.png` });
+    await snap(page, { path: `${out}/cloud-bar-catch-up${tag}-${theme}-${view.name}.png` });
     if (lang === "en" || lang === "zh-CN") {
       for (const state of before.states) {
-        await page.locator(`[data-audit-row="${state.name}"] [data-catch-up-shot]`).screenshot({ path: `${out}/cloud-bar-${state.name}${tag}-${theme}-${view.name}.png` });
+        await snap(page.locator(`[data-audit-row="${state.name}"] [data-catch-up-shot]`), { path: `${out}/cloud-bar-${state.name}${tag}-${theme}-${view.name}.png` });
       }
     }
     results.push({ mode: "cloud-bar-catch-up", lang, theme, viewport: view.name, before });
@@ -1133,13 +1211,8 @@ const CONNECTION_LOG_FILTERS = {
  * `connection-log[-<lang>]-<theme>-<viewport>.png` and
  * `connection-log-setting-<theme>-<viewport>.png`.
  */
-async function auditConnectionLog(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditConnectionLog(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "connection-log", id, actual, expected });
   for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
     await page.goto(`${base}ui-audit/index.html?fixture=connection-log&lang=${lang}&theme=${theme}`);
@@ -1202,7 +1275,7 @@ async function auditConnectionLog(theme, view) {
       };
     });
     const tag = lang === "en" ? "" : `-${lang}`;
-    await page.screenshot({ path: `${out}/connection-log${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+    await snap(page, { path: `${out}/connection-log${tag}-${theme}-${view.name}.png`, animations: "disabled" });
     results.push({ mode: "connection-log", lang, theme, viewport: view.name, ...seen });
     const where = { lang };
     const d = seen.dialog;
@@ -1241,7 +1314,7 @@ async function auditConnectionLog(theme, view) {
     const button = document.querySelector("[data-testid='connection-log-setting-open']");
     return { row: r(document.querySelector("[data-testid='connection-log-setting']")), direct: r(document.querySelector("[data-testid='direct-connections']")), button: r(button), radius: button ? getComputedStyle(button).borderRadius : null };
   });
-  await page.screenshot({ path: `${out}/connection-log-setting-${theme}-${view.name}.png`, animations: "disabled" });
+  await snap(page, { path: `${out}/connection-log-setting-${theme}-${view.name}.png`, animations: "disabled" });
   results.push({ mode: "connection-log-setting", theme, viewport: view.name, ...row });
   const want = view.name === "mobile" ? 36 : 28;
   if (Math.round(row.button?.h ?? 0) !== want) fail("connection-log.setting-button", row, `a ${want}px action (§2: 28px, 36px on touch)`);
@@ -1322,13 +1395,8 @@ function sessionOpeningSnapshot(page) {
  * and Chinese each stage's view on its own (the spinner held still). Each
  * stage's free space beside its line is in measurements.json.
  */
-async function auditSessionOpening(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditSessionOpening(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "session-opening", id, actual, expected });
   for (const lang of CLOUD_BAR_LANGS) {
     await page.setViewportSize({ width: view.width, height: view.height });
@@ -1342,10 +1410,10 @@ async function auditSessionOpening(theme, view) {
     await page.waitForTimeout(250);
     const before = await sessionOpeningSnapshot(page);
     const tag = lang === "en" ? "" : `-${lang}`;
-    await page.screenshot({ path: `${out}/session-opening${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+    await snap(page, { path: `${out}/session-opening${tag}-${theme}-${view.name}.png`, animations: "disabled" });
     if (lang === "en" || lang === "zh-CN") {
       for (const state of before.states) {
-        await page.locator(`[data-audit-row="${state.name}"] [data-session-view]`).screenshot({ path: `${out}/session-opening-${state.name}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+        await snap(page.locator(`[data-audit-row="${state.name}"] [data-session-view]`), { path: `${out}/session-opening-${state.name}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
       }
     }
     results.push({ mode: "session-opening", lang, theme, viewport: view.name, before });
@@ -1401,13 +1469,8 @@ const NO_COPY_WORDS = {
  * padding. Captured: `no-copy[-<lang>]-<theme>-<viewport>.png`, the fixture
  * alone.
  */
-async function auditNoCopy(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditNoCopy(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "no-copy", id, actual, expected });
   for (const [lang, words] of Object.entries(NO_COPY_WORDS)) {
     await page.goto(`${base}ui-audit/index.html?fixture=no-copy&lang=${lang}&theme=${theme}`);
@@ -1443,7 +1506,7 @@ async function auditNoCopy(theme, view) {
       }),
       overflow: { doc: document.documentElement.scrollWidth, win: window.innerWidth },
     }));
-    await page.locator("[data-fixture-root]").screenshot({ path: `${out}/no-copy${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
+    await snap(page.locator("[data-fixture-root]"), { path: `${out}/no-copy${lang === "en" ? "" : `-${lang}`}-${theme}-${view.name}.png` });
     results.push({ mode: "no-copy", lang, theme, viewport: view.name, before });
     for (const [name, text] of Object.entries(words)) {
       const row = before.rows.find((r) => r.name === name);
@@ -1512,13 +1575,8 @@ const COPY_AGENT_HINT = {
  * and no context in the row, nothing there to press or open, and no account
  * in the header. Captured in English and Chinese.
  */
-async function auditSessionFromCopy(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditSessionFromCopy(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "session-from-copy", id, actual, expected });
   for (const lang of Object.keys(COPY_BANNER_WORDS)) {
     const drawn = {};
@@ -1645,7 +1703,7 @@ async function auditSessionFromCopyState(page, theme, view, lang, variant, fail)
     };
   });
   const tag = `${variant === "copy" ? "" : `-${variant}`}${lang === "en" ? "" : `-${lang}`}`;
-  await page.screenshot({ path: `${out}/session-from-copy${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+  await snap(page, { path: `${out}/session-from-copy${tag}-${theme}-${view.name}.png`, animations: "disabled" });
   const { text, ...measured } = state;
   results.push({ mode: `session-from-copy${variant === "copy" ? "" : `-${variant}`}`, lang, theme, viewport: view.name, ...measured });
   const where = { lang, state: variant };
@@ -1758,13 +1816,8 @@ const NO_TRAY_QUIT = /Closing the window quits Droppen|关掉窗口会退出 Dro
  * closing the window quits. Captured: every screen on each system, in English
  * and Chinese.
  */
-async function auditWelcome(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditWelcome(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "welcome", id, actual, expected });
   for (const system of WELCOME_SYSTEMS) {
     for (const lang of ["en", "zh-CN"]) {
@@ -1778,7 +1831,7 @@ async function auditWelcome(theme, view) {
           startAtLogin: document.querySelector("[data-testid='wrap-login']") !== null,
         }));
         const tag = lang === "en" ? "" : `-${lang}`;
-        await page.screenshot({ path: `${out}/welcome-${screen}-${system.name}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+        await snap(page, { path: `${out}/welcome-${screen}-${system.name}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
         results.push({ mode: "welcome", screen, system: system.name, lang, theme, viewport: view.name, kicker: seen.kicker, startAtLogin: seen.startAtLogin });
         const where = { screen, system: system.name, lang };
         if (system.platform === "linux" && MAC_ONLY.test(seen.text)) fail("welcome.mac-words", { ...where, said: seen.text.match(MAC_ONLY)[0] }, "no Mac, macOS, menu bar or Apple on the Linux app's pages");
@@ -1816,9 +1869,9 @@ const DESKTOP_APP_OPEN = { en: "Open in Browser", "zh-CN": "在浏览器中打�
  * none. Desktop width only: the section is a settings page, never a phone's.
  * Captured: every case in English and Chinese, in each theme.
  */
-async function auditDesktopApp(theme, view) {
+async function auditDesktopApp(theme, view, context) {
   if (view.name !== "desktop") return;
-  const page = await browser.newPage({ viewport: { width: view.width, height: view.height }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "desktop-app", id, actual, expected });
   for (const one of DESKTOP_APP_CASES) {
     for (const lang of ["en", "zh-CN"]) {
@@ -1845,7 +1898,7 @@ async function auditDesktopApp(theme, view) {
         };
       });
       const tag = lang === "en" ? "" : `-${lang}`;
-      await page.screenshot({ path: `${out}/desktop-app-${one.name}${tag}-${theme}.png`, animations: "disabled" });
+      await snap(page, { path: `${out}/desktop-app-${one.name}${tag}-${theme}.png`, animations: "disabled" });
       results.push({ mode: "desktop-app", ...one, lang, theme, ...seen });
       const where = { case: one.name, lang };
       const wantsLogin = one.state !== "no-login";
@@ -1886,13 +1939,8 @@ const MOVE_TO_APPLICATIONS = /Applications|应用程序|應用程式|アプリ�
  * this user cannot write, and the .deb) never point at Applications, and
  * each has a line of its own, not the Mac's or the generic one.
  */
-async function auditUpdates(theme, view) {
-  const page = await browser.newPage({
-    viewport: { width: view.width, height: view.height },
-    deviceScaleFactor: 1,
-    hasTouch: view.name === "mobile",
-    isMobile: view.name === "mobile",
-  });
+async function auditUpdates(theme, view, context) {
+  const page = await context.newPage();
   const fail = (id, actual, expected) => failures.push({ theme, viewport: view.name, fixture: "updates", id, actual, expected });
   for (const lang of ["en", "zh-CN", "zh-TW", "ja"]) {
     const lines = new Map();
@@ -1905,7 +1953,7 @@ async function auditUpdates(theme, view) {
         check: document.querySelector("[data-testid='updates-check']") !== null,
       }));
       const tag = lang === "en" ? "" : `-${lang}`;
-      await page.screenshot({ path: `${out}/updates-${place}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
+      await snap(page, { path: `${out}/updates-${place}${tag}-${theme}-${view.name}.png`, animations: "disabled" });
       results.push({ mode: "updates", place, lang, theme, viewport: view.name, line: seen.line });
       const where = { place, lang };
       if (!seen.line) fail("updates.place-line", where, "a line saying why it cannot update here");
@@ -1923,23 +1971,37 @@ try {
   if (liveUrl) {
     for (const view of views) await auditLive(view);
   } else {
+    const tasks = [];
     for (const theme of themes) {
       for (const view of views) {
-        if (runSettings) await auditSettings(theme, view);
-        if (runDevices) await auditDevices(theme, view);
-        if (runAgents) await auditAgents(theme, view);
-        if (runNewChat) await auditNewChat(theme, view);
-        if (runCloudBar) await auditCloudBar(theme, view);
-        if (runCloudBar) await auditCatchUp(theme, view);
-        if (runConnectionLog) await auditConnectionLog(theme, view);
-        if (runSessionOpening) await auditSessionOpening(theme, view);
-        if (runNoCopy) await auditNoCopy(theme, view);
-        if (runSessionFromCopy) await auditSessionFromCopy(theme, view);
-        if (runWelcome) await auditWelcome(theme, view);
-        if (runDesktopApp) await auditDesktopApp(theme, view);
-        if (runUpdates) await auditUpdates(theme, view);
+        tasks.push(async () => {
+          const context = await browser.newContext({
+            viewport: { width: view.width, height: view.height },
+            deviceScaleFactor: 1,
+            hasTouch: view.name === "mobile",
+            isMobile: view.name === "mobile",
+          });
+          try {
+            if (runSettings) await auditSettings(theme, view, context);
+            if (runDevices) await auditDevices(theme, view, context);
+            if (runAgents) await auditAgents(theme, view, context);
+            if (runNewChat) await auditNewChat(theme, view, context);
+            if (runCloudBar) await auditCloudBar(theme, view, context);
+            if (runCloudBar) await auditCatchUp(theme, view, context);
+            if (runConnectionLog) await auditConnectionLog(theme, view, context);
+            if (runSessionOpening) await auditSessionOpening(theme, view, context);
+            if (runNoCopy) await auditNoCopy(theme, view, context);
+            if (runSessionFromCopy) await auditSessionFromCopy(theme, view, context);
+            if (runWelcome) await auditWelcome(theme, view, context);
+            if (runDesktopApp) await auditDesktopApp(theme, view, context);
+            if (runUpdates) await auditUpdates(theme, view, context);
+          } finally {
+            await context.close();
+          }
+        });
       }
     }
+    await runPool(tasks, concurrency);
   }
 } finally {
   await fs.writeFile(`${out}/measurements.json`, JSON.stringify(results, null, 2));
@@ -1958,5 +2020,6 @@ try {
   console.log(lines.join("\n"));
   await browser.close();
   if (server) await server.close();
+  if (distDir) await fs.rm(distDir, { recursive: true, force: true });
   if (check && failures.length) process.exitCode = 1;
 }
