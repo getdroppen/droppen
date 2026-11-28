@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
-use rand::Rng;
 use droppen_proto::frame::Frame;
 use droppen_proto::identity::MachineIdentity;
 use droppen_proto::sig::{HubLogin, LoginRole};
@@ -355,36 +354,7 @@ where
     }
 }
 
-/// Exponential backoff with full jitter: each wait is drawn from
-/// `0..=current` and the ceiling doubles, up to `max`. A connection that
-/// lasted at least `stable` starts over.
-pub(super) struct Backoff {
-    min: Duration,
-    max: Duration,
-    stable: Duration,
-    current: Duration,
-}
-
-impl Backoff {
-    pub(super) fn new(min: Duration, max: Duration, stable: Duration) -> Self {
-        Self {
-            min,
-            max,
-            stable,
-            current: min,
-        }
-    }
-
-    /// The wait before the next try, after one that lasted `lasted`.
-    pub(super) fn after(&mut self, lasted: Duration) -> Duration {
-        if lasted > self.stable {
-            self.current = self.min;
-        }
-        let wait = rand::thread_rng().gen_range(Duration::ZERO..=self.current);
-        self.current = (self.current * 2).min(self.max);
-        wait
-    }
-}
+pub(super) use droppen_base::backoff::Backoff;
 
 /// The one writer a socket has: frames from every channel, control text, and
 /// a heartbeat ping — the hub's connection and a relay's alike, the text
@@ -397,6 +367,7 @@ pub(super) fn spawn_writer(
     wrap: fn(String) -> String,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
         let mut beat = tokio::time::interval(heartbeat);
         let mut nonce = 0u64;
         loop {
@@ -411,11 +382,12 @@ pub(super) fn spawn_writer(
                     Message::Binary(Frame::Ping { nonce }.encode().expect("a ping encodes").into())
                 }
             };
-            if sink.send(message).await.is_err() {
-                break;
+            match tokio::time::timeout(WRITE_TIMEOUT, sink.send(message)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) | Err(_) => break,
             }
         }
-        let _ = sink.close().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), sink.close()).await;
     })
 }
 

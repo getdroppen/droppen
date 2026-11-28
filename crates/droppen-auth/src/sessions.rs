@@ -121,27 +121,40 @@ impl SessionsStore {
         }
     }
 
+    /// Run a synchronous SQLite closure on Tokio's blocking thread pool so
+    /// `synchronous = FULL` transactions and `busy_timeout` waits never stall
+    /// async worker threads.
+    async fn run_db<T: Send + 'static>(&self, op: impl FnOnce(Arc<Db>) -> T + Send + 'static) -> T {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || op(db))
+            .await
+            .expect("auth sessions blocking DB task panicked")
+    }
+
     /// Every session that has not expired, oldest first.
     ///
     /// `ORDER BY rowid` is the order they were minted in, which is what the
     /// list route hands back.
+    fn live_on(db: &Db, now: i64) -> Vec<StoredSession> {
+        db.read(|conn| {
+            let mut statement = conn.prepare("SELECT payload FROM auth_sessions WHERE expires_at > ?1 ORDER BY rowid")?;
+            let rows = statement.query_map((now,), |row| row.get::<_, String>(0))?;
+            // A payload that will not parse is a session nobody can be
+            // logged in by; it is dropped from the answer rather than
+            // failing the request, and the expiry sweep will collect it.
+            Ok(rows
+                .filter_map(Result::ok)
+                .filter_map(|raw| serde_json::from_str::<StoredSession>(&raw).ok())
+                .collect::<Vec<_>>())
+        })
+        .unwrap_or_else(|error| {
+            tracing::error!(database = %db.path().display(), %error, "cannot read the login sessions out of the state database");
+            Vec::new()
+        })
+    }
+
     fn live(&self, now: i64) -> Vec<StoredSession> {
-        self.db
-            .read(|conn| {
-                let mut statement = conn.prepare("SELECT payload FROM auth_sessions WHERE expires_at > ?1 ORDER BY rowid")?;
-                let rows = statement.query_map((now,), |row| row.get::<_, String>(0))?;
-                // A payload that will not parse is a session nobody can be
-                // logged in by; it is dropped from the answer rather than
-                // failing the request, and the expiry sweep will collect it.
-                Ok(rows
-                    .filter_map(Result::ok)
-                    .filter_map(|raw| serde_json::from_str::<StoredSession>(&raw).ok())
-                    .collect::<Vec<_>>())
-            })
-            .unwrap_or_else(|error| {
-                tracing::error!(database = %self.db.path().display(), %error, "cannot read the login sessions out of the state database");
-                Vec::new()
-            })
+        Self::live_on(&self.db, now)
     }
 
     /// Mint a session for `username` and return the one copy of its token.
@@ -159,22 +172,25 @@ impl SessionsStore {
             last_seen_at: created_at,
             label,
         };
+        let ttl = self.ttl;
 
         let _guard = self.write_lock.lock().await;
-        self.db
-            .write(|tx| {
+        self.run_db(move |db| {
+            db.write(|tx| {
                 tx.prune_expired_sessions(epoch_millis(now))?;
                 tx.execute(
                     "INSERT INTO auth_sessions (digest, expires_at, payload) VALUES (?1, ?2, ?3)",
                     (
                         &session.token_sha256,
-                        epoch_millis(now + self.ttl),
+                        epoch_millis(now + ttl),
                         serde_json::to_string(&session).unwrap_or_default(),
                     ),
                 )?;
                 Ok(())
             })
-            .map_err(store_error)?;
+        })
+        .await
+        .map_err(store_error)?;
         Ok(NewSession { token, expires_at })
     }
 
@@ -192,8 +208,10 @@ impl SessionsStore {
     /// expiry sweep on the write paths already saves.
     pub async fn resolve(&self, token: &str) -> Option<String> {
         let digest = digest_of(token);
+        let now = now_millis();
         let found = self
-            .live(now_millis())
+            .run_db(move |db| Self::live_on(&db, now))
+            .await
             .into_iter()
             .find(|session| session.token_sha256.as_bytes().ct_eq(digest.as_bytes()).into())?;
         let username = found.username;
@@ -223,21 +241,26 @@ impl SessionsStore {
         let _guard = self.write_lock.lock().await;
         let stamp = iso8601(now);
         let millis = epoch_millis(now);
-        let outcome = self.db.write(|tx| {
-            tx.prune_expired_sessions(millis)?;
-            let raw: Option<String> = tx
-                .query_row("SELECT payload FROM auth_sessions WHERE digest = ?1", (digest,), |row| row.get(0))
-                .optional()?;
-            let Some(mut session) = raw.and_then(|raw| serde_json::from_str::<StoredSession>(&raw).ok()) else {
-                return Ok(());
-            };
-            session.last_seen_at = stamp;
-            tx.execute(
-                "UPDATE auth_sessions SET payload = ?2 WHERE digest = ?1",
-                (digest, serde_json::to_string(&session).unwrap_or_default()),
-            )?;
-            Ok(())
-        });
+        let digest_owned = digest.to_string();
+        let outcome = self
+            .run_db(move |db| {
+                db.write(|tx| {
+                    tx.prune_expired_sessions(millis)?;
+                    let raw: Option<String> = tx
+                        .query_row("SELECT payload FROM auth_sessions WHERE digest = ?1", (&digest_owned,), |row| row.get(0))
+                        .optional()?;
+                    let Some(mut session) = raw.and_then(|raw| serde_json::from_str::<StoredSession>(&raw).ok()) else {
+                        return Ok(());
+                    };
+                    session.last_seen_at = stamp;
+                    tx.execute(
+                        "UPDATE auth_sessions SET payload = ?2 WHERE digest = ?1",
+                        (&digest_owned, serde_json::to_string(&session).unwrap_or_default()),
+                    )?;
+                    Ok(())
+                })
+            })
+            .await;
         if let Err(error) = outcome {
             tracing::warn!(%error, "could not record a session's last use");
         }

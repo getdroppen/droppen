@@ -12,6 +12,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use droppen_proto::bridge::{self, Kind, MessageReader, RequestHead, ResponseHead, CLOSE_BAD_REQUEST, CLOSE_DONE, CLOSE_FORBIDDEN, CLOSE_UPSTREAM};
@@ -694,7 +695,11 @@ async fn still_served(stream: Stream, head: &RequestHead, device: &str, local: &
 }
 
 /// One of the agent's own routes.
-async fn local_rpc(mut stream: Stream, head: RequestHead, device: &str, local: &dyn Local) {
+async fn local_rpc(stream: Stream, head: RequestHead, device: &str, local: &dyn Local) {
+    // Refuse unauthorized callers before buffering the request body.
+    let Some(mut stream) = still_served(stream, &head, device, local).await else {
+        return;
+    };
     let Some(body) = request_body(&mut stream, 64 * 1024).await else {
         return;
     };
@@ -706,7 +711,11 @@ async fn local_rpc(mut stream: Stream, head: RequestHead, device: &str, local: &
     answer(stream, (status, json)).await;
 }
 
-async fn rpc(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loopback, local: &dyn Local) {
+async fn rpc(stream: Stream, head: RequestHead, device: &str, loopback: &Loopback, local: &dyn Local) {
+    // Refuse unauthorized/revoked devices before buffering up to 64 MiB of body.
+    let Some(mut stream) = still_served(stream, &head, device, local).await else {
+        return;
+    };
     let Some(body) = request_body(&mut stream, MAX_BODY).await else {
         return;
     };
@@ -721,9 +730,11 @@ async fn rpc(mut stream: Stream, head: RequestHead, device: &str, loopback: &Loo
         return stream.close(CLOSE_BAD_REQUEST);
     };
     let url = format!("http://{}{}", loopback.addr, head.path);
+    const LOOPBACK_RPC_TIMEOUT: Duration = Duration::from_secs(300);
     let mut request = loopback
         .http
         .request(method, url)
+        .timeout(LOOPBACK_RPC_TIMEOUT)
         .header(CREDENTIAL_HEADER, &loopback.credential)
         .header(DEVICE_HEADER, device);
     for (name, value) in &head.headers {

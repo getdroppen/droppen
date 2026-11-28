@@ -142,6 +142,11 @@ impl ReadPoint {
     }
 }
 
+/// How many lines [`ResumableLines::next_line`] returns before yielding
+/// cooperatively to the async executor so parsing a large buffered transcript
+/// does not starve Tokio worker threads.
+const YIELD_EVERY_LINES: u16 = 256;
+
 /// A transcript's lines, decoded lossily as [`crate::util::LossyLines`] does,
 /// from its start or from where an earlier read stopped, keeping count of
 /// where they end.
@@ -158,6 +163,7 @@ pub struct ResumableLines {
     end: u64,
     open_tail: bool,
     head: Option<Mark>,
+    lines_since_yield: u16,
 }
 
 impl ResumableLines {
@@ -245,6 +251,7 @@ impl ResumableLines {
             end,
             open_tail,
             head,
+            lines_since_yield: 0,
         }
     }
 
@@ -252,6 +259,11 @@ impl ResumableLines {
     /// can be read yet: the end of the file, or a last line still being
     /// written.
     pub async fn next_line(&mut self) -> io::Result<Option<String>> {
+        self.lines_since_yield = self.lines_since_yield.wrapping_add(1);
+        if self.lines_since_yield >= YIELD_EVERY_LINES {
+            self.lines_since_yield = 0;
+            tokio::task::yield_now().await;
+        }
         self.buffer.clear();
         let read = self.reader.read_until(b'\n', &mut self.buffer).await?;
         if read == 0 {
