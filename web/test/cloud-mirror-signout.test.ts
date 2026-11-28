@@ -101,7 +101,7 @@ async function storeWithKey(): Promise<MemoryKeyStore> {
   return store;
 }
 
-test("clearing the device copies waits for the clear however long it takes, seals the cache, and forgets the mirror key", async () => {
+test("clearing the device copies waits for the clear however long it takes, seals the cache, and forgets the mirror key", async (t) => {
   cacheUnseal();
   idb.data.set("stream/a-1/m-1/ab", { v: 2 });
   idb.data.set("feeds", ["claude/x"]);
@@ -109,6 +109,8 @@ test("clearing the device copies waits for the clear however long it takes, seal
   await mirrorSeal(defaultStore).seal({ account: "a-1", machine: "m-1", key: "k" }, 1);
   assert.ok(await defaultStore.get(MIRROR_KEY_NAME));
 
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
   let release!: () => void;
   idb.clearGate = new Promise((resolve) => (release = resolve));
   let done = false;
@@ -119,9 +121,13 @@ test("clearing the device copies waits for the clear however long it takes, seal
   assert.equal(cacheSealed(), true, "sealed at once");
   await cacheSet("stream/a-1/m-1/cd", { late: true });
   // Well past the old one-second cap: still waiting, as it should.
-  await new Promise((resolve) => setTimeout(resolve, 1300));
+  t.mock.timers.tick(0);
+  await settle();
+  t.mock.timers.tick(1300);
+  await settle();
   assert.equal(done, false, "nothing moves on while the clear is still running");
   release();
+  t.mock.timers.tick(0);
   assert.deepEqual(await clearing, []);
   assert.equal(idb.data.size, 0, "the cache is empty");
   assert.equal(await store.get(MIRROR_KEY_NAME), undefined, "the given store's mirror key is gone");

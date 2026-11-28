@@ -510,6 +510,8 @@ export class SessionFeed {
   stop(): void {
     clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
     const run = this.run;
     if (!run) return;
     run.stopped = true;

@@ -70,7 +70,12 @@ function poolFor(t: TestContext, deps: FeedPoolDeps, limits: Parameters<typeof c
   return pool;
 }
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function advance(t: TestContext, ms: number) {
+  t.mock.timers.tick(ms);
+  await flush();
+}
 
 function snapshot(id: string, endIndex: number) {
   const items = Array.from({ length: 3 }, (_, i) => ({ kind: "message", role: "user", text: `${id} ${i}` }));
@@ -144,6 +149,7 @@ test("the last few sessions keep their sockets open, and the oldest idle one is 
 });
 
 test("an idle socket closes after the idle time, keeping its window", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness();
   const pool = poolFor(t, deps, { cached: 8, idleSockets: 3, idleMs: 20 });
   const a = pool.feed("claude", "a");
@@ -153,12 +159,13 @@ test("an idle socket closes after the idle time, keeping its window", async (t) 
   sockets[0]!.frame(snapshot("a", 5));
   release();
   assert.equal(sockets[0]!.closed, false, "kept open for a quick switch back");
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  await advance(t, 40);
   assert.equal(sockets[0]!.closed, true, "and let go once nobody came back");
   assert.ok(a.getView().data, "the window stays for the next resume");
 });
 
 test("a hidden feed whose socket drops is not reconnected until it is shown again", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness();
   const pool = poolFor(t, deps, { cached: 8, idleSockets: 3, idleMs: 60_000 });
   const a = pool.feed("claude", "a");
@@ -168,7 +175,7 @@ test("a hidden feed whose socket drops is not reconnected until it is shown agai
   sockets[0]!.frame(snapshot("a", 7));
   release();
   sockets[0]!.drop();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await advance(t, 20);
   assert.equal(sockets.length, 1, "nobody is looking, so nothing reconnects");
   assert.equal(a.running, false);
 
@@ -236,6 +243,7 @@ test("refresh throws the window away and re-attaches without a resume marker", a
 });
 
 test("a cold start draws the device copy marked as such, then resumes from it", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness();
   const saved: { key: string; data: unknown }[] = [];
   const copy = {
@@ -264,7 +272,7 @@ test("a cold start draws the device copy marked as such, then resumes from it", 
   sockets[0]!.open();
   sockets[0]!.frame({ type: "delta", sig: "a:2", fromIndex: 27, items: copy.items, endIndex: 30, totalItems: 30, prefixFp: "a-fp" });
   assert.equal(a.getView().connection, "live", "a frame confirms it");
-  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await advance(t, 2100);
   assert.equal(saved.at(-1)?.key, "claude/a", "and the confirmed window is saved back");
 });
 
@@ -292,6 +300,7 @@ test("the device copy keeps the newest items and the resume marker, and forgets 
 });
 
 test("a device copy that never arrives does not keep the transcript from connecting", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { HYDRATE_WAIT_MS } = await import("../src/features/sessions/session-feed-pool.js");
   const { sockets, deps } = harness();
   const pool = poolFor(
@@ -303,12 +312,13 @@ test("a device copy that never arrives does not keep the transcript from connect
   pool.acquire(a, pin());
   await flush();
   assert.equal(sockets.length, 0, "a moment's wait for the copy");
-  await new Promise((resolve) => setTimeout(resolve, HYDRATE_WAIT_MS + 50));
+  await advance(t, HYDRATE_WAIT_MS + 50);
   assert.equal(sockets.length, 1, "and then on without it");
   assert.equal(sockets[0]!.url, "/api/sessions/claude/a/ws", "nothing to resume from");
 });
 
 test("a subscription the server refuses as unreadable is a verdict, not a retry loop", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness();
   const pool = poolFor(t, deps, { cached: 8, idleSockets: 3, idleMs: 60_000 });
   const a = pool.feed("claude", "a");
@@ -316,13 +326,14 @@ test("a subscription the server refuses as unreadable is a verdict, not a retry 
   await flush();
   sockets[0]!.open();
   sockets[0]!.frame({ type: "closed", reason: "invalid" });
-  await new Promise((resolve) => setTimeout(resolve, 1200));
+  await advance(t, 1200);
   assert.equal(a.getView().connection, "gone", "said at once, so the view shows it");
   assert.equal(sockets.length, 1, "and not asked again");
   assert.equal(a.running, false);
 });
 
 test("a subscription refused for want of room goes on over a socket of the feed's own", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness();
   const channels: FakeSocket[] = [];
   const pool = poolFor(
@@ -344,13 +355,14 @@ test("a subscription refused for want of room goes on over a socket of the feed'
   assert.equal(sockets.length, 0, "the shared socket first");
   channels[0]!.open();
   channels[0]!.frame({ type: "closed", reason: "limit" });
-  await new Promise((resolve) => setTimeout(resolve, 1200));
+  await advance(t, 1200);
   assert.equal(channels.length, 1, "not the shared socket again");
   assert.equal(sockets.length, 1, "a socket of its own");
   assert.equal(sockets[0]!.url, "/api/sessions/claude/a/ws");
 });
 
 test("only a window somebody is reading is saved, and it is saved as they leave it", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness();
   const saved: string[] = [];
   const pool = poolFor(
@@ -368,11 +380,12 @@ test("only a window somebody is reading is saved, and it is saved as they leave 
 
   // Hidden now, and still moving on its pooled socket: not saved.
   sockets[0]!.frame({ type: "delta", sig: "s2", fromIndex: 3, items: [{ kind: "message", role: "user", text: "x" }], endIndex: 4, totalItems: 4, prefixFp: "p2" });
-  await new Promise((resolve) => setTimeout(resolve, 2100));
+  await advance(t, 2100);
   assert.deepEqual(saved, ["claude/a"], "a background window does not push out one that was read");
 });
 
 test("disposing the pool (its machine closed) stops every feed: sockets closed, no reconnect, nothing held", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness();
   const pool = poolFor(t, deps, { cached: 8, idleSockets: 2, idleMs: 60_000 });
   const shown = pool.feed("claude", "a");
@@ -386,7 +399,7 @@ test("disposing the pool (its machine closed) stops every feed: sockets closed, 
   pool.dispose();
   assert.ok(sockets.every((s) => s.closed), "every socket closed, the idle one's timer with it");
   assert.equal(pool.held().length, 0);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await advance(t, 20);
   assert.equal(sockets.length, 2, "nothing reconnects after");
 });
 
@@ -482,12 +495,13 @@ test("an opening that changes wakes the view, and one said again with the same n
 });
 
 test("a pooled feed with a window that reconnects says nothing of it", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, feed, views } = await opened(t);
   sockets[0]!.open();
   sockets[0]!.frame(snapshot("a", 3));
   const before = views.length;
   sockets[0]!.drop();
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await advance(t, 600);
   assert.equal(sockets.length, 2, "reconnected");
   sockets[1]!.open();
   sockets[1]!.frame({ type: "progress", stage: "copy", done: 1, total: 2 });
@@ -496,11 +510,12 @@ test("a pooled feed with a window that reconnects says nothing of it", async (t)
 });
 
 test("closed with nothing on screen is retrying, through every attempt, until a window arrives", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, opening } = await opened(t);
   sockets[0]!.open();
   sockets[0]!.frame({ type: "closed" });
   assert.deepEqual(opening(), { stage: "retrying" });
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await advance(t, 1100);
   assert.equal(sockets.length, 2, "asked again after the backoff");
   assert.deepEqual(opening(), { stage: "retrying" }, "the same wait while it connects");
   sockets[1]!.open();
@@ -512,12 +527,13 @@ test("closed with nothing on screen is retrying, through every attempt, until a 
 });
 
 test("a refusal for want of room is no retry: the feed connects on a socket of its own", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const channel = new FakeSocket("channel");
   const { sockets, opening } = await opened(t, { openFeed: () => channel });
   channel.open();
   channel.frame({ type: "closed", reason: "limit" });
   assert.deepEqual(opening(), { stage: "connecting" });
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await advance(t, 1100);
   assert.equal(sockets.length, 1);
   assert.deepEqual(opening(), { stage: "connecting" });
   sockets[0]!.open();

@@ -178,6 +178,7 @@ test("live, with the copy in memory: the first frame is the transcript under the
   const { mirror, writes } = await deviceWith(t, ["a"], { a: copyOf(0, 10) });
   shellWith(t, mirror);
   await mirror.sessionHeld("claude", "a");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { sockets, deps } = harness({ persist: devicePersistFor("m-1") });
   const pool = poolFor(t, deps);
   const written = writes();
@@ -190,12 +191,13 @@ test("live, with the copy in memory: the first frame is the transcript under the
   assert.equal(view.opening, null, "no loading line over a drawn transcript");
 
   pool.acquire(feed, pin());
-  await flush();
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(sockets[0]!.url, "/api/sessions/claude/a/ws?since=10&fp=fp7", "the live socket resumes from the copy's marker");
   sockets[0]!.open();
   assert.equal(feed.getView().opening, null);
   assert.equal(feed.getView().connection, "cached", "until a frame confirms it");
-  await new Promise((resolve) => setTimeout(resolve, 2100));
+  t.mock.timers.tick(2100);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(writes(), written, "nothing is written: not the copy, not a second one");
 });
 
@@ -393,6 +395,8 @@ test("on the machine's copy, or without droppen.app, or for the local app's own 
 // A switch between the machine and its copy
 
 test("a feed whose socket a switch between the machine and its copy closed goes back at once, not after a backoff", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
   let switched: (() => void) | null = null;
   const { sockets, deps } = harness({
     onSwitch: (fn) => {
@@ -405,22 +409,25 @@ test("a feed whose socket a switch between the machine and its copy closed goes 
   const pool = poolFor(t, deps);
   const a = pool.feed("claude", "a");
   pool.acquire(a, pin());
-  await flush();
+  await settle();
   sockets[0]!.open();
   sockets[0]!.frame({ type: "snapshot", sig: "s", summary: row("a"), items: items(0, 3), startIndex: 0, endIndex: 3, totalItems: 3, prefixFp: "fp0", startFp: null });
 
   // An ordinary drop backs off.
   sockets[0]!.close();
-  await flush(50);
+  t.mock.timers.tick(50);
+  await settle();
   assert.equal(sockets.length, 1, "half a second's wait for a socket that merely dropped");
-  await until(() => sockets.length === 2, 1000);
+  t.mock.timers.tick(1000);
+  await settle();
+  assert.equal(sockets.length, 2);
   sockets[1]!.open();
 
   // The switch closes the socket, then says so: no wait at all.
   sockets[1]!.close();
   switched!();
-  await flush();
-  await flush();
+  t.mock.timers.tick(0);
+  await settle();
   assert.equal(sockets.length, 3, "back at once, through whichever side the page is on now");
   assert.equal(sockets[2]!.url, "/api/sessions/claude/a/ws?since=3&fp=fp0", "resuming its window");
 
