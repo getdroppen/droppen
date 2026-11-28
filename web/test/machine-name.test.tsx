@@ -264,14 +264,14 @@ test("a machine's chain alarm (a fork it was shown) reaches every device through
   assert.equal(status({}).alarms, undefined, "no field when there are none");
 });
 
-test("the bar shows the open machine's name from its copy, and the id beside it, with no rename of its own", () => {
+test("the bar shows the open machine's name from its copy, with its id in the tooltip and no rename of its own", () => {
   const mirror = {
     status: { state: status({ displayName: "studio mac" }) },
     onChange: () => () => undefined,
   } as unknown as MachineMirror;
   const live = draw(<BarMachineName machine="m-3" mirror={mirror} />);
-  assert.match(live, /data-testid="bar-machine-name"[^>]*>studio mac</);
-  assert.match(live, />m-3</);
+  assert.match(live, /data-testid="bar-machine-name"[^>]*title="m-3"[^>]*>studio mac</);
+  assert.doesNotMatch(live, />m-3</, "id stays in the tooltip once a display name is known");
   assert.doesNotMatch(live, /rename device/, "renaming is on 「我的设备」");
   const away = draw(<BarMachineName machine="m-3" mirror={null} />);
   assert.match(away, /data-testid="bar-machine-name"[^>]*>m-3</, "no copy, no name: the id");

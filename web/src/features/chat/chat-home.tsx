@@ -274,7 +274,7 @@ export function ChatHome() {
                   {" — "}
                   {t("or add an account")}
                   {" · "}
-                  <MachineLink to="/settings" className="underline hover:text-fg">
+                  <MachineLink to="/settings" search={{ section: "accounts" }} className="underline hover:text-fg">
                     {t("Settings")}
                   </MachineLink>
                 </>
@@ -285,7 +285,7 @@ export function ChatHome() {
           {backend === "api" && !providerReady && (
             <Notice signal="warn">
               {t("no API provider configured —")}{" "}
-              <MachineLink to="/settings" className="text-accent hover:underline">
+              <MachineLink to="/settings" search={{ section: "accounts" }} className="text-accent hover:underline">
                 {t("set base URL and key in settings")}
               </MachineLink>
             </Notice>

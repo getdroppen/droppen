@@ -562,7 +562,7 @@ function ProviderGroup({
       <div className="-mx-3 flex h-9 items-center gap-2 border-y border-border px-3">
         <span data-label="" className="label-caps text-2xs text-fg">{PROVIDER_NAME[provider]}</span>
         <span className="font-mono text-2xs text-faint">{t("accounts")}</span>
-        <span className="font-mono text-2xs tabular-nums text-faint">{accounts.length + 1}</span>
+        <span className="font-mono text-2xs tabular-nums text-faint">{accounts.length + (signedOut ? 0 : 1)}</span>
       </div>
       {automaticOffered && (
         <label className="flex h-9 items-center gap-1.5 border-b border-border">

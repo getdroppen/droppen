@@ -23,6 +23,7 @@ import { useAccounts, useQuota } from "@/features/accounts/use-accounts";
 import { useAcpAgents } from "@/features/sessions/acp-agent";
 import { ACP_GLYPH } from "@/features/sessions/acp-agent-icons";
 import { AccountsSection } from "@/features/settings/accounts-section";
+import { ChatProviderSection } from "@/features/settings/chat-provider-section";
 import { cn } from "@/lib/cn";
 import { AcpTab } from "./acp-tab";
 import {
@@ -126,6 +127,7 @@ export function AgentsSection() {
       ) : (
         <AccountsSection key={tab} provider={tab} />
       )}
+      <ChatProviderSection />
     </Sheet>
   );
 }
