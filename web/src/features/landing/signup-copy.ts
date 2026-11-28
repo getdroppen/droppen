@@ -26,7 +26,7 @@ export const SIGNUP_COPY: Record<SignupMode, SignupCopy> = {
     planNote: "Sign up with an e-mail address",
     waitlistTitle: "Leave your address, and we'll write when Pro opens",
     waitlistLead: "One e-mail, when it opens: nothing else, and never more than 12 months.",
-    joined: "You're on the list: we'll e-mail you an invite.",
+    joined: "You're on the list: we'll e-mail you when Pro opens.",
     freeCta: "Start free",
     pricingDescription: ACCOUNT_PRICING_DESCRIPTION,
   },

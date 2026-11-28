@@ -56,7 +56,7 @@ test("the landing page leads with what you get, in zh-CN first", () => {
     "安全与端到端加密",
     // The deep sections, each headed by what it gets you.
     "直连优先，网络受限时自动中继",
-    "开始试用",
+    "免费开始",
   ]) {
     assert.ok(words.includes(line), `missing: ${line}`);
   }
@@ -151,9 +151,9 @@ test("signed in, the landing page is still the landing page, with a way back int
     for (const id of ["tour", "features", "direct", "security"]) assert.match(html, new RegExp(`id="${id}"`), lng);
   }
   const words = text(draw("zh-CN", { signedIn: true }));
-  for (const gone of ["台运行 AI 的电脑免费", "开始试用", "AI 在你的电脑上继续工作"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
+  for (const gone of ["台运行 AI 的电脑免费", "免费开始", "AI 在你的电脑上继续工作"]) assert.ok(!words.includes(gone), `still there: ${gone}`);
   assert.ok(!text(draw("zh-CN", { signedIn: true, signup: "invite" })).includes("注册需要邀请码。"), "by invite too");
-  assert.ok(text(draw("zh-CN")).includes("开始试用"), "signed out keeps the sign-up prompt");
+  assert.ok(text(draw("zh-CN")).includes("免费开始"), "signed out keeps the sign-up prompt");
 });
 
 test("routing: `/` is the landing page signed in or not; the app keeps its own routes and starts at its start", () => {
@@ -423,7 +423,7 @@ test("the product showcase shows the product: three screens in their frames, in 
   // Three screens, and only the caption of the one on screen is written: the server render
   // opens the first, so its headline and body are there and the other two are not.
   const entries = [
-    ["sessions", "所有电脑，一个列表。", "将多台 Mac 和 Linux 电脑接入同一个账户。实时查看所有 Claude Code 和 Codex 会话。需要你确认的任务会标出来。"],
+    ["sessions", "所有电脑，一个列表。", "将多台 Mac 和 Linux 电脑接入同一个账号。实时查看所有 Claude Code 和 Codex 会话。需要你确认的任务会标出来。"],
     ["split", "左边代码，右边终端。", "AI 会话与终端并排运行。在同一窗口查看代码改动、测试日志和命令输出，不必切换应用。"],
     ["phone", "离开电脑，在手机上接手。", "在手机浏览器打开 droppen.app，会话立即同步。等待你批准的任务会置顶。"],
   ] as const;

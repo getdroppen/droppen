@@ -38,17 +38,20 @@ export function PlatformMark({ os, className, ...props }: { os: Platform } & SVG
   return <WindowsLogoIcon weight="fill" aria-hidden="true" className={className} {...props} />;
 }
 
-function jumpToBrowser(event: MouseEvent<HTMLAnchorElement>) {
-  const section = document.getElementById("browser");
-  if (!section) return;
-  event.preventDefault();
-  section.scrollIntoView();
-  history.replaceState(null, "", "#browser");
+function jumpToSection(id: string) {
+  return (event: MouseEvent<HTMLAnchorElement>) => {
+    const section = document.getElementById(id);
+    if (!section) return;
+    event.preventDefault();
+    section.scrollIntoView();
+    history.replaceState(null, "", `#${id}`);
+  };
 }
 
 /**
- * The caret half of the segmented download button: macOS has the build, Linux
- * and Windows are marked "coming soon", and the browser needs nothing installed.
+ * The caret half of the segmented download button: macOS has the desktop app,
+ * Linux and Windows jump straight to the command-line install instructions, and
+ * the browser needs nothing installed.
  *
  * `anchor` is the whole control, not the caret: the list then opens from the
  * button's left edge instead of hanging under the narrow caret segment.
@@ -68,23 +71,36 @@ export function PlatformMenu({ anchor }: { anchor?: RefObject<HTMLDivElement | n
         {PLATFORMS.map((id) => {
           const current = APP_BUILD[id] === "current";
           const note = MENU_NOTES[id];
+          if (current) {
+            return (
+              <DropdownMenuItem key={id} data-testid={`hero-os-${id}`} className={cn(MENU_ITEM, "items-start")}>
+                <PlatformMark os={id} className="mt-0.5 size-4 shrink-0" />
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="truncate font-medium">{t(MENU_LABELS[id])}</span>
+                  {note && <span className="text-xs leading-4 text-muted">{t(note)}</span>}
+                </span>
+                <CheckIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              </DropdownMenuItem>
+            );
+          }
           return (
-            <DropdownMenuItem key={id} disabled={!current} data-testid={`hero-os-${id}`} className={cn(MENU_ITEM, "items-start")}>
+            <DropdownMenuItem
+              key={id}
+              render={<a href={`${DOWNLOAD_PATH}?os=${id}#server`} onClick={jumpToSection("server")} />}
+              data-testid={`hero-os-${id}`}
+              className={cn(MENU_ITEM, "items-start")}
+            >
               <PlatformMark os={id} className="mt-0.5 size-4 shrink-0" />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className={cn("truncate", current && "font-medium")}>{t(MENU_LABELS[id])}</span>
-                {note && <span className="text-xs leading-4 text-muted">{t(note)}</span>}
+                <span className="truncate">{t(MENU_LABELS[id])}</span>
+                <span className="text-xs leading-4 text-muted">{t("Command line")}</span>
               </span>
-              {current ? (
-                <CheckIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-              ) : (
-                <span className="mt-0.5 shrink-0 text-xs">{t("Coming soon")}</span>
-              )}
+              <ArrowRightIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted" />
             </DropdownMenuItem>
           );
         })}
         <DropdownMenuItem
-          render={<a href={`${DOWNLOAD_PATH}#browser`} onClick={jumpToBrowser} />}
+          render={<a href={`${DOWNLOAD_PATH}#browser`} onClick={jumpToSection("browser")} />}
           data-testid="hero-browser"
           className={cn(MENU_ITEM, "border-t border-border")}
         >

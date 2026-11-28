@@ -1,5 +1,5 @@
 import { type AnchorHTMLAttributes, Fragment, type ReactNode, type Ref, useCallback, useEffect, useRef } from "react";
-import { ArrowRightIcon, CheckIcon, CopyIcon, SignInIcon, UserPlusIcon, UserCircleIcon } from "@phosphor-icons/react";
+import { ArrowRightIcon, CheckIcon, CopyIcon, ListIcon, SignInIcon, UserPlusIcon, UserCircleIcon } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { useEventCallback, useEventListener } from "usehooks-ts";
 import { BrandMark } from "@/components/brand-mark";
@@ -422,14 +422,39 @@ const iconControl = cn(
   "flex size-9 p-0 text-muted transition-colors hover:text-fg data-[popup-open]:bg-hover data-[popup-open]:text-fg",
 );
 
-function MenuLink({ path, icon: Icon, children }: { path: string; icon: typeof SignInIcon; children: ReactNode }) {
+function MenuLink({ path, icon: Icon, className, children }: { path: string; icon?: typeof SignInIcon; className?: string; children: ReactNode }) {
   return (
-    <DropdownMenuItem render={<a {...publicLink(path)} />} className="gap-2 text-sm">
-      <span className="flex size-3.5 shrink-0 items-center justify-center">
-        <Icon className="size-3.5" />
-      </span>
+    <DropdownMenuItem render={<a {...publicLink(path)} />} className={cn("gap-2 text-sm", className)}>
+      {Icon && (
+        <span className="flex size-3.5 shrink-0 items-center justify-center">
+          <Icon className="size-3.5" />
+        </span>
+      )}
       <span>{children}</span>
     </DropdownMenuItem>
+  );
+}
+
+function MobileNavMenu({ pages }: { pages: { path: string; label: string; testId: string }[] }) {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={t("Site navigation")}
+        title={t("Site navigation")}
+        data-testid="mobile-nav-trigger"
+        className={cn(iconControl, "md:hidden")}
+      >
+        <ListIcon className="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="bottom" align="end" sideOffset={4}>
+        {pages.map((page) => (
+          <MenuLink key={page.path} path={page.path}>
+            {page.label}
+          </MenuLink>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -497,6 +522,7 @@ export function PublicHeader({ signedIn }: { signedIn: boolean }) {
             <GithubMark className="size-4" />
           </a>
           <PrefsControls />
+          <MobileNavMenu pages={pages} />
           <AccountMenu signedIn={signedIn} />
         </div>
         <RegMark className="-bottom-[5px] -left-[5px]" />

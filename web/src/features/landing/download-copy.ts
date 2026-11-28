@@ -22,6 +22,9 @@ const LINES: readonly CopyRow[] = [
   ["Browser", "浏览器", "瀏覽器", "ブラウザ"],
   ["Other platforms", "其他平台", "其他平台", "その他のプラットフォーム"],
   ["Coming soon", "敬请期待", "敬請期待", "近日公開"],
+  ["Command line", "命令行可用", "指令行可用", "コマンドライン対応"],
+  ["Open my devices", "打开我的设备", "打開我的裝置", "マイデバイスを開く"],
+  ["Command-line install", "命令行安装", "指令行安裝", "コマンドラインでインストール"],
 
   ["The App is coming soon", "App 即将推出", "App 即將推出", "アプリは近日公開"],
   [
@@ -149,7 +152,7 @@ const LINES: readonly CopyRow[] = [
     "インストールコマンドを再実行することで、データと設定を保持したままインプレース更新されます。",
   ],
   ["Uninstall", "卸载", "解除安裝", "アンインストール"],
-  ["Remove it from your account", "从账户中移除", "從帳戶中移除", "アカウントから削除する"],
+  ["Remove it from your account", "从账号中移除", "從帳號中移除", "アカウントから削除する"],
   [
     "On {{app}}, open my devices and remove the device. Every key it held is replaced, so it cannot decrypt anything written afterwards.",
     "在 {{app}} 的「我的设备」列表中移除该设备。系统将立即轮换加密密钥，该设备此后无法解密任何新的会话数据。",
@@ -159,7 +162,7 @@ const LINES: readonly CopyRow[] = [
   ["Disconnect it", "在设备上断开连接", "在裝置上中斷連線", "デバイスで接続を解除する"],
   [
     "On that device, open Droppen's Settings → Access → Droppen → Disconnect this device. This deletes the Droppen keys stored on it. Removing the device from your account leaves them in place.",
-    "在该设备上打开 Droppen 界面，点击「设置 → 访问 → Droppen → 断开这台设备」。此操作将彻底销毁保存在该设备上的加密密钥。（仅在云端账户中移除设备不会清除设备上的残留密钥）。",
+    "在该设备上打开 Droppen 界面，点击「设置 → 访问 → Droppen → 断开这台设备」。此操作将彻底销毁保存在该设备上的加密密钥。（仅在云端账号中移除设备不会清除设备上的残留密钥）。",
     "在該裝置上開啟 Droppen 介面，點擊「設定 → 存取 → Droppen → 中斷這台裝置」。此操作將徹底銷毀保存在本地的加密金鑰。（僅在雲端帳號中移除裝置不會清除本地殘留金鑰）。",
     "そのデバイスで Droppen の「設定 → アクセス → Droppen → このデバイスの接続を解除」を開きます。これによりローカルに保存された暗号鍵が完全に削除されます。（アカウントからの削除だけではローカルの鍵は残ります）。",
   ],
@@ -240,8 +243,8 @@ const LINES: readonly CopyRow[] = [
   ],
   [
     "End-to-end encrypted between your devices: neither Droppen Hub nor the Droppen relays hold a key that can decrypt your sessions.",
-    "在你的多台设备之间全程端到端加密：Droppen Hub 及中继节点均不持有能够解密你的会话数据的私钥。",
-    "在你的多台裝置之間全程端對端加密：Droppen Hub 及中繼節點均不持有能夠解密你的工作階段資料的私鑰。",
+    "在你的多台设备之间全程端到端加密：Droppen Hub 及中继节点均不持有能够解密你的会话数据的密钥。",
+    "在你的多台裝置之間全程端對端加密：Droppen Hub 及中繼節點均不持有能夠解密你的工作階段資料的金鑰。",
     "デバイス間は完全にエンドツーエンドで暗号化されます。Droppen Hub もリレーサーバーも、セッションやターミナルを復号できる鍵を保持しません。",
   ],
 

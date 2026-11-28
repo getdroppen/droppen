@@ -277,13 +277,14 @@ test("the plans are facts, not buttons: signed in or not, the waitlist form is t
 });
 
 test("joined: the form says you're on the list and what comes next, in each language", () => {
-  const joined = (lng: string, plan: WaitlistPlan) => text(draw(lng, { waitlist: { kind: "done", plan } }));
-  assert.ok(joined("en", "free").includes("You're on the list: we'll e-mail you an invite."));
+  const joined = (lng: string, plan: WaitlistPlan, signup: SignupMode = "open") => text(draw(lng, { signup, waitlist: { kind: "done", plan } }));
+  assert.ok(joined("en", "free", "invite").includes("You're on the list: we'll e-mail you an invite."));
+  assert.ok(joined("en", "free", "open").includes("You're on the list: we'll e-mail you when Pro opens."));
   assert.ok(joined("en", "pro").includes("You're on the list: we'll e-mail you when Pro opens."));
   assert.ok(joined("en", "pro").includes(`To be taken off the list, write to ${PRIVACY_EMAIL}.`));
-  assert.ok(joined("zh-CN", "free").includes("你已在名单上，我们会把邀请发到你的邮箱。"));
+  assert.ok(joined("zh-CN", "free", "invite").includes("你已在名单上，我们会把邀请发到你的邮箱。"));
   assert.ok(joined("zh-CN", "pro").includes("你已在名单上，Pro 开放时我们会发邮件通知你。"));
-  assert.ok(joined("zh-TW", "free").includes("你已在名單上，我們會把邀請寄到你的信箱。"));
+  assert.ok(joined("zh-TW", "free", "invite").includes("你已在名單上，我們會把邀請寄到你的信箱。"));
   assert.ok(joined("ja", "pro").includes("登録しました。Pro が始まったらメールでお知らせします。"));
   const html = draw("en", { waitlist: { kind: "done", plan: "pro" } });
   assert.match(html, /role="status" data-testid="waitlist-done" data-plan="pro"/);

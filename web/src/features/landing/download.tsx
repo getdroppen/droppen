@@ -90,7 +90,7 @@ function AppDownload({ availability, release }: { availability: Availability; re
         file={dmg}
         mark={<AppleMark className="size-4 shrink-0" />}
         testId="app-download"
-        label={t("Download for macOS")}
+        label={t("Download for Mac")}
         menu={(anchor) => <PlatformMenu anchor={anchor} />}
       />
       <p className="text-xs leading-5 text-muted">
@@ -151,12 +151,19 @@ function serverSteps(t: TFunction, linger: boolean): Step[] {
   return [
     {
       title: t("Get a one-time code"),
-      body: t("In my devices, add a device and show its one-time code. It works once, for 10 minutes."),
+      body: (
+        <>
+          {t("In my devices, add a device and show its one-time code. It works once, for 10 minutes.")}{" "}
+          <TextLink {...publicLink("/devices")} nowrap data-testid="server-step-devices">
+            {t("Open my devices")}
+          </TextLink>
+        </>
+      ),
     },
     {
       title: t("Install it"),
       body: t("Replace <code> with the one-time code."),
-      action: <CommandLine command={codeInstallCommand(t("<code>"))} testId="install-command" primaryCopy />,
+      action: <CommandLine command={codeInstallCommand(t("<code>"))} testId="install-command" />,
     },
     {
       title: t("Check it is online"),
@@ -210,7 +217,7 @@ function ServerSection({ availability, os, arch }: { availability: Availability;
   return (
     <Section id="server">
       <div className={cn(COLUMN, "py-12 max-md:py-10")}>
-        <SectionHead title={t("Run the server")} className="pb-7" />
+        <SectionHead title={t("Command-line install")} className="pb-7" />
         <Tabs value={tab} onValueChange={(value) => setTab(value as Platform)}>
           <TabsList aria-label={t("Server")} activateOnFocus className="mx-6 h-auto w-fit max-w-full max-md:mx-4">
             {tabs.map(({ id, label }) => (
