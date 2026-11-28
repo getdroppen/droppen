@@ -79,30 +79,34 @@ has_copyright() { # directory, .dsc
   return 1
 }
 
-# A source package's .dsc and its files, straight from the archive's pool.
-# Needed when the archive has moved its source index on to a newer version
-# while the installed binary (and so LIBRARIES) still names this one: apt then
-# finds no version in the index, though the pool keeps the files. The .dsc's
-# own Source, Version, sizes and Checksums-Sha256 are the check; HTTPS, and
-# these hashes for every file, take the signed index's place.
+# A source package's .dsc and its files, straight from the archive's pool or
+# Launchpad's primary source archive. Needed when the archive has moved its
+# source index on to a newer version (or purged a superseded version from the
+# pool) while the installed binary (and so LIBRARIES) still names this one. The
+# .dsc's own Source, Version, sizes and Checksums-Sha256 are the check; HTTPS,
+# and these hashes for every file, take the signed index's place.
 # (The pool path is Debian's: pool/main/<first letter, or the fourth of lib*>/<source>/.)
 fetch_dsc_from_pool() { # source, version, destination
-  local src=$1 ver=$2 dest=$3 area dsc base url tmp
+  local src=$1 ver=$2 dest=$3 area dsc dir_url url tmp
   # HTTPS and HTTPS on redirects: the .dsc's signature is not checked, so the
   # transport is the trust anchor for the .dsc itself.
   pool_get() { curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 "$@"; }
   case "$src" in lib*) area=${src:3:1} ;; *) area=${src:0:1} ;; esac
   dsc=${src}_${ver#*:}.dsc
-  for base in https://security.ubuntu.com/ubuntu https://archive.ubuntu.com/ubuntu https://ports.ubuntu.com/ubuntu-ports; do
+  for dir_url in \
+    "https://security.ubuntu.com/ubuntu/pool/main/$area/$src" \
+    "https://archive.ubuntu.com/ubuntu/pool/main/$area/$src" \
+    "https://ports.ubuntu.com/ubuntu-ports/pool/main/$area/$src" \
+    "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/$src/$ver"; do
     tmp=$(mktemp -d "$dest/.pool.XXXXXX")
-    url=$base/pool/main/$area/$src/$dsc
+    url=$dir_url/$dsc
     if pool_get -o "$tmp/$dsc" "$url" 2>/dev/null \
       && [ "$(sed -n 's/^Source: //p' "$tmp/$dsc")" = "$src" ] \
       && [ "$(sed -n 's/^Version: //p' "$tmp/$dsc")" = "$ver" ]; then
       local ok=1 sha size name
       while read -r sha size name; do
         case "$name" in */*) ok=0; break ;; esac
-        pool_get -o "$tmp/$name" "$base/pool/main/$area/$src/$name" 2>/dev/null || { ok=0; break; }
+        pool_get -o "$tmp/$name" "$dir_url/$name" 2>/dev/null || { ok=0; break; }
         # `wc -c <` pads its number on BSD: read the digits only.
         [ "$(wc -c <"$tmp/$name" | tr -d ' ')" = "$size" ] || { ok=0; break; }
         [ "$(sha256sum "$tmp/$name" | cut -d' ' -f1)" = "$sha" ] || { ok=0; break; }

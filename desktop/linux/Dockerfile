@@ -25,10 +25,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # CI's desktop-app-linux job installs them. The downloaded packages go; the
 # lists stay.
 # The security archive publishes its index before the files they name, and can
-# be mid-sync: an update or an install is retried a little rather than failing
-# the whole packaging run on that window.
+# be mid-sync: an update, upgrade or install is retried a little rather than
+# failing the whole packaging run on that window. Upgrading pre-installed base
+# packages keeps every installed library aligned with the live deb-src lists so
+# `apt-get source` finds the exact versions bundled into the AppImage.
 RUN sed -n 's/^deb /deb-src /p' /etc/apt/sources.list > /etc/apt/sources.list.d/deb-src.list \
  && n=0; until apt-get update; do n=$((n+1)); [ "$n" -lt 6 ] || exit 1; sleep 20; done \
+ && n=0; until apt-get upgrade -y --no-install-recommends; do n=$((n+1)); [ "$n" -lt 6 ] || exit 1; sleep 20; apt-get update || true; done \
  && n=0; until apt-get install -y --no-install-recommends \
       build-essential ca-certificates curl file pkg-config \
       libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
