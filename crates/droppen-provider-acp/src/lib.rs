@@ -62,14 +62,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use droppen_provider::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use droppen_provider::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
+use droppen_provider::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, PermissionOutcome, PermissionReply, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
 use futures_util::future::BoxFuture;
 use crate::protocol::{category, option_for, ConfigOption, InitializeResponse};
 use crate::agents::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::{has_conversation, read_header, AcpTranscripts, Record, Translator};
 use droppen_sessions::{Injection, SessionSummary, Source};
 use droppen_http::error::ApiError;
-use droppen_base::process_env::clean_env_bare;
+use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
 use client::Client;
 use conn::Conn;
 pub(crate) use driver::Handle;
@@ -154,21 +154,68 @@ fn check_options(agent: &AcpAgent, options: &SendOptions) -> Result<(), InjectEr
 
 /// Refuse a model or effort the agent does not offer, when what it offers is
 /// known; with nothing known yet, the agent itself answers when it is set.
+///
+/// When a message is switching to a different model, the new model may publish
+/// a different `thought_level` ladder (or omit it altogether), so `effort` is
+/// deferred to [`Driver::configure`] once the model switch completes.
 fn check_choice(agent: &AcpAgent, offered: &[ConfigOption], model: Option<&str>, effort: Option<&str>) -> Result<(), InjectError> {
     if offered.is_empty() {
         return Ok(());
     }
-    for (category, what, wanted) in [(category::MODEL, "model", model), (category::THOUGHT_LEVEL, "effort", effort)] {
-        let Some(wanted) = wanted else { continue };
-        match option_for(offered, category) {
-            None => return Err(InjectError::message(format!("{} offers no {what} to choose", agent.name))),
-            Some(option) if !option.accepts(wanted) => {
-                return Err(InjectError::message(format!("{} has no {what} \"{wanted}\"", agent.name)));
+    let model_option = option_for(offered, category::MODEL);
+    let switching_model = match (model, model_option) {
+        (Some(_), None) => {
+            return Err(InjectError::message(format!("{} offers no model to choose", agent.name)));
+        }
+        (Some(wanted), Some(option)) => {
+            if !option.accepts(wanted) {
+                return Err(InjectError::message(format!("{} has no model \"{wanted}\"", agent.name)));
             }
-            Some(_) => {}
+            option.current_value.as_deref() != Some(wanted)
+        }
+        (None, _) => false,
+    };
+    if !switching_model {
+        if let Some(wanted) = effort {
+            match option_for(offered, category::THOUGHT_LEVEL) {
+                None => return Err(InjectError::message(format!("{} offers no effort to choose", agent.name))),
+                Some(option) if !option.accepts(wanted) => {
+                    return Err(InjectError::message(format!("{} has no effort \"{wanted}\"", agent.name)));
+                }
+                Some(_) => {}
+            }
         }
     }
     Ok(())
+}
+
+/// Append the standard user and system tool directories (`~/.local/bin`,
+/// Homebrew, etc.) after `current`, preserving `current`'s order and
+/// deduplicating entries.
+fn augment_path(current: &str, home: &Path) -> String {
+    let mut dirs: Vec<String> = current.split(':').filter(|dir| !dir.is_empty()).map(str::to_string).collect();
+    let mut seen: std::collections::HashSet<String> = dirs.iter().cloned().collect();
+    for dir in droppen_search_path::base_dirs(home) {
+        let dir = dir.to_string_lossy().into_owned();
+        if seen.insert(dir.clone()) {
+            dirs.push(dir);
+        }
+    }
+    dirs.join(":")
+}
+
+/// The base environment for looking up, checking and launching an ACP agent:
+/// [`clean_env_bare`] with standard user/system tool directories (such as
+/// `~/.local/bin` and Homebrew) appended as fallback on `PATH` so CLIs
+/// installed outside a minimal launchd/systemd `PATH` are still found.
+pub(crate) fn acp_base_env(home: &Path) -> Env {
+    let mut env = clean_env_bare();
+    let current = env.get("PATH").map(String::as_str).unwrap_or("");
+    let augmented = augment_path(current, home);
+    if !augmented.is_empty() {
+        env.insert("PATH".to_string(), augmented);
+    }
+    env
 }
 
 /// An agent process, started and connected, before any session is open.
@@ -181,26 +228,40 @@ struct Started {
 
 /// Start `agent` in `workdir` for a session, and connect to it: only under a
 /// permit, which a start takes under the spawn gate.
-async fn start(agent: &AcpAgent, workdir: &Path, _permit: &SpawnPermit<'_>) -> Result<Started, InjectError> {
-    launch(agent, workdir).await
+async fn start(agent: &AcpAgent, workdir: &Path, home: &Path, _permit: &SpawnPermit<'_>) -> Result<Started, InjectError> {
+    launch(agent, workdir, home).await
 }
 
 /// Start `agent` in a scratch directory, to ask it something: no session, so
 /// no permit and no gate.
-async fn start_scratch(agent: &AcpAgent, scratch: &ScratchDir) -> Result<Started, InjectError> {
-    launch(agent, scratch.path()).await
+async fn start_scratch(agent: &AcpAgent, scratch: &ScratchDir, home: &Path) -> Result<Started, InjectError> {
+    launch(agent, scratch.path(), home).await
 }
 
 /// Start `agent` in `workdir` and connect to it: its command line, over stdio,
 /// with its variables laid over the server's clean environment, in a process
 /// group of its own ([`Process`]).
-async fn launch(agent: &AcpAgent, workdir: &Path) -> Result<Started, InjectError> {
+async fn launch(agent: &AcpAgent, workdir: &Path, home: &Path) -> Result<Started, InjectError> {
     let program = agent.program();
     if program.as_os_str().is_empty() {
         return Err(InjectError::message(format!("{} has no executable. {INSTALL_HINT}", agent.name)));
     }
-    let env = agent.environment(clean_env_bare());
-    let mut child = tokio::process::Command::new(&program)
+    let base_env = agent.environment(clean_env_bare());
+    // Keep the server's exact `clean_env_bare()` PATH whenever the executable is
+    // already reachable there (explicit path or already on PATH), and only
+    // append the `droppen-search-path` fallback directories (`~/.local/bin`,
+    // Homebrew, …) when a bare command is found via that fallback.
+    let (resolved, env) = match resolve_on_path(agent.command.trim(), &base_env) {
+        Some(path) => (path, base_env),
+        None => {
+            let fallback_env = agent.environment(acp_base_env(home));
+            match resolve_on_path(agent.command.trim(), &fallback_env) {
+                Some(path) => (path, fallback_env),
+                None => (program.clone(), base_env),
+            }
+        }
+    };
+    let mut child = tokio::process::Command::new(&resolved)
         .args(&agent.args)
         .current_dir(workdir)
         .env_clear()
@@ -328,6 +389,17 @@ impl Acp {
     }
 }
 
+/// What a fresh session of an ACP agent offered: its configuration options and
+/// optional `models.availableModels` ids.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AcpOffered {
+    /// The session's configuration options (`model`, `thought_level`, …).
+    pub(crate) options: Vec<ConfigOption>,
+    /// Optional `models.availableModels[].modelId` entries reported alongside
+    /// `configOptions`, used to derive per-model effort ladders.
+    pub(crate) available_models: Vec<String>,
+}
+
 /// The ACP agents' runs: the agent process behind each session, what each
 /// agent offers, and the probes that ask it. Kept here rather than on the
 /// host they run on, whose shared parts — the paths, the runs journal, the
@@ -340,7 +412,7 @@ pub(crate) struct AcpRuns {
     acp_servers: Mutex<HashMap<String, Handle>>,
     /// What each ACP agent last said it offers, by agent id: its model list
     /// and effort ladder, for the composer; see [`AcpRuns::acp_options`].
-    acp_options: Mutex<HashMap<String, Vec<ConfigOption>>>,
+    acp_options: Mutex<HashMap<String, AcpOffered>>,
     /// Serializes each agent's probes, so a page asking twice starts one
     /// process, not two.
     acp_probes: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -401,11 +473,14 @@ impl Provider for Acp {
         Source::Acp
     }
 
-    /// Every permission request an agent makes is answered by the client:
-    /// an agent never stops to ask the user. Its sessions are conversations
-    /// only: no instant chats, and no scheduled tasks.
+    /// Tool permission requests (`session/request_permission`) are held open
+    /// for the user to approve or reject on any connected device. Its sessions
+    /// are conversations only: no instant chats, and no scheduled tasks.
     fn capabilities(&self) -> Capabilities {
-        Capabilities::default()
+        Capabilities {
+            permissions: true,
+            ..Capabilities::default()
+        }
     }
 
     fn run(&self) -> &dyn Run {
@@ -498,6 +573,10 @@ impl Run for Acp {
         self.runs.acp_handle(id).filter(Handle::alive).is_some_and(|handle| handle.interrupt())
     }
 
+    fn respond_permission<'a>(&'a self, id: &'a str, request_id: &'a str, reply: PermissionReply, by: Option<String>) -> BoxFuture<'a, PermissionOutcome> {
+        Box::pin(self.runs.acp_respond_permission(id, request_id, reply, by))
+    }
+
     // The transcript moves out of the agent's list (`archive_acp`).
     fn archive<'a>(&'a self, gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move { self.runs.archive_acp(gate, id).await.map_err(|error| error.to_string()) })
@@ -529,25 +608,25 @@ impl AcpRuns {
     /// agent's defaults, which a switched session's are not. With
     /// nothing remembered, a probe opens a session in a scratch directory,
     /// reads its options and closes it, so it leaves no conversation behind.
-    pub(crate) async fn acp_options(self: &Arc<Self>, agent: &AcpAgent) -> Result<Vec<ConfigOption>, InjectError> {
-        if let Some(options) = self.acp_options.lock().unwrap().get(&agent.id) {
-            return Ok(options.clone());
+    pub(crate) async fn acp_options(self: &Arc<Self>, agent: &AcpAgent) -> Result<AcpOffered, InjectError> {
+        if let Some(offered) = self.acp_options.lock().unwrap().get(&agent.id) {
+            return Ok(offered.clone());
         }
         // One probe per agent at a time: a page that asks twice gets the first
         // answer, and a slow agent does not hold up another's list.
         let gate = self.acp_probes.lock().unwrap().entry(agent.id.clone()).or_default().clone();
         let _probing = gate.lock().await;
-        if let Some(options) = self.acp_options.lock().unwrap().get(&agent.id) {
-            return Ok(options.clone());
+        if let Some(offered) = self.acp_options.lock().unwrap().get(&agent.id) {
+            return Ok(offered.clone());
         }
         let scratch = scratch("probe").map_err(|error| InjectError::Internal(error.to_string()))?;
-        let options = self.probe(agent, &scratch).await?;
-        self.remember_acp_options(&agent.id, &options);
-        Ok(options)
+        let offered = self.probe(agent, &scratch).await?;
+        self.remember_acp_options(&agent.id, &offered.options, &offered.available_models);
+        Ok(offered)
     }
 
-    async fn probe(&self, agent: &AcpAgent, scratch: &ScratchDir) -> Result<Vec<ConfigOption>, InjectError> {
-        let mut started = start_scratch(agent, scratch).await?;
+    async fn probe(&self, agent: &AcpAgent, scratch: &ScratchDir) -> Result<AcpOffered, InjectError> {
+        let mut started = start_scratch(agent, scratch, &self.host.paths.home).await?;
         #[cfg(test)]
         self.host.step("agent probed", Source::Acp, None);
         // Only answers are read: what else the agent says is dropped as it
@@ -568,13 +647,22 @@ impl AcpRuns {
         let _ = tokio::time::timeout(Duration::from_secs(10), started.conn.close_session(&opened.id)).await;
         started.conn.close().await;
         started.process.end(Duration::from_secs(10)).await;
-        Ok(opened.options)
+        Ok(AcpOffered {
+            options: opened.options,
+            available_models: opened.available_models,
+        })
     }
 
     /// What the agent `agent` offers, as a fresh session reports it.
-    pub(crate) fn remember_acp_options(&self, agent: &str, options: &[ConfigOption]) {
+    pub(crate) fn remember_acp_options(&self, agent: &str, options: &[ConfigOption], available_models: &[String]) {
         if !options.is_empty() {
-            self.acp_options.lock().unwrap().insert(agent.to_string(), options.to_vec());
+            self.acp_options.lock().unwrap().insert(
+                agent.to_string(),
+                AcpOffered {
+                    options: options.to_vec(),
+                    available_models: available_models.to_vec(),
+                },
+            );
         }
     }
 
@@ -676,7 +764,7 @@ impl AcpRuns {
 
     /// [`AcpRuns::check_acp_agent`], waiting `patience` for the answer.
     async fn check_acp_agent_within(&self, agent: &AcpAgent, patience: Duration) -> AcpCheck {
-        let env = agent.environment(clean_env_bare());
+        let env = agent.environment(acp_base_env(&self.host.paths.home));
         let searched = format!("PATH={}", env.get("PATH").map(String::as_str).unwrap_or(""));
         let redact = |text: &str| self.redact_acp(agent, text);
         let Some(resolved) = droppen_base::process_env::resolve_on_path(agent.command.trim(), &env) else {
@@ -689,7 +777,7 @@ impl AcpRuns {
                 return AcpCheck::ended(AcpCheckState::Failed, Some(redact(&format!("cannot make a scratch directory: {error}"))));
             }
         };
-        let mut started = match start_scratch(agent, &scratch).await {
+        let mut started = match start_scratch(agent, &scratch, &self.host.paths.home).await {
             Ok(started) => started,
             Err(error) => return AcpCheck::ended(AcpCheckState::Failed, Some(redact(&format!("{error}\n{searched}")))),
         };
@@ -739,7 +827,13 @@ impl AcpRuns {
         let message = message(text, options);
         // Checked before anything starts, against what the agent last offered:
         // a refused pick must not leave a new, empty session behind.
-        let offered = self.acp_options.lock().unwrap().get(&agent.id).cloned().unwrap_or_default();
+        let offered = self
+            .acp_options
+            .lock()
+            .unwrap()
+            .get(&agent.id)
+            .map(|o| o.options.clone())
+            .unwrap_or_default();
         check_choice(&agent, &offered, message.model.as_deref(), message.effort.as_deref())?;
         let name = agent.name.clone();
         let id = new_uuid();
@@ -781,7 +875,13 @@ impl AcpRuns {
         // when it is running and what the agent last offered otherwise.
         let offered = match &running {
             Some(handle) => handle.options(),
-            None => self.acp_options.lock().unwrap().get(&agent.id).cloned().unwrap_or_default(),
+            None => self
+                .acp_options
+                .lock()
+                .unwrap()
+                .get(&agent.id)
+                .map(|o| o.options.clone())
+                .unwrap_or_default(),
         };
         check_choice(&agent, &offered, message.model.as_deref(), message.effort.as_deref())?;
         let name = agent.name.clone();
@@ -836,6 +936,13 @@ impl AcpRuns {
         match self.acp_handle(id).filter(Handle::alive) {
             Some(handle) => handle.queue_action(qid, steer).await,
             None => QueueOutcome::NoResident,
+        }
+    }
+
+    pub(crate) async fn acp_respond_permission(&self, id: &str, request_id: &str, reply: PermissionReply, by: Option<String>) -> PermissionOutcome {
+        match self.acp_handle(id).filter(Handle::alive) {
+            Some(handle) => handle.respond_permission(request_id, reply, by).await,
+            None => PermissionOutcome::NoResident,
         }
     }
 
@@ -901,7 +1008,7 @@ impl AcpRuns {
         // A session that exists ran somewhere; that is where it is reopened,
         // whatever directory the request names.
         let workdir = session_workdir(&self.host.paths, recorded.as_ref().and_then(|recorded| recorded.cwd.as_deref()).or(cwd));
-        let mut started = start(agent, &workdir, permit).await?;
+        let mut started = start(agent, &workdir, &self.host.paths.home, permit).await?;
         #[cfg(test)]
         self.host.step("agent started", Source::Acp, Some(id));
         let reopen = recorded.as_ref().map(|recorded| recorded.agent_session.as_str());
@@ -921,7 +1028,7 @@ impl AcpRuns {
                 // A new session's options say what a fresh one starts on — the
                 // defaults the composer offers. A reopened one's say what *it*
                 // was switched to, which is nobody else's default.
-                self.remember_acp_options(&agent.id, &opened.options);
+                self.remember_acp_options(&agent.id, &opened.options, &opened.available_models);
                 let dir = AcpTranscripts::of(&self.host.paths).agent_dir(&agent.id).ok_or_else(|| InjectError::Internal(format!("unusable agent id {}", agent.id)))?;
                 tokio::fs::create_dir_all(&dir)
                     .await
@@ -975,6 +1082,8 @@ impl AcpRuns {
             transcript,
             options,
         } = open;
+        let (perm_tx, perm_rx) = mpsc::unbounded_channel();
+        client.attach_permissions(perm_tx);
         let driver = Driver {
             runs: self.clone(),
             agent,
@@ -989,6 +1098,8 @@ impl AcpRuns {
             state: State::opened(options, starting.handle.injection()),
             shared: starting.handle.shared(),
             rx,
+            perm_rx,
+            pending_permissions: Vec::new(),
             in_flight,
             retire,
             interrupted: false,
@@ -1110,6 +1221,30 @@ mod tests {
         let model_only = &offered[..1];
         let refused = check_choice(agent, model_only, None, Some("high")).expect_err("no effort to choose");
         assert!(refused.to_string().contains("offers no effort"), "{refused}");
+        // Switching away from a model with no effort ladder to another model
+        // defers effort validation until `Driver::configure` receives the new
+        // model's updated `configOptions`.
+        assert!(
+            check_choice(agent, model_only, Some("a:y"), Some("high")).is_ok(),
+            "switching model may unlock thought_level"
+        );
+        // Switching to another model with an effort not on the *previous*
+        // model's ladder is also deferred to `Driver::configure`.
+        assert!(check_choice(agent, &offered, Some("a:y"), Some("xhigh")).is_ok());
+        // Keeping the current model still rejects unknown efforts upfront.
+        assert!(check_choice(agent, &offered, Some("a:x"), Some("xhigh")).is_err());
+    }
+
+    #[test]
+    fn augment_path_preserves_order_and_appends_user_and_system_dirs() {
+        let home = Path::new("/Users/ada");
+        let augmented = augment_path("/custom/bin:/usr/bin", home);
+        let dirs: Vec<&str> = augmented.split(':').collect();
+        assert_eq!(dirs[0], "/custom/bin", "existing PATH order comes first");
+        assert_eq!(dirs[1], "/usr/bin");
+        assert!(dirs.contains(&"/Users/ada/.local/bin"), "{augmented}");
+        assert!(dirs.contains(&"/opt/homebrew/bin"), "{augmented}");
+        assert_eq!(dirs.iter().filter(|d| **d == "/usr/bin").count(), 1, "deduplicated");
     }
 
     /// A stand-in that never answers and is deaf to its input: it writes down

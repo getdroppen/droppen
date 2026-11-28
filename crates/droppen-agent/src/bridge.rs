@@ -237,6 +237,8 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("GET", "/api/sessions/{source}/{id}/questions", Use),
         ("POST", "/api/sessions/{source}/{id}/questions/{requestId}/answer", Use),
         ("POST", "/api/sessions/{source}/{id}/questions/{requestId}/dismiss", Use),
+        ("GET", "/api/sessions/{source}/{id}/permissions", Use),
+        ("POST", "/api/sessions/{source}/{id}/permissions/{requestId}", Use),
         ("PUT", "/api/sessions/{source}/{id}/title", Use),
         ("PUT", "/api/sessions/{source}/{id}/pin", Use),
         ("POST", "/api/sessions/{source}/{id}/archive", Use),

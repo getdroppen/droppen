@@ -3443,6 +3443,62 @@
         ],
         "type": "string"
       },
+      "PermissionOption": {
+        "description": "One choice the user can pick on a permission prompt.",
+        "properties": {
+          "id": {
+            "description": "The option id sent back to the agent.",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PermissionOptionKind",
+            "description": "Semantic kind of this option."
+          },
+          "name": {
+            "description": "Human-readable label shown on the button.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "PermissionOptionKind": {
+        "description": "What a permission option means: how clients style its button.",
+        "enum": [
+          "allow_once",
+          "allow_always",
+          "reject_once",
+          "reject_always",
+          "other"
+        ],
+        "type": "string"
+      },
+      "PermissionRespondResult": {
+        "description": "What answering a tool permission prompt did.",
+        "properties": {
+          "permission": {
+            "$ref": "#/components/schemas/SessionPermission",
+            "description": "The permission prompt as it now stands."
+          }
+        },
+        "required": [
+          "permission"
+        ],
+        "type": "object"
+      },
+      "PermissionState": {
+        "description": "Where a permission prompt is in its life.",
+        "enum": [
+          "pending",
+          "resolved",
+          "cancelled"
+        ],
+        "type": "string"
+      },
       "PluginBatch": {
         "description": "The body of `POST /api/plugins/{id}/batch`: all of these, or none.",
         "properties": {
@@ -4388,6 +4444,21 @@
         ],
         "type": "string"
       },
+      "RespondPermission": {
+        "description": "`POST /api/sessions/{source}/{id}/permissions/{requestId}` body.",
+        "properties": {
+          "cancel": {
+            "description": "Set `true` to cancel/decline without selecting a specific option.",
+            "type": "boolean"
+          },
+          "optionId": {
+            "description": "The option id chosen by the user (`SessionPermission::options[].id`).",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
       "ReturnRequest": {
         "description": "`POST /api/cloud/link/return`: droppen.app's sealed reply, as the page at\n`/link/return` took it from its address.",
         "properties": {
@@ -5281,6 +5352,13 @@
             "description": "How many items were dropped off the front of this page.",
             "type": "integer"
           },
+          "permissions": {
+            "description": "The tool permission prompts the agent asked, oldest first: the ones it\nis blocked on and recent settled ones. At most 20, from the last week.",
+            "items": {
+              "$ref": "#/components/schemas/SessionPermission"
+            },
+            "type": "array"
+          },
           "questions": {
             "description": "The questions the agent stopped to ask (`AskUserQuestion`), oldest\nfirst: the one it is blocked on, if any, and the recent ones with what\nbecame of them. At most 20, from the last week; empty for codex.",
             "items": {
@@ -5418,6 +5496,100 @@
         "required": [
           "sessions",
           "total"
+        ],
+        "type": "object"
+      },
+      "SessionPermission": {
+        "description": "One tool permission prompt an agent asked, as a session's state carries it.",
+        "properties": {
+          "answeredAt": {
+            "description": "When it was decided, ISO-8601.",
+            "nullable": true,
+            "type": "string"
+          },
+          "answeredBy": {
+            "description": "Who decided, when authentication is enabled.",
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "description": "When the agent asked, ISO-8601.",
+            "type": "string"
+          },
+          "input": {
+            "description": "Redacted preview of the tool input / command.",
+            "nullable": true,
+            "type": "string"
+          },
+          "options": {
+            "description": "Choices offered by the agent.",
+            "items": {
+              "$ref": "#/components/schemas/PermissionOption"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "description": "Why permission is being requested, when the agent said.",
+            "nullable": true,
+            "type": "string"
+          },
+          "requestId": {
+            "description": "The request id used to answer this permission prompt.",
+            "type": "string"
+          },
+          "selectedOptionId": {
+            "description": "The option id the user selected; `null` until resolved.",
+            "nullable": true,
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PermissionState",
+            "description": "Where it is in its life."
+          },
+          "title": {
+            "description": "Short summary of what the agent wants to do.",
+            "type": "string"
+          },
+          "toolCallId": {
+            "description": "The tool call id the request is about, when the agent provided one.",
+            "nullable": true,
+            "type": "string"
+          },
+          "toolName": {
+            "description": "The tool name or kind (`Bash`, `Write`, `shell`, `edit`, …).",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "toolCallId",
+          "title",
+          "toolName",
+          "reason",
+          "input",
+          "options",
+          "state",
+          "selectedOptionId",
+          "answeredBy",
+          "answeredAt",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "SessionPermissions": {
+        "description": "A session's tool permission prompts.",
+        "properties": {
+          "permissions": {
+            "description": "Oldest first: the ones the agent is blocked on, and the recent settled ones.",
+            "items": {
+              "$ref": "#/components/schemas/SessionPermission"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions"
         ],
         "type": "object"
       },
@@ -12736,6 +12908,154 @@
           }
         },
         "summary": "Send a message",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/sessions/{source}/{id}/permissions": {
+      "get": {
+        "deprecated": false,
+        "description": "The tool permission prompts the agent asked in this session, oldest first.",
+        "operationId": "session_permissions",
+        "parameters": [
+          {
+            "description": "Which CLI a session belongs to.",
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Source"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionPermissions"
+                }
+              }
+            },
+            "description": "The tool permission prompts, oldest first: the pending ones and recent settled ones"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The error body every failing route returns.\n\nNamed `Error` because that is the schema name in `openapi/openapi.json` —\n`Schematic::name()` is the Rust identifier, so the two have to agree."
+          }
+        },
+        "summary": "Tool permission prompts the agent asked",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/sessions/{source}/{id}/permissions/{requestId}": {
+      "post": {
+        "deprecated": false,
+        "description": "Approve, reject, or cancel a pending tool permission prompt.",
+        "operationId": "respond_permission",
+        "parameters": [
+          {
+            "description": "Session source (`claude`, `codex`, or `acp`).",
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Source",
+              "description": "Session source (`claude`, `codex`, or `acp`)."
+            }
+          },
+          {
+            "description": "Session id.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Permission request id.",
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "description": "Permission request id.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondPermission"
+              }
+            }
+          },
+          "description": "`POST /api/sessions/{source}/{id}/permissions/{requestId}` body.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionRespondResult"
+                }
+              }
+            },
+            "description": "The decision was delivered to the waiting agent"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Missing or unknown optionId"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No such permission prompt in this session"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Already decided or cancelled (`permission_settled`, with the record as it stands)"
+          }
+        },
+        "summary": "Respond to a tool permission prompt",
         "tags": [
           "sessions"
         ]

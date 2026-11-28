@@ -286,7 +286,11 @@ impl ConfigOption {
     pub fn is(&self, wanted: &str) -> bool {
         match self.category.as_deref() {
             Some(category) => category == wanted,
-            None => self.id == wanted || (wanted == category::THOUGHT_LEVEL && self.id == "reasoning_effort"),
+            None => {
+                self.id == wanted
+                    || (wanted == category::THOUGHT_LEVEL
+                        && matches!(self.id.as_str(), "reasoning_effort" | "thinking_level" | "effort"))
+            }
         }
     }
 
@@ -331,6 +335,23 @@ pub fn option_for<'a>(options: &'a [ConfigOption], category: &str) -> Option<&'a
 /// read is skipped, not the whole list.
 pub fn config_options(answer: &Value) -> Vec<ConfigOption> {
     answer["configOptions"].as_array().map(|options| read_options(options)).unwrap_or_default()
+}
+
+/// Read the `models.availableModels[].modelId` entries an agent reported
+/// alongside `configOptions`, when present (for example Antigravity's
+/// per-model thinking-level variants such as `claude-opus-5-5-high` vs
+/// `gpt-oss-120b-medium`).
+pub fn available_model_ids(answer: &Value) -> Vec<String> {
+    answer["models"]["availableModels"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("modelId").and_then(Value::as_str).map(str::to_owned))
+                .take(MAX_SELECT_VALUES * 4)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The most options a session's list keeps, and the most values one of them
@@ -546,6 +567,51 @@ pub struct TerminalParams {
     pub terminal_id: String,
 }
 
+/// `session/request_permission`: the agent asking the user to approve or reject
+/// a tool call.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RequestPermissionParams {
+    /// The session requesting permission.
+    pub session_id: String,
+    /// Details about the tool call requiring permission.
+    pub tool_call: Option<ToolCallUpdate>,
+    /// Options the user may pick from.
+    pub options: Vec<PermissionOptionWire>,
+}
+
+/// One option offered in `session/request_permission`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionOptionWire {
+    /// The option id to send back in `selected.optionId`.
+    pub option_id: String,
+    /// Human-readable label shown to the user.
+    #[serde(default)]
+    pub name: String,
+    /// Hint about what this choice means.
+    #[serde(default)]
+    pub kind: PermissionOptionKindWire,
+}
+
+/// Semantic kind of an ACP permission option.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionOptionKindWire {
+    /// Allow this single operation.
+    AllowOnce,
+    /// Allow this operation and remember the choice.
+    AllowAlways,
+    /// Reject this single operation.
+    RejectOnce,
+    /// Reject this operation and remember the choice.
+    RejectAlways,
+    /// Any other agent-defined option kind.
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,5 +682,23 @@ mod tests {
             Some([ToolCallContent::Content { .. }, ToolCallContent::Other])
         ));
         assert!(update.raw_output.is_none());
+    }
+
+    #[test]
+    fn effort_fallback_ids_and_available_model_ids_are_read() {
+        for id in ["thought_level", "reasoning_effort", "thinking_level", "effort"] {
+            let options = config_options(&json!({"configOptions": [
+                {"id": id, "name": "Effort", "type": "select", "currentValue": "high",
+                 "options": [{"value": "low", "name": "Low"}, {"value": "high", "name": "High"}]}
+            ]}));
+            assert!(option_for(&options, category::THOUGHT_LEVEL).is_some(), "id={id}");
+        }
+        let ids = available_model_ids(&json!({"models": {"availableModels": [
+            {"modelId": "gemini-4-neon-high", "name": "Gemini 4 Neon (High)"},
+            {"modelId": "gpt-oss-120b-medium", "name": "GPT-OSS 120B (Medium)"},
+            {"noModelId": true},
+        ]}}));
+        assert_eq!(ids, vec!["gemini-4-neon-high", "gpt-oss-120b-medium"]);
+        assert!(available_model_ids(&json!({})).is_empty());
     }
 }

@@ -336,9 +336,10 @@ fn tool_uses(detail: &Value) -> Vec<&Value> {
 }
 
 /// What this client answers an agent's own requests, line for line: a
-/// permission is declined, files and terminals are served, and a method nobody
-/// offers is an error. Each answer echoes a string, number or null id as it
-/// came; a request under any other id is not run and is refused under null.
+/// permission is held open until approved over the API, files and terminals are
+/// served, and a method nobody offers is an error. Each answer echoes a string,
+/// number or null id as it came; a request under any other id is not run and is
+/// refused under null.
 #[tokio::test]
 async fn the_agents_requests_are_answered_in_these_lines() {
     let home = tempfile::tempdir().expect("tempdir");
@@ -350,12 +351,42 @@ async fn the_agents_requests_are_answered_in_these_lines() {
     configure(&server, &program).await;
 
     let id = start(&server, "fake", &workdir, "ask the client").await;
+    // Wait until the permission prompt arrives and approve it through the route.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let perm_id = loop {
+        let perms = server.get_json(&format!("/api/sessions/acp/{id}/permissions")).await;
+        if let Some(first) = perms["permissions"].as_array().and_then(|list| list.first()) {
+            assert_eq!(first["title"], "rm -rf build");
+            assert_eq!(first["toolName"], "shell");
+            assert_eq!(first["state"], "pending");
+            assert_eq!(first["options"][0]["id"], "once");
+            break first["requestId"].as_str().expect("requestId").to_string();
+        }
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for permission prompt: {perms:#}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    };
+    let detail_while_waiting = server.get_json(&format!("/api/sessions/acp/{id}")).await;
+    assert_eq!(detail_while_waiting["summary"]["asking"], true, "asking while waiting for permission");
+    let (status, body) = server
+        .json("POST", &format!("/api/sessions/acp/{id}/permissions/{perm_id}"), &json!({"optionId": "once"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let settled: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(settled["permission"]["state"], "resolved");
+    assert_eq!(settled["permission"]["selectedOptionId"], "once");
+    // A second decision loses the race with 409 permission_settled.
+    let (status, body) = server
+        .json("POST", &format!("/api/sessions/acp/{id}/permissions/{perm_id}"), &json!({"optionId": "once"}))
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("permission_settled"), "{body}");
+
     wait_for(&server, &id, "the turn", finished).await;
     let answers: Vec<String> = stdin_lines(&workdir).into_iter().filter(|line| !line.contains("\"method\"")).collect();
     assert_eq!(
         answers,
         [
-            r#"{"jsonrpc":"2.0","id":1,"result":{"outcome":{"outcome":"cancelled"}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"outcome":{"outcome":"selected","optionId":"once"}}}"#,
             r#"{"jsonrpc":"2.0","id":2,"result":{"content":"two\n"}}"#,
             r#"{"jsonrpc":"2.0","id":3,"result":{}}"#,
             r#"{"jsonrpc":"2.0","id":4,"result":{"terminalId":"term-1"}}"#,
@@ -382,6 +413,36 @@ async fn the_agents_requests_are_answered_in_these_lines() {
         ran,
         [("string", true), ("big", true), ("fraction", true), ("null", true), ("boolean", false), ("object", false), ("array", false)]
     );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn an_interrupted_acp_turn_cancels_its_pending_permission() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let program = install_fake(home.path());
+    let workdir = home.path().join("work");
+    std::fs::create_dir_all(&workdir).expect("workdir");
+    std::fs::write(workdir.join("notes.txt"), "one\ntwo\nthree\n").expect("notes");
+    let server = TestServer::start_at(home.path(), None).await;
+    configure(&server, &program).await;
+
+    let id = start(&server, "fake", &workdir, "ask the client").await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let perms = server.get_json(&format!("/api/sessions/acp/{id}/permissions")).await;
+        if perms["permissions"].as_array().is_some_and(|list| !list.is_empty()) {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for permission prompt: {perms:#}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let (status, body) = server.json("POST", &format!("/api/sessions/acp/{id}/interrupt"), &json!({})).await;
+    assert_eq!(status, 200, "{body}");
+    wait_for(&server, &id, "the turn", finished).await;
+    let perms = server.get_json(&format!("/api/sessions/acp/{id}/permissions")).await;
+    assert_eq!(perms["permissions"][0]["state"], "cancelled", "{perms:#}");
+    let answers: Vec<String> = stdin_lines(&workdir).into_iter().filter(|line| !line.contains("\"method\"")).collect();
+    assert_eq!(answers[0], r#"{"jsonrpc":"2.0","id":1,"result":{"outcome":{"outcome":"cancelled"}}}"#);
     server.stop().await;
 }
 

@@ -33,9 +33,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::protocol::{CreateTerminalParams, ReadTextFileParams, TerminalParams, WriteTextFileParams};
+use crate::protocol::{CreateTerminalParams, ReadTextFileParams, RequestPermissionParams, TerminalParams, WriteTextFileParams};
 use droppen_base::process_env::Env;
 
 /// How much of a terminal's output is kept when the agent names no limit.
@@ -159,6 +159,13 @@ impl Terminal {
     }
 }
 
+/// A `session/request_permission` handed off to the session driver so a user
+/// can approve or reject it on any connected device.
+pub(super) struct IncomingPermission {
+    pub(super) params: RequestPermissionParams,
+    pub(super) reply: oneshot::Sender<RequestPermissionOutcome>,
+}
+
 /// What one agent process may ask of this server.
 pub(super) struct Client {
     /// Where a terminal runs when the agent names no directory.
@@ -168,6 +175,10 @@ pub(super) struct Client {
     env: Env,
     terminals: Mutex<HashMap<String, Arc<Terminal>>>,
     next: AtomicU64,
+    /// Where incoming `session/request_permission` calls go once a session
+    /// driver is attached. `None` during checks/probes, which immediately
+    /// cancel any permission prompt.
+    permissions: Mutex<Option<mpsc::UnboundedSender<IncomingPermission>>>,
 }
 
 impl Client {
@@ -177,7 +188,13 @@ impl Client {
             env,
             terminals: Mutex::new(HashMap::new()),
             next: AtomicU64::new(0),
+            permissions: Mutex::new(None),
         })
+    }
+
+    /// Route incoming `session/request_permission` calls to `tx`.
+    pub(super) fn attach_permissions(&self, tx: mpsc::UnboundedSender<IncomingPermission>) {
+        *self.permissions.lock().unwrap() = Some(tx);
     }
 
     /// Kill every terminal still running: the agent's process is gone, and
@@ -210,11 +227,26 @@ impl Client {
                 }
                 answer(ReleaseTerminalResponse::new())
             }
-            // There is nobody at this end of the pipe to ask, and approving
-            // whatever a model wants to run is not this server's call to make.
-            "session/request_permission" => answer(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled)),
+            "session/request_permission" => self.request_permission(request).await,
             other => Err(Error::new(METHOD_NOT_FOUND, format!("{other} is not supported by Droppen"))),
         }
+    }
+
+    async fn request_permission(&self, request: Value) -> Result<Value, Error> {
+        let tx = self.permissions.lock().unwrap().clone();
+        let Some(tx) = tx else {
+            return answer(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled));
+        };
+        let parsed: RequestPermissionParams = serde_json::from_value(request).unwrap_or_default();
+        if parsed.options.is_empty() {
+            return answer(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled));
+        }
+        let (reply, outcome) = oneshot::channel();
+        if tx.send(IncomingPermission { params: parsed, reply }).is_err() {
+            return answer(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled));
+        }
+        let outcome = outcome.await.unwrap_or(RequestPermissionOutcome::Cancelled);
+        answer(RequestPermissionResponse::new(outcome))
     }
 
     async fn read_text_file(&self, request: ReadTextFileParams) -> Result<Value, Error> {

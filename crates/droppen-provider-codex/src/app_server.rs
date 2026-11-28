@@ -200,6 +200,7 @@ impl Handle {
             // Approvals are off, and every interactive request the app server
             // makes is refused: codex never stops to ask.
             question: None,
+            permission: None,
             // Codex states each turn's window itself.
             model: None,
         }
@@ -687,6 +688,7 @@ impl Provider for Codex {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             questions: false,
+            permissions: false,
             chats: true,
             chat_attachments: true,
             chat_inline_attachments: false,

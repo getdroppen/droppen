@@ -15,6 +15,7 @@ droppen-base = { path = "../droppen-base" }
 droppen-http = { path = "../droppen-http" }
 droppen-instance = { path = "../droppen-instance" }
 droppen-provider = { path = "../droppen-provider" }
+droppen-search-path = { path = "../droppen-search-path" }
 droppen-sessions = { path = "../droppen-sessions" }
 # The Agent Client Protocol's own types, for what this provider sends an
 # agent: the spec's encoding rather than one of ours. Without the default

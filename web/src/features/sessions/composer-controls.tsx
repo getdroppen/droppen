@@ -269,7 +269,8 @@ export function modelOptions(
  * nothing" is how the picker ends up offering five rungs for a model that
  * accepts none, which is exactly what the server-side ladder exists to prevent.
  */
-export function effortsOf(model: ModelInfo | undefined, source: "claude" | "codex"): string[] {
+export function effortsOf(model: ModelInfo | undefined, source: Source): string[] {
+  if (source === "acp") return model?.efforts ?? [];
   return model?.efforts ?? EFFORT_FALLBACK[source];
 }
 
@@ -539,13 +540,13 @@ export function useComposerChoice(
   // account's own env block names — so only the static guess is flagged.
   const modelsAreFallback = modelData ? modelData.source === "fallback" : modelsFailed;
   const resolved = catalog.length
-    ? resolveModel(catalog, startingModel(pick("model"), startModel), cli)
+    ? resolveModel(catalog, acp ? pick("model") : startingModel(pick("model"), startModel), cli)
     : { options: [], active: NO_MODEL, custom: false };
   // An ACP agent takes only what it published: a stored pick it no longer
   // offers falls back to its first model rather than becoming a typed-in one.
   const { options: models, active: activeModel, custom: modelIsCustom } =
     acp && resolved.custom ? { options: catalog, active: catalog[0]!, custom: false } : resolved;
-  const effortOptions = effortsOf(activeModel, cli);
+  const effortOptions = effortsOf(activeModel, source);
   const storedEffort = pick("effort") ?? "";
   // Null for a model with no ladder, and for a stored rung the current model
   // does not accept: the effort follows the model rather than outliving it.
@@ -566,7 +567,7 @@ export function useComposerChoice(
 
   const pickModel = (id: string) => {
     const next = models.find((m) => m.id === id);
-    const opts = effortsOf(next, cli);
+    const opts = effortsOf(next, source);
     const patch: ComposerChoice = { model: id };
     // Efforts do not carry across models: `xhigh` is a rung opus-4-6 never had,
     // and sending it would be refused. Converge on what the new model names.

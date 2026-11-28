@@ -7,17 +7,20 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
+use agent_client_protocol_schema::v1::{RequestPermissionOutcome, SelectedPermissionOutcome};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
 use tokio::sync::{mpsc, oneshot};
 
-use super::client::Client;
+use super::client::{Client, IncomingPermission};
 use super::conn::{Conn, Event};
-use crate::protocol::{category, option_for, ConfigOption, SessionUpdate};
+use crate::protocol::{category, option_for, ConfigOption, PermissionOptionKindWire, SessionUpdate, ToolKind};
 use crate::agents::AcpAgent;
-use droppen_provider::{InjectError, Phase, QueueOutcome, ResidentState, Sent};
+use droppen_provider::permissions::{self, PermissionSpec};
+use droppen_provider::{InjectError, PermissionOutcome, PermissionReply, Phase, QueueOutcome, ResidentState, Sent};
 use crate::sessions::{Record, Translator};
+use droppen_sessions::delivery::{PermissionOption, PermissionOptionKind, PermissionState};
 use droppen_sessions::{Injection, InjectionRunState, Source};
 use droppen_base::time::iso8601;
 
@@ -51,6 +54,8 @@ pub(super) struct State {
     /// The session's configuration options as they stand: what its model and
     /// effort are, and may be set to.
     options: Vec<ConfigOption>,
+    /// Oldest pending permission prompt's request id, if any.
+    permission: Option<String>,
 }
 
 impl State {
@@ -251,8 +256,10 @@ impl Handle {
             tasks: vec![],
             awaiting_background: false,
             turn_started_at: state.turn_started_at.clone(),
-            // Every permission request the agent makes is answered by the client.
+            // ACP sessions have no AskUserQuestion; interactive tool approvals
+            // travel in `permission`.
             question: None,
+            permission: state.permission.clone(),
             // The agent states each reading's window itself.
             model: None,
         }
@@ -286,6 +293,23 @@ impl Handle {
         }
         rx.await.unwrap_or(QueueOutcome::Unreachable)
     }
+
+    pub(super) async fn respond_permission(&self, request_id: &str, reply: PermissionReply, by: Option<String>) -> PermissionOutcome {
+        let (respond, rx) = oneshot::channel();
+        if self
+            .tx
+            .send(Cmd::RespondPermission {
+                request_id: request_id.to_string(),
+                reply,
+                by,
+                respond,
+            })
+            .is_err()
+        {
+            return PermissionOutcome::NoResident;
+        }
+        rx.await.unwrap_or(PermissionOutcome::NoResident)
+    }
 }
 
 pub(crate) enum Cmd {
@@ -301,9 +325,23 @@ pub(crate) enum Cmd {
         steer: bool,
         reply: oneshot::Sender<QueueOutcome>,
     },
+    /// Deliver the user's permission decision for a pending `session/request_permission`.
+    RespondPermission {
+        request_id: String,
+        reply: PermissionReply,
+        by: Option<String>,
+        respond: oneshot::Sender<PermissionOutcome>,
+    },
     /// End the process if nothing is in flight — no turn, no queue, no message
     /// on its way; `false` when something is.
     Stop(oneshot::Sender<bool>),
+}
+
+/// One `session/request_permission` currently awaiting the user's choice.
+pub(super) struct OpenPermission {
+    request_id: String,
+    options: Vec<PermissionOption>,
+    reply: oneshot::Sender<RequestPermissionOutcome>,
 }
 
 /// The agent process, leading a process group of its own: what it starts — a
@@ -515,6 +553,10 @@ pub(super) struct Driver {
     pub(super) state: State,
     pub(super) shared: Arc<Mutex<State>>,
     pub(super) rx: mpsc::UnboundedReceiver<Cmd>,
+    /// Incoming `session/request_permission` requests from the ACP client task.
+    pub(super) perm_rx: mpsc::UnboundedReceiver<IncomingPermission>,
+    /// Permission prompts this session is currently blocked on, oldest first.
+    pub(super) pending_permissions: Vec<OpenPermission>,
     /// Its handle's count of messages on their way ([`Handle::deliver`]).
     pub(super) in_flight: Arc<AtomicUsize>,
     /// Its handle's [`Handle::retire`].
@@ -532,9 +574,12 @@ impl Driver {
         self.runs.host.poke_feed(Source::Acp, &self.id);
     }
 
-    /// Nothing to do: no turn, no queue, and no message on its way.
+    /// Nothing to do: no turn, no queue, no message on its way, and no pending permission.
     fn idle(&self) -> bool {
-        !self.state.active && self.state.queue.is_empty() && self.in_flight.load(Ordering::Acquire) == 0
+        !self.state.active
+            && self.state.queue.is_empty()
+            && self.in_flight.load(Ordering::Acquire) == 0
+            && self.pending_permissions.is_empty()
     }
 
     /// Take this driver's handle out of the runs' map, if it is still
@@ -591,6 +636,9 @@ impl Driver {
                         return;
                     }
                 },
+                Some(incoming) = self.perm_rx.recv() => {
+                    self.open_permission(incoming);
+                }
                 cmd = self.rx.recv() => match cmd {
                     Some(Cmd::Stop(reply)) => {
                         let idle = self.idle();
@@ -638,8 +686,20 @@ impl Driver {
             Cmd::Interrupt(turn) => {
                 if self.state.active && self.state.turns == turn && !self.interrupted {
                     self.interrupted = true;
+                    // ACP requires cancelling all pending permission requests when
+                    // sending session/cancel so the agent unblocks promptly.
+                    self.cancel_permissions();
                     self.conn.cancel(&self.agent_session).await?;
                 }
+            }
+            Cmd::RespondPermission {
+                request_id,
+                reply,
+                by,
+                respond,
+            } => {
+                let outcome = self.respond_permission(&request_id, reply, by);
+                let _ = respond.send(outcome);
             }
             Cmd::Queue { id, steer, reply } => {
                 let Some(index) = self.state.queue.iter().position(|message| message.id == id) else {
@@ -733,43 +793,71 @@ impl Driver {
     /// [`CONFIG_TIMEOUT`].
     async fn configure(&mut self, message: &Message) -> Result<(), Unset> {
         let name = self.agent.name.clone();
-        let picks = [
-            (category::MODEL, "model", message.model.as_deref()),
-            (category::THOUGHT_LEVEL, "effort", message.effort.as_deref()),
-        ];
-        for (category, what, wanted) in picks {
-            let Some(wanted) = wanted else { continue };
-            let Some(option) = option_for(&self.state.options, category).cloned() else {
-                return Err(Unset::Refused(format!("{name} offers no {what} to choose")));
+        let mut model_switched = false;
+        if let Some(wanted) = message.model.as_deref() {
+            let Some(option) = option_for(&self.state.options, category::MODEL).cloned() else {
+                return Err(Unset::Refused(format!("{name} offers no model to choose")));
             };
-            if option.current_value.as_deref() == Some(wanted) {
-                continue;
-            }
-            if !option.accepts(wanted) {
-                return Err(Unset::Refused(format!("{name} has no {what} \"{wanted}\"")));
-            }
-            let switched = tokio::time::timeout(CONFIG_TIMEOUT, self.conn.set_config_option(&self.agent_session, &option.id, wanted)).await;
-            let options = match switched {
-                Ok(Ok(options)) => options,
-                Ok(Err(error)) => return Err(Unset::Refused(format!("{name} did not switch its {what} to {wanted}: {error}"))),
-                Err(_) => {
-                    return Err(Unset::Silent(format!(
-                        "{name} did not answer a switch of its {what} to {wanted} within {}s; it was stopped",
-                        CONFIG_TIMEOUT.as_secs()
-                    )))
+            if option.current_value.as_deref() != Some(wanted) {
+                if !option.accepts(wanted) {
+                    return Err(Unset::Refused(format!("{name} has no model \"{wanted}\"")));
                 }
+                self.set_option(&name, "model", &option.id, wanted).await?;
+                model_switched = true;
+            }
+        }
+        if let Some(wanted) = message.effort.as_deref() {
+            let Some(option) = option_for(&self.state.options, category::THOUGHT_LEVEL).cloned() else {
+                // Switching to a model with no thinking levels (e.g. an
+                // orchestrator or fixed-effort model) leaves effort unset
+                // rather than failing the turn on a stale carried value.
+                if model_switched {
+                    return Ok(());
+                }
+                return Err(Unset::Refused(format!("{name} offers no effort to choose")));
             };
-            if options.is_empty() {
-                // An agent that answers without the list: the value it took.
-                if let Some(changed) = self.state.options.iter_mut().find(|candidate| candidate.id == option.id) {
-                    changed.current_value = Some(wanted.to_string());
+            let resolved = if option.accepts(wanted) {
+                wanted.to_string()
+            } else if model_switched {
+                // Switching from a model with `xhigh` to one capped at `high`
+                // clamps to the closest rung the new model offers (or keeps
+                // its default) instead of aborting the turn.
+                match resolve_effort_for_option(&option, wanted) {
+                    Some(mapped) => mapped,
+                    None => return Ok(()),
                 }
             } else {
-                self.options_changed(options);
+                return Err(Unset::Refused(format!("{name} has no effort \"{wanted}\"")));
+            };
+            if option.current_value.as_deref() != Some(resolved.as_str()) {
+                self.set_option(&name, "effort", &option.id, &resolved).await?;
             }
         }
         // Published with the turn's start or its failure, not here: the session
         // reads as starting in between ([`State::preparing`]).
+        Ok(())
+    }
+
+    async fn set_option(&mut self, name: &str, what: &str, option_id: &str, wanted: &str) -> Result<(), Unset> {
+        let switched = tokio::time::timeout(CONFIG_TIMEOUT, self.conn.set_config_option(&self.agent_session, option_id, wanted)).await;
+        let options = match switched {
+            Ok(Ok(options)) => options,
+            Ok(Err(error)) => return Err(Unset::Refused(format!("{name} did not switch its {what} to {wanted}: {error}"))),
+            Err(_) => {
+                return Err(Unset::Silent(format!(
+                    "{name} did not answer a switch of its {what} to {wanted} within {}s; it was stopped",
+                    CONFIG_TIMEOUT.as_secs()
+                )))
+            }
+        };
+        if options.is_empty() {
+            // An agent that answers without the list: the value it took.
+            if let Some(changed) = self.state.options.iter_mut().find(|candidate| candidate.id == option_id) {
+                changed.current_value = Some(wanted.to_string());
+            }
+        } else {
+            self.options_changed(options);
+        }
         Ok(())
     }
 
@@ -826,6 +914,7 @@ impl Driver {
     }
 
     fn end_turn(&mut self, error: Option<String>, interrupted: bool) {
+        self.cancel_permissions();
         self.interrupted = false;
         self.state.active = false;
         self.state.turn_started_at = None;
@@ -868,6 +957,7 @@ impl Driver {
     /// The process went away, or stopped answering: say so, and fail what
     /// was waiting for it.
     async fn died(&mut self, reason: &str) {
+        self.cancel_permissions();
         self.client.kill_all();
         self.process.kill().await;
         let tail = self.stderr.settled().await;
@@ -900,16 +990,209 @@ impl Driver {
     /// End the process politely: an ACP agent over stdio exits when its input
     /// closes.
     async fn exit(&mut self) {
+        self.cancel_permissions();
         self.rx.close();
         self.client.kill_all();
         self.conn.close().await;
         self.process.end(Duration::from_secs(10)).await;
     }
+
+    fn open_permission(&mut self, incoming: IncomingPermission) {
+        let request_id = droppen_provider::common::new_uuid();
+        let tool = incoming.params.tool_call.as_ref();
+        let tool_call_id = tool.map(|t| t.tool_call_id.clone()).filter(|id| !id.is_empty());
+        let tool_name = tool.and_then(|t| t.kind).map(|kind| match kind {
+            ToolKind::Execute => "shell",
+            ToolKind::Read => "read",
+            ToolKind::Edit => "edit",
+            ToolKind::Delete => "delete",
+            ToolKind::Move => "move",
+            ToolKind::Search => "search",
+            ToolKind::Fetch => "fetch",
+            ToolKind::Think => "think",
+            ToolKind::Other => "tool",
+        });
+        let raw_title = tool
+            .and_then(|t| t.title.as_deref())
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or(tool_name.unwrap_or("Tool permission"));
+        let title = permissions::clip_label(raw_title, |s| self.redact(s));
+        let input = tool
+            .and_then(|t| t.raw_input.as_ref())
+            .and_then(|v| permissions::format_input_preview(v, |s| self.redact(s)));
+        let options: Vec<PermissionOption> = incoming
+            .params
+            .options
+            .into_iter()
+            .filter(|opt| !opt.option_id.trim().is_empty())
+            .map(|opt| {
+                let kind = match opt.kind {
+                    PermissionOptionKindWire::AllowOnce => PermissionOptionKind::AllowOnce,
+                    PermissionOptionKindWire::AllowAlways => PermissionOptionKind::AllowAlways,
+                    PermissionOptionKindWire::RejectOnce => PermissionOptionKind::RejectOnce,
+                    PermissionOptionKindWire::RejectAlways => PermissionOptionKind::RejectAlways,
+                    PermissionOptionKindWire::Other => PermissionOptionKind::Other,
+                };
+                let label = if opt.name.trim().is_empty() {
+                    opt.option_id.clone()
+                } else {
+                    permissions::clip_label(&opt.name, |s| self.redact(s))
+                };
+                PermissionOption {
+                    id: opt.option_id,
+                    name: label,
+                    kind,
+                }
+            })
+            .collect();
+        if options.is_empty() {
+            let _ = incoming.reply.send(RequestPermissionOutcome::Cancelled);
+            return;
+        }
+        let spec = PermissionSpec {
+            request_id: request_id.clone(),
+            session_id: self.id.clone(),
+            tool_call_id,
+            title: title.clone(),
+            tool_name: tool_name.map(str::to_owned),
+            reason: None,
+            input,
+            options: options.clone(),
+        };
+        let fresh = self.runs.host.permissions().open(&spec, permissions::now_ms());
+        if fresh {
+            if let Some(alerts) = self.runs.host.alerts.get() {
+                alerts.question(
+                    self.runs.host.paths.clone(),
+                    Source::Acp,
+                    self.id.clone(),
+                    permissions::headline(&title),
+                );
+            }
+        }
+        self.pending_permissions.push(OpenPermission {
+            request_id,
+            options,
+            reply: incoming.reply,
+        });
+        self.sync_permission_state();
+        self.publish();
+        self.runs.host.announce(Source::Acp, &self.id);
+    }
+
+    fn respond_permission(&mut self, request_id: &str, reply: PermissionReply, by: Option<String>) -> PermissionOutcome {
+        let Some(at) = self.pending_permissions.iter().position(|p| p.request_id == request_id) else {
+            return PermissionOutcome::Unknown;
+        };
+        let (to, selected, wire_outcome) = match reply {
+            PermissionReply::Select(option_id) => {
+                if !self.pending_permissions[at].options.iter().any(|opt| opt.id == option_id) {
+                    return PermissionOutcome::Invalid(format!("unknown permission option: {option_id}"));
+                }
+                (
+                    PermissionState::Resolved,
+                    Some(option_id.clone()),
+                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
+                )
+            }
+            PermissionReply::Cancel => (PermissionState::Cancelled, None, RequestPermissionOutcome::Cancelled),
+        };
+        let store = self.runs.host.permissions();
+        let now = permissions::now_ms();
+        let stored = match store.resolve(request_id, to, selected.as_deref(), None, by.as_deref(), now) {
+            Ok(stored) => stored,
+            Err(Some(current)) => {
+                let open = self.pending_permissions.remove(at);
+                let _ = open.reply.send(RequestPermissionOutcome::Cancelled);
+                self.sync_permission_state();
+                self.publish();
+                self.runs.host.announce(Source::Acp, &self.id);
+                return PermissionOutcome::Resolved(current.wire());
+            }
+            Err(None) => return PermissionOutcome::Unknown,
+        };
+        let open = self.pending_permissions.remove(at);
+        let _ = open.reply.send(wire_outcome);
+        self.sync_permission_state();
+        self.publish();
+        self.runs.host.announce(Source::Acp, &self.id);
+        PermissionOutcome::Delivered(stored.wire())
+    }
+
+    fn cancel_permissions(&mut self) {
+        if self.pending_permissions.is_empty() {
+            return;
+        }
+        let store = self.runs.host.permissions();
+        let now = permissions::now_ms();
+        for open in self.pending_permissions.drain(..) {
+            store.close(&open.request_id, PermissionState::Cancelled, now);
+            let _ = open.reply.send(RequestPermissionOutcome::Cancelled);
+        }
+        self.sync_permission_state();
+        self.publish();
+        self.runs.host.announce(Source::Acp, &self.id);
+    }
+
+    fn sync_permission_state(&mut self) {
+        self.state.permission = self.pending_permissions.first().map(|p| p.request_id.clone());
+    }
+}
+
+/// Relative intensity of common reasoning-effort names, used only to clamp a
+/// carried effort when a model switch narrows the available `thought_level`
+/// ladder (for example `xhigh` → `high`).
+fn effort_rank(value: &str) -> Option<i32> {
+    match value {
+        "none" | "off" => Some(0),
+        "minimal" | "min" => Some(1),
+        "low" => Some(2),
+        "medium" | "med" | "default" | "auto" => Some(3),
+        "high" => Some(4),
+        "xhigh" | "extra_high" | "extra-high" | "very_high" | "very-high" => Some(5),
+        "max" | "maximum" => Some(6),
+        _ => None,
+    }
+}
+
+/// Nearest effort value `option` accepts for `wanted`, preferring not to
+/// overshoot on ties; falls back to `option.current_value` when unranked.
+fn resolve_effort_for_option(option: &ConfigOption, wanted: &str) -> Option<String> {
+    if let Some(target) = effort_rank(wanted) {
+        let best = option
+            .values()
+            .into_iter()
+            .filter_map(|candidate| {
+                let rank = effort_rank(&candidate.value)?;
+                // Distance first; on ties prefer the lower/safer rung.
+                Some(((rank - target).abs(), rank > target, candidate.value.as_str()))
+            })
+            .min_by_key(|(dist, higher, _)| (*dist, *higher))
+            .map(|(_, _, value)| value.to_string());
+        if best.is_some() {
+            return best;
+        }
+    }
+    option.current_value.clone()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effort_clamps_to_nearest_supported_rung_after_model_switch() {
+        let ladder = crate::protocol::config_options(&serde_json::json!({"configOptions": [
+            {"id": "thought_level", "name": "Thinking Level", "category": "thought_level", "type": "select", "currentValue": "medium",
+             "options": [{"value": "low", "name": "Low"}, {"value": "medium", "name": "Medium"}, {"value": "high", "name": "High"}]}
+        ]}));
+        let opt = &ladder[0];
+        assert_eq!(resolve_effort_for_option(opt, "xhigh").as_deref(), Some("high"));
+        assert_eq!(resolve_effort_for_option(opt, "max").as_deref(), Some("high"));
+        assert_eq!(resolve_effort_for_option(opt, "minimal").as_deref(), Some("low"));
+        assert_eq!(resolve_effort_for_option(opt, "custom_unknown").as_deref(), Some("medium"));
+    }
 
     #[test]
     fn a_line_the_stderr_ring_cut_is_left_out() {

@@ -973,6 +973,7 @@ mod tests {
 
         let all = Capabilities {
             questions: true,
+            permissions: true,
             chats: true,
             chat_attachments: true,
             chat_inline_attachments: true,
@@ -983,11 +984,18 @@ mod tests {
             providers.capabilities(Source::Codex),
             Capabilities {
                 questions: false,
+                permissions: false,
                 chat_inline_attachments: false,
                 ..all
             }
         );
-        assert_eq!(providers.capabilities(Source::Acp), Capabilities::default());
+        assert_eq!(
+            providers.capabilities(Source::Acp),
+            Capabilities {
+                permissions: true,
+                ..Capabilities::default()
+            }
+        );
     }
 
     /// The instance is free as soon as the serve task ends, whatever still holds

@@ -25,6 +25,7 @@ pub mod common;
 pub mod drafts;
 pub mod gate;
 pub mod models;
+pub mod permissions;
 pub mod questions;
 pub mod receipts;
 mod registry;
@@ -33,7 +34,7 @@ pub mod shim;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
-pub use common::{AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
+pub use common::{AnswerOutcome, PermissionOutcome, PermissionReply, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 pub use gate::{SessionLease, SpawnGate, SpawnPermit};
 pub use registry::{Capabilities, ContinueError, Provider, ProviderRegistry, Run, SendTo, StartAt};
 
@@ -550,6 +551,9 @@ pub struct RunHost {
     /// drivers open and close them; the answer routes compare-and-set them.
     /// See [`questions`].
     questions: Arc<questions::Questions>,
+    /// The tool permission prompts agents stopped to ask, in this instance's
+    /// database. See [`permissions`].
+    permissions: Arc<permissions::Permissions>,
     /// What each resident claude is thinking right now, as a running count;
     /// written by the drivers, read by the session feeds. See [`drafts`].
     pub drafts: drafts::Drafts,
@@ -713,9 +717,11 @@ impl RunHost {
     ) -> Arc<Self> {
         let receipts = Arc::new(receipts::Receipts::new(droppen_instance::db::at(paths.instance_db())));
         let questions = Arc::new(questions::Questions::new(droppen_instance::db::at(paths.instance_db())));
+        let permissions = Arc::new(permissions::Permissions::new(droppen_instance::db::at(paths.instance_db())));
         Arc::new(Self {
             receipts,
             questions,
+            permissions,
             accounts,
             quota,
             server: ServerId::local(&paths),
@@ -787,6 +793,11 @@ impl RunHost {
     /// The questions claude stopped to ask, and what became of them.
     pub fn questions(&self) -> &Arc<questions::Questions> {
         &self.questions
+    }
+
+    /// The tool permission prompts agents asked, and what became of them.
+    pub fn permissions(&self) -> &Arc<permissions::Permissions> {
+        &self.permissions
     }
 
     /// A driver's word on what became of the message travelling as `qid`.
@@ -1174,6 +1185,13 @@ impl InjectionRegistry {
             tracing::info!(
                 expired,
                 "questions whose process did not survive the restart can no longer be answered in their turn"
+            );
+        }
+        let cancelled_permissions = self.host.permissions.cancel_unheld(&held, permissions::now_ms());
+        if cancelled_permissions > 0 {
+            tracing::info!(
+                cancelled = cancelled_permissions,
+                "permission prompts whose process did not survive the restart were cancelled"
             );
         }
         report

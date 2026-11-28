@@ -644,6 +644,7 @@ impl Harness {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            permission: None,
             model: live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
@@ -701,8 +702,9 @@ impl Harness {
                     .and_then(|record| record.decode::<ClaudeRun>().ok())
                     .and_then(|record| record.payload.hold),
                 asked: Vec::new(),
+                pending_permissions: Vec::new(),
                 replay_asked: Vec::new(),
-                replay_refusals: Vec::new(),
+                replay_permissions: Vec::new(),
                 replay_declines: Vec::new(),
                 replay_gapped: false,
                 draft: registry.draft_writer(SESSION),

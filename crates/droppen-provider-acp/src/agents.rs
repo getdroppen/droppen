@@ -55,7 +55,7 @@ use droppen_http::extract::{ApiJson, ApiPath};
 use droppen_http::SendResult;
 use droppen_http::openapi_ext::Optional;
 use droppen_instance::paths::Paths;
-use droppen_base::process_env::{clean_env_bare, resolve_on_path, Env};
+use droppen_base::process_env::{resolve_on_path, Env};
 use crate::sessions::{valid_agent_id, MAX_AGENT_ID};
 use droppen_sessions::{SessionSummary, Source};
 
@@ -704,7 +704,7 @@ impl AcpAgentState {
     responses(200 = "The configured ACP agents, with the names of their extra variables, and the built-in descriptions")
 )]
 pub async fn acp_agents(State(state): State<AcpAgentState>) -> Json<AcpAgentList> {
-    let env = clean_env_bare();
+    let env = crate::acp_base_env(&state.paths.home);
     Json(AcpAgentList {
         agents: AcpAgentRegistry::of(&state.paths).list().iter().map(AcpAgent::info).collect(),
         presets: presets().iter().map(|preset| preset.looked_up(&env)).collect(),

@@ -419,6 +419,7 @@ export type SessionStateFields = Pick<
   | "rotation"
   | "receipts"
   | "questions"
+  | "permissions"
 >;
 
 /**
@@ -518,6 +519,7 @@ export function applyStateFrame<T extends SessionStateFields>(
   // every frame would wake every one of them twice a second. A server too old
   // to send it leaves what the snapshot said — an empty list, there.
   const questions = held(previous.questions, frame.questions ?? previous.questions);
+  const permissions = held(previous.permissions, frame.permissions ?? previous.permissions);
 
   if (
     summary === previous.summary &&
@@ -531,7 +533,8 @@ export function applyStateFrame<T extends SessionStateFields>(
     account === previous.account &&
     rotation === previous.rotation &&
     receipts === previous.receipts &&
-    questions === previous.questions
+    questions === previous.questions &&
+    permissions === previous.permissions
   ) {
     return previous;
   }
@@ -555,5 +558,6 @@ export function applyStateFrame<T extends SessionStateFields>(
     ...(rotation !== undefined ? { rotation } : {}),
     ...(receipts !== undefined ? { receipts } : {}),
     ...(questions !== undefined ? { questions } : {}),
+    ...(permissions !== undefined ? { permissions } : {}),
   } as T;
 }

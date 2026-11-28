@@ -25,6 +25,8 @@ import { injectionFailurePausesQueue, localQueueHeadAction, shouldDrainQueue } f
 import { ServerQueue } from "@/features/sessions/server-queue";
 import { RotationNotice } from "@/features/sessions/rotation-notice";
 import { AnswerNotice } from "@/features/sessions/question-card";
+import { PendingPermissions } from "@/features/sessions/permission-card";
+import { pendingPermissionsOf } from "@/features/sessions/session-permissions";
 import { composerAnswersQuestion, sentOutcome } from "@/features/sessions/session-questions";
 import { DeliveryPreviews, useDeliveryPreviews } from "@/features/sessions/delivery-preview-view";
 import { nextDeliveryId } from "@/features/sessions/delivery-preview";
@@ -421,7 +423,12 @@ export function Composer({
   // server sets them aside for an answer: they describe a process, and the one
   // answering is blocked mid-turn and cannot change. They take effect with the
   // next message that starts a turn, which is why nothing here claims more.
-  const answering = composerAnswersQuestion({ questions: detail.questions, row: detail.summary });
+  const pendingPermissions = pendingPermissionsOf(detail.permissions);
+  const answering = composerAnswersQuestion({
+    questions: detail.questions,
+    permissions: detail.permissions,
+    row: detail.summary,
+  });
   const questionPending = detail.questions?.some((question) => question.state === "pending") === true;
   const sendsAnswer = answering && canSend && queue.length === 0;
   const willQueue =
@@ -583,6 +590,7 @@ export function Composer({
         stopping={interrupt.isPending}
         onStop={bannerCanStop(banner) ? () => interrupt.mutate() : undefined}
       />
+      <PendingPermissions permissions={pendingPermissions} session={{ source, id }} />
       <AnswerNotice show={answering} blocked={questionPending} />
       <AwaitingBackgroundNotice resident={residentOf(detail.summary)} />
       <RotationNotice source={source} id={id} rotation={detail.rotation} />

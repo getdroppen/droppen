@@ -1,5 +1,13 @@
 [
   {
+    "id": "agy",
+    "name": "Antigravity",
+    "command": "agy",
+    "args": ["acp"],
+    "homepage": "https://antigravity.google/docs/cli/acp",
+    "note": "Sign in first with agy acp --login"
+  },
+  {
     "id": "bub",
     "name": "Bub",
     "command": "bub",

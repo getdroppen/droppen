@@ -2018,6 +2018,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{source}/{id}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tool permission prompts the agent asked
+         * @description The tool permission prompts the agent asked in this session, oldest first.
+         */
+        get: operations["session_permissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{source}/{id}/permissions/{requestId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Respond to a tool permission prompt
+         * @description Approve, reject, or cancel a pending tool permission prompt.
+         */
+        post: operations["respond_permission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{source}/{id}/pin": {
         parameters: {
             query?: never;
@@ -4456,6 +4496,30 @@ export interface components {
          * @enum {string}
          */
         PathRead: "ok" | "timeout" | "failed" | "unknown";
+        /** @description One choice the user can pick on a permission prompt. */
+        PermissionOption: {
+            /** @description The option id sent back to the agent. */
+            id: string;
+            /** @description Semantic kind of this option. */
+            kind: components["schemas"]["PermissionOptionKind"];
+            /** @description Human-readable label shown on the button. */
+            name: string;
+        };
+        /**
+         * @description What a permission option means: how clients style its button.
+         * @enum {string}
+         */
+        PermissionOptionKind: "allow_once" | "allow_always" | "reject_once" | "reject_always" | "other";
+        /** @description What answering a tool permission prompt did. */
+        PermissionRespondResult: {
+            /** @description The permission prompt as it now stands. */
+            permission: components["schemas"]["SessionPermission"];
+        };
+        /**
+         * @description Where a permission prompt is in its life.
+         * @enum {string}
+         */
+        PermissionState: "pending" | "resolved" | "cancelled";
         /** @description The body of `POST /api/plugins/{id}/batch`: all of these, or none. */
         PluginBatch: {
             /** @description In order; a name may appear once. */
@@ -4962,6 +5026,13 @@ export interface components {
          * @enum {string}
          */
         ResidentPhase: "starting" | "working" | "idle";
+        /** @description `POST /api/sessions/{source}/{id}/permissions/{requestId}` body. */
+        RespondPermission: {
+            /** @description Set `true` to cancel/decline without selecting a specific option. */
+            cancel?: boolean;
+            /** @description The option id chosen by the user (`SessionPermission::options[].id`). */
+            optionId?: string;
+        };
         /**
          * @description `POST /api/cloud/link/return`: droppen.app's sealed reply, as the page at
          *     `/link/return` took it from its address.
@@ -5497,6 +5568,11 @@ export interface components {
             /** @description How many items were dropped off the front of this page. */
             omittedItems: number;
             /**
+             * @description The tool permission prompts the agent asked, oldest first: the ones it
+             *     is blocked on and recent settled ones. At most 20, from the last week.
+             */
+            permissions?: components["schemas"]["SessionPermission"][];
+            /**
              * @description The questions the agent stopped to ask (`AskUserQuestion`), oldest
              *     first: the one it is blocked on, if any, and the recent ones with what
              *     became of them. At most 20, from the last week; empty for codex.
@@ -5561,6 +5637,38 @@ export interface components {
             sessions: components["schemas"]["SessionSummary"][];
             /** @description How many sessions matched before the limit was applied. */
             total: number;
+        };
+        /** @description One tool permission prompt an agent asked, as a session's state carries it. */
+        SessionPermission: {
+            /** @description When it was decided, ISO-8601. */
+            answeredAt: string | null;
+            /** @description Who decided, when authentication is enabled. */
+            answeredBy: string | null;
+            /** @description When the agent asked, ISO-8601. */
+            createdAt: string;
+            /** @description Redacted preview of the tool input / command. */
+            input: string | null;
+            /** @description Choices offered by the agent. */
+            options: components["schemas"]["PermissionOption"][];
+            /** @description Why permission is being requested, when the agent said. */
+            reason: string | null;
+            /** @description The request id used to answer this permission prompt. */
+            requestId: string;
+            /** @description The option id the user selected; `null` until resolved. */
+            selectedOptionId: string | null;
+            /** @description Where it is in its life. */
+            state: components["schemas"]["PermissionState"];
+            /** @description Short summary of what the agent wants to do. */
+            title: string;
+            /** @description The tool call id the request is about, when the agent provided one. */
+            toolCallId: string | null;
+            /** @description The tool name or kind (`Bash`, `Write`, `shell`, `edit`, …). */
+            toolName: string | null;
+        };
+        /** @description A session's tool permission prompts. */
+        SessionPermissions: {
+            /** @description Oldest first: the ones the agent is blocked on, and the recent settled ones. */
+            permissions: components["schemas"]["SessionPermission"][];
         };
         /** @description Desired sidebar pin state; PUT is idempotent. */
         SessionPin: {
@@ -10550,6 +10658,103 @@ export interface operations {
                 };
             };
             /** @description Session cannot accept input right now, belongs to another server (`external_session`), an attachment is not from `/api/uploads` or is no longer on this device (`attachment_missing`), or the `clientMessageId` is still being accepted (`in_progress`) or was used elsewhere (`client_message_id_reused`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    session_permissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Which CLI a session belongs to. */
+                source: components["schemas"]["Source"];
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tool permission prompts, oldest first: the pending ones and recent settled ones */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionPermissions"];
+                };
+            };
+            /**
+             * @description The error body every failing route returns.
+             *
+             *     Named `Error` because that is the schema name in `openapi/openapi.json` —
+             *     `Schematic::name()` is the Rust identifier, so the two have to agree.
+             */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    respond_permission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session source (`claude`, `codex`, or `acp`). */
+                source: components["schemas"]["Source"];
+                /** @description Session id. */
+                id: string;
+                /** @description Permission request id. */
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        /** @description `POST /api/sessions/{source}/{id}/permissions/{requestId}` body. */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RespondPermission"];
+            };
+        };
+        responses: {
+            /** @description The decision was delivered to the waiting agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionRespondResult"];
+                };
+            };
+            /** @description Missing or unknown optionId */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such permission prompt in this session */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Already decided or cancelled (`permission_settled`, with the record as it stands) */
             409: {
                 headers: {
                     [name: string]: unknown;
