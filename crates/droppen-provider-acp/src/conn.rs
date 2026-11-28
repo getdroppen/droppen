@@ -22,9 +22,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol_schema::v1::{
-    CancelNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as RpcError, FileSystemCapabilities, Implementation,
-    InitializeRequest, JsonRpcMessage, LoadSessionRequest, NewSessionRequest, Notification, PromptRequest, Request, RequestId,
-    SetSessionConfigOptionRequest, AGENT_METHOD_NAMES,
+    CancelNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, EnvVariable, Error as RpcError, FileSystemCapabilities,
+    Implementation, InitializeRequest, JsonRpcMessage, LoadSessionRequest, McpServer, McpServerStdio, NewSessionRequest, Notification,
+    PromptRequest, Request, RequestId, SetSessionConfigOptionRequest, AGENT_METHOD_NAMES,
 };
 use agent_client_protocol_schema::ProtocolVersion;
 use serde::Serialize;
@@ -214,13 +214,31 @@ impl Conn {
         self.prompt_capabilities.clone()
     }
 
-    /// Initialize, then create or reopen the session.
-    pub(super) async fn open(&mut self, id: Option<&str>, workdir: &Path) -> Result<Opened, InjectError> {
+    /// Initialize, then create or reopen the session, attaching any host MCP servers.
+    pub(super) async fn open(
+        &mut self,
+        id: Option<&str>,
+        workdir: &Path,
+        mcp_servers: Vec<droppen_provider::StdioMcpServer>,
+    ) -> Result<Opened, InjectError> {
         let init = self.initialize().await?;
         let cwd = absolute(workdir);
+        let wire_mcp: Vec<McpServer> = mcp_servers
+            .into_iter()
+            .map(|server| {
+                let env: Vec<EnvVariable> = server
+                    .env
+                    .into_iter()
+                    .map(|(name, value)| EnvVariable::new(name, value))
+                    .collect();
+                McpServer::Stdio(McpServerStdio::new(server.name, server.command).args(server.args).env(env))
+            })
+            .collect();
         match id {
             None => {
-                let created = self.call(AGENT_METHOD_NAMES.session_new, NewSessionRequest::new(cwd)).await?;
+                let created = self
+                    .call(AGENT_METHOD_NAMES.session_new, NewSessionRequest::new(cwd).mcp_servers(wire_mcp))
+                    .await?;
                 let id = created["sessionId"]
                     .as_str()
                     .filter(|id| crate::sessions::valid_id(id))
@@ -236,7 +254,12 @@ impl Conn {
                 if init["agentCapabilities"]["loadSession"].as_bool() != Some(true) {
                     return Err(InjectError::message("this agent cannot reopen a session"));
                 }
-                let loaded = self.call(AGENT_METHOD_NAMES.session_load, LoadSessionRequest::new(id.to_owned(), cwd)).await?;
+                let loaded = self
+                    .call(
+                        AGENT_METHOD_NAMES.session_load,
+                        LoadSessionRequest::new(id.to_owned(), cwd).mcp_servers(wire_mcp),
+                    )
+                    .await?;
                 // Every update the replay sent was read before the answer
                 // that ended it, so it is already on the channel.
                 let mut replayed = Vec::new();

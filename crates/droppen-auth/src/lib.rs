@@ -160,7 +160,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 
 use droppen_http::config::AuthSettings;
 use droppen_http::error::ApiError;
-use droppen_http::identity::{AuthIdentity, NotifyGrant};
+use droppen_http::identity::{AgentsGrant, AuthIdentity, NotifyGrant};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
@@ -246,6 +246,23 @@ pub trait NotifyCredential: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>>;
 }
 
+/// The capability `/api/agents/*` (the local session-to-session MCP agent bus)
+/// is called with, checked by [`guard`] only on loopback requests that did not
+/// arrive through the cloud bridge.
+pub trait AgentsCredential: Send + Sync {
+    /// Whether this request targets an `/api/agents/*` peer-messaging route.
+    fn is_agents_request(&self, method: &Method, path: &str) -> bool;
+
+    /// The calling session proved by `Authorization: Bearer`, as an opaque
+    /// [`AgentsGrant`], or `None` on any miss.
+    fn caller<'a>(
+        &'a self,
+        paths: &'a Paths,
+        instance: &'a str,
+        headers: &'a HeaderMap,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentsGrant>> + Send + 'a>>;
+}
+
 /// Everything the guard and the `/api/auth/*` routes need.
 ///
 /// Hangs off `droppen_drive::Drive`, like every other registry in this server,
@@ -282,6 +299,8 @@ pub struct Auth {
     instance: String,
     /// How [`guard`] checks the notify capability on its one route.
     notify: Arc<dyn NotifyCredential>,
+    /// How [`guard`] checks the loopback agent-bus capability on `/api/agents/*`.
+    agents: std::sync::OnceLock<Arc<dyn AgentsCredential>>,
     /// The cloud agent's per-boot loopback credential (hex), see the module docs.
     internal: String,
 }
@@ -329,6 +348,7 @@ impl Auth {
             paths: paths.clone(),
             instance: instance.name().to_string(),
             notify,
+            agents: std::sync::OnceLock::new(),
             internal: {
                 use rand::RngCore;
                 let mut bytes = [0u8; 32];
@@ -419,8 +439,24 @@ impl Auth {
     /// the secret, the MAC and the token format are that module's, and this one
     /// has no business knowing any of them. What belongs here is *where* the
     /// question is asked, which is the guard and nowhere else.
+    /// Attach the verifier for `/api/agents/*` loopback session tokens.
+    pub fn attach_agents_credential(&self, agents: Arc<dyn AgentsCredential>) {
+        let _ = self.agents.set(agents);
+    }
+
     async fn notify_caller(&self, headers: &HeaderMap) -> Option<NotifyGrant> {
         self.notify.caller(&self.paths, &self.instance, headers).await
+    }
+
+    async fn agents_caller(&self, method: &Method, path: &str, headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> Option<AgentsGrant> {
+        if !peer.is_some_and(|p| p.ip().is_loopback()) {
+            return None;
+        }
+        let verifier = self.agents.get()?;
+        if !verifier.is_agents_request(method, path) {
+            return None;
+        }
+        verifier.caller(&self.paths, &self.instance, headers).await
     }
 }
 
@@ -593,7 +629,8 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // What is left out is the case that matters for cost: an exempt static
     // asset, which is most requests a browser makes and now touches neither the
     // session store nor the account file.
-    let mut identity = if bridged.is_some() {
+    let is_bridged = bridged.is_some();
+    let mut identity = if is_bridged {
         bridged
     } else if path.starts_with("/api/") || !is_exempt {
         auth.identify(request.headers()).await
@@ -632,6 +669,14 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
         None
     };
 
+    // The local agent-bus capability: accepted only on `/api/agents/*` from a
+    // direct loopback peer (never over a cloud-bridged channel).
+    let agents_caller = if !is_bridged {
+        auth.agents_caller(&method, &path, request.headers(), peer).await
+    } else {
+        None
+    };
+
     if let Some(found) = identity.clone() {
         request.extensions_mut().insert(found);
     }
@@ -641,12 +686,16 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     if let Some(found) = caller.clone() {
         request.extensions_mut().insert(found);
     }
+    if let Some(found) = agents_caller.clone() {
+        request.extensions_mut().insert(found);
+    }
 
     // Nobody is let through for where they connect from: an identity, the
-    // notify capability on its one route, the exempt surface — or nothing at
-    // all asked, with authentication switched off. Everyone else is refused
-    // without a word about why; the status route is where a client learns it.
-    if identity.is_some() || caller.is_some() || is_exempt || auth.is_off() {
+    // notify or agent-bus capability on its own routes, the exempt surface —
+    // or nothing at all asked, with authentication switched off. Everyone else
+    // is refused without a word about why; the status route is where a client
+    // learns it.
+    if identity.is_some() || caller.is_some() || agents_caller.is_some() || is_exempt || auth.is_off() {
         return next.run(request).await.with_guard_headers(&path);
     }
     ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized").into_response().with_guard_headers(&path)

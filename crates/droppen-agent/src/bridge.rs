@@ -328,6 +328,11 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         // A session's own `rh-notify`, proved by a capability only a process
         // this server spawned holds: no device can satisfy it over a channel.
         ("POST", "/api/notify", Never),
+        // The local session-to-session MCP agent bus, proved by a loopback-only
+        // capability only a child this server spawned holds.
+        ("GET", "/api/agents", Never),
+        ("POST", "/api/agents/send", Never),
+        ("GET", "/api/agents/{source}/{id}/transcript", Never),
         ("GET", "/api/prefs", Use),
         ("PUT", "/api/prefs", Use),
         ("GET", "/api/push/vapid", Posture),
@@ -1021,6 +1026,16 @@ mod tests {
         for path in ["/api/notify", "/api/%6Eotify", "/api/notify?x=1"] {
             assert_eq!(refusal("POST", path, ADMIN), Some(Refusal::NotFromCloud), "{path}");
             assert_eq!(refusal("POST", path, PLAIN), Some(Refusal::NotFromCloud), "{path}");
+        }
+        // The local session-to-session agent bus is loopback-only too.
+        for (method, path) in [
+            ("GET", "/api/agents"),
+            ("GET", "/api/agents?source=claude"),
+            ("POST", "/api/agents/send"),
+            ("GET", "/api/agents/claude/abc/transcript"),
+        ] {
+            assert_eq!(refusal(method, path, ADMIN), Some(Refusal::NotFromCloud), "{method} {path}");
+            assert_eq!(refusal(method, path, PLAIN), Some(Refusal::NotFromCloud), "{method} {path}");
         }
         // Cloud-enabled plugin routes are allowed (`Use`); management routes
         // (install, uninstall, enabled/cloud switches) stay `NotFromCloud`.

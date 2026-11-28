@@ -867,6 +867,9 @@ mod tests {
     fn a_cross_session_envelope_is_taken_off_a_title() {
         let text = "<cross-session-message from=\"uds:/tmp/droppen-ff.sock\" from-name=\"droppen-ff\" from-mode=\"prompting\">\n\nThe cursor argument is agreed; keep the row blocked.\n</cross-session-message>";
         assert_eq!(title_line(text), "The cursor argument is agreed; keep the row blocked.");
+
+        let bus = "<cross-session-message from=\"acp/sess-1\" from-name=\"agy: Fix auth\" hop=\"1\">\n\nPlease inspect the failing middleware test.\n</cross-session-message>";
+        assert_eq!(title_line(bus), "Please inspect the failing middleware test.");
     }
 
     #[test]

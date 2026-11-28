@@ -473,6 +473,7 @@ async fn a_page_is_sent_the_count_and_never_the_words() {
         paths,
         transcripts: crate::app::transcript_sources(),
         providers: harness.providers(),
+        agents: droppen_drive::agents::AgentsBus::default(),
     });
     let feeds = droppen_drive::feed::FeedRegistry::new();
     harness.injections.host.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(droppen_drive::feed::global::GlobalFeed::new()));

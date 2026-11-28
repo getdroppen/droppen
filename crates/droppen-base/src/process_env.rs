@@ -20,6 +20,16 @@ pub const NOTIFY_URL_ENV: &str = "DROPPEN_NOTIFY_URL";
 /// [`NOTIFY_URL_ENV`].
 pub const NOTIFY_TOKEN_ENV: &str = "DROPPEN_NOTIFY_TOKEN";
 
+/// Where a session's `droppen mcp-agents` bridge reaches its server, and the
+/// session's peer capability token ([`AGENTS_TOKEN_ENV`]). Server-only
+/// otherwise (`is_server_only_variable`), so child processes and terminals
+/// never inherit an outer session's peer capability.
+pub const AGENTS_URL_ENV: &str = "DROPPEN_AGENTS_URL";
+
+/// The session's peer-messaging token, a stateless loopback capability: see
+/// [`AGENTS_URL_ENV`].
+pub const AGENTS_TOKEN_ENV: &str = "DROPPEN_AGENTS_TOKEN";
+
 /// The variable the desktop app reports its own login-shell read in:
 /// `ok`, `timeout` or `failed`. Server-only: never passed to a child
 /// (`is_server_only_variable`).
@@ -50,7 +60,12 @@ fn is_harness_variable(key: &str) -> bool {
 /// session, and carry its token into recordings and model requests. A
 /// decorated Claude session gets its own channel back after the strip.
 fn is_server_only_variable(key: &str) -> bool {
-    key == DESKTOP_APP_ENV || key == SHELL_READ_ENV || key == NOTIFY_URL_ENV || key == NOTIFY_TOKEN_ENV
+    key == DESKTOP_APP_ENV
+        || key == SHELL_READ_ENV
+        || key == NOTIFY_URL_ENV
+        || key == NOTIFY_TOKEN_ENV
+        || key == AGENTS_URL_ENV
+        || key == AGENTS_TOKEN_ENV
 }
 
 /// Variables an older Droppen set for whoever started this server, under their
@@ -405,6 +420,7 @@ mod tests {
     #[test]
     fn an_inherited_notify_channel_stays_with_the_server() {
         assert!(is_server_only_variable(NOTIFY_URL_ENV) && is_server_only_variable(NOTIFY_TOKEN_ENV));
+        assert!(is_server_only_variable(AGENTS_URL_ENV) && is_server_only_variable(AGENTS_TOKEN_ENV));
         let inherited = [(NOTIFY_URL_ENV, "http://outer/api/notify"), (NOTIFY_TOKEN_ENV, "outer"), ("HOME", "/home/ada")]
             .map(|(k, v)| (k.to_string(), v.to_string()));
         let env = clean_env_from(inherited.clone(), std::iter::empty::<(String, String)>());

@@ -437,6 +437,8 @@ async fn deliver_message(
     let sent = drive.providers.send_to_session(source, &id, summary.cwd.as_ref().map(String::as_str), &body.text, &options)
         .await
         .map_err(|error| spawn_refusal(error, "failed to start the CLI"))?;
+    // A human turn clears any consecutive cross-session hop streak on this session.
+    drive.agents.reset_hops(source, &id);
     let sent_uploads: Vec<String> = options.images.iter().chain(options.files.iter()).cloned().collect();
     if !sent_uploads.is_empty() {
         droppen_files::FileRoots::of(&drive.paths).mark_uploads_sent(&sent_uploads).await;
@@ -929,6 +931,9 @@ impl DriveState {
             .get("/api/composer-prefs", composer_prefs)
             .put("/api/composer-prefs/{source}", put_composer_default)
             .put("/api/composer-prefs/{source}/{id}", put_composer_session)
+            .get("/api/agents", crate::agents::list_agents)
+            .post("/api/agents/send", crate::agents::send_agent_message)
+            .get("/api/agents/{source}/{id}/transcript", crate::agents::read_agent_transcript)
             .put("/api/sessions/{source}/{id}/account", bind_session_account)
             .post("/api/sessions/{source}/{id}/continue", continue_session_on_account)
     }

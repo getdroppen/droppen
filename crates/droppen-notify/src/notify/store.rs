@@ -218,6 +218,15 @@ pub async fn secret(paths: &Paths) -> std::io::Result<Vec<u8>> {
     Ok(bytes.to_vec())
 }
 
+/// Read the existing signing secret without creating one if absent.
+pub async fn read_secret(paths: &Paths) -> Option<Vec<u8>> {
+    let data = read(paths).await;
+    if data.secret.is_empty() {
+        return None;
+    }
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&data.secret).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

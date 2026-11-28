@@ -12,6 +12,7 @@
 //! cache and the composer preferences, so the merge surface in `api/mod.rs`
 //! stays a single line.
 
+pub mod agents;
 mod attachments;
 pub mod composer_prefs;
 /// A provider and a transcript reader of the tests' own, for the tests of the
@@ -80,6 +81,8 @@ pub struct Drive {
     /// second handle to it for the middleware, which runs outside the router and
     /// so cannot go through `State<AppState>`.
     pub auth: Arc<Auth>,
+    /// In-memory rate-limit and hop-depth guardrails for the local MCP agent bus.
+    pub agents: agents::AgentsBus,
 }
 
 impl Drive {
@@ -107,6 +110,7 @@ impl Drive {
         let injections = InjectionRegistry::new(paths.clone(), instance, accounts.clone(), quota.clone(), decoration);
         Arc::new(Self {
             auth,
+            agents: agents::AgentsBus::default(),
             providers: ProviderRegistry::new(injections.clone(), providers),
             injections,
             accounts,
