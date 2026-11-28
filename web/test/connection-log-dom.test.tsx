@@ -33,7 +33,7 @@ const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
 const { default: i18n } = await import("./i18n-all.js");
 const { ConnectionLog, maskId } = await import("../src/lib/connection-log.js");
-const { ConnectionLogButton, ConnectionLogDialog, ConnectionLogHost, openConnectionLog } = await import("../src/features/cloud/connection-log.js");
+const { ConnectionLogButton, ConnectionLogDialog, ConnectionLogHost, headerNow, openConnectionLog } = await import("../src/features/cloud/connection-log.js");
 const { ConnectionLogSetting } = await import("../src/features/cloud/this-device.js");
 
 type Root = ReturnType<typeof createRoot>;
@@ -174,4 +174,34 @@ test("the ways to the log say what they open, in every language, and open the pa
   await settle();
   assert.ok(byTestId("connection-log"), "and so does 「这台设备」's row");
   assert.equal(document.querySelectorAll("[data-testid='connection-log']").length, 1, "one dialog");
+});
+
+test("headerNow runs build, agentVersion, and userAgent through ConnectionLog.clean", () => {
+  const log = new ConnectionLog();
+  const deviceId = "Dev-Ada-Studio-99";
+  log.hide(deviceId);
+  const bad = headerNow(
+    log,
+    "all",
+    () => null,
+    () => "192.168.1.23",
+    () => `${deviceId} studio.tail1234.ts.net`,
+    () => `Mozilla/5.0 (${deviceId}; 2001:db8:85a3::1; https://ada.example.com/secret)`,
+  );
+  assert.equal(bad.agentVersion, null, "an IP is not an agent version");
+  assert.ok(!bad.build.includes(deviceId) && !bad.build.includes("studio") && !bad.build.includes("tail1234"), bad.build);
+  assert.ok(!bad.userAgent.includes(deviceId) && !bad.userAgent.includes("2001:db8") && !bad.userAgent.includes("ada.example.com"), bad.userAgent);
+  assert.ok(bad.userAgent.includes(maskId(deviceId)!), "hidden ids are masked in header fields too");
+
+  const good = headerNow(
+    log,
+    "events",
+    () => null,
+    () => "0.2.143",
+    () => "index-B3x9aQ",
+    () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0 Safari/537.36",
+  );
+  assert.equal(good.build, "index-B3x9aQ");
+  assert.equal(good.agentVersion, "0.2.143");
+  assert.equal(good.userAgent, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0 Safari/537.36");
 });
