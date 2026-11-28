@@ -12,7 +12,7 @@
 //! variables must never reach a child, whichever login it runs on, and only
 //! the account's own block may say what key a codex spawn reads.
 
-mod support;
+use crate::support;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -33,7 +33,7 @@ const CODEX_BLOCK: &str = "OPENAI_API_KEY=spawn-env-codex-key\nOPENAI_BASE_URL=h
 /// A codex block whose key is under the fallback name, with no endpoint.
 const CODEX_FALLBACK_BLOCK: &str = "CODEX_API_KEY=spawn-env-codex-fallback";
 /// The stand-in ACP agent of `tests/acp.rs`.
-const FAKE_ACP_AGENT: &str = include_str!("support/fake_acp_agent.py");
+const FAKE_ACP_AGENT: &str = include_str!("../support/fake_acp_agent.py");
 /// A session in the root this server owns.
 const OWNED_ID: &str = "cccccccc-3333-4333-8333-cccccccccccc";
 /// The thread the fake App Server answers under unless told otherwise.

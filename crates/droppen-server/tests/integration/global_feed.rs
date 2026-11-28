@@ -7,7 +7,7 @@
 //! deliberately not asserted: both are legitimate, and under this repository's
 //! agent sandbox FSEvents does not reach a `cargo test` binary at all.
 
-mod common;
+use crate::common;
 
 use std::io::Write;
 use std::path::Path;

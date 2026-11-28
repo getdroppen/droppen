@@ -47,6 +47,7 @@
 //! times per user message. A torn journal is still the one thing adoption
 //! cannot recover from; it is simply no longer this module's job to prevent it.
 
+#[cfg(any(test, feature = "test-support"))]
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;

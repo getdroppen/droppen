@@ -15,7 +15,7 @@ droppen-base = { path = "../droppen-base" }
 droppen-instance = { path = "../droppen-instance" }
 # The `Schematic` derive alone, for the shapes the cloud page reads: the device
 # role serves no routes of its own, so it needs nothing of the web framework.
-gotcha_core = { workspace = true, default-features = false }
+gotcha_core = { workspace = true }
 libc = "0.2"
 # The jitter on a copy's retry.
 rand = "0.8"

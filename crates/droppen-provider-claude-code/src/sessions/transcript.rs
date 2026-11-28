@@ -69,9 +69,11 @@ pub fn block_text(block: &Json) -> String {
 }
 
 fn tag_value(text: &str, name: &str) -> Option<String> {
-    let re = regex::Regex::new(&format!(r"(?s)<{name}>(.*?)</{name}>")).ok()?;
-    let caps = re.captures(text)?;
-    let value = caps[1].trim();
+    let open = format!("<{name}>");
+    let close = format!("</{name}>");
+    let start = text.find(&open)? + open.len();
+    let end = text[start..].find(&close)?;
+    let value = text[start..start + end].trim();
     (!value.is_empty()).then(|| value.to_string())
 }
 

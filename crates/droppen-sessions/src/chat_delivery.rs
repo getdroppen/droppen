@@ -266,14 +266,6 @@ mod tests {
         Paths::new(home.to_path_buf())
     }
 
-    fn upload(paths: &Paths, name: &str) -> String {
-        let dir = paths.uploads_dir().join("abc");
-        std::fs::create_dir_all(&dir).expect("uploads dir");
-        let path = dir.join(name);
-        std::fs::write(&path, b"bytes").expect("upload");
-        path.to_string_lossy().into_owned()
-    }
-
     /// A fixed entry stamp, and a delivery written before it.
     fn before(stamp: &str) -> i64 {
         entry_time_ms(stamp).expect("stamp") - 1_000

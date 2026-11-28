@@ -136,7 +136,26 @@ impl ModelRule {
 
     /// Whether `model` is spelled the way this rule allows.
     pub fn admits(&self, model: &str) -> bool {
-        self.max_len > 0 && model.chars().count() <= self.max_len && regex::Regex::new(self.pattern).expect("valid model pattern").is_match(model)
+        if self.max_len == 0 || model.chars().count() > self.max_len {
+            return false;
+        }
+        if self.pattern == MODEL_PATTERN {
+            static NAMED_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+            return NAMED_RE
+                .get_or_init(|| regex::Regex::new(MODEL_PATTERN).expect("valid model pattern"))
+                .is_match(model);
+        }
+        static EXTRA_RE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<&'static str, regex::Regex>>> =
+            std::sync::OnceLock::new();
+        let cache = EXTRA_RE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        let re = {
+            let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard
+                .entry(self.pattern)
+                .or_insert_with(|| regex::Regex::new(self.pattern).expect("valid model pattern"))
+                .clone()
+        };
+        re.is_match(model)
     }
 }
 

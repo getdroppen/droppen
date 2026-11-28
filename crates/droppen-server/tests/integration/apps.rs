@@ -31,7 +31,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-mod common;
+use crate::common;
 
 // ------------------------------------------------------------------ the server
 
@@ -513,7 +513,7 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-DROPPEN_FAKE_ADDR="$addr" DROPPEN_FAKE_TEST="{test}" "{binary}" fake_code_server --exact --ignored --nocapture
+DROPPEN_FAKE_ADDR="$addr" DROPPEN_FAKE_TEST="{test}" "{binary}" apps::fake_code_server --exact --ignored --nocapture
 "#,
         binary = binary.display(),
         test = std::process::id()

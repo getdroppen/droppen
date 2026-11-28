@@ -2143,7 +2143,7 @@ mod tests {
                 machines: vec![("h-2".into(), KeyCommit { epoch, hash: [epoch as u8; 32] })],
             })
         };
-        let mut push = |state: &mut ChainState, action: Action| {
+        let push = |state: &mut ChainState, action: Action| {
             let e = state.draft(Signer::Device("d-1".into()), action, 2_000 + state.seq()).sign(dev.signing_key());
             state.apply(&e, &mut ChainClock::history()).unwrap();
             e

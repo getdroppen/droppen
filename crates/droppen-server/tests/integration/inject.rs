@@ -5,7 +5,7 @@
 //! records exactly the two things it controls — argv and env — and the tests
 //! read them back.
 
-mod support;
+use crate::support;
 
 use serde_json::{json, Value};
 use support::{common, plan_dying_cli, plan_forked_transcript, Probe};

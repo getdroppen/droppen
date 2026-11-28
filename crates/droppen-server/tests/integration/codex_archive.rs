@@ -1,5 +1,5 @@
 //! Archive must use the live writer, not start a competing Codex process.
-mod support;
+use crate::support;
 
 use droppen_instance::paths::Paths;
 use droppen_provider_codex::sessions::codex::CodexSessions;

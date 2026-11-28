@@ -11,7 +11,7 @@
 //! see: two remote-hands on one machine resuming one transcript and interleaving
 //! two conversations into it.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 

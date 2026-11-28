@@ -11,7 +11,7 @@
 //! below are all in the root this server owns for exactly that reason, so
 //! grouping is tested without scope in the way.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 

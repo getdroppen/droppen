@@ -23,7 +23,7 @@ use droppen_workbench::terminals::{Registry, MAX_TERMINALS};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 
-mod common;
+use crate::common;
 
 use common::sh;
 

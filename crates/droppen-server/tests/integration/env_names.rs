@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 /// How long a server is given to come up, or a supervised child to start.
 const BUDGET: Duration = Duration::from_secs(60);
 
-mod common;
+use crate::common;
 
 /// The server binary with nothing in its environment but a scratch home, a
 /// `PATH` and `env`.

@@ -250,7 +250,7 @@ async fn read_fenced(paths: Paths, requested: String, cap: Cap) -> Result<Vec<u8
             use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
         }
-        let mut file = options.open(&path).map_err(|_| ChatAttachmentError::Missing)?;
+        let file = options.open(&path).map_err(|_| ChatAttachmentError::Missing)?;
         let meta = file.metadata().map_err(|_| ChatAttachmentError::Missing)?;
         if !meta.is_file() {
             return Err(ChatAttachmentError::Missing);

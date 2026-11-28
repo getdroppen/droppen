@@ -6,7 +6,7 @@
 //! the point — it is what proves the fallback is a real substitute rather than a
 //! differently shaped answer.
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 

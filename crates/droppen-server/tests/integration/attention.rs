@@ -7,7 +7,7 @@
 //! serve one row, and a badge that disagreed with itself between the sidebar and
 //! the session header would be worse than no badge.
 
-mod common;
+use crate::common;
 
 use std::path::{Path, PathBuf};
 

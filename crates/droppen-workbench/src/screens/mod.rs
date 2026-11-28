@@ -469,6 +469,7 @@ impl PaneContent {
     }
 
     /// As a leaf's `content` holds it.
+    #[cfg(test)]
     fn to_value(&self) -> Value {
         // Checked strings and the plugin state, which always encode.
         serde_json::to_value(self).unwrap_or_default()
