@@ -28,6 +28,7 @@ import {
   composerAnswersQuestion,
   EMPTY_DRAFT,
   effectiveQuestion,
+  hasMountedPendingQuestion,
   questionIsOpen,
   questionsByToolUse,
   sentOutcome,
@@ -412,4 +413,14 @@ test("a lost race draws the winner's answer straight away", () => {
   assert.match(visibleText(html), /→ Blue/);
   assert.match(visibleText(html), /answered · alice/);
   assert.doesNotMatch(html, /<button|<input/, "no buttons that can only fail again");
+});
+
+test("composer only locks for a pending question whose card is mounted in the loaded transcript", () => {
+  const pending = record({ toolUseId: "toolu_1" });
+  const unlinked = record({ toolUseId: null });
+  assert.equal(hasMountedPendingQuestion([pending], [call({ toolUseId: "toolu_1" })]), true);
+  assert.equal(hasMountedPendingQuestion([pending], []), false, "no card rendered: composer stays usable as fallback");
+  assert.equal(hasMountedPendingQuestion([pending], [call({ toolUseId: "toolu_other" })]), false);
+  assert.equal(hasMountedPendingQuestion([unlinked], [call({ toolUseId: "toolu_1" })]), false);
+  assert.equal(hasMountedPendingQuestion([record({ state: "expired" })], [call({ toolUseId: "toolu_1" })]), false);
 });

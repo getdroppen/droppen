@@ -259,3 +259,25 @@ export function composerAnswersQuestion(input: {
   if (input.permissions?.some((permission) => permission.state === "pending")) return false;
   return residentOf(input.row)?.asking === true;
 }
+
+/**
+ * Whether a pending question is actually mounted as a card in the loaded
+ * transcript items.
+ *
+ * The composer only blocks sending when the user has a live card above to
+ * answer in; when a pending record has no `tool_use` call in the loaded
+ * transcript, leaving the composer enabled lets the user still answer via
+ * free-text instead of deadlocking.
+ */
+export function hasMountedPendingQuestion(
+  questions: readonly SessionQuestion[] | null | undefined,
+  items: readonly { kind?: string; toolUseId?: string | null }[] | null | undefined,
+): boolean {
+  if (!questions?.length || !items?.length) return false;
+  const pendingIds = new Set<string>();
+  for (const question of questions) {
+    if (question.state === "pending" && question.toolUseId) pendingIds.add(question.toolUseId);
+  }
+  if (pendingIds.size === 0) return false;
+  return items.some((item) => item.kind === "tool_use" && !!item.toolUseId && pendingIds.has(item.toolUseId));
+}

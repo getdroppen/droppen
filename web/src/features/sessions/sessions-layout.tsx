@@ -902,7 +902,7 @@ function SessionsPanel({ detailOpen, unified, devices }: { detailOpen: boolean; 
             </div>
           )}
           {model && rows.length === 0 && (
-            <div className="p-3 text-2xs text-faint">{t("no sessions match")}</div>
+            <div className="p-3 text-2xs text-faint">{q.trim() ? t("no sessions match") : t("no sessions yet")}</div>
           )}
         </div>
       </Panel>
@@ -939,6 +939,17 @@ function DevicesLedger({ devices }: { devices: readonly MachineInfo[] }) {
 export function SessionsIndex() {
   const { t } = useTranslation();
   const { unified, devices } = useUnifiedDevices();
+  const openNewSession = useOpenNewSession();
+  const newSessionCta = (
+    <button
+      type="button"
+      onClick={() => openNewSession()}
+      className="mt-2 inline-flex h-8 w-fit items-center gap-1.5 border border-border-strong bg-bg px-3 font-mono text-2xs font-medium text-fg hover:bg-hover"
+    >
+      <PlusIcon className="size-3.5" />
+      {t("new session")}
+    </button>
+  );
   if (unified) {
     return (
       <div data-testid="sessions-index-ledger" className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto">
@@ -946,6 +957,7 @@ export function SessionsIndex() {
         <div className="flex max-w-xs flex-col gap-2 p-6">
           <CapsLabel>{t("select a session")}</CapsLabel>
           <p className="text-[28px] leading-[1.05] font-semibold tracking-[-0.03em] text-fg">{t("pick one on the left, or start a new one.")}</p>
+          {newSessionCta}
         </div>
       </div>
     );
@@ -955,6 +967,7 @@ export function SessionsIndex() {
       <div className="flex max-w-xs flex-col gap-2">
         <CapsLabel>{t("select a session")}</CapsLabel>
         <p className="text-[28px] leading-[1.05] font-semibold tracking-[-0.03em] text-fg">{t("pick one on the left, or start a new one.")}</p>
+        {newSessionCta}
         {/* A device never signed in to Droppen: 「登录 Droppen」 front and centre (local page only). */}
         <LinkFirstRun className="mt-6" />
       </div>

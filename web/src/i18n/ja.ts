@@ -1049,4 +1049,7 @@ export const ja: Record<string, string> = {
   "{{device}} is offline — plugins run live on their device": "{{device}} はオフラインです — プラグインは所属デバイス上で実行されます",
   "the {{name}} plugin is not available on droppen.app": "{{name}} プラグインは droppen.app で利用できません",
   "Turn on \"Show on droppen.app\" in Settings › Plugins on the device itself.": "このデバイスの「設定 › プラグイン」で「droppen.app で表示」をオンにしてください。",
+  "no sessions yet": "セッションはまだありません",
+  "The session was created, but has not appeared yet.": "セッションを作成しましたが、まだ一覧に表示されていません。",
+  "open session": "セッションを開く",
 };

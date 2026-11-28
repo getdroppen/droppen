@@ -1048,4 +1048,7 @@ export const zhTW: Record<string, string> = {
   "{{device}} is offline — plugins run live on their device": "{{device}} 已離線 — 外掛在其所屬裝置上即時執行",
   "the {{name}} plugin is not available on droppen.app": "外掛 {{name}} 未在 droppen.app 上開放",
   "Turn on \"Show on droppen.app\" in Settings › Plugins on the device itself.": "請在該裝置上的「設定 › 外掛」中開啟「在 droppen.app 上顯示」。",
+  "no sessions yet": "還沒有工作階段",
+  "The session was created, but has not appeared yet.": "工作階段已建立，但暫時還沒有出現在清單裡。",
+  "open session": "開啟工作階段",
 };

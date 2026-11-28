@@ -775,6 +775,14 @@ export function SessionDetailInner({
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold max-md:text-[15px]" title={displayTitle}>{displayTitle}</span>
           <PaneUnreadPill />
           <StatusBadge session={summary} />
+          {data.injection?.state === "failed" && !data.injection.interrupted && (
+            <span
+              data-signal="failed"
+              className="inline-flex h-4 shrink-0 items-center bg-danger/15 px-1 font-mono text-[10px] leading-none font-medium whitespace-nowrap text-danger shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-danger)_50%,transparent)]"
+            >
+              {t("failed")}
+            </span>
+          )}
           {!chat && !readOnly && summary.scope === "owned" && <SessionPinButton session={summary} onError={setActionError} />}
           <SearchButton onClick={search.openBar} />
           {!chat && !readOnly && (

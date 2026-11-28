@@ -1048,4 +1048,7 @@ export const zhCN: Record<string, string> = {
   "{{device}} is offline — plugins run live on their device": "{{device}} 已离线 — 插件在其所属设备上实时运行",
   "the {{name}} plugin is not available on droppen.app": "插件 {{name}} 未在 droppen.app 上开放",
   "Turn on \"Show on droppen.app\" in Settings › Plugins on the device itself.": "请在该设备本地的「设置 › 插件」中开启「在 droppen.app 上显示」。",
+  "no sessions yet": "还没有会话",
+  "The session was created, but has not appeared yet.": "会话已创建，但暂时还没有出现在列表里。",
+  "open session": "打开会话",
 };

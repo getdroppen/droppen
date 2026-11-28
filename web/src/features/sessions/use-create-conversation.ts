@@ -30,6 +30,15 @@ export interface CreateConversationOptions {
   onAttempt?: (attempt: CreationAttempt | null) => void;
 }
 
+/** How long to wait for a newly created CLI conversation to appear in the feed before surfacing a fallback action. */
+const DISCOVERY_TIMEOUT_MS = 15_000;
+
+export interface StalledConversation {
+  kind: "session" | "chat";
+  source: SessionSource;
+  id: string;
+}
+
 /** Both CLI surfaces wait for discovery; API chats exist as soon as POST returns. */
 export function useCreateConversation(
   input: NewConversation,
@@ -41,7 +50,8 @@ export function useCreateConversation(
   const machine = useMachine();
   const navigate = useMachineNavigate();
   const queryClient = useQueryClient();
-  const [pending, setPending] = useState<{ kind: "session" | "chat"; source: SessionSource; id: string } | null>(null);
+  const [pending, setPending] = useState<StalledConversation | null>(null);
+  const [stalled, setStalled] = useState<StalledConversation | null>(null);
   const sessions = useGlobalFeedSelector(useCallback(
     (state: GlobalFeedState) => pending?.kind === "session" ? state.sessions : null,
     [pending?.kind],
@@ -64,6 +74,7 @@ export function useCreateConversation(
     const found = resolveCreatedSession(pending, available);
     if (!found) return;
     setPending(null);
+    setStalled(null);
     if (pending?.kind === "chat") {
       void navigate({ to: found.source === "claude" ? "/chat/claude/$id" : "/chat/codex/$id", params: { id: found.id } });
     } else if (onCreated) {
@@ -72,6 +83,15 @@ export function useCreateConversation(
       void navigate({ to: "/sessions/$source/$id", params: { source: found.source, id: found.id } });
     }
   }, [pending, sessions, chats, navigate, onCreated]);
+
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(() => {
+      setStalled(pending);
+      setPending(null);
+    }, DISCOVERY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [pending]);
 
   // Kept across retries of the same request, so a start whose answer was lost
   // is answered with the session it made instead of making a second one.
@@ -120,11 +140,13 @@ export function useCreateConversation(
         stashPendingMessage(machine, id, submitted.text.trim());
         void navigate({ to: "/chat/api/$id", params: { id } });
       } else {
+        setStalled(null);
         setPending({ kind: submitted.kind, source: submitted.source, id });
       }
       onAccepted(accepted);
     },
   });
   const isPending = mutation.isPending || pending !== null;
-  return { ...mutation, isPending, canStart: canCreateConversation(input, isPending) };
+  const clearStalled = useCallback(() => setStalled(null), []);
+  return { ...mutation, isPending, stalled, clearStalled, canStart: canCreateConversation(input, isPending) };
 }

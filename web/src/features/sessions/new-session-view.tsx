@@ -60,6 +60,7 @@ import {
   storedAttachments,
   useComposerAttachments,
   useSendHint,
+  withSendHint,
   type ComposerAttachment,
 } from "./composer-box";
 import { ComposerChoiceChips, useComposerChoice, useComposerStart } from "./composer-controls";
@@ -350,6 +351,19 @@ export function NewSessionView({
   }, [machine]);
   const start = useCreateConversation(input(text.trim(), [], []), onAccepted, onCreated, { attempt: draft.attempt, onAttempt });
 
+  // If the server accepted the session start but the session has not appeared
+  // in the live feed after the timeout, stop blocking the composer and surface
+  // a direct link instead of leaving the user stuck or losing their prompt.
+  useEffect(() => {
+    if (!start.stalled) return;
+    setStarting((prev) => {
+      if (prev && !composerNow.current.text.trim()) {
+        setText(prev.composer.text);
+      }
+      return null;
+    });
+  }, [start.stalled]);
+
   const busy = starting !== null || start.isPending;
   const canStart = canStartOn(info);
   const empty = !text.trim() && attachments.attachments.length === 0;
@@ -543,6 +557,19 @@ export function NewSessionView({
           {start.isError && !starting && (
             <Notice signal="failed">{t("could not start the session:")} {errorText(start.error)}</Notice>
           )}
+          {start.stalled && !starting && (
+            <Notice signal="warn">
+              {t("The session was created, but has not appeared yet.")}
+              {" · "}
+              <button
+                type="button"
+                onClick={() => onCreated(start.stalled!.source, start.stalled!.id)}
+                className="underline hover:text-fg"
+              >
+                {t("open session")}
+              </button>
+            </Notice>
+          )}
           {noRoom.length > 0 && (
             <Notice signal="warn">
               <span data-attachments-dropped="">
@@ -602,7 +629,7 @@ export function NewSessionView({
             disabled={busy}
             autoFocus={wide}
             onSubmit={submit}
-            placeholder={`${t("what should the agent do?")} (${sendHint})`}
+            placeholder={withSendHint(t("what should the agent do?"), sendHint)}
             chips={<>
               {/* Never another device shown read-only here (the local app's gateway): nothing starts there. */}
               {onDevice && <DevicePicker ghost forStarting writable value={machine} onSelect={switchDevice} disabled={busy} />}

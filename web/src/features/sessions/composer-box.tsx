@@ -12,6 +12,7 @@
 import { CameraIcon, FileTextIcon, ListPlusIcon, CircleNotchIcon, PaperclipIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useMediaQuery } from "usehooks-ts";
 import { HostImage } from "@/components/host-file";
 import { authHeader, noteUnauthorized } from "@/lib/auth";
 import { cn } from "@/lib/cn";
@@ -201,10 +202,22 @@ function draggingFiles(e: React.DragEvent): boolean {
   return [...(e.dataTransfer?.types ?? [])].includes("Files");
 }
 
-/** The words after a placeholder that say how to send: they follow the user's own send-key preference. */
+/**
+ * The words after a placeholder that say how to send: they follow the user's
+ * own send-key preference on desktop, and stay empty on touch-primary devices
+ * where keyboard shortcut hints are irrelevant.
+ */
 export function useSendHint(): string {
   const { t } = useTranslation();
-  return useEnterSendsModifier() ? t("⌘/Ctrl+Enter to send") : t("Enter to send, Shift+Enter for newline");
+  const coarse = useMediaQuery("(pointer: coarse)", { defaultValue: false, initializeWithValue: false });
+  const modifier = useEnterSendsModifier();
+  if (coarse) return "";
+  return modifier ? t("⌘/Ctrl+Enter to send") : t("Enter to send, Shift+Enter for newline");
+}
+
+/** Combine a composer prompt with an optional desktop send-key hint. */
+export function withSendHint(prompt: string, hint: string): string {
+  return hint ? `${prompt} (${hint})` : prompt;
 }
 
 /** One attachment in the strip above the textarea. */
