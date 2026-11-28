@@ -44,18 +44,18 @@ const QUIET_SESSION: &str = "cccccccc-3333-4333-8333-dddddddddddd";
 /// take several times that. A window ten times the tick leaves the test
 /// measuring what it is about — whether *progress* keeps a run alive — instead
 /// of measuring the scheduler.
-const STALL_AFTER: Duration = Duration::from_secs(4);
+const STALL_AFTER: Duration = Duration::from_secs(1);
 
 /// How often the watchdog looks. Small: it is a poll, not a stopwatch, and
 /// nothing here asserts on when exactly a quiet turn is noticed.
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(50);
 
 /// How long between two lines of a progressing run's output.
-const PROGRESS_TICK: Duration = Duration::from_millis(300);
+const PROGRESS_TICK: Duration = Duration::from_millis(150);
 
 /// Enough ticks that the run outlives [`STALL_AFTER`] with room to spare, so a
 /// wall-clock cap set at the stall window would certainly have ended it.
-const PROGRESS_TICKS: u32 = 20;
+const PROGRESS_TICKS: u32 = 10;
 
 fn shrink_the_watchdog() {
     static ONCE: OnceLock<()> = OnceLock::new();

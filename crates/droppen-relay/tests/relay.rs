@@ -658,12 +658,12 @@ async fn a_revoke_closes_its_connections_within_a_second_and_a_throttle_slows_th
     let mut dev = Client::login(o, &dev_h).await;
     let mut other = Client::login(o, &other_h).await;
 
-    // Throttled to 64 KiB/s (bursts of 128 KiB): 384 KiB take seconds.
-    hub.tell(json!({"t": "throttle", "account": "a-1", "bytes_per_sec": 65536}));
+    // Throttled to 32 KiB/s (bursts of 64 KiB): 96 KiB each way take ~2 s.
+    hub.tell(json!({"t": "throttle", "account": "a-1", "bytes_per_sec": 32768}));
     tokio::time::sleep(Duration::from_millis(200)).await;
     let ch = pair(&mut other, &mut agent, 1, "m-1").await;
     let t0 = Instant::now();
-    traffic(&mut other, &mut agent, 1, ch, 384 * 1024).await;
+    traffic(&mut other, &mut agent, 1, ch, 96 * 1024).await;
     assert!(t0.elapsed() > Duration::from_millis(1500), "throttled: {:?}", t0.elapsed());
     hub.tell(json!({"t": "throttle", "account": "a-1", "bytes_per_sec": null}));
 

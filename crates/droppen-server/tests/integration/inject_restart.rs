@@ -437,7 +437,7 @@ async fn a_second_instance_cannot_start_a_run_the_first_one_is_already_running()
     let workspace = first.workspace();
     first.seed_session(&first.managed_root(), SESSION, &workspace);
     // Long enough that the run is still going when the sibling tries.
-    plan_slow_cli(&workspace, 5.0);
+    plan_slow_cli(&workspace, 1.5);
 
     let (status, body) = first
         .send("POST", &format!("/api/sessions/claude/{SESSION}/message"), json!({"text": "mine"}))
