@@ -427,24 +427,34 @@ impl Mux {
         }
         for priority in 1..=3 {
             let room = budget.of(priority);
-            let fits = |s: &Stream| {
-                s.pending.front().is_some_and(|front| {
-                    let n = (front.len() as u64).min(s.send_credit);
-                    n > 0 && (n <= room as u64 || room >= MIN_CUT)
-                })
-            };
-            let ready: Vec<u32> = self
-                .streams
-                .iter()
-                .filter(|(_, s)| s.class.priority() == priority)
-                .filter(|(_, s)| fits(s) || (s.pending.is_empty() && s.pending_close.is_some()))
-                .map(|(&sid, _)| sid)
-                .collect();
-            if ready.is_empty() {
-                continue;
-            }
             let last = self.last_served[priority];
-            let sid = ready.iter().copied().find(|&sid| sid > last).unwrap_or(ready[0]);
+            let mut first = None;
+            let mut next_above = None;
+            for (&sid, s) in &self.streams {
+                if s.class.priority() != priority {
+                    continue;
+                }
+                let ready = match s.pending.front() {
+                    Some(front) => {
+                        let n = (front.len() as u64).min(s.send_credit);
+                        n > 0 && (n <= room as u64 || room >= MIN_CUT)
+                    }
+                    None => s.pending_close.is_some(),
+                };
+                if !ready {
+                    continue;
+                }
+                if first.is_none() {
+                    first = Some(sid);
+                }
+                if sid > last {
+                    next_above = Some(sid);
+                    break;
+                }
+            }
+            let Some(sid) = next_above.or(first) else {
+                continue;
+            };
             self.last_served[priority] = sid;
             let stream = self.streams.get_mut(&sid).expect("listed above");
             if let Some(front) = stream.pending.front_mut() {

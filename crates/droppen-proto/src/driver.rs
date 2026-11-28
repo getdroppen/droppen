@@ -46,10 +46,7 @@ pub const DIRECT_BUDGET: usize = 1024 * 1024;
 const DRAIN_POLL_US: u64 = 5_000;
 
 fn now_us() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_micros() as u64)
-        .unwrap_or(0)
+    crate::clock::monotonic_us()
 }
 
 /// The clock a channel runs on: microseconds, the wall clock by default.

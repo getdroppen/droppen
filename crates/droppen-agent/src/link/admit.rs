@@ -48,10 +48,7 @@ pub(crate) fn server_info(direct: bool) -> Vec<u8> {
 }
 
 pub(crate) fn now_us() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_micros() as u64)
-        .unwrap_or(0)
+    droppen_proto::clock::monotonic_us()
 }
 
 /// The first message of a channel: on the hub or a relay, or on a direct
@@ -604,6 +601,7 @@ pub(crate) fn accept(
                     };
                     if !current {
                         tracing::info!(%device, ch, "a stream from a device that may no longer control this machine; closing its channel");
+                        channel.close(4403, "this device may no longer control this machine");
                         break;
                     }
                     if !fresh {

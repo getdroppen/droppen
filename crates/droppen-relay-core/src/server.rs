@@ -71,6 +71,9 @@ pub struct ConnInfo {
     /// reader re-reads it.
     pub rate: Arc<AtomicU64>,
     pub ticket_rate: u64,
+    /// The ticket's frame rate: updated on renewal so throttle changes do not
+    /// reset it to the pre-login default.
+    pub frames: Arc<AtomicU64>,
     /// Whether the account is throttled (the Hub said so, or the ticket):
     /// then its connections share one bucket ([`Server::charge_account`]).
     pub throttled: Arc<AtomicBool>,
@@ -83,6 +86,7 @@ pub struct ConnInfo {
 #[derive(Clone)]
 pub struct ConnRate {
     pub rate: Arc<AtomicU64>,
+    pub frames: Arc<AtomicU64>,
     pub throttled: Arc<AtomicBool>,
 }
 
@@ -331,11 +335,16 @@ impl Server {
             return Err((CLOSE_BUSY, "the relay is shutting down"));
         }
         let mut inner = self.lock();
-        if inner.conns.len() >= self.config.max_conns {
+        // Same-agent reconnection replaces its own existing slot rather than failing on full limits.
+        let replacing_agent = (ticket.role == TicketRole::Agent)
+            .then(|| inner.route.agent(&ticket.account, &ticket.id))
+            .flatten();
+        let replacing = usize::from(replacing_agent.is_some());
+        if inner.conns.len().saturating_sub(replacing) >= self.config.max_conns {
             return Err((CLOSE_BUSY, "the relay is full"));
         }
         let held = inner.by_account.get(&ticket.account).map_or(0, HashSet::len);
-        if held >= usize::from(ticket.limits.account_conns) {
+        if held.saturating_sub(replacing) >= usize::from(ticket.limits.account_conns) {
             return Err((CLOSE_LIMIT, "too many connections for this account on this relay"));
         }
         let peer = match ticket.role {
@@ -350,8 +359,10 @@ impl Server {
         };
         let replaced = inner.route.add(conn, peer, usize::from(ticket.limits.channels).max(1));
         let ticket_rate = u64::from(ticket.limits.bytes_per_sec.max(1));
+        let ticket_frames = u64::from(ticket.limits.frames_per_sec.max(1));
         let hub_throttle = inner.throttles.get(&ticket.account).copied();
         let rate = Arc::new(AtomicU64::new(hub_throttle.unwrap_or(ticket_rate)));
+        let frames = Arc::new(AtomicU64::new(ticket_frames));
         let throttled = Arc::new(AtomicBool::new(hub_throttle.is_some() || ticket.throttled()));
         inner.conns.insert(
             conn,
@@ -366,6 +377,7 @@ impl Server {
                 expires_ms: ticket.expires_ms,
                 rate: rate.clone(),
                 ticket_rate,
+                frames: frames.clone(),
                 throttled: throttled.clone(),
                 ticket_throttled: ticket.throttled(),
                 since_ms: now_ms(),
@@ -378,7 +390,7 @@ impl Server {
         if ticket.role == TicketRole::Agent {
             presence_change(&inner, &ticket.account, &ticket.id, true);
         }
-        Ok(ConnRate { rate, throttled })
+        Ok(ConnRate { rate, frames, throttled })
     }
 
     /// Charge `len` bytes of a throttled account's connection to the bucket
@@ -433,6 +445,7 @@ impl Server {
         info.ticket_rate = u64::from(ticket.limits.bytes_per_sec.max(1));
         info.ticket_throttled = ticket.throttled();
         info.rate.store(throttle.unwrap_or(info.ticket_rate), Ordering::Relaxed);
+        info.frames.store(u64::from(ticket.limits.frames_per_sec.max(1)), Ordering::Relaxed);
         info.throttled.store(throttle.is_some() || info.ticket_throttled, Ordering::Relaxed);
         Ok(ticket.expires_ms)
     }
@@ -480,11 +493,7 @@ impl Server {
             return;
         }
         let inner = self.lock();
-        for d in deliveries {
-            if let Some(info) = inner.conns.get(&d.to) {
-                info.out.frame(&d.frame);
-            }
-        }
+        deliver_locked(&inner, deliveries);
     }
 
     /// `OPEN {ch, peer}` from a device: only to a machine its ticket names,
@@ -492,23 +501,21 @@ impl Server {
     /// with another ticket, as a device — one identity, two roles; its device
     /// connection does not reach its own agent connection).
     pub fn open(&self, conn: ConnId, ch: u32, machine: &str) {
-        let deliveries = {
-            let mut inner = self.lock();
-            let allowed = match inner.conns.get(&conn) {
-                Some(info) if info.role == TicketRole::Device && info.id == machine => Err("a device does not open a channel to itself"),
-                Some(info) if info.role == TicketRole::Device && info.peers.contains(machine) => Ok(()),
-                Some(info) if info.role == TicketRole::Device => Err("the ticket does not name that device"),
-                _ => Ok(()),
-            };
-            inner.route.open(conn, ch, machine, allowed)
+        let mut inner = self.lock();
+        let allowed = match inner.conns.get(&conn) {
+            Some(info) if info.role == TicketRole::Device && info.id == machine => Err("a device does not open a channel to itself"),
+            Some(info) if info.role == TicketRole::Device && info.peers.contains(machine) => Ok(()),
+            Some(info) if info.role == TicketRole::Device => Err("the ticket does not name that device"),
+            _ => Ok(()),
         };
-        self.deliver(deliveries);
+        let deliveries = inner.route.open(conn, ch, machine, allowed);
+        deliver_locked(&inner, deliveries);
     }
 
     /// `DATA`: forwarded untouched and counted for the account.
     pub fn data(&self, conn: ConnId, ch: u32, payload: Vec<u8>) {
         let len = payload.len();
-        let (deliveries, account) = {
+        let account = {
             let mut inner = self.lock();
             let deliveries = inner.route.data(conn, ch, payload);
             let account = deliveries
@@ -516,22 +523,24 @@ impl Server {
                 .any(|d| matches!(d.frame, Frame::Data { .. }))
                 .then(|| inner.conns.get(&conn).map(|i| i.account.clone()))
                 .flatten();
-            (deliveries, account)
+            deliver_locked(&inner, deliveries);
+            account
         };
         if let Some(account) = account {
             self.meter.count(&account, len);
         }
-        self.deliver(deliveries);
     }
 
     pub fn credit(&self, conn: ConnId, ch: u32, bytes: u32) {
-        let deliveries = self.lock().route.credit(conn, ch, bytes);
-        self.deliver(deliveries);
+        let mut inner = self.lock();
+        let deliveries = inner.route.credit(conn, ch, bytes);
+        deliver_locked(&inner, deliveries);
     }
 
     pub fn close(&self, conn: ConnId, ch: u32, code: u16, reason: String) {
-        let deliveries = self.lock().route.close(conn, ch, code, reason);
-        self.deliver(deliveries);
+        let mut inner = self.lock();
+        let deliveries = inner.route.close(conn, ch, code, reason);
+        deliver_locked(&inner, deliveries);
     }
 
     // ------------------------------------------------------------ the Hub's orders
@@ -632,6 +641,14 @@ impl Server {
     pub fn load(&self) -> f32 {
         let (conns, _) = self.counts();
         (conns as f32 / self.config.max_conns.max(1) as f32).min(1.0)
+    }
+}
+
+fn deliver_locked(inner: &Inner, deliveries: Vec<Delivery>) {
+    for d in deliveries {
+        if let Some(info) = inner.conns.get(&d.to) {
+            info.out.frame(&d.frame);
+        }
     }
 }
 

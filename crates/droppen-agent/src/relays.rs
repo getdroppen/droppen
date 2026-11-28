@@ -93,14 +93,14 @@ pub enum Event {
     HubUp(mpsc::UnboundedSender<String>),
     /// The hub connection went away.
     HubDown,
-    /// A relay connection signed in (`true`) or ended.
-    Attached(String, bool),
+    /// A relay connection signed in (`true`) or ended, tagged with its connection generation.
+    Attached(String, u64, bool),
     /// Round trips measured: the relays tried, and those that answered.
     Measured(Vec<String>, BTreeMap<String, u32>),
     /// A relay refused this agent's ticket as revoked (or closed its
     /// connection 4403): the hub revoked the tickets issued to this machine so
     /// far, so that one is dropped and a fresh one asked for.
-    Revoked(String),
+    Revoked(String, u64),
 }
 
 /// What a relay closes a connection with when the hub revoked the ticket's
@@ -137,6 +137,7 @@ struct Wanted {
 
 /// A running relay connection.
 struct Conn {
+    generation: u64,
     origin: String,
     ticket: watch::Sender<Option<(String, u64)>>,
     cancel: CancellationToken,
@@ -147,6 +148,7 @@ struct Conn {
 struct Manager {
     shared: Arc<Shared>,
     events: mpsc::UnboundedSender<Event>,
+    next_gen: u64,
     wanted: BTreeMap<String, Wanted>,
     /// Every listed relay: `id → origin`.
     directory: BTreeMap<String, String>,
@@ -168,6 +170,7 @@ async fn manage(shared: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<Event>, eve
     let mut m = Manager {
         shared: shared.clone(),
         events,
+        next_gen: 1,
         wanted: BTreeMap::new(),
         directory: BTreeMap::new(),
         tickets: HashMap::new(),
@@ -494,7 +497,11 @@ impl Manager {
                 self.report();
             }
             Event::HubDown => self.hub = None,
-            Event::Attached(id, up) => {
+            Event::Attached(id, generation, up) => {
+                // Ignore events from a cancelled or superseded connection generation.
+                if self.conns.get(&id).is_none_or(|c| c.generation != generation) {
+                    return;
+                }
                 if up {
                     self.attached.insert(id);
                 } else {
@@ -502,7 +509,10 @@ impl Manager {
                 }
                 self.report();
             }
-            Event::Revoked(id) => {
+            Event::Revoked(id, generation) => {
+                if self.conns.get(&id).is_some_and(|c| c.generation != generation) {
+                    return;
+                }
                 // Never try that ticket again: ask for a fresh one now (at
                 // most every 20 s, else at the next tick) — not only once it
                 // nears expiry, which kept this machine off the relay for
@@ -551,7 +561,17 @@ impl Manager {
     /// ones no longer wanted once their channels are gone.
     fn reconcile(&mut self) {
         let now = now_ms_u64();
-        self.conns.retain(|_, c| !c.done.is_finished());
+        let mut attached_changed = false;
+        self.conns.retain(|id, c| {
+            if c.done.is_finished() {
+                if self.attached.remove(id) {
+                    attached_changed = true;
+                }
+                false
+            } else {
+                true
+            }
+        });
         for (id, w) in &self.wanted {
             let Some(ticket) = self.tickets.get(id).filter(|(_, exp)| *exp > now) else {
                 continue;
@@ -561,13 +581,19 @@ impl Manager {
                     continue;
                 }
                 conn.cancel.cancel();
+                if self.attached.remove(id) {
+                    attached_changed = true;
+                }
             }
+            let generation = self.next_gen;
+            self.next_gen = self.next_gen.wrapping_add(1).max(1);
             let (tx, rx) = watch::channel(Some(ticket.clone()));
             let cancel = CancellationToken::new();
             let channels = Arc::new(AtomicUsize::new(0));
             let done = tokio::spawn(run(
                 self.shared.clone(),
                 id.clone(),
+                generation,
                 Target {
                     origin: w.origin.clone(),
                     insecure: self.insecure,
@@ -580,6 +606,7 @@ impl Manager {
             self.conns.insert(
                 id.clone(),
                 Conn {
+                    generation,
                     origin: w.origin.clone(),
                     ticket: tx,
                     cancel,
@@ -599,6 +626,12 @@ impl Manager {
             if let Some(c) = self.conns.remove(&id) {
                 c.cancel.cancel();
             }
+            if self.attached.remove(&id) {
+                attached_changed = true;
+            }
+        }
+        if attached_changed {
+            self.report();
         }
     }
 
@@ -697,6 +730,7 @@ struct Target {
 async fn run(
     shared: Arc<Shared>,
     id: String,
+    generation: u64,
     target: Target,
     mut ticket: watch::Receiver<Option<(String, u64)>>,
     cancel: CancellationToken,
@@ -710,10 +744,10 @@ async fn run(
         match current {
             Some((text, expires)) if expires > now_ms_u64() => {
                 let result = tokio::select! {
-                    r = session(&shared, &id, &target, &text, &mut ticket, &channels, &events) => r,
+                    r = session(&shared, &id, generation, &target, &text, &mut ticket, &channels, &events) => r,
                     () = cancel.cancelled() => return,
                 };
-                let _ = events.send(Event::Attached(id.clone(), false));
+                let _ = events.send(Event::Attached(id.clone(), generation, false));
                 channels.store(0, Ordering::Relaxed);
                 match result {
                     Ok(()) => tracing::info!(relay = %id, "relay connection closed; reconnecting"),
@@ -721,7 +755,7 @@ async fn run(
                         // Not with this ticket again: wait for the one the
                         // manager asks for (it drops this one first).
                         tracing::info!(relay = %id, "relay connection refused as revoked; waiting for a fresh ticket");
-                        let _ = events.send(Event::Revoked(id.clone()));
+                        let _ = events.send(Event::Revoked(id.clone(), generation));
                         tokio::select! {
                             r = ticket.changed() => if r.is_err() { return },
                             () = cancel.cancelled() => return,
@@ -749,9 +783,11 @@ async fn run(
 }
 
 /// One signed-in connection to a relay, until it ends.
+#[allow(clippy::too_many_arguments)]
 async fn session(
     shared: &Arc<Shared>,
     id: &str,
+    generation: u64,
     target: &Target,
     ticket: &str,
     tickets: &mut watch::Receiver<Option<(String, u64)>>,
@@ -815,7 +851,7 @@ async fn session(
         return Err(format!("the relay refused the sign-in: {}", welcome["message"]));
     }
     tracing::info!(relay = %id, %origin, "signed in on a relay");
-    let _ = events.send(Event::Attached(id.to_string(), true));
+    let _ = events.send(Event::Attached(id.to_string(), generation, true));
     tickets.mark_unchanged();
 
     let (frames_tx, frames_rx) = mpsc::unbounded_channel::<Frame>();
@@ -1196,7 +1232,7 @@ mod tests {
             origin: format!("ws://{relay}"),
             insecure: true,
         };
-        tokio::spawn(run(shared, "r-1".into(), target, rx, cancel.clone(), Arc::new(AtomicUsize::new(0)), events));
+        tokio::spawn(run(shared, "r-1".into(), 1, target, rx, cancel.clone(), Arc::new(AtomicUsize::new(0)), events));
         // Refused once, and not again with that ticket (with backoff alone it
         // would be tried again within a second or two).
         tokio::time::sleep(Duration::from_secs(4)).await;
@@ -1204,7 +1240,7 @@ mod tests {
         // The manager heard it, to drop the ticket and ask for a fresh one.
         let mut revoked = Vec::new();
         while let Ok(event) = heard.try_recv() {
-            if let Event::Revoked(id) = event {
+            if let Event::Revoked(id, _) = event {
                 revoked.push(id);
             }
         }
@@ -1215,7 +1251,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 match heard.recv().await {
-                    Some(Event::Attached(id, true)) if id == "r-1" => break,
+                    Some(Event::Attached(id, _, true)) if id == "r-1" => break,
                     Some(_) => continue,
                     None => panic!("the connection ended"),
                 }
@@ -1278,11 +1314,11 @@ mod tests {
             origin: format!("ws://{relay}"),
             insecure: true,
         };
-        tokio::spawn(run(shared, "r-1".into(), target, rx, cancel.clone(), Arc::new(AtomicUsize::new(0)), events));
+        tokio::spawn(run(shared, "r-1".into(), 1, target, rx, cancel.clone(), Arc::new(AtomicUsize::new(0)), events));
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 match said.recv().await {
-                    Some(Event::Attached(id, true)) if id == "r-1" => break,
+                    Some(Event::Attached(id, _, true)) if id == "r-1" => break,
                     Some(_) => continue,
                     None => panic!("the connection ended"),
                 }
@@ -1327,6 +1363,7 @@ mod tests {
         let mut m = Manager {
             shared,
             events: mpsc::unbounded_channel().0,
+            next_gen: 1,
             wanted: BTreeMap::new(),
             directory: BTreeMap::new(),
             tickets: HashMap::new(),
@@ -1363,6 +1400,7 @@ mod tests {
         let mut m = Manager {
             shared,
             events: mpsc::unbounded_channel().0,
+            next_gen: 1,
             wanted: BTreeMap::from([("r-1".to_string(), Wanted { origin: "wss://r-1.relay.example".into() })]),
             directory: BTreeMap::new(),
             tickets: HashMap::from([("r-1".to_string(), ("old".to_string(), now_ms_u64() + 14 * 60 * 1000))]),
@@ -1378,10 +1416,70 @@ mod tests {
         };
         m.ask_tickets(false);
         assert!(asked.try_recv().is_err(), "a ticket with 14 minutes left is not asked for again");
-        m.on_event(Event::Revoked("r-1".into()));
+        m.on_event(Event::Revoked("r-1".into(), 1));
         assert!(!m.tickets.contains_key("r-1"), "the revoked ticket is dropped");
         let request: Value = serde_json::from_str(&asked.try_recv().expect("a fresh ticket asked for")).unwrap();
         assert_eq!(request, json!({"t": "relay_tickets", "relays": ["r-1"]}));
+    }
+
+    /// Leaving a relay immediately removes it from `attached` and reports to the hub;
+    /// a stale `Attached(_, false)` from a superseded connection generation is ignored.
+    #[tokio::test]
+    async fn leaving_a_relay_clears_attached_and_ignores_stale_generation_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = droppen_instance::paths::Paths::for_instance(dir.path().to_path_buf(), "relays");
+        let st = super::super::state::AgentState::enrolling("http://hub.invalid", "a-1", "m-1", [0; 16], now_ms_u64());
+        let shared = super::super::link::test_shared(
+            &paths,
+            st,
+            droppen_proto::identity::MachineIdentity::from_seed(&[5; 32]),
+            super::super::streams::Handle::detached(),
+            super::super::rotation::no_restart(),
+        );
+        let (hub, mut told) = mpsc::unbounded_channel::<String>();
+        let cancel_old = CancellationToken::new();
+        let mut m = Manager {
+            shared,
+            events: mpsc::unbounded_channel().0,
+            next_gen: 3,
+            wanted: BTreeMap::from([("r-1".to_string(), Wanted { origin: "wss://r-1.relay.example".into() })]),
+            directory: BTreeMap::new(),
+            tickets: HashMap::new(),
+            conns: HashMap::from([(
+                "r-1".to_string(),
+                Conn {
+                    generation: 2,
+                    origin: "wss://r-1.relay.example".into(),
+                    ticket: watch::channel(None).0,
+                    cancel: cancel_old.clone(),
+                    channels: Arc::new(AtomicUsize::new(0)),
+                    done: tokio::spawn(std::future::pending()),
+                },
+            )]),
+            hub: Some(hub),
+            attached: BTreeSet::new(),
+            rtts: BTreeMap::new(),
+            reported: None,
+            asked_ms: 0,
+            insecure: false,
+            http: None,
+            measuring: Measuring::default(),
+        };
+        m.on_event(Event::Attached("r-1".into(), 2, true));
+        assert!(m.attached.contains("r-1"));
+        let state: Value = serde_json::from_str(&told.try_recv().expect("attached reported")).unwrap();
+        assert_eq!(state["attached"], json!(["r-1"]));
+        // Stale disconnect from generation 1 must not clear generation 2.
+        m.on_event(Event::Attached("r-1".into(), 1, false));
+        assert!(m.attached.contains("r-1"));
+        assert!(told.try_recv().is_err());
+        // Dropping r-1 from wanted immediately leaves, clears attached, and reports.
+        m.wanted.clear();
+        m.reconcile();
+        assert!(cancel_old.is_cancelled());
+        assert!(m.attached.is_empty());
+        let state: Value = serde_json::from_str(&told.try_recv().expect("leave reported")).unwrap();
+        assert_eq!(state["attached"], json!([]));
     }
 
     /// A `/v1/ping` that counts its hits.

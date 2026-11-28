@@ -81,7 +81,8 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
     let mut last_inbound = Instant::now();
     let mut signed: Option<(TicketRole, String, ConnRate)> = None;
     let mut rate = 4 * 1024 * 1024u64;
-    let mut limiter = ConnLimiter::new(rate, FRAMES_PER_SEC, Instant::now());
+    let mut frames = FRAMES_PER_SEC;
+    let mut limiter = ConnLimiter::new(rate, frames, Instant::now());
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     let mut window_start = Instant::now();
     let mut window_bytes = 0u64;
@@ -139,9 +140,11 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
         }
         if let Some((_, _, current)) = &signed {
             let now_rate = current.rate.load(Ordering::Relaxed);
-            if now_rate != rate {
+            let now_frames = current.frames.load(Ordering::Relaxed);
+            if now_rate != rate || now_frames != frames {
                 rate = now_rate;
-                limiter = ConnLimiter::new(rate, FRAMES_PER_SEC, Instant::now());
+                frames = now_frames;
+                limiter.set_rates(rate, frames, last_inbound);
             }
         }
         let (len, cost) = match &message {
@@ -202,7 +205,7 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
             }
         }
         let keep = match message {
-            Message::Text(text) => on_text(&server, id, &out, &nonce, &mut signed, &mut rate, &mut limiter, text.as_str()),
+            Message::Text(text) => on_text(&server, id, &out, &nonce, &mut signed, &mut rate, &mut frames, &mut limiter, text.as_str()),
             Message::Binary(bytes) => match &signed {
                 Some((role, _, _)) => on_binary(&server, id, &out, *role, &bytes),
                 None => {
@@ -236,6 +239,7 @@ fn on_text(
     nonce: &[u8; 32],
     signed: &mut Option<(TicketRole, String, ConnRate)>,
     rate: &mut u64,
+    frames: &mut u64,
     limiter: &mut ConnLimiter,
     text: &str,
 ) -> bool {
@@ -265,7 +269,8 @@ fn on_text(
                 Err((code, reason)) => return fail(code, "limit", reason),
             };
             *rate = current.rate.load(Ordering::Relaxed);
-            *limiter = ConnLimiter::new(*rate, u64::from(ticket.limits.frames_per_sec.max(1)), Instant::now());
+            *frames = current.frames.load(Ordering::Relaxed);
+            *limiter = ConnLimiter::new(*rate, *frames, Instant::now());
             out.text(&RelayToPeer::Welcome {
                 relay: server.config.id.clone(),
                 id: ticket.id.clone(),
