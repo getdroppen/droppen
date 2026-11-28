@@ -43,6 +43,9 @@ use subtle::ConstantTimeEq;
 /// rather than a misparse.
 const PREFIX: &str = "rhn1";
 
+/// HMAC domain separator for notify capability tokens.
+const DOMAIN: &str = "rh-notify:v1";
+
 /// base64url without padding, the alphabet every other token in this server uses.
 const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -54,17 +57,44 @@ const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::gen
 /// compare a field. The secret is machine-global (see [`super::store`]), so
 /// without this the two instances would accept each other's sessions — which
 /// would put another instance's session title and deep link on a notification.
-fn message(instance: &str, session_key: &str) -> Vec<u8> {
-    format!("rh-notify:v1:{instance}:{session_key}").into_bytes()
+fn scoped_message(domain: &str, instance: &str, session_key: &str) -> Vec<u8> {
+    format!("{domain}:{instance}:{session_key}").into_bytes()
 }
 
-/// The MAC of one session under one instance.
-fn mac(secret: &[u8], instance: &str, session_key: &str) -> Vec<u8> {
+/// The MAC of one session under one instance and domain.
+fn mac_scoped(secret: &[u8], domain: &str, instance: &str, session_key: &str) -> Vec<u8> {
     // `new_from_slice` only refuses a key length HMAC cannot use, and HMAC
     // accepts every length there is.
     let mut hmac = <Hmac<Sha256>>::new_from_slice(secret).expect("hmac accepts any key length");
-    hmac.update(&message(instance, session_key));
+    hmac.update(&scoped_message(domain, instance, session_key));
     hmac.finalize().into_bytes().to_vec()
+}
+
+/// Mint a domain-separated stateless HMAC session token (`<prefix>.<b64(key)>.<b64(mac)>`).
+///
+/// Distinct `(prefix, domain)` pairs guarantee that tokens minted for one
+/// capability (e.g. `rh-notify` vs `droppen-agents`) can never verify under another.
+pub fn mint_scoped(secret: &[u8], prefix: &str, domain: &str, instance: &str, session_key: &str) -> String {
+    format!(
+        "{prefix}.{}.{}",
+        B64.encode(session_key.as_bytes()),
+        B64.encode(mac_scoped(secret, domain, instance, session_key))
+    )
+}
+
+/// Verify a token minted by [`mint_scoped`] in constant time and return its session key.
+pub fn verify_scoped(secret: &[u8], prefix: &str, domain: &str, instance: &str, token: &str) -> Option<String> {
+    let mut parts = token.split('.');
+    if parts.next()? != prefix {
+        return None;
+    }
+    let session_key = String::from_utf8(B64.decode(parts.next()?).ok()?).ok()?;
+    let offered = B64.decode(parts.next()?).ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let expected = mac_scoped(secret, domain, instance, &session_key);
+    bool::from(offered.as_slice().ct_eq(expected.as_slice())).then_some(session_key)
 }
 
 /// The token a session's `rh-notify` is given.
@@ -73,11 +103,7 @@ fn mac(secret: &[u8], instance: &str, session_key: &str) -> Vec<u8> {
 /// so there is no version of the call where the caller states which session it
 /// is and the server believes them.
 pub fn mint(secret: &[u8], instance: &str, session_key: &str) -> String {
-    format!(
-        "{PREFIX}.{}.{}",
-        B64.encode(session_key.as_bytes()),
-        B64.encode(mac(secret, instance, session_key))
-    )
+    mint_scoped(secret, PREFIX, DOMAIN, instance, session_key)
 }
 
 /// The session a token names, or `None` for anything this server did not mint.
@@ -86,17 +112,7 @@ pub fn mint(secret: &[u8], instance: &str, session_key: &str) -> String {
 /// byte-by-byte early exit is a timing oracle a caller can walk a forgery
 /// through, and the cost of not having one is a fixed 32-byte compare.
 pub fn verify(secret: &[u8], instance: &str, token: &str) -> Option<String> {
-    let mut parts = token.split('.');
-    if parts.next()? != PREFIX {
-        return None;
-    }
-    let session_key = String::from_utf8(B64.decode(parts.next()?).ok()?).ok()?;
-    let offered = B64.decode(parts.next()?).ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    let expected = mac(secret, instance, &session_key);
-    bool::from(offered.ct_eq(&expected)).then_some(session_key)
+    verify_scoped(secret, PREFIX, DOMAIN, instance, token)
 }
 
 #[cfg(test)]

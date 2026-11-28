@@ -145,7 +145,14 @@ impl RemoteHandApp {
                 }
             }
         });
-        let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, false, Arc::new(NotifyTokens));
+        let auth = droppen_auth::Auth::new(
+            &paths,
+            &instance,
+            &auth_settings,
+            false,
+            Arc::new(NotifyTokens),
+            Arc::new(AgentsTokens),
+        );
         let logins = logins();
         let drive = droppen_drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins.clone(), NotifyDecoration::new(paths.clone(), instance.as_ref().clone()));
         let feeds = FeedRegistry::new();
@@ -831,6 +838,29 @@ impl droppen_auth::NotifyCredential for NotifyTokens {
     }
 }
 
+/// `/api/agents/*`'s loopback session capability as [`droppen_drive::agents`]
+/// checks it, carried to handlers inside [`droppen_http::identity::AgentsGrant`].
+pub(crate) struct AgentsTokens;
+
+impl droppen_auth::AgentsCredential for AgentsTokens {
+    fn is_agents_request(&self, method: &gotcha::axum::http::Method, path: &str) -> bool {
+        droppen_drive::agents::is_agents_request(method, path)
+    }
+
+    fn caller<'a>(
+        &'a self,
+        paths: &'a Paths,
+        instance: &'a str,
+        headers: &'a gotcha::axum::http::HeaderMap,
+    ) -> futures_util::future::BoxFuture<'a, Option<droppen_http::identity::AgentsGrant>> {
+        Box::pin(async move {
+            droppen_drive::agents::caller(paths, instance, headers)
+                .await
+                .map(droppen_http::identity::AgentsGrant::new)
+        })
+    }
+}
+
 /// The notify channel, as a claude spawn's environment gains it: the
 /// `droppen-notify` program on its `PATH`, this server's address and a token
 /// for the session, when the channel is on (see [`droppen_notify::notify::inject`]).
@@ -851,6 +881,15 @@ impl NotifyDecoration {
 impl droppen_provider::SpawnDecoration for NotifyDecoration {
     fn decorate<'a>(&'a self, source: Source, id: &'a str, env: &'a mut droppen_base::process_env::Env) -> futures_util::future::BoxFuture<'a, ()> {
         Box::pin(droppen_notify::notify::inject::decorate(&self.paths, &self.instance, source, id, env))
+    }
+
+    fn mcp_servers<'a>(&'a self, source: Source, id: &'a str) -> futures_util::future::BoxFuture<'a, Vec<droppen_provider::StdioMcpServer>> {
+        Box::pin(async move {
+            droppen_drive::agents::mcp_server_for(&self.paths, &self.instance, source, id)
+                .await
+                .into_iter()
+                .collect()
+        })
     }
 }
 

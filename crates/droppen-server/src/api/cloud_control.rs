@@ -90,7 +90,7 @@ async fn a_new_enrollment_never_reopens_the_old_streams_store() {
 /// What a link needs, for a server of these paths that listens nowhere.
 fn link_env(paths: &Paths) -> LinkEnv {
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), paths.instance()).unwrap();
-    let auth = droppen_auth::Auth::new(paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
+    let auth = droppen_auth::Auth::new(paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens), std::sync::Arc::new(crate::app::AgentsTokens));
     LinkEnv {
         addr: "127.0.0.1:9".parse().unwrap(),
         credential: "test".into(),

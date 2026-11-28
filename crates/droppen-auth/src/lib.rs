@@ -160,7 +160,7 @@ use gotcha::axum::response::{IntoResponse, Response};
 
 use droppen_http::config::AuthSettings;
 use droppen_http::error::ApiError;
-use droppen_http::identity::{AuthIdentity, NotifyGrant};
+use droppen_http::identity::{AgentsGrant, AuthIdentity, NotifyGrant};
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 use lockout::{LockoutPolicy, Lockouts};
@@ -246,6 +246,23 @@ pub trait NotifyCredential: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>>;
 }
 
+/// The capability `/api/agents/*` (the local session-to-session MCP agent bus)
+/// is called with, checked by [`guard`] only on loopback requests that did not
+/// arrive through the cloud bridge.
+pub trait AgentsCredential: Send + Sync {
+    /// Whether this request targets an `/api/agents/*` peer-messaging route.
+    fn is_agents_request(&self, method: &Method, path: &str) -> bool;
+
+    /// The calling session proved by `Authorization: Bearer`, as an opaque
+    /// [`AgentsGrant`], or `None` on any miss.
+    fn caller<'a>(
+        &'a self,
+        paths: &'a Paths,
+        instance: &'a str,
+        headers: &'a HeaderMap,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentsGrant>> + Send + 'a>>;
+}
+
 /// Everything the guard and the `/api/auth/*` routes need.
 ///
 /// Hangs off `droppen_drive::Drive`, like every other registry in this server,
@@ -282,6 +299,8 @@ pub struct Auth {
     instance: String,
     /// How [`guard`] checks the notify capability on its one route.
     notify: Arc<dyn NotifyCredential>,
+    /// How [`guard`] checks the loopback agent-bus capability on `/api/agents/*`.
+    agents: Arc<dyn AgentsCredential>,
     /// The cloud agent's per-boot loopback credential (hex), see the module docs.
     internal: String,
 }
@@ -308,6 +327,7 @@ impl Auth {
         settings: &AuthSettings,
         disabled: bool,
         notify: Arc<dyn NotifyCredential>,
+        agents: Arc<dyn AgentsCredential>,
     ) -> Arc<Self> {
         let mode = match (disabled, settings.enabled()) {
             (true, _) | (_, Some(false)) => Mode::Off,
@@ -329,6 +349,7 @@ impl Auth {
             paths: paths.clone(),
             instance: instance.name().to_string(),
             notify,
+            agents,
             internal: {
                 use rand::RngCore;
                 let mut bytes = [0u8; 32];
@@ -421,6 +442,16 @@ impl Auth {
     /// question is asked, which is the guard and nowhere else.
     async fn notify_caller(&self, headers: &HeaderMap) -> Option<NotifyGrant> {
         self.notify.caller(&self.paths, &self.instance, headers).await
+    }
+
+    async fn agents_caller(&self, method: &Method, path: &str, headers: &HeaderMap, peer: Option<std::net::SocketAddr>) -> Option<AgentsGrant> {
+        if !peer.is_some_and(|p| p.ip().is_loopback()) {
+            return None;
+        }
+        if !self.agents.is_agents_request(method, path) {
+            return None;
+        }
+        self.agents.caller(&self.paths, &self.instance, headers).await
     }
 }
 
@@ -593,7 +624,8 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     // What is left out is the case that matters for cost: an exempt static
     // asset, which is most requests a browser makes and now touches neither the
     // session store nor the account file.
-    let mut identity = if bridged.is_some() {
+    let is_bridged = bridged.is_some();
+    let mut identity = if is_bridged {
         bridged
     } else if path.starts_with("/api/") || !is_exempt {
         auth.identify(request.headers()).await
@@ -632,6 +664,14 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
         None
     };
 
+    // The local agent-bus capability: accepted only on `/api/agents/*` from a
+    // direct loopback peer (never over a cloud-bridged channel).
+    let agents_caller = if !is_bridged {
+        auth.agents_caller(&method, &path, request.headers(), peer).await
+    } else {
+        None
+    };
+
     if let Some(found) = identity.clone() {
         request.extensions_mut().insert(found);
     }
@@ -641,12 +681,16 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     if let Some(found) = caller.clone() {
         request.extensions_mut().insert(found);
     }
+    if let Some(found) = agents_caller.clone() {
+        request.extensions_mut().insert(found);
+    }
 
     // Nobody is let through for where they connect from: an identity, the
-    // notify capability on its one route, the exempt surface — or nothing at
-    // all asked, with authentication switched off. Everyone else is refused
-    // without a word about why; the status route is where a client learns it.
-    if identity.is_some() || caller.is_some() || is_exempt || auth.is_off() {
+    // notify or agent-bus capability on its own routes, the exempt surface —
+    // or nothing at all asked, with authentication switched off. Everyone else
+    // is refused without a word about why; the status route is where a client
+    // learns it.
+    if identity.is_some() || caller.is_some() || agents_caller.is_some() || is_exempt || auth.is_off() {
         return next.run(request).await.with_guard_headers(&path);
     }
     ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized").into_response().with_guard_headers(&path)
@@ -833,12 +877,29 @@ mod tests {
         }
     }
 
+    struct NoAgents;
+
+    impl AgentsCredential for NoAgents {
+        fn is_agents_request(&self, _method: &Method, _path: &str) -> bool {
+            false
+        }
+
+        fn caller<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            _instance: &'a str,
+            _headers: &'a HeaderMap,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentsGrant>> + Send + 'a>> {
+            Box::pin(async { None })
+        }
+    }
+
     /// The subsystem a server with the default settings builds for its
     /// instance `unittest` under `home`, and that instance's paths.
     pub(crate) fn auth_at(home: &Path) -> (Paths, Arc<Auth>) {
         let paths = Paths::for_instance(home.to_path_buf(), "unittest");
         let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
-        let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(NoNotify));
+        let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(NoNotify), Arc::new(NoAgents));
         (paths, auth)
     }
 
@@ -1087,7 +1148,7 @@ mod tests {
             let home = tempfile::tempdir().expect("tempdir");
             let paths = Paths::for_instance(home.path().to_path_buf(), "unittest");
             let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
-            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(proves));
+            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(proves), Arc::new(NoAgents));
             let mut router = gotcha::axum::Router::new()
                 .route("/api/notify", gotcha::axum::routing::post(found))
                 .route("/api/settings", gotcha::axum::routing::get(found))
@@ -1112,5 +1173,81 @@ mod tests {
         );
         assert_eq!(send(Proves(|| None), "POST", "/api/notify").await.0, StatusCode::UNAUTHORIZED, "no grant, no admission");
         assert_eq!(send(Proves(planted), "GET", "/api/settings").await.0, StatusCode::UNAUTHORIZED, "and no other route");
+    }
+
+    /// An agent-bus capability is accepted only on its own routes from a
+    /// loopback peer, stays inside [`AgentsGrant`], and never turns into an
+    /// [`AuthIdentity`].
+    #[tokio::test]
+    async fn the_agents_port_admits_only_loopback_grants_and_never_hands_out_an_identity() {
+        use gotcha::axum::body::Body;
+        use gotcha::axum::extract::ConnectInfo;
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        use tower_service::Service;
+
+        struct Proves(fn() -> Option<AgentsGrant>);
+        impl AgentsCredential for Proves {
+            fn is_agents_request(&self, method: &Method, path: &str) -> bool {
+                method == Method::GET && path == "/api/agents"
+            }
+
+            fn caller<'a>(
+                &'a self,
+                _paths: &'a Paths,
+                _instance: &'a str,
+                _headers: &'a HeaderMap,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentsGrant>> + Send + 'a>> {
+                Box::pin(std::future::ready((self.0)()))
+            }
+        }
+
+        async fn found(request: Request) -> String {
+            let extensions = request.extensions();
+            let grant = extensions.get::<AgentsGrant>();
+            format!(
+                "{} {} {}",
+                grant.is_some(),
+                grant.and_then(|grant| grant.get::<AuthIdentity>()).is_some(),
+                extensions.get::<AuthIdentity>().is_some()
+            )
+        }
+
+        async fn send(proves: Proves, path: &str, peer: Option<SocketAddr>) -> (StatusCode, String) {
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::for_instance(home.path().to_path_buf(), "unittest");
+            let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
+            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(NoNotify), Arc::new(proves));
+            let mut router = gotcha::axum::Router::new()
+                .route("/api/agents", gotcha::axum::routing::get(found))
+                .route("/api/settings", gotcha::axum::routing::get(found))
+                .layer(layer(auth));
+            let mut request = gotcha::axum::http::Request::builder().method("GET").uri(path).body(Body::empty()).expect("request");
+            if let Some(peer) = peer {
+                request.extensions_mut().insert(ConnectInfo(peer));
+            }
+            let response = router.call(request).await.expect("infallible");
+            let status = response.status();
+            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 16).await.expect("body");
+            (status, String::from_utf8_lossy(&body).into_owned())
+        }
+
+        let planted = || {
+            Some(AgentsGrant::new(AuthIdentity {
+                username: "peer".into(),
+                token_sha256: None,
+            }))
+        };
+        let loopback = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41234));
+        let remote = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)), 41234));
+
+        assert_eq!(
+            send(Proves(planted), "/api/agents", loopback).await,
+            (StatusCode::OK, "true true false".to_string()),
+            "a loopback grant admits /api/agents without conferring an AuthIdentity"
+        );
+        assert_eq!(send(Proves(planted), "/api/agents", remote).await.0, StatusCode::UNAUTHORIZED, "non-loopback peers are refused");
+        assert_eq!(send(Proves(planted), "/api/agents", None).await.0, StatusCode::UNAUTHORIZED, "an unknown peer is refused");
+        assert_eq!(send(Proves(|| None), "/api/agents", loopback).await.0, StatusCode::UNAUTHORIZED, "no grant, no admission");
+        assert_eq!(send(Proves(planted), "/api/settings", loopback).await.0, StatusCode::UNAUTHORIZED, "and no other route");
     }
 }

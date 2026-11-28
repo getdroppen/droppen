@@ -62,7 +62,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use droppen_provider::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
-use droppen_provider::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, PermissionOutcome, PermissionReply, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
+use droppen_provider::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, PermissionOutcome, PermissionReply, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnDecoration, SpawnGate, SpawnPermit, StartAt, WrittenAt};
 use futures_util::future::BoxFuture;
 use crate::protocol::{category, option_for, ConfigOption, InitializeResponse};
 use crate::agents::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
@@ -375,7 +375,7 @@ pub struct Acp {
 impl Acp {
     /// The ACP agents, run on `registry`'s host.
     pub fn new(registry: Arc<InjectionRegistry>) -> Self {
-        let runs = AcpRuns::new(registry.host.clone());
+        let runs = AcpRuns::new(registry.host.clone(), registry.decoration.clone());
         let models = crate::models::AcpModels::new(runs.host.paths.clone(), runs.clone());
         Self { runs, models }
     }
@@ -404,6 +404,8 @@ pub(crate) struct AcpOffered {
 pub(crate) struct AcpRuns {
     /// What they run on.
     host: Arc<RunHost>,
+    /// Server-injected per-session spawn decorations (including MCP servers).
+    decoration: Arc<dyn SpawnDecoration>,
     /// The agent process behind each ACP session, keyed
     /// [`droppen_provider::RunHost::key_of`].
     acp_servers: Mutex<HashMap<String, Handle>>,
@@ -417,9 +419,10 @@ pub(crate) struct AcpRuns {
 
 impl AcpRuns {
     /// None yet, on `host`.
-    fn new(host: Arc<RunHost>) -> Arc<Self> {
+    fn new(host: Arc<RunHost>, decoration: Arc<dyn SpawnDecoration>) -> Arc<Self> {
         let runs = Arc::new(Self {
             host,
+            decoration,
             acp_servers: Mutex::new(HashMap::new()),
             acp_options: Mutex::new(HashMap::new()),
             acp_probes: Mutex::new(HashMap::new()),
@@ -650,7 +653,7 @@ impl AcpRuns {
         // Only answers are read: what else the agent says is dropped as it
         // arrives rather than kept.
         started.conn.events.close();
-        let opened = tokio::time::timeout(START_TIMEOUT, started.conn.open(None, scratch.path())).await;
+        let opened = tokio::time::timeout(START_TIMEOUT, started.conn.open(None, scratch.path(), Vec::new())).await;
         let opened = match opened {
             Ok(Ok(opened)) => opened,
             failed => {
@@ -1030,7 +1033,8 @@ impl AcpRuns {
         #[cfg(test)]
         self.host.step("agent started", Source::Acp, Some(id));
         let reopen = recorded.as_ref().map(|recorded| recorded.agent_session.as_str());
-        let opened = match tokio::time::timeout(START_TIMEOUT, started.conn.open(reopen, &workdir)).await {
+        let mcp_servers = self.decoration.mcp_servers(Source::Acp, id).await;
+        let opened = match tokio::time::timeout(START_TIMEOUT, started.conn.open(reopen, &workdir, mcp_servers)).await {
             Ok(Ok(opened)) => opened,
             failed => {
                 let reason = match failed {

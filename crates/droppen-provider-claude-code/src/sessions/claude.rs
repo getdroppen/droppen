@@ -846,6 +846,10 @@ impl droppen_sessions::Transcripts for ClaudeCodeSessions {
         Box::pin(load_claude_summary(paths, id))
     }
 
+    fn is_archived<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(async move { archived_ids(paths).await.contains(id) })
+    }
+
     // Found without building the row: the row summarizes the file and applies
     // the live overlay, and reading the transcript needs neither.
     fn find_file<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<PathBuf>> {

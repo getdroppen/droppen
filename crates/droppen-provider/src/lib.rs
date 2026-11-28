@@ -219,15 +219,33 @@ pub fn require_provider(launch: &AccountLaunch, wanted: AccountProvider) -> Resu
     })
 }
 
-/// What a claude spawn's environment gains just before the CLI starts, beyond
-/// its root and its account: the channel to its user, when there is one.
+/// One stdio MCP server injected into a session when it opens or spawns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StdioMcpServer {
+    /// Server name under which the agent exposes its tools.
+    pub name: String,
+    /// Executable path to launch.
+    pub command: PathBuf,
+    /// Command-line arguments passed to `command`.
+    pub args: Vec<String>,
+    /// Environment variables passed to the MCP server process.
+    pub env: Vec<(String, String)>,
+}
+
+/// What a spawn gains just before the CLI starts, beyond its root and its
+/// account: the notify channel and any host-managed stdio MCP servers.
 ///
 /// A port, because what goes in is the channel's business and the spawn only
-/// knows when. Infallible: a session that cannot notify is still a session,
-/// and one refused for want of a channel would be worse.
+/// knows when. Infallible: a session that cannot notify or attach a host MCP
+/// server is still a session, and one refused for want of either would be worse.
 pub trait SpawnDecoration: Send + Sync {
     /// Add to `env` what session `id` of `source` starts with.
     fn decorate<'a>(&'a self, source: Source, id: &'a str, env: &'a mut Env) -> BoxFuture<'a, ()>;
+
+    /// Host-managed stdio MCP servers to attach to session `id` of `source`.
+    fn mcp_servers<'a>(&'a self, _source: Source, _id: &'a str) -> BoxFuture<'a, Vec<StdioMcpServer>> {
+        Box::pin(async { Vec::new() })
+    }
 }
 
 // ------------------------------------------------------------------ operations

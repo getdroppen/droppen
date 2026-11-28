@@ -55,7 +55,14 @@ pub(crate) fn drive_resumable(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
 fn drive_reading(dir: &Path, reader: FakeReader) -> (Arc<Paths>, Arc<Drive>) {
     let paths = Arc::new(Paths::new(dir.to_path_buf()));
     let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-    let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, Arc::new(NoNotify));
+    let auth = droppen_auth::Auth::new(
+        &paths,
+        &instance,
+        &droppen_http::config::AuthSettings::default(),
+        false,
+        Arc::new(NoNotify),
+        Arc::new(NoAgents),
+    );
     let mut sources = TranscriptSources::default();
     sources.register(Arc::new(reader));
     let drive = Drive::new(paths.clone(), &instance, auth, sources, register, Logins::stand_ins(), droppen_provider::testing::no_decoration());
@@ -135,6 +142,23 @@ impl NotifyCredential for NoNotify {
         _instance: &'a str,
         _headers: &'a gotcha::axum::http::HeaderMap,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<NotifyGrant>> + Send + 'a>> {
+        Box::pin(std::future::ready(None))
+    }
+}
+
+struct NoAgents;
+
+impl droppen_auth::AgentsCredential for NoAgents {
+    fn is_agents_request(&self, _method: &gotcha::axum::http::Method, _path: &str) -> bool {
+        false
+    }
+
+    fn caller<'a>(
+        &'a self,
+        _paths: &'a Paths,
+        _instance: &'a str,
+        _headers: &'a gotcha::axum::http::HeaderMap,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<droppen_http::identity::AgentsGrant>> + Send + 'a>> {
         Box::pin(std::future::ready(None))
     }
 }

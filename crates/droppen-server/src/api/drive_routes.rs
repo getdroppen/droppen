@@ -26,7 +26,7 @@ fn drive_with(register: fn(&mut droppen_provider::ProviderRegistry, &Arc<droppen
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = Arc::new(droppen_instance::paths::Paths::new(dir.path().to_path_buf()));
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-    let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
+    let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens), std::sync::Arc::new(crate::app::AgentsTokens));
     let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), register, crate::app::logins(), crate::app::NotifyDecoration::new(paths.clone(), instance.clone()));
     (dir, drive)
 }

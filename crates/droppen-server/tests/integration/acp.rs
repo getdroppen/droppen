@@ -277,11 +277,48 @@ async fn an_acp_session_is_created_streamed_interrupted_reopened_and_archived() 
 
     // Every line it was sent, as the agent reads it: the requests' ids count up
     // per process, and the version and the working directory are this run's.
+    // Both `session/new` and `session/load` carry the `droppen-agents` stdio
+    // MCP server with a loopback URL for the running server and a stateless
+    // `rha1` capability token for this session (identical across restart).
+    let raw_lines = stdin_lines(&workdir);
+    let extract_mcp = |line: &str| -> (String, String) {
+        let v: Value = serde_json::from_str(line).expect("json");
+        let servers = v["params"]["mcpServers"].as_array().expect("mcpServers array");
+        assert_eq!(servers.len(), 1, "expected droppen-agents MCP server: {v:#}");
+        assert_eq!(servers[0]["name"], "droppen-agents");
+        assert_eq!(servers[0]["args"], json!(["mcp-agents"]));
+        let env = servers[0]["env"].as_array().expect("env array");
+        let get_env = |name: &str| {
+            env.iter()
+                .find(|e| e["name"] == name)
+                .and_then(|e| e["value"].as_str())
+                .unwrap_or_else(|| panic!("missing env {name} in {servers:#?}"))
+                .to_string()
+        };
+        (get_env("DROPPEN_AGENTS_URL"), get_env("DROPPEN_AGENTS_TOKEN"))
+    };
+    let (new_url, new_token) = extract_mcp(&raw_lines[1]);
+    let (load_url, load_token) = extract_mcp(&raw_lines[7]);
+    assert!(new_url.starts_with("http://127.0.0.1:"), "{new_url}");
+    assert_eq!(load_url, format!("http://127.0.0.1:{}", server.addr.port()));
+    assert!(new_token.starts_with("rha1."), "{new_token}");
+    assert_eq!(new_token, load_token, "stateless rha1 token survives restart");
+
+    let strip_mcp = |line: &str| -> String {
+        let mut v: Value = serde_json::from_str(line).expect("json");
+        if v.get("params").and_then(|p| p.get("mcpServers")).is_some() {
+            v["params"]["mcpServers"] = json!([]);
+            serde_json::to_string(&v).expect("json")
+        } else {
+            line.to_string()
+        }
+    };
+    let normalized_lines: Vec<String> = raw_lines.iter().map(|l| strip_mcp(l)).collect();
     let cwd = workdir.canonicalize().unwrap();
     let wire = |line: &str| with_json(&with_json(line, "VERSION", env!("CARGO_PKG_VERSION")), "CWD", &cwd);
     let initialize = wire(r#"{"jsonrpc":"2.0","id":"droppen-1","method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true,"auth":{"terminal":false}},"clientInfo":{"name":"droppen","title":"Droppen","version":VERSION}}}"#);
     assert_eq!(
-        stdin_lines(&workdir),
+        normalized_lines,
         vec![
             initialize.clone(),
             wire(r#"{"jsonrpc":"2.0","id":"droppen-2","method":"session/new","params":{"cwd":CWD,"mcpServers":[]}}"#),
@@ -1312,4 +1349,215 @@ async fn the_built_in_agents_say_whether_their_executable_is_on_path() {
         assert!(preset["onPath"].is_boolean(), "{preset:#}");
     }
     server.stop().await;
+}
+
+/// Two ACP sessions discover each other, exchange a `<cross-session-message>`
+/// turn, and read trimmed transcripts over the loopback agent bus using the
+/// stateless `rha1` token injected into `session/new`'s `mcpServers`.
+#[tokio::test]
+async fn two_acp_sessions_discover_and_message_each_other_through_the_agent_bus() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let program = install_fake(home.path());
+    let mut dirs = workdirs(home.path(), &["work-a", "work-b"]);
+    let work_a = dirs.remove(0);
+    let work_b = dirs.remove(0);
+
+    let server = TestServer::start_at(home.path(), None).await;
+    configure(&server, &program).await;
+
+    let id_a = start(&server, "fake", &work_a, "alpha task").await;
+    wait_for(&server, &id_a, "alpha first turn", finished).await;
+    let id_b = start(&server, "fake", &work_b, "beta task").await;
+    wait_for(&server, &id_b, "beta first turn", finished).await;
+
+    let new_a = calls(&work_a)
+        .into_iter()
+        .find(|c| c["method"] == "session/new")
+        .expect("session/new for alpha");
+    let mcp = &new_a["params"]["mcpServers"][0];
+    assert_eq!(mcp["name"], "droppen-agents");
+    let env = mcp["env"].as_array().expect("env array");
+    let base_url = env
+        .iter()
+        .find(|e| e["name"] == "DROPPEN_AGENTS_URL")
+        .and_then(|e| e["value"].as_str())
+        .expect("DROPPEN_AGENTS_URL")
+        .to_string();
+    let token_a = env
+        .iter()
+        .find(|e| e["name"] == "DROPPEN_AGENTS_TOKEN")
+        .and_then(|e| e["value"].as_str())
+        .expect("DROPPEN_AGENTS_TOKEN")
+        .to_string();
+    assert!(token_a.starts_with("rha1."), "{token_a}");
+
+    let http = reqwest::Client::new();
+
+    // Even with server auth off, `/api/agents` requires a verified `AgentsGrant`,
+    // and a `rhn1` notify token minted from the same secret is never accepted.
+    assert_eq!(http.get(format!("{base_url}/api/agents")).send().await.expect("get").status(), 401);
+    let secret = droppen_notify::notify::store::read_secret(&server.paths)
+        .await
+        .expect("secret minted with rha1 token");
+    let notify_token = droppen_notify::notify::token::mint(&secret, "default", &format!("acp/{id_a}"));
+    assert_eq!(
+        http.get(format!("{base_url}/api/agents"))
+            .bearer_auth(&notify_token)
+            .send()
+            .await
+            .expect("get")
+            .status(),
+        401
+    );
+
+    // Listing peers returns beta and excludes alpha from `agents` while naming
+    // alpha in `self`.
+    let list_resp = http
+        .get(format!("{base_url}/api/agents"))
+        .bearer_auth(&token_a)
+        .send()
+        .await
+        .expect("list");
+    assert_eq!(list_resp.status(), 200);
+    let listed: Value = list_resp.json().await.expect("json");
+    assert_eq!(listed["self"]["ref"], format!("acp/{id_a}"), "{listed:#}");
+    let peers = listed["agents"].as_array().expect("agents array");
+    assert!(peers.iter().all(|p| p["ref"] != format!("acp/{id_a}")), "self excluded");
+    let beta_peer = peers
+        .iter()
+        .find(|p| p["ref"] == format!("acp/{id_b}"))
+        .unwrap_or_else(|| panic!("beta not in peers: {listed:#}"));
+    assert_eq!(beta_peer["canReceive"], true);
+
+    // A session cannot address itself, and sending to a peer delivers the
+    // `<cross-session-message>` envelope as an ordinary turn on beta.
+    let self_send = http
+        .post(format!("{base_url}/api/agents/send"))
+        .bearer_auth(&token_a)
+        .json(&json!({ "target": format!("acp/{id_a}"), "message": "talking to myself" }))
+        .send()
+        .await
+        .expect("self send");
+    assert_eq!(self_send.status(), 400);
+
+    let before_b = texts(&server.get_json(&format!("/api/sessions/acp/{id_b}")).await).len();
+    let send_resp = http
+        .post(format!("{base_url}/api/agents/send"))
+        .bearer_auth(&token_a)
+        .json(&json!({ "target": format!("acp/{id_b}"), "message": "please inspect auth.rs" }))
+        .send()
+        .await
+        .expect("send");
+    assert_eq!(send_resp.status(), 200);
+    let sent: Value = send_resp.json().await.expect("json");
+    assert_eq!(sent["accepted"], true);
+    assert_eq!(sent["target"], format!("acp/{id_b}"));
+    assert_eq!(sent["hop"], 1);
+
+    wait_for(&server, &id_b, "beta received cross-session message", |detail| {
+        texts(detail).len() > before_b && finished(detail)
+    })
+    .await;
+
+    let beta_prompts: Vec<String> = calls(&work_b)
+        .into_iter()
+        .filter(|c| c["method"] == "session/prompt")
+        .filter_map(|c| c["params"]["prompt"][0]["text"].as_str().map(str::to_string))
+        .collect();
+    let delivered = beta_prompts.last().expect("delivered prompt");
+    assert!(
+        delivered.starts_with(&format!("<cross-session-message from=\"acp/{id_a}\"")),
+        "missing envelope: {delivered}"
+    );
+    assert!(delivered.contains("hop=\"1\""), "missing hop: {delivered}");
+    assert!(delivered.contains("please inspect auth.rs"), "missing body: {delivered}");
+
+    // Reading beta's transcript returns trimmed items and pending-gate flags.
+    let tr_resp = http
+        .get(format!("{base_url}/api/agents/acp/{id_b}/transcript"))
+        .bearer_auth(&token_a)
+        .send()
+        .await
+        .expect("transcript");
+    assert_eq!(tr_resp.status(), 200);
+    let tr: Value = tr_resp.json().await.expect("json");
+    assert_eq!(tr["target"], format!("acp/{id_b}"));
+    assert_eq!(tr["pendingPermission"], false);
+    assert_eq!(tr["pendingQuestion"], false);
+    let items = tr["items"].as_array().expect("items");
+    assert!(
+        items.iter().any(|i| i["text"].as_str().unwrap_or_default().contains("please inspect auth.rs")),
+        "transcript missing delivered message: {tr:#}"
+    );
+
+    server.stop().await;
+
+    // With authentication enforced, the stateless `rha1` token still opens
+    // `/api/agents` after a restart and never opens `/api/sessions` or `/api/notify`.
+    let guarded = TestServer::start_forced_at(home.path()).await;
+    let guarded_url = format!("http://127.0.0.1:{}", guarded.addr.port());
+    assert_eq!(
+        http.get(format!("{guarded_url}/api/agents"))
+            .bearer_auth(&token_a)
+            .send()
+            .await
+            .expect("agents")
+            .status(),
+        200
+    );
+    assert_eq!(
+        http.get(format!("{guarded_url}/api/sessions"))
+            .bearer_auth(&token_a)
+            .send()
+            .await
+            .expect("sessions")
+            .status(),
+        401
+    );
+    assert_eq!(
+        http.post(format!("{guarded_url}/api/notify"))
+            .bearer_auth(&token_a)
+            .json(&json!({ "title": "hi" }))
+            .send()
+            .await
+            .expect("notify")
+            .status(),
+        401
+    );
+    guarded.stop().await;
+
+    // Archiving alpha revokes its eligibility on all three agent-bus routes.
+    let unguarded = TestServer::start_at(home.path(), None).await;
+    let unguarded_url = format!("http://127.0.0.1:{}", unguarded.addr.port());
+    let (status, body) = unguarded.json("POST", &format!("/api/sessions/acp/{id_a}/archive"), &json!({})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        http.get(format!("{unguarded_url}/api/agents"))
+            .bearer_auth(&token_a)
+            .send()
+            .await
+            .expect("archived list")
+            .status(),
+        403
+    );
+    assert_eq!(
+        http.post(format!("{unguarded_url}/api/agents/send"))
+            .bearer_auth(&token_a)
+            .json(&json!({ "target": format!("acp/{id_b}"), "message": "ghost" }))
+            .send()
+            .await
+            .expect("archived send")
+            .status(),
+        403
+    );
+    assert_eq!(
+        http.get(format!("{unguarded_url}/api/agents/acp/{id_b}/transcript"))
+            .bearer_auth(&token_a)
+            .send()
+            .await
+            .expect("archived transcript")
+            .status(),
+        403
+    );
+    unguarded.stop().await;
 }

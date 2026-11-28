@@ -47,3 +47,23 @@ impl NotifyGrant {
         self.0.downcast_ref()
     }
 }
+
+/// What the local agent-bus capability proved about a request, carried from
+/// `droppen_auth::guard` to `/api/agents/*` handlers in the request extensions.
+///
+/// Distinct from both [`AuthIdentity`] and [`NotifyGrant`] so a peer-messaging
+/// token can never satisfy a user login check or a notification check.
+#[derive(Clone)]
+pub struct AgentsGrant(Arc<dyn Any + Send + Sync>);
+
+impl AgentsGrant {
+    /// A grant holding what the agent-bus capability proved.
+    pub fn new<T: Any + Send + Sync>(proof: T) -> Self {
+        Self(Arc::new(proof))
+    }
+
+    /// What the grant holds, if it is a `T`.
+    pub fn get<T: Any>(&self) -> Option<&T> {
+        self.0.downcast_ref()
+    }
+}
