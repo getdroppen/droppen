@@ -17,9 +17,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-// Only the default's ran-here-before check off Linux asks the store.
-#[cfg(not(target_os = "linux"))]
-use droppen_desktop_core::credentials::LayeredStore;
 use droppen_desktop_core::dirs::ShellDirs;
 use droppen_desktop_core::login_item::{self as core, Backend, Before, FirstLaunch, Legacy, LegacyFile, Migration, Status};
 use tauri::{AppHandle, Runtime};
@@ -172,23 +169,12 @@ impl LoginItem {
         }
     }
 
-    /// Whether an install ran here before, for the default. On Linux the
-    /// app's own files answer: the Secret Service load can wait its 5 s
-    /// deadline, and this runs on the main thread before the window exists.
-    /// The instance directory is made by the same start that makes the
-    /// keyring item, so a keyring item without it is an install that was
-    /// already reset.
+    /// Whether an install ran here before, for the default. Uses the app's own
+    /// files on every platform so startup on the main thread never blocks on
+    /// a locked Keychain or Secret Service prompt before the window exists.
     fn ran_here_before(&self) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            let _ = self.keychain;
-            core::ran_here_before_files(&self.home, &self.credential_file)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            let store = LayeredStore::for_app(droppen_desktop_core::INSTANCE, self.keychain, self.credential_file.clone());
-            core::ran_here_before(&self.home, &self.credential_file, &store)
-        }
+        let _ = self.keychain;
+        core::ran_here_before_files(&self.home, &self.credential_file)
     }
 
     fn move_or_repoint<R: Runtime>(&self, app: &AppHandle<R>, translocated: bool) {

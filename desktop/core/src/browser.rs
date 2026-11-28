@@ -24,12 +24,16 @@ use std::time::{Duration, SystemTime};
 /// (the server's `local_open::TTL`), past which it opens nothing.
 pub const PAGE_LIFETIME: Duration = Duration::from_secs(60);
 
+/// How long `osascript` may run before it is killed as hung.
+const OSASCRIPT_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// The AppleScript that opens `url` in the default browser.
 pub fn open_location_script(url: &str) -> String {
     format!("open location {}\n", applescript_string(url))
 }
 
-/// `text` as an AppleScript string literal.
+/// `text` as a single-line AppleScript string literal (control characters
+/// cannot break out into a second statement).
 fn applescript_string(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
@@ -37,6 +41,9 @@ fn applescript_string(text: &str) -> String {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
+            '\r' => out.push_str("\\r"),
+            '\n' => out.push_str("\\n"),
+            '\0' => {}
             other => out.push(other),
         }
     }
@@ -48,6 +55,9 @@ fn applescript_string(text: &str) -> String {
 /// input: the address is in no process's arguments. An error says why
 /// without the address, which may go to a log.
 pub fn open_secret(url: &str) -> Result<(), String> {
+    if url.chars().any(|c| c.is_control()) {
+        return Err("refusing to open an address containing control characters".into());
+    }
     let mut child = Command::new("osascript")
         .arg("-")
         .stdin(Stdio::piped())
@@ -60,7 +70,19 @@ pub fn open_secret(url: &str) -> Result<(), String> {
             .write_all(open_location_script(url).as_bytes())
             .map_err(|error| format!("cannot hand osascript the address: {}", error.kind()))?;
     }
-    let status = child.wait().map_err(|error| format!("osascript did not finish: {}", error.kind()))?;
+    let deadline = std::time::Instant::now() + OSASCRIPT_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("osascript timed out after {}s", OSASCRIPT_TIMEOUT.as_secs()));
+            }
+            Err(error) => return Err(format!("osascript did not finish: {}", error.kind())),
+        }
+    };
     if status.success() {
         Ok(())
     } else {
@@ -210,8 +232,10 @@ mod tests {
             open_location_script("http://127.0.0.1:5555/#local-open=abc-DEF_123"),
             "open location \"http://127.0.0.1:5555/#local-open=abc-DEF_123\"\n"
         );
-        // Whatever it holds, it stays one string literal.
+        // Whatever it holds, it stays one string literal on a single line.
         assert_eq!(open_location_script(r#"a"b\c"#), "open location \"a\\\"b\\\\c\"\n");
+        assert_eq!(open_location_script("a\nb\rc"), "open location \"a\\nb\\rc\"\n");
+        assert!(open_secret("http://127.0.0.1:5555/\ndo shell script \"id\"").is_err());
     }
 
     #[test]

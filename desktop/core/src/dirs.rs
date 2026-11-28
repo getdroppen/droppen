@@ -192,7 +192,24 @@ pub fn login_item(home: &Path) -> PathBuf {
 /// Whether a login item's property list starts `exe` — a login item made
 /// before the app was moved still names where it was.
 pub fn login_item_starts(plist: &str, exe: &Path) -> bool {
-    plist.contains(&format!("<string>{}</string>", exe.display()))
+    let raw = exe.display().to_string();
+    let escaped = xml_escape(&raw);
+    plist.contains(&format!("<string>{escaped}</string>"))
+}
+
+fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// `mkdir -p` with the last component 0700, tightened if it already existed.
@@ -291,6 +308,11 @@ mod tests {
             Path::new("/Users/someone/Downloads/Droppen.app/Contents/MacOS/Droppen")
         ));
         assert!(!login_item_starts(plist, Path::new("/Applications/Droppen.app/Contents/MacOS/Droppen")));
+        let escaped_plist = "<plist><dict><array><string>/Users/a&amp;b/Droppen.app/Contents/MacOS/Droppen</string></array></dict></plist>";
+        assert!(login_item_starts(
+            escaped_plist,
+            Path::new("/Users/a&b/Droppen.app/Contents/MacOS/Droppen")
+        ));
     }
 
     #[test]

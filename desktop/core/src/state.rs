@@ -69,16 +69,19 @@ impl ShellState {
 pub fn write_atomically(path: &Path, body: &[u8], mode: u32) -> io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
 
     let parent = path.parent().ok_or_else(|| io::Error::other("no parent directory"))?;
     std::fs::create_dir_all(parent)?;
     let name = path.file_name().ok_or_else(|| io::Error::other("no file name"))?.to_string_lossy();
-    let temporary = parent.join(format!(".{name}.{}.tmp", std::process::id()));
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
     let result = (|| {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(mode)
             .open(&temporary)?;
         file.write_all(body)?;
@@ -151,5 +154,24 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(leftovers.is_empty());
+    }
+
+    #[test]
+    fn concurrent_atomic_writes_never_collide() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("state.json");
+        std::thread::scope(|scope| {
+            for i in 0..8 {
+                let path = path.clone();
+                scope.spawn(move || {
+                    for j in 0..20 {
+                        let body = format!("{{\"port\": {}}}", 10_000 + i * 100 + j);
+                        write_atomically(&path, body.as_bytes(), 0o600).expect("write");
+                    }
+                });
+            }
+        });
+        let loaded = ShellState::load(&path);
+        assert!(loaded.port.is_some());
     }
 }

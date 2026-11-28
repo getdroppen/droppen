@@ -282,12 +282,17 @@ impl Supervisor {
                     if let Some(pid) = pid {
                         on_event(Event::Started { pid, attempt });
                         let (status, requested) = wait_for_exit(&shared);
+                        let code = status.and_then(|status| status.code());
                         on_event(Event::Exited {
                             pid,
-                            code: status.and_then(|status| status.code()),
+                            code,
                             signal: status.and_then(|status| std::os::unix::process::ExitStatusExt::signal(&status)),
                             requested,
                         });
+                        // Another server owns this instance: retrying in a loop only burns CPU until the user acts.
+                        if code == Some(INSTANCE_HELD_EXIT) {
+                            break;
+                        }
                     }
                     attempt = attempt.saturating_add(1);
                     if shared.state.lock().map(|state| state.stopping).unwrap_or(true) {
@@ -560,8 +565,10 @@ pub fn stop_leftover(pid_file: &Path, instance_dir: &Path, grace: Duration) -> L
 /// Whether the process `pid`, running `exe`, is a Droppen app's server: see
 /// [`stop_leftover`]. `lock_holder` is the pid the instance's held lock names.
 pub fn is_leftover_server(exe: &Path, pid: u32, lock_holder: Option<u32>) -> bool {
-    let named = exe.file_name().is_some_and(|name| {
-        name == crate::SIDECAR_NAME || name == crate::LEGACY_SIDECAR_NAME
+    let named = exe.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
+        // On Linux `/proc/<pid>/exe` appends ` (deleted)` when the binary (or an AppImage mount) was replaced or unmounted.
+        let clean = name.strip_suffix(" (deleted)").unwrap_or(name);
+        clean == crate::SIDECAR_NAME || clean == crate::LEGACY_SIDECAR_NAME
     });
     named && (lock_holder == Some(pid) || in_app_bundle(exe))
 }
@@ -985,6 +992,10 @@ mod tests {
             is_leftover_server(&Path::new("/tmp").join(crate::LEGACY_SIDECAR_NAME), 10, Some(10)),
             "the old sidecar name, holding our instance"
         );
+        assert!(
+            is_leftover_server(&Path::new("/tmp/.mount_x/usr/bin").join(format!("{} (deleted)", crate::SIDECAR_NAME)), 10, Some(10)),
+            "Linux /proc/<pid>/exe suffix after upgrade or unmounted AppImage"
+        );
         assert!(!is_leftover_server(Path::new("/bin/sleep"), 10, Some(10)));
         assert_eq!(
             plist_bundle_id("<key>CFBundleIdentifier</key><string>a.b</string>").as_deref(),
@@ -1008,5 +1019,34 @@ mod tests {
         assert!(path.exists());
         PidRecord::clear(&path, 4242);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn instance_held_exit_stops_supervision_without_restarting() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let program = script(
+            dir.path(),
+            "server",
+            &format!("n=$(cat starts 2>/dev/null || echo 0); n=$((n+1)); echo $n > starts\nexit {INSTANCE_HELD_EXIT}"),
+        );
+        let (send, events) = mpsc::channel();
+        let dir_path = dir.path().to_path_buf();
+        let supervisor = Supervisor::start(
+            move |_| spec(&program, &dir_path),
+            fast(),
+            move |event| {
+                let _ = send.send(event);
+            },
+        );
+        wait_until("one start", Duration::from_secs(5), || dir.path().join("starts").exists());
+        // Wait past the fast backoff (50ms) to prove it does not restart.
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(std::fs::read_to_string(dir.path().join("starts")).expect("starts").trim(), "1");
+        assert_eq!(supervisor.stop(Duration::from_secs(2)), Stopped::NotRunning);
+        let events: Vec<Event> = events.try_iter().collect();
+        assert!(
+            !events.iter().any(|event| matches!(event, Event::Restarting { .. })),
+            "must not schedule a restart on INSTANCE_HELD_EXIT: {events:?}"
+        );
     }
 }

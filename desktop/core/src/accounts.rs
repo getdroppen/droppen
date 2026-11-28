@@ -76,10 +76,13 @@ pub struct Ran {
     pub stderr: String,
 }
 
+/// How long one `user` subcommand may run before it is stopped as hung.
+const CLI_TIMEOUT: Duration = Duration::from_secs(30);
+
 impl Cli {
     /// Run `user <args…> --instance <instance>`, writing `stdin` (if any) to it.
     pub fn user(&self, args: &[&str], stdin: Option<&str>) -> std::io::Result<Ran> {
-        self.command("user", args, stdin, None)
+        self.command("user", args, stdin, Some(CLI_TIMEOUT))
     }
 
     /// Run `<subcommand> <args…> --instance <instance>`, writing `stdin` (if
@@ -118,7 +121,7 @@ impl Cli {
             // The command's own words only: a password goes in on stdin and is
             // in neither stream, and a one-time sign-in token `open` prints is
             // cut out.
-            if let Ok(mut file) = crate::logging::open_append(path) {
+            if let Ok(mut file) = crate::logging::open_append_no_rotate(path) {
                 let _ = writeln!(
                     file,
                     "[droppen-desktop] {subcommand} {} --instance {}: {}\n{}{}",

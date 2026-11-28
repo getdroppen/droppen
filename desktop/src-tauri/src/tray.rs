@@ -293,6 +293,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, login: &LoginItem, translocated: 
         OPEN_IN_BROWSER => open_in_browser(app),
         AUTOSTART => {
             toggle_autostart(app);
+            crate::desktop_settings::push(app);
         }
         LOGIN_ITEMS => crate::login_item::open_login_items(),
         QUIT => quit(app),
@@ -458,6 +459,7 @@ pub fn refresh_login_item<R: Runtime>(app: &AppHandle<R>) {
         shown.read_at = Some(Instant::now());
     }
     show_login_item(app, login.status(app));
+    crate::desktop_settings::push(app);
 }
 
 /// Show `status` in the menu bar's login item. On the main thread only: the
@@ -544,6 +546,13 @@ pub fn open_in_browser_from<R: Runtime>(app: &AppHandle<R>, from: &str) {
     log::info!("open in browser, from {from}");
     let app = app.clone();
     std::thread::spawn(move || {
+        struct ResetOpening;
+        impl Drop for ResetOpening {
+            fn drop(&mut self) {
+                OPENING.store(false, Ordering::SeqCst);
+            }
+        }
+        let _guard = ResetOpening;
         match shell.open_in_browser() {
             Ok(crate::shell::Opening::Done) => {}
             Ok(crate::shell::Opening::PlainPage(port)) => crate::window::open_page_in_browser(&app, port),
@@ -553,7 +562,6 @@ pub fn open_in_browser_from<R: Runtime>(app: &AppHandle<R>, from: &str) {
             }
             Err((why, None)) => log::warn!("could not open the page in the browser: {why}"),
         }
-        OPENING.store(false, Ordering::SeqCst);
     });
 }
 
