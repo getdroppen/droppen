@@ -30,6 +30,12 @@ pub const AGENTS_URL_ENV: &str = "DROPPEN_AGENTS_URL";
 /// [`AGENTS_URL_ENV`].
 pub const AGENTS_TOKEN_ENV: &str = "DROPPEN_AGENTS_TOKEN";
 
+/// Path to a private (`0600`) JSON file carrying `{"url", "token"}` for
+/// `droppen mcp-agents` when credentials are delivered via file rather than
+/// inline environment variables (e.g. Codex `thread/start`, where the thread id
+/// is learned immediately after spawning `codex app-server`).
+pub const AGENTS_CONFIG_ENV: &str = "DROPPEN_AGENTS_CONFIG";
+
 /// The variable the desktop app reports its own login-shell read in:
 /// `ok`, `timeout` or `failed`. Server-only: never passed to a child
 /// (`is_server_only_variable`).
@@ -66,6 +72,7 @@ fn is_server_only_variable(key: &str) -> bool {
         || key == NOTIFY_TOKEN_ENV
         || key == AGENTS_URL_ENV
         || key == AGENTS_TOKEN_ENV
+        || key == AGENTS_CONFIG_ENV
 }
 
 /// Variables an older Droppen set for whoever started this server, under their
@@ -420,26 +427,42 @@ mod tests {
     #[test]
     fn an_inherited_notify_channel_stays_with_the_server() {
         assert!(is_server_only_variable(NOTIFY_URL_ENV) && is_server_only_variable(NOTIFY_TOKEN_ENV));
-        assert!(is_server_only_variable(AGENTS_URL_ENV) && is_server_only_variable(AGENTS_TOKEN_ENV));
+        assert!(
+            is_server_only_variable(AGENTS_URL_ENV)
+                && is_server_only_variable(AGENTS_TOKEN_ENV)
+                && is_server_only_variable(AGENTS_CONFIG_ENV)
+        );
         let inherited = [
             (NOTIFY_URL_ENV, "http://outer/api/notify"),
             (NOTIFY_TOKEN_ENV, "outer"),
             (AGENTS_URL_ENV, "http://127.0.0.1:9999"),
             (AGENTS_TOKEN_ENV, "rha1.outer"),
+            (AGENTS_CONFIG_ENV, "/tmp/outer-mcp.json"),
             ("HOME", "/home/ada"),
         ]
         .map(|(k, v)| (k.to_string(), v.to_string()));
         let env = clean_env_from(inherited.clone(), std::iter::empty::<(String, String)>());
         assert!(!env.contains_key(NOTIFY_URL_ENV) && !env.contains_key(NOTIFY_TOKEN_ENV), "{env:?}");
-        assert!(!env.contains_key(AGENTS_URL_ENV) && !env.contains_key(AGENTS_TOKEN_ENV), "{env:?}");
+        assert!(
+            !env.contains_key(AGENTS_URL_ENV)
+                && !env.contains_key(AGENTS_TOKEN_ENV)
+                && !env.contains_key(AGENTS_CONFIG_ENV),
+            "{env:?}"
+        );
         assert_eq!(env.get("HOME").map(String::as_str), Some("/home/ada"));
         let env = clean_env_from(
             inherited,
-            [(NOTIFY_TOKEN_ENV, "own"), (AGENTS_URL_ENV, "http://127.0.0.1:4321"), (AGENTS_TOKEN_ENV, "rha1.own")],
+            [
+                (NOTIFY_TOKEN_ENV, "own"),
+                (AGENTS_URL_ENV, "http://127.0.0.1:4321"),
+                (AGENTS_TOKEN_ENV, "rha1.own"),
+                (AGENTS_CONFIG_ENV, "/tmp/own-mcp.json"),
+            ],
         );
         assert_eq!(env.get(NOTIFY_TOKEN_ENV).map(String::as_str), Some("own"), "what a caller adds is its own");
         assert_eq!(env.get(AGENTS_URL_ENV).map(String::as_str), Some("http://127.0.0.1:4321"));
         assert_eq!(env.get(AGENTS_TOKEN_ENV).map(String::as_str), Some("rha1.own"));
+        assert_eq!(env.get(AGENTS_CONFIG_ENV).map(String::as_str), Some("/tmp/own-mcp.json"));
     }
 
     /// What an older Droppen hands its children never reaches one of ours: a

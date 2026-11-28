@@ -1,13 +1,14 @@
 //! How a claude resident is started: its command line, the environment and
 //! the account it runs under, for a send, a start and a rotation.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use droppen_accounts::store::AccountProvider;
 use crate::claude_roots;
 use droppen_provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 use crate::resident;
-use droppen_provider::{require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
+use droppen_provider::{require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt, StdioMcpServer};
 use crate::sessions::claude;
 use droppen_sessions::context::{context_window, LARGE_CONTEXT_WINDOW};
 use droppen_sessions::Source;
@@ -104,6 +105,40 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
         args.extend(RESIDENT_DISALLOWED_TOOLS.iter().map(|tool| (*tool).to_string()));
     }
     args
+}
+
+/// Insert `--mcp-config <path>` ahead of `--permission-prompt-tool` so the
+/// variadic `--mcp-config` option stops before later flags and never collides
+/// with `--disallowedTools`.
+pub(super) fn insert_mcp_config_arg(args: &mut Vec<String>, path: &Path) {
+    let pair = ["--mcp-config".to_string(), path.to_string_lossy().into_owned()];
+    if let Some(pos) = args
+        .iter()
+        .position(|a| a == "--permission-prompt-tool" || a == "--disallowedTools")
+    {
+        args.splice(pos..pos, pair);
+    } else {
+        args.extend(pair);
+    }
+}
+
+fn claude_mcp_config_json(servers: &[StdioMcpServer]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for server in servers {
+        let mut env = serde_json::Map::new();
+        for (k, v) in &server.env {
+            env.insert(k.clone(), serde_json::Value::String(v.clone()));
+        }
+        map.insert(
+            server.name.clone(),
+            serde_json::json!({
+                "command": server.command.to_string_lossy(),
+                "args": server.args,
+                "env": env,
+            }),
+        );
+    }
+    serde_json::json!({ "mcpServers": map })
 }
 
 /// The variable the CLI's own compaction threshold is set through.
@@ -351,6 +386,35 @@ impl super::ClaudeCodeRuns {
     /// bug with a very unhappy user attached.
     async fn notify_decorate(&self, id: &str, env: &mut Env) {
         self.decoration.decorate(Source::Claude, id, env).await;
+    }
+
+    /// Write a private (`0600`) `--mcp-config` file for a non-chat Claude
+    /// resident keyed by `shim_id` when the server offers injected MCP servers
+    /// (`droppen-agents`).
+    ///
+    /// Deliberately infallible like [`Self::notify_decorate`]: an MCP config
+    /// write failure degrades peer messaging rather than blocking the session.
+    pub(super) async fn claude_mcp_config(&self, id: &str, shim_id: &str, chat: bool) -> Option<PathBuf> {
+        if chat {
+            return None;
+        }
+        let servers = self.decoration.mcp_servers(Source::Claude, id).await;
+        if servers.is_empty() {
+            return None;
+        }
+        if let Err(error) = droppen_base::fsutil::ensure_private_dir(&self.mcp_configs_dir) {
+            tracing::warn!(session = %id, %error, "cannot secure MCP config directory; skipping droppen-agents");
+            return None;
+        }
+        let payload = serde_json::to_vec(&claude_mcp_config_json(&servers)).ok()?;
+        let path = self.mcp_configs_dir.join(format!("claude-{shim_id}.json"));
+        match droppen_base::fsutil::write_private_reporting_path(&path, &payload) {
+            Ok(()) => Some(path),
+            Err(error) => {
+                tracing::warn!(session = %id, %error, "cannot write Claude --mcp-config file; skipping droppen-agents");
+                None
+            }
+        }
     }
 }
 
@@ -809,5 +873,23 @@ mod tests {
         assert_eq!(enforced(&mut Env::new(), Some("sonnet")), None);
         assert_eq!(enforced(&mut Env::new(), Some("claude-sonnet-5")), None);
         assert_eq!(enforced(&mut Env::new(), None), None);
+    }
+
+    #[test]
+    fn mcp_config_is_inserted_before_permission_prompt_tool() {
+        let cfg = Path::new("/tmp/claude-shim.json");
+        let mut session_args = claude_resident_flags(&paths(), &options());
+        insert_mcp_config_arg(&mut session_args, cfg);
+        let mcp_pos = session_args.iter().position(|a| a == "--mcp-config").expect("--mcp-config");
+        let prompt_pos = session_args
+            .iter()
+            .position(|a| a == "--permission-prompt-tool")
+            .expect("--permission-prompt-tool");
+        assert_eq!(session_args[mcp_pos + 1], "/tmp/claude-shim.json");
+        assert!(mcp_pos < prompt_pos, "--mcp-config must precede --permission-prompt-tool");
+        assert_eq!(session_args.last().map(String::as_str), Some("ExitPlanMode"));
+
+        let chat_args = claude_resident_flags(&paths(), &SendOptions { chat: true, ..options() });
+        assert!(!chat_args.iter().any(|a| a == "--mcp-config"), "chats never receive MCP config");
     }
 }

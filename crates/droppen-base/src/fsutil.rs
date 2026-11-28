@@ -52,6 +52,20 @@ pub fn write_private_reporting_path(path: &Path, data: &[u8]) -> Result<(), Stri
     write_private_creating_parent(path, data).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// Create `dir` (and any missing parents) with mode `0700` on Unix, and
+/// tighten `dir`'s own mode to `0700` even if it already existed with looser
+/// permissions.
+pub fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)?;
+    #[cfg(unix)]
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
 /// Fails for a file that others can read, naming it and its mode: a key store
 /// refuses such a file, a cache starts again.
 #[cfg(unix)]
@@ -74,6 +88,28 @@ pub fn check_private(path: &Path) -> Result<(), String> {
 /// No file modes to check off Unix, so every file passes.
 #[cfg(not(unix))]
 pub fn check_private(_: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+/// Fails for an already-open file descriptor that is not a regular file or
+/// that others can read (mode bits `0o077`), without naming its host path.
+///
+/// Inspects the opened file directly (`fstat`) so callers avoid TOCTOU races
+/// between a path-based permission check and reading the file contents.
+pub fn check_private_file(file: &std::fs::File) -> Result<(), String> {
+    let meta = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect file permissions: {error}"))?;
+    if !meta.is_file() {
+        return Err("not a regular file".to_string());
+    }
+    #[cfg(unix)]
+    {
+        let mode = meta.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(format!("file is readable by others (mode {:o}); expected 0600", mode & 0o777));
+        }
+    }
     Ok(())
 }
 
@@ -150,5 +186,37 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
             .count();
         assert_eq!(leftovers, 0, "the temp file is renamed, never left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_dir_tightens_preexisting_loose_directory_to_0700() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("mcp-configs");
+        std::fs::create_dir(&target).expect("create dir");
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).expect("chmod 755");
+        assert_eq!(std::fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o755);
+
+        ensure_private_dir(&target).expect("tighten dir");
+        assert_eq!(std::fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_private_file_accepts_0600_and_rejects_loose_modes_and_dirs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let private_path = dir.path().join("private.json");
+        write_private(&private_path, b"{}").expect("write private");
+        let private_file = std::fs::File::open(&private_path).expect("open private");
+        assert!(check_private_file(&private_file).is_ok());
+
+        std::fs::set_permissions(&private_path, std::fs::Permissions::from_mode(0o644)).expect("chmod 644");
+        let loose_file = std::fs::File::open(&private_path).expect("open loose");
+        let err = check_private_file(&loose_file).expect_err("must reject 0644");
+        assert!(err.contains("644"), "{err}");
+        assert!(!err.contains(&private_path.display().to_string()), "must not expose path: {err}");
+
+        let dir_handle = std::fs::File::open(dir.path()).expect("open dir");
+        assert!(check_private_file(&dir_handle).is_err(), "directory must be rejected");
     }
 }

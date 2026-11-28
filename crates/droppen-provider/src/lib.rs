@@ -246,6 +246,23 @@ pub trait SpawnDecoration: Send + Sync {
     fn mcp_servers<'a>(&'a self, _source: Source, _id: &'a str) -> BoxFuture<'a, Vec<StdioMcpServer>> {
         Box::pin(async { Vec::new() })
     }
+
+    /// Host-managed stdio MCP server descriptors (command and arguments)
+    /// without minting a session capability token yet, for providers such as
+    /// Codex `thread/start` that must pass `-c mcp_servers.*` before the
+    /// canonical session id is known.
+    fn pending_mcp_servers<'a>(&'a self, source: Source) -> BoxFuture<'a, Vec<StdioMcpServer>> {
+        Box::pin(async move {
+            self.mcp_servers(source, "")
+                .await
+                .into_iter()
+                .map(|mut server| {
+                    server.env.clear();
+                    server
+                })
+                .collect()
+        })
+    }
 }
 
 // ------------------------------------------------------------------ operations
@@ -1030,6 +1047,13 @@ pub trait ProviderRuns: Send + Sync {
     fn permission_holders(&self) -> Vec<String> {
         self.question_holders()
     }
+
+    /// Filenames inside `<instance>/mcp-configs/` that `record` may legitimately
+    /// reference while its CLI process is alive, so startup orphan cleanup does
+    /// not remove them.
+    fn mcp_config_names(&self, _record: &runs::RunRecord) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// When a file was last written, on the clock `Instant` keeps.
@@ -1098,6 +1122,18 @@ impl Adopted {
     }
 }
 
+/// Conservative fallback filenames inside `<instance>/mcp-configs/` for a
+/// journal record whose provider is not registered in this binary.
+fn fallback_mcp_config_names(record: &runs::RunRecord) -> Vec<String> {
+    let prefix = record.source.as_str();
+    let mut names = Vec::new();
+    if let Some(shim) = record.shim.as_deref() {
+        names.push(format!("{prefix}-{shim}.json"));
+    }
+    names.push(format!("{prefix}-{}.json", record.session_id));
+    names
+}
+
 /// What became of one resident record on the way through adoption.
 enum Reattached {
     /// Its stdio is back and a driver has it.
@@ -1130,6 +1166,14 @@ impl InjectionRegistry {
             tracing::warn!("adoption runs once per server; not adopting again");
             return report;
         };
+        // Snapshot candidate filenames in `<instance>/mcp-configs/` *before*
+        // spawning or re-attaching any drivers, so files created concurrently
+        // during adoption (for example by an account-rotation respawn) are
+        // never swept as orphans.
+        let pre_adoption_mcp_files = self.snapshot_mcp_config_candidates();
+        // Per-run MCP config filenames that belong to live/adopted/deferred
+        // runs and must survive the startup orphan sweep below.
+        let mut live_mcp_files = std::collections::HashSet::<String>::new();
         for record in self.host.journal.read() {
             // Each run is its own CLI's provider's to take back. One whose part
             // that provider cannot read is one this version cannot read, and is
@@ -1138,10 +1182,12 @@ impl InjectionRegistry {
             // without it.
             let Some(runs) = by_source.get(&record.source).cloned() else {
                 tracing::error!(session = %record.session_id, source = %record.source, "no provider is registered for this run's source; that run will not be adopted");
+                live_mcp_files.extend(fallback_mcp_config_names(&record));
                 continue;
             };
             if !runs.readable(&record) {
                 tracing::warn!(session = %record.session_id, source = %record.source, "a run record cannot be read; that run will not be adopted");
+                live_mcp_files.extend(runs.mcp_config_names(&record));
                 continue;
             }
             if !procs::is_same_process(record.cli_pid, record.pid_token.as_deref()) {
@@ -1170,11 +1216,13 @@ impl InjectionRegistry {
                         ?holder,
                         "another server is already running this session; not adopting"
                     );
+                    live_mcp_files.extend(runs.mcp_config_names(&record));
                     report.deferred += 1;
                     continue;
                 }
                 Err(gate::ClaimError::Io(error)) => {
                     tracing::warn!(%error, session = %record.session_id, "cannot claim a session to adopt it");
+                    live_mcp_files.extend(runs.mcp_config_names(&record));
                     report.deferred += 1;
                     continue;
                 }
@@ -1187,8 +1235,12 @@ impl InjectionRegistry {
             // exists. A `codex exec` child has no such thing and is watched.
             if record.resident || runs.holds_state(&record) {
                 match self.clone().reattach(&runs, &record, claim, &boot).await {
-                    Reattached::Driving => report.recovered += 1,
+                    Reattached::Driving => {
+                        live_mcp_files.extend(runs.mcp_config_names(&record));
+                        report.recovered += 1;
+                    }
                     Reattached::Watching(claim) => {
+                        live_mcp_files.extend(runs.mcp_config_names(&record));
                         self.clone().resume(runs, record, claim);
                         report.recovered += 1;
                     }
@@ -1196,6 +1248,7 @@ impl InjectionRegistry {
                 }
                 continue;
             }
+            live_mcp_files.extend(runs.mcp_config_names(&record));
             self.clone().resume(runs, record, claim);
             report.recovered += 1;
         }
@@ -1220,7 +1273,48 @@ impl InjectionRegistry {
                 "permission prompts whose process did not survive the restart were cancelled"
             );
         }
+        let swept = self.sweep_orphan_mcp_configs(&pre_adoption_mcp_files, &live_mcp_files);
+        if swept > 0 {
+            tracing::info!(removed = swept, "swept orphaned MCP config files on startup");
+        }
         report
+    }
+
+    /// Snapshot managed `.json` and crash-left `.tmp` filenames currently in
+    /// `<instance>/mcp-configs/` before adoption starts.
+    fn snapshot_mcp_config_candidates(&self) -> Vec<String> {
+        let dir = self.instance.mcp_configs();
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut candidates = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let is_managed_json = name.ends_with(".json");
+            let is_managed_tmp = name.starts_with('.') && name.ends_with(".tmp");
+            if is_managed_json || is_managed_tmp {
+                candidates.push(name.to_string());
+            }
+        }
+        candidates
+    }
+
+    /// Delete any leftover `.json` or crash-left `.tmp` files from the
+    /// pre-adoption snapshot that do not belong to a live/adopted run.
+    fn sweep_orphan_mcp_configs(&self, candidates: &[String], live: &std::collections::HashSet<String>) -> usize {
+        let dir = self.instance.mcp_configs();
+        let mut removed = 0;
+        for name in candidates {
+            if !live.contains(name.as_str()) && std::fs::remove_file(dir.join(name)).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
     }
 
     /// Get a resident's stdio back, or work out why that is not possible.
@@ -1649,5 +1743,39 @@ mod tests {
         assert!(host.run_injection(Source::Claude, "second").is_some(), "though it is still in the map");
         host.withdraw_run(Source::Claude, "second");
         assert!(host.run_injection(Source::Claude, "second").is_none());
+    }
+
+    #[test]
+    fn startup_mcp_sweep_preserves_live_and_post_snapshot_files() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = testing::injection_registry(home.path());
+        let dir = registry.instance.ensure_mcp_configs().expect("mcp_configs dir");
+
+        let orphan_json = dir.join("codex-orphan.json");
+        let orphan_tmp = dir.join(".claude-crashed.json.tmp");
+        let live_json = dir.join("claude-adopted.json");
+        let unmanaged = dir.join("README.txt");
+        for path in [&orphan_json, &orphan_tmp, &live_json, &unmanaged] {
+            std::fs::write(path, b"{}").expect("write");
+        }
+
+        let candidates = registry.snapshot_mcp_config_candidates();
+
+        // Simulate a concurrent respawn writing a brand-new config and temp file
+        // while `adopt_all` is running after the pre-adoption snapshot.
+        let respawned_json = dir.join("claude-respawned.json");
+        let respawned_tmp = dir.join(".claude-respawned.json.1234.tmp");
+        std::fs::write(&respawned_json, b"{}").expect("write respawned");
+        std::fs::write(&respawned_tmp, b"{}").expect("write respawned tmp");
+
+        let live = std::collections::HashSet::from(["claude-adopted.json".to_string()]);
+        let removed = registry.sweep_orphan_mcp_configs(&candidates, &live);
+        assert_eq!(removed, 2);
+        assert!(!orphan_json.exists(), "pre-boot orphan json should be swept");
+        assert!(!orphan_tmp.exists(), "pre-boot orphan tmp should be swept");
+        assert!(live_json.exists(), "adopted live config must survive");
+        assert!(unmanaged.exists(), "unmanaged files must survive");
+        assert!(respawned_json.exists(), "file created after snapshot must survive");
+        assert!(respawned_tmp.exists(), "in-flight tmp created after snapshot must survive");
     }
 }

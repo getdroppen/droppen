@@ -472,13 +472,56 @@ fn provider_argv(base_url: &str) -> Vec<String> {
     ]
 }
 
-/// With no account, exactly the spawn there was before accounts existed:
-/// `codex app-server`, the server's environment, and codex's own login.
+/// Strip and validate the three `-c mcp_servers.droppen_agents.*` overrides
+/// injected for every non-chat Codex session, returning the rest of `argv` and
+/// the `0600` config path carried in `DROPPEN_AGENTS_CONFIG`.
+fn strip_codex_mcp_args(argv: &[String]) -> (Vec<String>, String) {
+    assert!(
+        argv.iter().all(|a| !a.contains("rha1.")),
+        "capability token must never appear in codex argv: {argv:?}"
+    );
+    let mut rest = Vec::new();
+    let mut saw_cmd = false;
+    let mut saw_args = false;
+    let mut config_path = None;
+    let mut i = 0;
+    while i < argv.len() {
+        if argv[i] == "-c" && i + 1 < argv.len() {
+            let val = &argv[i + 1];
+            if val.starts_with("mcp_servers.droppen_agents.command=") {
+                saw_cmd = true;
+                i += 2;
+                continue;
+            }
+            if val == "mcp_servers.droppen_agents.args=[\"mcp-agents\"]" {
+                saw_args = true;
+                i += 2;
+                continue;
+            }
+            if let Some(tail) = val.strip_prefix("mcp_servers.droppen_agents.env={DROPPEN_AGENTS_CONFIG=\"") {
+                if let Some(path) = tail.strip_suffix("\"}") {
+                    config_path = Some(path.to_string());
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        rest.push(argv[i].clone());
+        i += 1;
+    }
+    assert!(saw_cmd && saw_args, "missing droppen_agents MCP args in {argv:?}");
+    let path = config_path.unwrap_or_else(|| panic!("missing DROPPEN_AGENTS_CONFIG in {argv:?}"));
+    (rest, path)
+}
+
+/// With no account, `codex app-server` carries only its `droppen-agents` MCP
+/// overrides beside codex's own login and the server's clean environment.
 #[tokio::test]
 async fn a_codex_start_with_no_account_is_the_bare_app_server() {
     let server = Server::start().await;
     let (spawn, start) = start_codex(&server, None).await;
-    assert_eq!(spawn.argv, ["app-server"]);
+    let (rest, _) = strip_codex_mcp_args(&spawn.argv);
+    assert_eq!(rest, ["app-server"]);
     assert_env(&spawn, server.clean_env(&[]), "codex, no account");
     assert_eq!(start["method"], "thread/start");
     assert_eq!(start["params"], json!({"cwd": server.workspace(), "approvalPolicy": "never"}));
@@ -492,7 +535,8 @@ async fn a_codex_start_on_an_env_account_gets_the_block_its_key_and_a_provider_o
     let server = Server::start().await;
     let account = server.create(json!({"label": "Relay", "kind": "env", "env": CODEX_BLOCK, "provider": "codex"})).await;
     let (spawn, start) = start_codex(&server, Some(&account)).await;
-    assert_eq!(spawn.argv, provider_argv("https://relay.example.com/v1"));
+    let (rest, _) = strip_codex_mcp_args(&spawn.argv);
+    assert_eq!(rest, provider_argv("https://relay.example.com/v1"));
     assert_env(
         &spawn,
         server.clean_env(&[
@@ -518,7 +562,8 @@ async fn a_codex_block_with_only_the_fallback_key_gets_it_and_the_default_endpoi
         .create(json!({"label": "Fallback", "kind": "env", "env": CODEX_FALLBACK_BLOCK, "provider": "codex"}))
         .await;
     let (spawn, _) = start_codex(&server, Some(&account)).await;
-    assert_eq!(spawn.argv, provider_argv("https://api.openai.com/v1"));
+    let (rest, _) = strip_codex_mcp_args(&spawn.argv);
+    assert_eq!(rest, provider_argv("https://api.openai.com/v1"));
     assert_env(
         &spawn,
         server.clean_env(&[
@@ -557,7 +602,8 @@ async fn a_codex_resume_on_an_env_account_restarts_the_app_server_under_it() {
     let workspace = server.workspace();
     seed_rollout(server.home(), CODEX_THREAD, &workspace);
     let (first, _) = start_codex(&server, None).await;
-    assert_eq!(first.argv, ["app-server"]);
+    let (first_rest, _) = strip_codex_mcp_args(&first.argv);
+    assert_eq!(first_rest, ["app-server"]);
     server.wait_idle("codex", CODEX_THREAD).await;
 
     server
@@ -569,7 +615,8 @@ async fn a_codex_resume_on_an_env_account_restarts_the_app_server_under_it() {
         )
         .await;
     let (spawn, resume) = codex_spawn(&workspace, 2).await;
-    assert_eq!(spawn.argv, provider_argv("https://relay.example.com/v1"));
+    let (rest, _) = strip_codex_mcp_args(&spawn.argv);
+    assert_eq!(rest, provider_argv("https://relay.example.com/v1"));
     assert_env(
         &spawn,
         server.clean_env(&[
@@ -719,7 +766,8 @@ async fn a_codex_start_the_rule_named_runs_on_it() {
         )
         .await;
     let (spawn, _) = codex_spawn(&workspace, 1).await;
-    assert_eq!(spawn.argv, provider_argv("https://relay.example.com/v1"));
+    let (rest, _) = strip_codex_mcp_args(&spawn.argv);
+    assert_eq!(rest, provider_argv("https://relay.example.com/v1"));
     assert_env(
         &spawn,
         server.clean_env(&[
@@ -847,4 +895,100 @@ async fn a_claude_resume_with_the_notify_channel_on_gets_the_channel() {
     let expected = server.claude_env(&[("CLAUDE_CONFIG_DIR", &root), ("CLAUDE_CODE_OAUTH_TOKEN", OAUTH_SECRET)]);
     assert_env(&spawn, server.with_notify(expected, OWNED_ID).await, "claude resume, notify on");
     assert!(Path::new(&root).join("skills/droppen-notify/SKILL.md").exists(), "the skill is in the managed root");
+}
+
+/// Ordinary Claude Code and Codex sessions each receive private (`0600`)
+/// `droppen-agents` credentials that authenticate them to `/api/agents` and
+/// let them see each other across providers, while instant chats receive none.
+#[tokio::test]
+async fn claude_and_codex_sessions_receive_private_mcp_configs_while_chats_do_not() {
+    let server = Server::start().await;
+    let workspace = server.workspace();
+
+    // Ordinary Claude session: `--mcp-config <0600 json>` with `droppen-agents`.
+    let claude_started = server
+        .send_ok(
+            "POST",
+            "/api/sessions/new",
+            json!({"source": "claude", "cwd": workspace.to_string_lossy(), "text": "hello claude"}),
+            200,
+        )
+        .await;
+    let claude_id = claude_started["id"].as_str().expect("claude id").to_string();
+    let claude_sp = claude_spawn(&workspace, 1).await;
+    let mcp_flag_pos = claude_sp
+        .argv
+        .iter()
+        .position(|a| a == "--mcp-config")
+        .unwrap_or_else(|| panic!("expected --mcp-config in {:?}", claude_sp.argv));
+    let claude_cfg_path = PathBuf::from(&claude_sp.argv[mcp_flag_pos + 1]);
+    assert_eq!(
+        std::fs::metadata(&claude_cfg_path).expect("claude cfg metadata").permissions().mode() & 0o777,
+        0o600
+    );
+    let claude_cfg: Value = serde_json::from_slice(&std::fs::read(&claude_cfg_path).expect("read claude cfg")).expect("json");
+    let claude_env = &claude_cfg["mcpServers"]["droppen-agents"]["env"];
+    let claude_url = claude_env["DROPPEN_AGENTS_URL"].as_str().expect("claude url");
+    let claude_token = claude_env["DROPPEN_AGENTS_TOKEN"].as_str().expect("claude token");
+    assert!(claude_token.starts_with("rha1."), "{claude_token}");
+
+    // Ordinary Codex session: `-c mcp_servers.droppen_agents.*` referencing a
+    // `0600` config file written immediately after `thread/start`.
+    let (codex_sp, _) = start_codex(&server, None).await;
+    let (_, codex_cfg_str) = strip_codex_mcp_args(&codex_sp.argv);
+    let codex_cfg_path = PathBuf::from(&codex_cfg_str);
+    assert_eq!(
+        std::fs::metadata(&codex_cfg_path).expect("codex cfg metadata").permissions().mode() & 0o777,
+        0o600
+    );
+    let codex_cfg: Value = serde_json::from_slice(&std::fs::read(&codex_cfg_path).expect("read codex cfg")).expect("json");
+    let codex_url = codex_cfg["url"].as_str().expect("codex url");
+    let codex_token = codex_cfg["token"].as_str().expect("codex token");
+    assert!(codex_token.starts_with("rha1."), "{codex_token}");
+
+    // Both credentials authenticate to the local agent bus under their own ref.
+    let http = reqwest::Client::new();
+    let claude_list: Value = http
+        .get(format!("{claude_url}/api/agents"))
+        .bearer_auth(claude_token)
+        .send()
+        .await
+        .expect("claude list")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(claude_list["self"]["ref"], format!("claude/{claude_id}"), "{claude_list:#}");
+
+    let codex_list: Value = http
+        .get(format!("{codex_url}/api/agents"))
+        .bearer_auth(codex_token)
+        .send()
+        .await
+        .expect("codex list")
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(codex_list["self"]["ref"], format!("codex/{CODEX_THREAD}"), "{codex_list:#}");
+
+    // Instant chats on both providers must never receive injected MCP config.
+    let chat_dir = server.chats_dir();
+    server
+        .send_ok("POST", "/api/chats/new", json!({"backend": "claude", "text": "quick question"}), 200)
+        .await;
+    let claude_chat_sp = claude_spawn(&chat_dir, 1).await;
+    assert!(
+        !claude_chat_sp.argv.iter().any(|a| a == "--mcp-config"),
+        "claude chat must not get --mcp-config: {:?}",
+        claude_chat_sp.argv
+    );
+
+    // Separate server for the Codex chat because the stand-in app-server returns
+    // one fixed `CODEX_THREAD` id per process.
+    let chat_server = Server::start().await;
+    let codex_chat_dir = chat_server.chats_dir();
+    chat_server
+        .send_ok("POST", "/api/chats/new", json!({"backend": "codex", "text": "quick codex question"}), 200)
+        .await;
+    let (codex_chat_sp, _) = codex_spawn(&codex_chat_dir, 1).await;
+    assert_eq!(codex_chat_sp.argv, ["app-server"], "codex chat must not get droppen_agents MCP");
 }

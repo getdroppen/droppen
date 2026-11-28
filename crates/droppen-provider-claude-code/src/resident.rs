@@ -77,7 +77,6 @@ use droppen_accounts::rest::{self, Observation};
 use droppen_accounts::rotation::{self, AheadGuards, AheadPlan, Plan, Wait};
 use droppen_accounts::store::AccountProvider;
 use droppen_http::openapi_ext::Optional;
-use droppen_base::process_env::Env;
 use droppen_base::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
 use droppen_sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
@@ -596,6 +595,9 @@ pub struct ClaudeCodeRuns {
     /// path, and for the process an automatic rotation moves a session to,
     /// which a driver builds by itself.
     decoration: Arc<dyn droppen_provider::SpawnDecoration>,
+    /// Instance-private directory holding `0600` per-session `--mcp-config`
+    /// files for non-chat Claude sessions (`droppen-agents`).
+    mcp_configs_dir: PathBuf,
     /// When a quota reading last woke the residents holding a queue; see
     /// [`ClaudeCodeRuns::recheck_holds`].
     reading_recheck: Mutex<Option<Instant>>,
@@ -607,6 +609,7 @@ impl ClaudeCodeRuns {
     /// environment gains before it starts.
     pub(crate) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn droppen_provider::SpawnDecoration>) -> Arc<Self> {
         let recorders = crate::record::Recorders::new(host.paths.clone(), instance);
+        let mcp_configs_dir = instance.mcp_configs();
         Arc::new(Self {
             host,
             residents: Mutex::new(std::collections::HashMap::new()),
@@ -643,6 +646,7 @@ impl ClaudeCodeRuns {
             absorb_poll: droppen_provider::env_ms("DROPPEN_ABSORB_POLL_MS", ABSORB_POLL),
             recorders,
             decoration,
+            mcp_configs_dir,
             reading_recheck: Mutex::new(None),
         })
     }
@@ -694,6 +698,17 @@ impl ProviderRuns for ClaudeCodeRuns {
 
     fn question_holders(&self) -> Vec<String> {
         self.residents.lock().expect("residents poisoned").keys().cloned().collect()
+    }
+
+    fn mcp_config_names(&self, record: &runs::RunRecord) -> Vec<String> {
+        let mut names = Vec::new();
+        if let Some(shim) = record.shim.as_deref() {
+            names.push(format!("claude-{shim}.json"));
+        }
+        // Backward compatibility for residents started by an older build that
+        // keyed Claude MCP config files by session id.
+        names.push(format!("claude-{}.json", record.session_id));
+        names
     }
 }
 
@@ -864,7 +879,21 @@ impl Run for ClaudeCode {
             }
             crate::sessions::claude::archive::archive_claude_session(&self.runs.host.paths, id)
                 .await
-                .map_err(|_| "archive failed".to_string())
+                .map_err(|_| "archive failed".to_string())?;
+            for record in self
+                .runs
+                .host
+                .journal
+                .read()
+                .into_iter()
+                .filter(|r| r.source == Source::Claude && r.session_id == id)
+            {
+                self.runs.remove_mcp_config(record.shim.as_deref());
+            }
+            // Legacy cleanup for residents started under an older build that
+            // keyed Claude MCP configs by session id.
+            let _ = std::fs::remove_file(self.runs.mcp_configs_dir.join(format!("claude-{id}.json")));
+            Ok(())
         })
     }
 }
@@ -1160,6 +1189,16 @@ impl ClaudeCodeRuns {
         Ok(())
     }
 
+    /// Best-effort cleanup of the per-resident `0600` `--mcp-config` file once
+    /// its Claude process has exited, been replaced, failed to launch, or been
+    /// archived. Keyed by shim id so a dying resident can never delete a
+    /// racing replacement's config file.
+    pub(crate) fn remove_mcp_config(&self, shim_id: Option<&str>) {
+        if let Some(shim_id) = shim_id {
+            let _ = std::fs::remove_file(self.mcp_configs_dir.join(format!("claude-{shim_id}.json")));
+        }
+    }
+
     /// Start one shim-held claude and record it, without touching the map.
     ///
     /// Shared by the first spawn and by the driver's respawn, which is what
@@ -1197,6 +1236,12 @@ impl ClaudeCodeRuns {
             Selector::Fork => args.extend(["--resume".to_string(), id.to_string(), "--fork-session".to_string()]),
         }
         args.extend(recipe.args.iter().cloned());
+        let mcp_config = self
+            .claude_mcp_config(id, sidecars.id(), recipe.fingerprint.chat)
+            .await;
+        if let Some(path) = &mcp_config {
+            spawn::insert_mcp_config_arg(&mut args, path);
+        }
 
         // Built here rather than kept on the recipe: it is a reading of the
         // model and account the recipe already names, and a rotation's swapped
@@ -1206,7 +1251,7 @@ impl ClaudeCodeRuns {
 
         #[cfg(test)]
         droppen_provider::testing::shims_run_as(crate::shims::SHIMS);
-        let link = shim::spawn_via_shim(Spawn {
+        let link = match shim::spawn_via_shim(Spawn {
             permit,
             sidecars: &sidecars,
             program: "claude",
@@ -1216,7 +1261,13 @@ impl ClaudeCodeRuns {
             buffer_bytes: None,
         })
         .await
-        .map_err(|error| InjectError::Message(format!("failed to launch claude: {error}")))?;
+        {
+            Ok(link) => link,
+            Err(error) => {
+                self.remove_mcp_config(Some(sidecars.id()));
+                return Err(InjectError::Message(format!("failed to launch claude: {error}")));
+            }
+        };
         #[cfg(test)]
         self.host.step("claude started", Source::Claude, Some(id));
 

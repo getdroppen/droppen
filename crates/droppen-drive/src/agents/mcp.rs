@@ -5,14 +5,15 @@
 //! `read_session`). Stdout carries nothing but line-delimited JSON-RPC 2.0
 //! frames; no logs or diagnostics are ever written there.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use droppen_base::process_env::{AGENTS_TOKEN_ENV, AGENTS_URL_ENV};
+use droppen_base::process_env::{AGENTS_CONFIG_ENV, AGENTS_TOKEN_ENV, AGENTS_URL_ENV};
 use droppen_sessions::Source;
 
 use super::routes::{AGENTS_LIST_PATH, AGENTS_SEND_PATH};
@@ -22,6 +23,8 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_PROTOCOL_VERSION: &str = "2025-03-26";
 /// Maximum bytes accepted for a single JSON-RPC line on stdin (1 MiB).
 const MAX_LINE_BYTES: usize = 1024 * 1024;
+/// Maximum bytes accepted for a `DROPPEN_AGENTS_CONFIG` JSON file (64 KiB).
+const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 enum StdinLine {
@@ -262,18 +265,82 @@ fn write_response<W: Write>(writer: &mut W, response: &RpcResponse) -> Result<()
     Ok(())
 }
 
-/// Run the stdio MCP server using `DROPPEN_AGENTS_URL` and `DROPPEN_AGENTS_TOKEN`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Credentials {
+    Inline { base_url: String, token: String },
+    ConfigFile(PathBuf),
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentsConfigFile {
+    url: String,
+    token: String,
+}
+
+impl Credentials {
+    fn from_env() -> Result<Self, String> {
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
+
+    fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        if let Some(path) = lookup(AGENTS_CONFIG_ENV)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(Self::ConfigFile(PathBuf::from(path)));
+        }
+        let base_url = lookup(AGENTS_URL_ENV)
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("{AGENTS_URL_ENV} (or {AGENTS_CONFIG_ENV}) is not set"))?;
+        let token = lookup(AGENTS_TOKEN_ENV)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("{AGENTS_TOKEN_ENV} is not set"))?;
+        Ok(Self::Inline { base_url, token })
+    }
+
+    fn resolve(&self) -> Result<(String, String), String> {
+        match self {
+            Self::Inline { base_url, token } => Ok((base_url.clone(), token.clone())),
+            Self::ConfigFile(path) => {
+                let file = match std::fs::File::open(path) {
+                    Ok(file) => file,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Err("session credentials not ready yet".to_string());
+                    }
+                    Err(error) => {
+                        return Err(format!("cannot open agent config file: {error}"));
+                    }
+                };
+                droppen_base::fsutil::check_private_file(&file)
+                    .map_err(|reason| format!("agent config file rejected: {reason}"))?;
+                let mut buf = Vec::new();
+                file.take(MAX_CONFIG_BYTES + 1)
+                    .read_to_end(&mut buf)
+                    .map_err(|error| format!("cannot read agent config file: {error}"))?;
+                if buf.len() as u64 > MAX_CONFIG_BYTES {
+                    return Err(format!("agent config file exceeds {MAX_CONFIG_BYTES} byte limit"));
+                }
+                let raw = String::from_utf8(buf)
+                    .map_err(|_| "agent config file is not valid UTF-8".to_string())?;
+                let parsed: AgentsConfigFile = serde_json::from_str(&raw)
+                    .map_err(|error| format!("invalid agent config file: {error}"))?;
+                let base_url = parsed.url.trim().trim_end_matches('/').to_string();
+                let token = parsed.token.trim().to_string();
+                if base_url.is_empty() || token.is_empty() {
+                    return Err("agent config file is missing url or token".to_string());
+                }
+                Ok((base_url, token))
+            }
+        }
+    }
+}
+
+/// Run the stdio MCP server using `DROPPEN_AGENTS_URL`/`DROPPEN_AGENTS_TOKEN`
+/// or a private JSON file named by `DROPPEN_AGENTS_CONFIG`.
 pub async fn run() -> Result<(), String> {
-    let base_url = std::env::var(AGENTS_URL_ENV)
-        .ok()
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("{AGENTS_URL_ENV} is not set"))?;
-    let token = std::env::var(AGENTS_TOKEN_ENV)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("{AGENTS_TOKEN_ENV} is not set"))?;
+    let creds = Credentials::from_env()?;
 
     let client = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
@@ -303,15 +370,14 @@ pub async fn run() -> Result<(), String> {
     });
 
     let stdout = std::io::stdout();
-    serve_lines(rx, stdout, &client, &base_url, &token).await
+    serve_lines(rx, stdout, &client, &creds).await
 }
 
 async fn serve_lines<W: Write>(
     mut rx: mpsc::Receiver<std::io::Result<StdinLine>>,
     mut writer: W,
     client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
+    creds: &Credentials,
 ) -> Result<(), String> {
     while let Some(item) = rx.recv().await {
         let line = match item.map_err(|error| format!("stdin read failed: {error}"))? {
@@ -362,7 +428,7 @@ async fn serve_lines<W: Write>(
             continue;
         }
 
-        let response = dispatch(client, base_url, token, id, &req.method, req.params).await;
+        let response = dispatch(client, creds, id, &req.method, req.params).await;
         write_response(&mut writer, &response)?;
     }
     Ok(())
@@ -370,8 +436,7 @@ async fn serve_lines<W: Write>(
 
 async fn dispatch(
     client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
+    creds: &Credentials,
     id: Value,
     method: &str,
     params: Value,
@@ -417,7 +482,10 @@ async fn dispatch(
             if !matches!(parsed.arguments, Value::Null | Value::Object(_)) {
                 return RpcResponse::invalid_params(id, "tool arguments must be an object");
             }
-            let result = call_tool(client, base_url, token, &parsed.name, parsed.arguments).await;
+            let result = match creds.resolve() {
+                Ok((base_url, token)) => call_tool(client, &base_url, &token, &parsed.name, parsed.arguments).await,
+                Err(error) => ToolCallResult::text(error, true),
+            };
             RpcResponse::ok(id, result)
         }
         _ => RpcResponse::method_not_found(id, method),
@@ -615,9 +683,11 @@ mod tests {
 
         let mut output = Vec::new();
         let client = reqwest::Client::new();
-        serve_lines(rx, &mut output, &client, base_url, "rha1.test-token")
-            .await
-            .expect("serve");
+        let creds = Credentials::Inline {
+            base_url: base_url.to_string(),
+            token: "rha1.test-token".to_string(),
+        };
+        serve_lines(rx, &mut output, &client, &creds).await.expect("serve");
         String::from_utf8(output)
             .expect("utf8")
             .lines()
@@ -786,5 +856,162 @@ mod tests {
             line,
             Some(StdinLine::Line("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn config_file_credentials_resolve_lazily_after_handshake() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = dir.path().join("codex-lazy.json");
+        let creds = Credentials::ConfigFile(cfg.clone());
+        let client = reqwest::Client::new();
+
+        let init = serde_json::to_value(
+            dispatch(&client, &creds, json!(1), "initialize", json!({ "protocolVersion": "2025-06-18" })).await,
+        )
+        .unwrap();
+        assert_eq!(init["result"]["serverInfo"]["name"], "droppen-agents");
+        let list = serde_json::to_value(dispatch(&client, &creds, json!(2), "tools/list", json!({})).await).unwrap();
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 3);
+
+        let before = serde_json::to_value(
+            dispatch(&client, &creds, json!(3), "tools/call", json!({ "name": "list_agents", "arguments": {} })).await,
+        )
+        .unwrap();
+        assert_eq!(before["result"]["isError"], true);
+
+        let app = Router::new().route(
+            "/api/agents",
+            get(|headers: gotcha::axum::http::HeaderMap| async move {
+                assert_eq!(
+                    headers.get("authorization").and_then(|v| v.to_str().ok()),
+                    Some("Bearer rha1.lazy-token")
+                );
+                Json(json!({ "self": { "ref": "codex/t1" }, "agents": [] }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let _ = gotcha::axum::serve(listener, app).await;
+        });
+
+        droppen_base::fsutil::write_private(
+            &cfg,
+            &serde_json::to_vec(&json!({ "url": format!("http://{addr}"), "token": "rha1.lazy-token" })).unwrap(),
+        )
+        .expect("write private cfg");
+
+        let after = serde_json::to_value(
+            dispatch(&client, &creds, json!(4), "tools/call", json!({ "name": "list_agents", "arguments": {} })).await,
+        )
+        .unwrap();
+        server.abort();
+        assert_eq!(after["result"]["isError"], false);
+        assert!(after["result"]["content"][0]["text"].as_str().unwrap().contains("codex/t1"));
+    }
+
+    #[test]
+    fn credentials_env_precedence_prefers_config_file_over_inline_vars() {
+        let lookup_both = |key: &str| match key {
+            AGENTS_CONFIG_ENV => Some(" /private/codex.json ".to_string()),
+            AGENTS_URL_ENV => Some("http://127.0.0.1:4321/".to_string()),
+            AGENTS_TOKEN_ENV => Some("rha1.inline".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            Credentials::from_lookup(lookup_both),
+            Ok(Credentials::ConfigFile(PathBuf::from("/private/codex.json")))
+        );
+
+        // Blank/whitespace config env falls back to inline vars.
+        let lookup_blank_cfg = |key: &str| match key {
+            AGENTS_CONFIG_ENV => Some("   ".to_string()),
+            AGENTS_URL_ENV => Some("http://127.0.0.1:4321/".to_string()),
+            AGENTS_TOKEN_ENV => Some("rha1.inline".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            Credentials::from_lookup(lookup_blank_cfg),
+            Ok(Credentials::Inline {
+                base_url: "http://127.0.0.1:4321".to_string(),
+                token: "rha1.inline".to_string(),
+            })
+        );
+
+        // Missing both returns an error.
+        assert!(Credentials::from_lookup(|_| None).is_err());
+    }
+
+    #[test]
+    fn credentials_config_loader_validates_permissions_size_json_and_error_kinds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Missing file -> "session credentials not ready yet" without host path.
+        let missing = dir.path().join("not-ready.json");
+        let err = Credentials::ConfigFile(missing.clone()).resolve().unwrap_err();
+        assert_eq!(err, "session credentials not ready yet");
+        assert!(!err.contains(&missing.display().to_string()), "must not expose path: {err}");
+
+        // Malformed JSON -> distinct error.
+        let bad_json = dir.path().join("bad.json");
+        droppen_base::fsutil::write_private(&bad_json, b"{not json").expect("write");
+        let err = Credentials::ConfigFile(bad_json).resolve().unwrap_err();
+        assert!(err.contains("invalid agent config file"), "{err}");
+
+        // Empty url/token -> distinct error.
+        let empty_fields = dir.path().join("empty.json");
+        droppen_base::fsutil::write_private(&empty_fields, br#"{"url":"  ","token":""}"#).expect("write");
+        let err = Credentials::ConfigFile(empty_fields).resolve().unwrap_err();
+        assert!(err.contains("missing url or token"), "{err}");
+
+        // Oversized (> 64 KiB) -> rejected.
+        let huge = dir.path().join("huge.json");
+        let big_payload = format!(
+            r#"{{"url":"http://127.0.0.1:1","token":"{}"}}"#,
+            "a".repeat(MAX_CONFIG_BYTES as usize + 128)
+        );
+        droppen_base::fsutil::write_private(&huge, big_payload.as_bytes()).expect("write");
+        let err = Credentials::ConfigFile(huge).resolve().unwrap_err();
+        assert!(err.contains("exceeds"), "{err}");
+
+        // Directory (non-regular file) -> rejected without exposing host path.
+        let subdir = dir.path().join("a-dir");
+        std::fs::create_dir(&subdir).expect("mkdir");
+        let err = Credentials::ConfigFile(subdir.clone()).resolve().unwrap_err();
+        assert!(!err.contains("not ready yet"), "directory is not NotFound: {err}");
+        assert!(!err.contains(&subdir.display().to_string()), "must not expose path: {err}");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // World-readable file (0644) -> rejected without exposing host path.
+            let loose = dir.path().join("loose.json");
+            droppen_base::fsutil::write_private(
+                &loose,
+                br#"{"url":"http://127.0.0.1:1","token":"rha1.secret"}"#,
+            )
+            .expect("write");
+            std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).expect("chmod 644");
+            let err = Credentials::ConfigFile(loose.clone()).resolve().unwrap_err();
+            assert!(err.contains("readable by others"), "{err}");
+            assert!(!err.contains(&loose.display().to_string()), "must not expose path: {err}");
+
+            // Unreadable file (0000) -> distinct open error (not NotFound), without exposing host path.
+            // Skip when running as root (uid 0 bypasses DAC read bits).
+            if unsafe { libc::geteuid() } != 0 {
+                let unreadable = dir.path().join("unreadable.json");
+                droppen_base::fsutil::write_private(
+                    &unreadable,
+                    br#"{"url":"http://127.0.0.1:1","token":"rha1.secret"}"#,
+                )
+                .expect("write");
+                std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).expect("chmod 000");
+                let err = Credentials::ConfigFile(unreadable.clone()).resolve().unwrap_err();
+                assert!(err.contains("cannot open agent config file"), "{err}");
+                assert!(!err.contains("not ready yet"), "{err}");
+                assert!(!err.contains(&unreadable.display().to_string()), "must not expose path: {err}");
+                let _ = std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600));
+            }
+        }
     }
 }

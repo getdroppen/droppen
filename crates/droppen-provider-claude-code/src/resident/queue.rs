@@ -1392,6 +1392,7 @@ impl Driver {
             .await?;
         let _ = std::fs::remove_file(self.sidecars.exit());
         let _ = std::fs::remove_file(self.sidecars.stderr());
+        self.runs.remove_mcp_config(Some(self.sidecars.id()));
         self.sidecars = spawned.sidecars;
         self.link = spawned.link;
         self.record = spawned.record;

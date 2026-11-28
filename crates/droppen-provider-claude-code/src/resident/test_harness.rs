@@ -9,6 +9,7 @@
 use super::*;
 use std::collections::HashMap;
 use std::path::Path;
+use droppen_base::process_env::Env;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 
@@ -113,6 +114,7 @@ pub(super) fn registry(home: &Path, stall: Duration, tick: Duration, step: Durat
         // answer to be yes whatever the developer's shell says.
         recorders: crate::record::Recorders::new_at(dirs.session_logs(), None, paths.clone()),
         decoration: droppen_provider::testing::no_decoration(),
+        mcp_configs_dir: dirs.mcp_configs(),
         reading_recheck: Mutex::new(None),
         host: host.clone(),
     });
