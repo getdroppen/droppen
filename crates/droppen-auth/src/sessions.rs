@@ -104,6 +104,10 @@ pub struct SessionsStore {
     /// When each token's `lastSeenAt` was last written. Keyed by digest, so it
     /// holds nothing secret and nothing that outlives the process.
     flushed: std::sync::Mutex<HashMap<String, SystemTime>>,
+    /// Bumped whenever a session is revoked or swept in this process so
+    /// [`super::Auth::watch_login`] closes its sockets immediately instead of
+    /// waiting for the next [`super::LOGIN_RECHECK`] tick.
+    revocations: tokio::sync::watch::Sender<u64>,
 }
 
 impl SessionsStore {
@@ -113,11 +117,13 @@ impl SessionsStore {
     /// so a store built for an instance, as [`super::cli`] builds one per
     /// instance it finds, reaches that instance's sessions and nobody else's.
     pub fn new(db: PathBuf, ttl: Duration) -> Self {
+        let (revocations, _) = tokio::sync::watch::channel(0);
         Self {
             db: db::at(db),
             ttl,
             write_lock: tokio::sync::Mutex::new(()),
             flushed: std::sync::Mutex::new(HashMap::new()),
+            revocations,
         }
     }
 
@@ -129,6 +135,15 @@ impl SessionsStore {
         tokio::task::spawn_blocking(move || op(db))
             .await
             .expect("auth sessions blocking DB task panicked")
+    }
+
+    /// Receive a wakeup whenever this process revokes or sweeps a session.
+    pub(crate) fn subscribe_revocations(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.revocations.subscribe()
+    }
+
+    fn notify_revocation(&self) {
+        self.revocations.send_modify(|n| *n = n.wrapping_add(1));
     }
 
     /// Every session that has not expired, oldest first.
@@ -302,6 +317,9 @@ impl SessionsStore {
             }
         };
         self.flushed.lock().expect("auth sessions flush map poisoned").remove(digest);
+        if removed {
+            self.notify_revocation();
+        }
         removed
     }
 
@@ -329,6 +347,9 @@ impl SessionsStore {
             }
         };
         self.flushed.lock().expect("auth sessions flush map poisoned").clear();
+        if removed > 0 {
+            self.notify_revocation();
+        }
         removed
     }
 
@@ -344,8 +365,10 @@ impl SessionsStore {
             .filter(|session| !known_users.contains(&session.username))
             .map(|session| session.token_sha256)
             .collect();
-        if let Err(error) = self.delete_all(&doomed) {
-            tracing::warn!(%error, "could not sweep stale login sessions");
+        match self.delete_all(&doomed) {
+            Ok((removed, pruned)) if removed > 0 || pruned > 0 => self.notify_revocation(),
+            Ok(_) => {}
+            Err(error) => tracing::warn!(%error, "could not sweep stale login sessions"),
         }
     }
 

@@ -443,18 +443,28 @@ impl MaybeIdentity {
 impl Auth {
     /// Resolves once the login a socket was opened by stops standing — signed
     /// out, revoked, its account removed, or (for the local owner) the device's
-    /// first account made — looked at every [`LOGIN_RECHECK`]; never, for a
-    /// socket no login opened. The socket's loop selects on it and closes with
-    /// 4401, so ending a login ends what it has open too, not only its next
-    /// request.
+    /// first account made — immediately for changes in this process and on a
+    /// [`LOGIN_RECHECK`] sweep for cross-process changes or expiry; never, for
+    /// a socket no login opened. The socket's loop selects on it and closes
+    /// with 4401, so ending a login ends what it has open too, not only its
+    /// next request.
     pub async fn watch_login(self: Arc<Self>, login: Option<(String, String)>) {
         let Some((user, digest)) = login else {
             return std::future::pending().await;
         };
+        let mut revocations = self.sessions.subscribe_revocations();
+        let mut user_changes = self.users.subscribe_changes();
+        if !self.login_stands(&user, &digest).await {
+            return;
+        }
         let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + LOGIN_RECHECK, LOGIN_RECHECK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tick.tick().await;
+            tokio::select! {
+                _ = tick.tick() => {}
+                Ok(()) = revocations.changed() => {}
+                Ok(()) = user_changes.changed() => {}
+            }
             if !self.login_stands(&user, &digest).await {
                 return;
             }
@@ -985,6 +995,33 @@ mod tests {
         assert!(watch.is_finished(), "and no longer once there is one");
         assert!(!nobody.is_finished(), "a socket no login opened is never ended for one");
         nobody.abort();
+    }
+
+    /// Revoking a session in this process wakes its socket watcher immediately,
+    /// without waiting for the 5 s `LOGIN_RECHECK` tick, while leaving other
+    /// live sessions untouched.
+    #[tokio::test]
+    async fn revoking_a_session_ends_its_watcher_immediately() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let (_, auth) = auth_at(home.path());
+        auth.users.add("ada", "correct horse battery staple").await.expect("account");
+        let first = auth.sessions.issue("ada", None).await.expect("first").token;
+        let second = auth.sessions.issue("ada", None).await.expect("second").token;
+        let first_digest = sessions::digest_of(&first);
+        let second_digest = sessions::digest_of(&second);
+
+        let watch_first = tokio::spawn(auth.clone().watch_login(Some(("ada".into(), first_digest.clone()))));
+        let watch_second = tokio::spawn(auth.clone().watch_login(Some(("ada".into(), second_digest))));
+        tokio::task::yield_now().await;
+
+        assert!(auth.sessions.revoke(&first_digest).await);
+        tokio::time::timeout(Duration::from_millis(250), watch_first)
+            .await
+            .expect("revoked session's watcher must finish well before LOGIN_RECHECK")
+            .expect("watcher task");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!watch_second.is_finished(), "another live session's watcher must stay open");
+        watch_second.abort();
     }
 
     #[test]

@@ -287,6 +287,11 @@ pub struct UsersStore {
     imported: std::sync::Once,
     write_lock: tokio::sync::Mutex<()>,
     verify_lock: tokio::sync::Mutex<()>,
+    /// Bumped whenever an account is added or removed in this process so
+    /// [`super::Auth::watch_login`] closes sockets whose identity stopped
+    /// standing (such as the local owner once the first account exists) right
+    /// away.
+    changes: tokio::sync::watch::Sender<u64>,
 }
 
 /// What a login attempt found.
@@ -324,13 +329,24 @@ impl UsersStore {
     }
 
     fn over(path: PathBuf, db: PathBuf) -> Self {
+        let (changes, _) = tokio::sync::watch::channel(0);
         Self {
             path,
             db: db::at(db),
             imported: std::sync::Once::new(),
             write_lock: tokio::sync::Mutex::new(()),
             verify_lock: tokio::sync::Mutex::new(()),
+            changes,
         }
+    }
+
+    /// Receive a wakeup whenever this process adds or removes an account.
+    pub(crate) fn subscribe_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
+    fn notify_change(&self) {
+        self.changes.send_modify(|n| *n = n.wrapping_add(1));
     }
 
     /// Where the mirror of the store lives. Still the file everything outside
@@ -548,6 +564,7 @@ impl UsersStore {
             })
             .map_err(store_error)??;
         self.mirror().await;
+        self.notify_change();
         Ok(())
     }
 
@@ -582,6 +599,7 @@ impl UsersStore {
             })
             .map_err(store_error)??;
         self.mirror().await;
+        self.notify_change();
         Ok(())
     }
 
@@ -615,6 +633,7 @@ impl UsersStore {
             })
             .map_err(store_error)??;
         self.mirror().await;
+        self.notify_change();
         Ok(())
     }
 
@@ -675,6 +694,7 @@ impl UsersStore {
             })
             .map_err(store_error)??;
         self.mirror().await;
+        self.notify_change();
         Ok(())
     }
 
