@@ -328,35 +328,39 @@ export function LightboxOverlay({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  // The scrim covers the whole window; the picture and its buttons stay inside
+  // the safe area, clear of the status bar of a home-screen app and the notch.
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label={alt || t("view image")}
-      className="fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-2 bg-black/85 p-6"
+      className="pt-safe px-safe fixed inset-0 z-50 cursor-zoom-out bg-black/85"
       onClick={onClose}
     >
-      <div className="flex min-h-0 w-full flex-1 items-center justify-center">
-        {draw({ className: "max-h-full max-w-full rounded object-contain", thumb: false, onFail: () => {} })}
-      </div>
-      {caption && <div className="max-w-full shrink-0 truncate text-xs text-white/80">{caption}</div>}
-      <div className="absolute top-3 right-3 flex items-center gap-1.5">
-        {original && (
-          <a
-            href={original}
-            target="_blank"
-            rel="noreferrer"
-            title={t("open original")}
-            onClick={stop}
-            className={OVERLAY_BUTTON}
-          >
-            <ArrowSquareOutIcon className="size-4" />
-          </a>
-        )}
-        {actions}
-        <button type="button" title={t("back")} onClick={onClose} className={OVERLAY_BUTTON}>
-          <XIcon className="size-4" />
-        </button>
+      <div className="relative flex h-full flex-col items-center justify-center gap-2 p-6">
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+          {draw({ className: "max-h-full max-w-full rounded object-contain", thumb: false, onFail: () => {} })}
+        </div>
+        {caption && <div className="max-w-full shrink-0 truncate text-xs text-white/80">{caption}</div>}
+        <div className="absolute top-3 right-3 flex items-center gap-1.5">
+          {original && (
+            <a
+              href={original}
+              target="_blank"
+              rel="noreferrer"
+              title={t("open original")}
+              onClick={stop}
+              className={OVERLAY_BUTTON}
+            >
+              <ArrowSquareOutIcon className="size-4" />
+            </a>
+          )}
+          {actions}
+          <button type="button" title={t("back")} onClick={onClose} className={OVERLAY_BUTTON}>
+            <XIcon className="size-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

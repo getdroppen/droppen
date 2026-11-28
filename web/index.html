@@ -29,8 +29,11 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Droppen" />
-    <!-- "default", not "black-translucent": the app shell has no top safe-area
-         padding, so the status bar must stay reserved rather than overlap it. -->
+    <!-- "default", not "black-translucent" (which WebKit calls deprecated):
+         iOS 26 then lays a home-screen web app out below the status bar.
+         Newer releases open the same app under the status bar all the same,
+         so index.css pads the shell by env(safe-area-inset-top) rather than
+         rely on this. iOS reads the tag once, when the icon is added. -->
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <!-- iOS paints a launch image only where one of these matches the device
          exactly: there is no scaling fallback, and a miss is the blank white

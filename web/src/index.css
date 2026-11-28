@@ -380,9 +380,30 @@ body {
   position: fixed;
   inset: 0;
   font-size: 13px;
-  /* viewport-fit=cover paints under the notch; in landscape that would put the
-     nav rail beneath it. The body background is the same colour either way, so
-     insetting the whole shell costs nothing and keeps content clear. */
+  /* viewport-fit=cover lets the page paint under the status bar, the notch and
+     the home indicator. The shell insets itself from the first three; the
+     bottom-most chrome pads itself out of the last (`.pb-safe`). The body
+     background is the same colour either way, so the strips cost nothing.
+
+     Left and right: in landscape the nav rail would sit under the notch.
+
+     Top: with the "default" status bar style (index.html) iOS 26 lays a
+     home-screen web app out below the status bar and reports a top inset of
+     0, as Safari does in a tab, so this is 0 there. Newer iOS releases open
+     the same installed app under the status bar, which they frost, and report
+     the bar's height here; without it the shell's first line sat under the
+     clock. */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* A layer fixed over the whole window (`fixed inset-0`) is outside the body's
+   padding, so it insets itself the same way: `pt-safe px-safe`. */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.px-safe {
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
 }
