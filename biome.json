@@ -51,17 +51,5 @@
         "preset": "recommended"
       }
     }
-  },
-  "overrides": [
-    {
-      "includes": ["web/src/lib/hub/account.ts"],
-      "linter": {
-        "rules": {
-          "correctness": {
-            "noUnusedImports": "off"
-          }
-        }
-      }
-    }
-  ]
+  }
 }
