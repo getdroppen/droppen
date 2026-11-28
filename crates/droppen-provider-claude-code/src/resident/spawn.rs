@@ -1,13 +1,14 @@
 //! How a claude resident is started: its command line, the environment and
 //! the account it runs under, for a send, a start and a rotation.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use droppen_accounts::store::AccountProvider;
 use crate::claude_roots;
 use droppen_provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 use crate::resident;
-use droppen_provider::{require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
+use droppen_provider::{require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt, StdioMcpServer};
 use crate::sessions::claude;
 use droppen_sessions::context::{context_window, LARGE_CONTEXT_WINDOW};
 use droppen_sessions::Source;
@@ -75,7 +76,12 @@ fn claude_prompt_and_attachments(text: &str, options: &SendOptions) -> (String, 
 /// Everything on this line is fixed for the process' whole life, which is what
 /// [`resident::Fingerprint`] exists to compare: a message wanting a different
 /// model needs a different process, not a different argument.
+#[cfg(test)]
 fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
+    claude_resident_flags_with_mcp(paths, options, None)
+}
+
+fn claude_resident_flags_with_mcp(paths: &Paths, options: &SendOptions, mcp_config: Option<&Path>) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(model) = &options.model {
         args.extend(["--model".to_string(), model.clone()]);
@@ -85,6 +91,14 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
     }
     if let Some(permission) = &options.permission {
         args.extend(["--permission-mode".to_string(), permission.clone()]);
+    }
+    // Instant chats have no tools (`--disallowedTools *`) and never receive
+    // injected MCP servers. Placed ahead of `--permission-prompt-tool` so the
+    // variadic `--mcp-config` option stops before later flags.
+    if !options.chat {
+        if let Some(path) = mcp_config {
+            args.extend(["--mcp-config".to_string(), path.to_string_lossy().into_owned()]);
+        }
     }
     // Where claude sends what it would otherwise have asked a terminal: back
     // down the stream, as a `control_request` the driver answers. This is what
@@ -104,6 +118,25 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
         args.extend(RESIDENT_DISALLOWED_TOOLS.iter().map(|tool| (*tool).to_string()));
     }
     args
+}
+
+fn claude_mcp_config_json(servers: &[StdioMcpServer]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for server in servers {
+        let mut env = serde_json::Map::new();
+        for (k, v) in &server.env {
+            env.insert(k.clone(), serde_json::Value::String(v.clone()));
+        }
+        map.insert(
+            server.name.clone(),
+            serde_json::json!({
+                "command": server.command.to_string_lossy(),
+                "args": server.args,
+                "env": env,
+            }),
+        );
+    }
+    serde_json::json!({ "mcpServers": map })
 }
 
 /// The variable the CLI's own compaction threshold is set through.
@@ -166,9 +199,21 @@ pub(super) fn enforce_auto_compaction(env: &mut Env, asked: Option<&str>) {
 /// the account store, the uploads directory and the session's own working
 /// directory are reachable; the driver only ever compares it and hands it to
 /// [`droppen_provider::shim::spawn_via_shim`].
+#[cfg(test)]
 pub(super) fn claude_recipe(paths: &Paths, cwd: Option<&str>, options: &SendOptions, env: Env, login: ClaudeLogin) -> resident::Recipe {
+    claude_recipe_with_mcp(paths, cwd, options, env, login, None)
+}
+
+pub(super) fn claude_recipe_with_mcp(
+    paths: &Paths,
+    cwd: Option<&str>,
+    options: &SendOptions,
+    env: Env,
+    login: ClaudeLogin,
+    mcp_config: Option<&Path>,
+) -> resident::Recipe {
     resident::Recipe {
-        args: claude_resident_flags(paths, options),
+        args: claude_resident_flags_with_mcp(paths, options, mcp_config),
         env,
         workdir: Some(session_workdir(paths, cwd)),
         fingerprint: resident::Fingerprint {
@@ -352,6 +397,30 @@ impl super::ClaudeCodeRuns {
     async fn notify_decorate(&self, id: &str, env: &mut Env) {
         self.decoration.decorate(Source::Claude, id, env).await;
     }
+
+    /// Write a private (`0600`) `--mcp-config` file for a non-chat Claude
+    /// session when the server offers injected MCP servers (`droppen-agents`).
+    ///
+    /// Deliberately infallible like [`Self::notify_decorate`]: an MCP config
+    /// write failure degrades peer messaging rather than blocking the session.
+    async fn claude_mcp_config(&self, id: &str, options: &SendOptions) -> Option<PathBuf> {
+        if options.chat {
+            return None;
+        }
+        let servers = self.decoration.mcp_servers(Source::Claude, id).await;
+        if servers.is_empty() {
+            return None;
+        }
+        let payload = serde_json::to_vec(&claude_mcp_config_json(&servers)).ok()?;
+        let path = self.mcp_configs_dir.join(format!("claude-{id}.json"));
+        match droppen_base::fsutil::write_private_reporting_path(&path, &payload) {
+            Ok(()) => Some(path),
+            Err(error) => {
+                tracing::warn!(session = %id, %error, "cannot write Claude --mcp-config file; skipping droppen-agents");
+                None
+            }
+        }
+    }
 }
 
 impl super::ClaudeCodeRuns {
@@ -361,7 +430,8 @@ impl super::ClaudeCodeRuns {
         // Resolved before anything is built: an unusable account must not spawn.
         let (mut env, login) = self.resume_claude_env(id, options).await?;
         self.notify_decorate(id, &mut env).await;
-        let recipe = claude_recipe(&self.host.paths, cwd, options, env, login);
+        let mcp_config = self.claude_mcp_config(id, options).await;
+        let recipe = claude_recipe_with_mcp(&self.host.paths, cwd, options, env, login, mcp_config.as_deref());
         // A session's attachments reach claude as paths in the prompt, which
         // travels over stdin; a chat's reach the driver as paths beside it and
         // become content blocks at delivery.
@@ -415,7 +485,8 @@ impl super::ClaudeCodeRuns {
         // session with no transcript is started with `--session-id`.
         self.notify_decorate(&id, &mut env).await;
         let login = self.login_of(chosen).await;
-        let recipe = claude_recipe(&self.host.paths, Some(cwd), options, env, login);
+        let mcp_config = self.claude_mcp_config(&id, options).await;
+        let recipe = claude_recipe_with_mcp(&self.host.paths, Some(cwd), options, env, login, mcp_config.as_deref());
         let (prompt, images, files) = claude_prompt_and_attachments(text, options);
         self.deliver(gate, &id, &prompt, images, files, recipe, options.message_id.clone()).await?;
         Ok(id)
@@ -476,7 +547,8 @@ impl super::ClaudeCodeRuns {
         };
         let env = self.account_spawn_env(session, account).await?;
         let login = self.login_of(Some(account.to_string())).await;
-        Ok(claude_recipe(&self.host.paths, cwd, &options, env, login))
+        let mcp_config = self.claude_mcp_config(session, &options).await;
+        Ok(claude_recipe_with_mcp(&self.host.paths, cwd, &options, env, login, mcp_config.as_deref()))
     }
 
     /// The whole environment a spawn of `session` under `account` gets, built
@@ -809,5 +881,22 @@ mod tests {
         assert_eq!(enforced(&mut Env::new(), Some("sonnet")), None);
         assert_eq!(enforced(&mut Env::new(), Some("claude-sonnet-5")), None);
         assert_eq!(enforced(&mut Env::new(), None), None);
+    }
+
+    #[test]
+    fn mcp_config_is_passed_for_sessions_and_omitted_for_chats() {
+        let cfg = Path::new("/tmp/claude-sess.json");
+        let session_args = claude_resident_flags_with_mcp(&paths(), &options(), Some(cfg));
+        let mcp_pos = session_args.iter().position(|a| a == "--mcp-config").expect("--mcp-config");
+        let prompt_pos = session_args
+            .iter()
+            .position(|a| a == "--permission-prompt-tool")
+            .expect("--permission-prompt-tool");
+        assert_eq!(session_args[mcp_pos + 1], "/tmp/claude-sess.json");
+        assert!(mcp_pos < prompt_pos, "--mcp-config must precede --permission-prompt-tool");
+        assert_eq!(session_args.last().map(String::as_str), Some("ExitPlanMode"));
+
+        let chat_args = claude_resident_flags_with_mcp(&paths(), &SendOptions { chat: true, ..options() }, Some(cfg));
+        assert!(!chat_args.iter().any(|a| a == "--mcp-config"), "chats never receive MCP config");
     }
 }

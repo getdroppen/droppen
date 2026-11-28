@@ -777,7 +777,11 @@ fn gone_run(run_id: &str, id: &str, payload: runs::Payload) -> runs::RunRecord {
 async fn the_runs_say_which_rows_hold_state_and_name_their_cli() {
     let home = tempfile::tempdir().expect("tempdir");
     let registry = droppen_provider::testing::injection_registry(home.path());
-    let codex_runs = CodexRuns::new(registry.host.clone());
+    let codex_runs = CodexRuns::new(
+        registry.host.clone(),
+        registry.decoration.clone(),
+        registry.instance.mcp_configs(),
+    );
     let exec = gone_run("run-exec", "0199c1a1-9999-7999-8999-dddddddddddd", runs::Payload::new());
     let app_server = gone_run(
         "run-app-server",
@@ -803,7 +807,11 @@ async fn a_gone_runs_thread_says_whether_it_was_cut_short_and_when_it_was_writte
     let _guard = droppen_sessions::index::exclusive().await;
     let home = tempfile::tempdir().expect("tempdir");
     let registry = droppen_provider::testing::injection_registry(home.path());
-    let codex_runs = CodexRuns::new(registry.host.clone());
+    let codex_runs = CodexRuns::new(
+        registry.host.clone(),
+        registry.decoration.clone(),
+        registry.instance.mcp_configs(),
+    );
     let day = registry.host.paths.codex_sessions().join("2026").join("09").join("21");
     std::fs::create_dir_all(&day).expect("rollout dir");
     for (id, last) in [(ASKED, "user_message"), (ANSWERED, "task_complete")] {

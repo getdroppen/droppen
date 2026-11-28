@@ -596,6 +596,9 @@ pub struct ClaudeCodeRuns {
     /// path, and for the process an automatic rotation moves a session to,
     /// which a driver builds by itself.
     decoration: Arc<dyn droppen_provider::SpawnDecoration>,
+    /// Instance-private directory holding `0600` per-session `--mcp-config`
+    /// files for non-chat Claude sessions (`droppen-agents`).
+    mcp_configs_dir: PathBuf,
     /// When a quota reading last woke the residents holding a queue; see
     /// [`ClaudeCodeRuns::recheck_holds`].
     reading_recheck: Mutex<Option<Instant>>,
@@ -607,6 +610,7 @@ impl ClaudeCodeRuns {
     /// environment gains before it starts.
     pub(crate) fn new(host: Arc<RunHost>, instance: &droppen_instance::instance::InstanceDirs, decoration: Arc<dyn droppen_provider::SpawnDecoration>) -> Arc<Self> {
         let recorders = crate::record::Recorders::new(host.paths.clone(), instance);
+        let mcp_configs_dir = instance.mcp_configs();
         Arc::new(Self {
             host,
             residents: Mutex::new(std::collections::HashMap::new()),
@@ -643,6 +647,7 @@ impl ClaudeCodeRuns {
             absorb_poll: droppen_provider::env_ms("DROPPEN_ABSORB_POLL_MS", ABSORB_POLL),
             recorders,
             decoration,
+            mcp_configs_dir,
             reading_recheck: Mutex::new(None),
         })
     }
@@ -864,7 +869,9 @@ impl Run for ClaudeCode {
             }
             crate::sessions::claude::archive::archive_claude_session(&self.runs.host.paths, id)
                 .await
-                .map_err(|_| "archive failed".to_string())
+                .map_err(|_| "archive failed".to_string())?;
+            let _ = std::fs::remove_file(self.runs.mcp_configs_dir.join(format!("claude-{id}.json")));
+            Ok(())
         })
     }
 }

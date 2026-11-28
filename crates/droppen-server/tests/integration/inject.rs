@@ -1018,7 +1018,19 @@ async fn a_new_codex_session_takes_the_id_the_cli_announces() {
     assert_eq!(created["id"], thread_id, "thread/start supplies the canonical id");
 
     let spawn = support::Spawn::read_codex(&workspace).expect("codex spawn");
-    assert_eq!(spawn.argv, ["app-server"]);
+    assert_eq!(spawn.argv[0], "app-server");
+    assert!(
+        spawn.argv.iter().any(|a| a.starts_with("mcp_servers.droppen_agents.command="))
+            && spawn.argv.iter().any(|a| a == "mcp_servers.droppen_agents.args=[\"mcp-agents\"]")
+            && spawn.argv.iter().any(|a| a.starts_with("mcp_servers.droppen_agents.env={DROPPEN_AGENTS_CONFIG=")),
+        "expected droppen_agents MCP overrides in {:?}",
+        spawn.argv
+    );
+    assert!(
+        spawn.argv.iter().all(|a| !a.contains("rha1.")),
+        "capability token must never appear in argv: {:?}",
+        spawn.argv
+    );
     let requests = std::fs::read_to_string(workspace.join("codex-stdin.jsonl")).expect("RPC log");
     let requests: Vec<serde_json::Value> = requests.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
     assert_eq!(requests[0]["method"], "initialize");

@@ -303,6 +303,7 @@ impl Driver {
                 self.retiring = true;
                 self.runs.host.journal.remove(&self.record.run_id);
                 self.runs.host.withdraw_run(Source::Codex, &self.record.session_id);
+                self.runs.remove_mcp_config(self.record.shim.as_deref());
                 // Only its own entry: the send that retires it has put the
                 // session's next app server, still starting, in its place.
                 {
@@ -668,7 +669,10 @@ impl Driver {
         // Closing this per-session server is safe only after archive succeeds.
         // Keep its archived checkpoint if EOF cannot be sent, for next boot.
         match tokio::time::timeout(RPC_TIMEOUT, self.link.close_stdin()).await {
-            Ok(Ok(())) => self.runs.host.journal.remove(&self.record.run_id),
+            Ok(Ok(())) => {
+                self.runs.host.journal.remove(&self.record.run_id);
+                self.runs.remove_mcp_config(self.record.shim.as_deref());
+            }
             _ => tracing::warn!(session = %self.record.session_id, "archived Codex server could not be closed; keeping its cleanup record"),
         }
     }

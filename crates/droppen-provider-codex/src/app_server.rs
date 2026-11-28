@@ -6,6 +6,7 @@
 //! finish an acknowledged delivery without ever submitting it twice.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -18,7 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use droppen_accounts::store::AccountProvider;
 use droppen_sessions::{Injection, InjectionRunState, Source};
-use droppen_base::process_env::{apply_env, clean_env, clean_env_bare};
+use droppen_base::process_env::{apply_env, clean_env, clean_env_bare, AGENTS_CONFIG_ENV, AGENTS_TOKEN_ENV, AGENTS_URL_ENV};
 use droppen_base::procs;
 use droppen_base::time::iso8601;
 
@@ -27,7 +28,8 @@ use droppen_provider::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_sessions::archive::ArchiveError;
 use droppen_provider::{
     require_provider, runs, shim, AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry,
-    Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt, WrittenAt,
+    Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnDecoration, SpawnPermit, StartAt,
+    StdioMcpServer, WrittenAt,
 };
 
 mod driver;
@@ -347,7 +349,11 @@ impl Codex {
     pub fn new(registry: Arc<InjectionRegistry>) -> Self {
         let models = crate::models::CodexModels::new(registry.host.paths.clone());
         Self {
-            runs: CodexRuns::new(registry.host.clone()),
+            runs: CodexRuns::new(
+                registry.host.clone(),
+                registry.decoration.clone(),
+                registry.instance.mcp_configs(),
+            ),
             models,
         }
     }
@@ -365,18 +371,33 @@ impl Codex {
 pub(crate) struct CodexRuns {
     /// What they run on.
     host: Arc<RunHost>,
+    /// Server-injected spawn decorations (including `droppen-agents` MCP).
+    decoration: Arc<dyn SpawnDecoration>,
+    /// Instance-private directory holding `0600` per-app-server MCP credential
+    /// files (`codex-<shim-id>.json`).
+    mcp_configs_dir: PathBuf,
     /// The app server behind each session, by session id.
     codex_servers: Mutex<HashMap<String, Handle>>,
 }
 
 impl CodexRuns {
     /// None yet, on `host`.
-    pub(crate) fn new(host: Arc<RunHost>) -> Arc<Self> {
+    pub(crate) fn new(host: Arc<RunHost>, decoration: Arc<dyn SpawnDecoration>, mcp_configs_dir: PathBuf) -> Arc<Self> {
         let runs = Arc::new(Self {
             host,
+            decoration,
+            mcp_configs_dir,
             codex_servers: Mutex::new(HashMap::new()),
         });
         runs
+    }
+
+    /// Best-effort cleanup of the per-app-server `0600` MCP credentials file
+    /// once its `codex app-server` process has exited or been archived.
+    pub(crate) fn remove_mcp_config(&self, shim_id: Option<&str>) {
+        if let Some(shim_id) = shim_id {
+            let _ = std::fs::remove_file(self.mcp_configs_dir.join(format!("codex-{shim_id}.json")));
+        }
     }
 }
 
@@ -692,6 +713,7 @@ impl CodexRuns {
         let id = record.session_id.clone();
         let account = record.payload.codex_account.clone();
         self.host.withdraw_run(Source::Codex, &id);
+        self.remove_mcp_config(record.shim.as_deref());
         if state.archived {
             self.host.journal.remove(&record.run_id);
         } else {
@@ -984,13 +1006,49 @@ impl CodexRuns {
         let launch = account.as_ref().map(|account| &account.launch);
         let mut args: Vec<String> = vec!["app-server".into()];
         args.extend(launch.into_iter().flat_map(|launch| launch.codex_args.iter().cloned()));
+        // Inject `droppen-agents` stdio MCP for ordinary sessions (never
+        // instant chats). Credentials live in a `0600` private file named by
+        // `DROPPEN_AGENTS_CONFIG` so the capability token never appears in
+        // argv/`ps`, and for a brand-new `thread/start` the file is written
+        // atomically the instant Codex returns the canonical thread id — before
+        // `turn/start` is ever sent.
+        let mcp_config_path = if options.chat {
+            None
+        } else {
+            let probe = self
+                .decoration
+                .mcp_servers(Source::Codex, id.unwrap_or("__pending__"))
+                .await;
+            if let Some(server) = probe.into_iter().next() {
+                let config_path = self.mcp_configs_dir.join(format!("codex-{}.json", sidecars.id()));
+                let ready = if id.is_some() {
+                    match write_codex_mcp_config(&config_path, &server) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            tracing::warn!(%error, "cannot write Codex MCP config; skipping droppen-agents");
+                            false
+                        }
+                    }
+                } else {
+                    true
+                };
+                if ready {
+                    args.extend(codex_mcp_args(&server, &config_path));
+                    Some(config_path)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
         let env = match launch {
             Some(launch) => clean_env(launch.env.iter().cloned()),
             None => clean_env_bare(),
         };
         #[cfg(test)]
         droppen_provider::testing::shims_run_as(tests::SHIMS);
-        let mut link = shim::spawn_via_shim(shim::Spawn {
+        let mut link = match shim::spawn_via_shim(shim::Spawn {
             permit,
             sidecars: &sidecars,
             program: "codex",
@@ -1000,7 +1058,15 @@ impl CodexRuns {
             buffer_bytes: None,
         })
         .await
-        .map_err(|e| InjectError::message(e.to_string()))?;
+        {
+            Ok(link) => link,
+            Err(error) => {
+                if let Some(path) = &mcp_config_path {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(InjectError::message(error.to_string()));
+            }
+        };
         #[cfg(test)]
         self.host.step("codex started", Source::Codex, id);
         let setup = async {
@@ -1040,6 +1106,13 @@ impl CodexRuns {
             }
             if id.is_none() {
                 permit.claim(Source::Codex, &resolved).map_err(claim_refusal)?;
+                if let Some(config_path) = &mcp_config_path {
+                    if let Some(server) = self.decoration.mcp_servers(Source::Codex, &resolved).await.into_iter().next() {
+                        if let Err(error) = write_codex_mcp_config(config_path, &server) {
+                            tracing::warn!(session = %resolved, %error, "cannot write Codex MCP config after thread/start");
+                        }
+                    }
+                }
             }
             #[cfg(test)]
             self.host.step("codex thread", Source::Codex, Some(&resolved));
@@ -1052,6 +1125,9 @@ impl CodexRuns {
                 // The session goes before the stdin, as it did when the claim
                 // was the setup's own.
                 permit.unclaim();
+                if let Some(path) = &mcp_config_path {
+                    let _ = std::fs::remove_file(path);
+                }
                 #[cfg(test)]
                 self.host.step("codex setup failed", Source::Codex, id);
                 let _ = link.close_stdin().await;
@@ -1273,4 +1349,91 @@ pub(crate) fn codex_permission_flags(permission: &str) -> Result<Vec<&'static st
         "bypass-all" => vec!["--dangerously-bypass-approvals-and-sandbox"],
         other => return Err(InjectError::message(format!("unknown codex permission mode: {other}"))),
     })
+}
+
+fn toml_string(value: &str) -> String {
+    serde_json::to_string(value).expect("string JSON encoding is valid TOML basic string")
+}
+
+/// Build `-c` TOML config overrides for `codex app-server` registering one
+/// injected stdio MCP server (`droppen_agents`) that reads its `0600` loopback
+/// credentials from `config_path`.
+pub(crate) fn codex_mcp_args(server: &StdioMcpServer, config_path: &Path) -> Vec<String> {
+    let key: String = server
+        .name
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' { ch } else { '_' })
+        .collect();
+    let encoded_args = server
+        .args
+        .iter()
+        .map(|arg| toml_string(arg))
+        .collect::<Vec<_>>()
+        .join(",");
+    vec![
+        "-c".to_string(),
+        format!("mcp_servers.{key}.command={}", toml_string(&server.command.to_string_lossy())),
+        "-c".to_string(),
+        format!("mcp_servers.{key}.args=[{encoded_args}]"),
+        "-c".to_string(),
+        format!(
+            "mcp_servers.{key}.env={{{AGENTS_CONFIG_ENV}={}}}",
+            toml_string(&config_path.to_string_lossy())
+        ),
+    ]
+}
+
+fn write_codex_mcp_config(path: &Path, server: &StdioMcpServer) -> Result<(), String> {
+    let url = server
+        .env
+        .iter()
+        .find(|(k, _)| k == AGENTS_URL_ENV)
+        .map(|(_, v)| v.as_str())
+        .ok_or_else(|| format!("missing {AGENTS_URL_ENV}"))?;
+    let token = server
+        .env
+        .iter()
+        .find(|(k, _)| k == AGENTS_TOKEN_ENV)
+        .map(|(_, v)| v.as_str())
+        .ok_or_else(|| format!("missing {AGENTS_TOKEN_ENV}"))?;
+    let payload = serde_json::to_vec(&serde_json::json!({ "url": url, "token": token }))
+        .map_err(|error| error.to_string())?;
+    droppen_base::fsutil::write_private_reporting_path(path, &payload)
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use super::*;
+
+    #[test]
+    fn codex_mcp_args_carry_only_the_config_path_and_never_the_token() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = dir.path().join("mcp-configs").join("codex-shim.json");
+        let server = StdioMcpServer {
+            name: "droppen-agents".to_string(),
+            command: PathBuf::from("/usr/local/bin/droppen"),
+            args: vec!["mcp-agents".to_string()],
+            env: vec![
+                (AGENTS_URL_ENV.to_string(), "http://127.0.0.1:9999".to_string()),
+                (AGENTS_TOKEN_ENV.to_string(), "rha1.secret-token".to_string()),
+            ],
+        };
+        let args = codex_mcp_args(&server, &cfg);
+        assert!(args.iter().all(|a| !a.contains("rha1.secret-token")), "token must stay out of argv: {args:?}");
+        assert_eq!(args[0], "-c");
+        assert_eq!(args[1], "mcp_servers.droppen_agents.command=\"/usr/local/bin/droppen\"");
+        assert_eq!(args[3], "mcp_servers.droppen_agents.args=[\"mcp-agents\"]");
+        assert!(args[5].contains(AGENTS_CONFIG_ENV), "{args:?}");
+
+        write_codex_mcp_config(&cfg, &server).expect("write private config");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&cfg).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let body: serde_json::Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
+        assert_eq!(body["url"], "http://127.0.0.1:9999");
+        assert_eq!(body["token"], "rha1.secret-token");
+    }
 }

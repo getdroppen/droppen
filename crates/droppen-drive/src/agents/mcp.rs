@@ -6,13 +6,14 @@
 //! frames; no logs or diagnostics are ever written there.
 
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use droppen_base::process_env::{AGENTS_TOKEN_ENV, AGENTS_URL_ENV};
+use droppen_base::process_env::{AGENTS_CONFIG_ENV, AGENTS_TOKEN_ENV, AGENTS_URL_ENV};
 use droppen_sessions::Source;
 
 use super::routes::{AGENTS_LIST_PATH, AGENTS_SEND_PATH};
@@ -262,18 +263,63 @@ fn write_response<W: Write>(writer: &mut W, response: &RpcResponse) -> Result<()
     Ok(())
 }
 
-/// Run the stdio MCP server using `DROPPEN_AGENTS_URL` and `DROPPEN_AGENTS_TOKEN`.
+#[derive(Debug, Clone)]
+enum Credentials {
+    Inline { base_url: String, token: String },
+    ConfigFile(PathBuf),
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentsConfigFile {
+    url: String,
+    token: String,
+}
+
+impl Credentials {
+    fn from_env() -> Result<Self, String> {
+        if let Some(path) = std::env::var(AGENTS_CONFIG_ENV)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(Self::ConfigFile(PathBuf::from(path)));
+        }
+        let base_url = std::env::var(AGENTS_URL_ENV)
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("{AGENTS_URL_ENV} (or {AGENTS_CONFIG_ENV}) is not set"))?;
+        let token = std::env::var(AGENTS_TOKEN_ENV)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("{AGENTS_TOKEN_ENV} is not set"))?;
+        Ok(Self::Inline { base_url, token })
+    }
+
+    fn resolve(&self) -> Result<(String, String), String> {
+        match self {
+            Self::Inline { base_url, token } => Ok((base_url.clone(), token.clone())),
+            Self::ConfigFile(path) => {
+                let raw = std::fs::read_to_string(path)
+                    .map_err(|error| format!("session credentials not ready yet ({}): {error}", path.display()))?;
+                let parsed: AgentsConfigFile = serde_json::from_str(&raw)
+                    .map_err(|error| format!("invalid agent config file: {error}"))?;
+                let base_url = parsed.url.trim().trim_end_matches('/').to_string();
+                let token = parsed.token.trim().to_string();
+                if base_url.is_empty() || token.is_empty() {
+                    return Err("agent config file is missing url or token".to_string());
+                }
+                Ok((base_url, token))
+            }
+        }
+    }
+}
+
+/// Run the stdio MCP server using `DROPPEN_AGENTS_URL`/`DROPPEN_AGENTS_TOKEN`
+/// or a private JSON file named by `DROPPEN_AGENTS_CONFIG`.
 pub async fn run() -> Result<(), String> {
-    let base_url = std::env::var(AGENTS_URL_ENV)
-        .ok()
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("{AGENTS_URL_ENV} is not set"))?;
-    let token = std::env::var(AGENTS_TOKEN_ENV)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("{AGENTS_TOKEN_ENV} is not set"))?;
+    let creds = Credentials::from_env()?;
 
     let client = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
@@ -303,15 +349,14 @@ pub async fn run() -> Result<(), String> {
     });
 
     let stdout = std::io::stdout();
-    serve_lines(rx, stdout, &client, &base_url, &token).await
+    serve_lines(rx, stdout, &client, &creds).await
 }
 
 async fn serve_lines<W: Write>(
     mut rx: mpsc::Receiver<std::io::Result<StdinLine>>,
     mut writer: W,
     client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
+    creds: &Credentials,
 ) -> Result<(), String> {
     while let Some(item) = rx.recv().await {
         let line = match item.map_err(|error| format!("stdin read failed: {error}"))? {
@@ -362,7 +407,7 @@ async fn serve_lines<W: Write>(
             continue;
         }
 
-        let response = dispatch(client, base_url, token, id, &req.method, req.params).await;
+        let response = dispatch(client, creds, id, &req.method, req.params).await;
         write_response(&mut writer, &response)?;
     }
     Ok(())
@@ -370,8 +415,7 @@ async fn serve_lines<W: Write>(
 
 async fn dispatch(
     client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
+    creds: &Credentials,
     id: Value,
     method: &str,
     params: Value,
@@ -417,7 +461,10 @@ async fn dispatch(
             if !matches!(parsed.arguments, Value::Null | Value::Object(_)) {
                 return RpcResponse::invalid_params(id, "tool arguments must be an object");
             }
-            let result = call_tool(client, base_url, token, &parsed.name, parsed.arguments).await;
+            let result = match creds.resolve() {
+                Ok((base_url, token)) => call_tool(client, &base_url, &token, &parsed.name, parsed.arguments).await,
+                Err(error) => ToolCallResult::text(error, true),
+            };
             RpcResponse::ok(id, result)
         }
         _ => RpcResponse::method_not_found(id, method),
@@ -615,9 +662,11 @@ mod tests {
 
         let mut output = Vec::new();
         let client = reqwest::Client::new();
-        serve_lines(rx, &mut output, &client, base_url, "rha1.test-token")
-            .await
-            .expect("serve");
+        let creds = Credentials::Inline {
+            base_url: base_url.to_string(),
+            token: "rha1.test-token".to_string(),
+        };
+        serve_lines(rx, &mut output, &client, &creds).await.expect("serve");
         String::from_utf8(output)
             .expect("utf8")
             .lines()
@@ -786,5 +835,57 @@ mod tests {
             line,
             Some(StdinLine::Line("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn config_file_credentials_resolve_lazily_after_handshake() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg = dir.path().join("codex-lazy.json");
+        let creds = Credentials::ConfigFile(cfg.clone());
+        let client = reqwest::Client::new();
+
+        let init = serde_json::to_value(
+            dispatch(&client, &creds, json!(1), "initialize", json!({ "protocolVersion": "2025-06-18" })).await,
+        )
+        .unwrap();
+        assert_eq!(init["result"]["serverInfo"]["name"], "droppen-agents");
+        let list = serde_json::to_value(dispatch(&client, &creds, json!(2), "tools/list", json!({})).await).unwrap();
+        assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 3);
+
+        let before = serde_json::to_value(
+            dispatch(&client, &creds, json!(3), "tools/call", json!({ "name": "list_agents", "arguments": {} })).await,
+        )
+        .unwrap();
+        assert_eq!(before["result"]["isError"], true);
+
+        let app = Router::new().route(
+            "/api/agents",
+            get(|headers: gotcha::axum::http::HeaderMap| async move {
+                assert_eq!(
+                    headers.get("authorization").and_then(|v| v.to_str().ok()),
+                    Some("Bearer rha1.lazy-token")
+                );
+                Json(json!({ "self": { "ref": "codex/t1" }, "agents": [] }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let _ = gotcha::axum::serve(listener, app).await;
+        });
+
+        std::fs::write(
+            &cfg,
+            serde_json::to_vec(&json!({ "url": format!("http://{addr}"), "token": "rha1.lazy-token" })).unwrap(),
+        )
+        .expect("write cfg");
+
+        let after = serde_json::to_value(
+            dispatch(&client, &creds, json!(4), "tools/call", json!({ "name": "list_agents", "arguments": {} })).await,
+        )
+        .unwrap();
+        server.abort();
+        assert_eq!(after["result"]["isError"], false);
+        assert!(after["result"]["content"][0]["text"].as_str().unwrap().contains("codex/t1"));
     }
 }

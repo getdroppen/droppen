@@ -239,6 +239,12 @@ impl InstanceDirs {
         self.root.join("session-logs")
     }
 
+    /// Private (`0700`) per-session MCP configuration files holding loopback
+    /// `droppen-agents` capability credentials (`0600`), created on demand.
+    pub fn mcp_configs(&self) -> PathBuf {
+        self.root.join("mcp-configs")
+    }
+
     /// The port this instance's listener bound, written after the bind so a
     /// sibling tool can find a running server without guessing.
     pub fn port_file(&self) -> PathBuf {
