@@ -58,6 +58,14 @@ pub struct ContentChunk {
     pub content: ContentBlock,
 }
 
+/// Metadata of an embedded resource content block, as far as replay reads it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EmbeddedResourceRef {
+    /// The resource's URI (`file://...`), when present.
+    #[serde(default)]
+    pub uri: Option<String>,
+}
+
 /// A piece of content, as far as this server shows it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -67,14 +75,27 @@ pub enum ContentBlock {
         /// The text.
         text: String,
     },
-    /// An image, which a transcript names rather than draws.
-    Image {},
+    /// An image, optionally carrying its `file://` URI for replay thumbnails.
+    Image {
+        /// Original file URI, when supplied.
+        #[serde(default)]
+        uri: Option<String>,
+    },
     /// A link to a resource the agent can read.
     ResourceLink {
         /// The resource's name.
         name: String,
+        /// The resource's URI (`file://...`), when supplied.
+        #[serde(default)]
+        uri: Option<String>,
     },
-    /// Audio, an embedded resource, or a kind this build does not know.
+    /// An embedded resource block, carrying its URI for replay chips.
+    Resource {
+        /// The embedded resource payload.
+        #[serde(default)]
+        resource: EmbeddedResourceRef,
+    },
+    /// Audio or a kind this build does not know.
     #[serde(other)]
     Other,
 }

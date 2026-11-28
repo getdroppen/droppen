@@ -168,11 +168,117 @@ pub(super) struct ThreadArchiveParams<'a> {
     pub(super) thread_id: &'a str,
 }
 
+#[cfg(test)]
 pub(super) fn message(text: &str, options: &SendOptions) -> Result<Message, InjectError> {
-    let mut input = vec![UserInput::Text {
-        text: with_codex_files(text, options),
-    }];
-    input.extend(options.images.iter().map(|path| UserInput::LocalImage { path }));
+    let wire_text = with_codex_files(text, &options.files);
+    build_message(text, &wire_text, &options.images, None, options)
+}
+
+/// Validate uploaded attachments and assemble one queued Codex message.
+///
+/// * **Chats** (`options.chat`): images are validated by magic bytes and size
+///   (refused if invalid/oversized) and non-image files are inlined as UTF-8
+///   text blocks so read-only / tool-less instant chats can read them.
+/// * **Coding sessions**: valid PNG/JPEG/GIF/WebP images within caps travel as
+///   native `localImage` items; oversized or unsupported image formats fall
+///   back to the file path suffix so Codex can still inspect them. Escapes and
+///   hardlinks always fail loudly.
+pub(super) async fn prepare_message(
+    paths: &droppen_instance::paths::Paths,
+    text: &str,
+    options: &SendOptions,
+) -> Result<Message, InjectError> {
+    use droppen_provider::chat_attachments::{
+        read_chat_image, read_chat_text_file, ChatAttachmentError, MAX_IMAGE_TOTAL_BYTES,
+    };
+    if options.images.is_empty() && options.files.is_empty() {
+        let delivery = options.chat.then(|| DeliveryRecord {
+            text: text.to_string(),
+            images: Vec::new(),
+            files: Vec::new(),
+        });
+        return build_message(text, text, &[], delivery, options);
+    }
+
+    if options.chat {
+        let mut valid_images = Vec::with_capacity(options.images.len());
+        let mut image_total = 0u64;
+        for path in &options.images {
+            let image = read_chat_image(paths, path)
+                .await
+                .map_err(|error| InjectError::message(error.to_string()))?;
+            image_total = image_total.saturating_add(image.raw_len);
+            if image_total > MAX_IMAGE_TOTAL_BYTES {
+                return Err(InjectError::message(
+                    ChatAttachmentError::ImagesTooLarge {
+                        limit: MAX_IMAGE_TOTAL_BYTES,
+                    }
+                    .to_string(),
+                ));
+            }
+            valid_images.push(path.clone());
+        }
+        let mut inlined = String::new();
+        let mut text_total = 0u64;
+        for path in &options.files {
+            let content = read_chat_text_file(paths, path, &mut text_total)
+                .await
+                .map_err(|error| InjectError::message(error.to_string()))?;
+            inlined.push_str(&droppen_sessions::util::chat_file_block(path, &content));
+        }
+        let wire_text = if inlined.is_empty() {
+            text.to_string()
+        } else {
+            format!("{text}{inlined}")
+        };
+        let delivery = Some(DeliveryRecord {
+            text: wire_text.clone(),
+            images: valid_images.clone(),
+            files: options.files.clone(),
+        });
+        return build_message(text, &wire_text, &valid_images, delivery, options);
+    }
+
+    let mut valid_images = Vec::new();
+    let mut fallback_files = Vec::new();
+    let mut image_total = 0u64;
+    for path in &options.images {
+        match read_chat_image(paths, path).await {
+            Ok(image) if image_total.saturating_add(image.raw_len) <= MAX_IMAGE_TOTAL_BYTES => {
+                image_total = image_total.saturating_add(image.raw_len);
+                valid_images.push(path.clone());
+            }
+            Ok(_) => fallback_files.push(path.clone()),
+            Err(error @ (ChatAttachmentError::OutsideUploads | ChatAttachmentError::HardLinked { .. })) => {
+                return Err(InjectError::message(error.to_string()));
+            }
+            Err(_) => fallback_files.push(path.clone()),
+        }
+    }
+    fallback_files.extend(options.files.iter().cloned());
+    let wire_text = with_codex_files(text, &fallback_files);
+    let delivery = (!valid_images.is_empty()).then(|| DeliveryRecord {
+        text: wire_text.clone(),
+        images: valid_images.clone(),
+        files: Vec::new(),
+    });
+    build_message(text, &wire_text, &valid_images, delivery, options)
+}
+
+fn build_message(
+    display_text: &str,
+    wire_text: &str,
+    images: &[String],
+    delivery: Option<DeliveryRecord>,
+    options: &SendOptions,
+) -> Result<Message, InjectError> {
+    let mut input = Vec::with_capacity(1 + images.len());
+    if !wire_text.is_empty() || images.is_empty() {
+        input.push(UserInput::Text {
+            text: wire_text.to_string(),
+        });
+    }
+    input.extend(images.iter().map(|path| UserInput::LocalImage { path }));
     let permission = if options.chat {
         Some("read-only")
     } else {
@@ -200,12 +306,13 @@ pub(super) fn message(text: &str, options: &SendOptions) -> Result<Message, Inje
         // The send path's choice when a client named the message, so its
         // receipt can follow it; see [`droppen_provider::receipts`].
         id: options.message_id.clone().unwrap_or_else(new_uuid),
-        text: text.into(),
+        text: display_text.into(),
         // A stored value, because the journal reads back rows other builds
         // wrote.
         params: serde_json::to_value(params).expect("turn/start params encode"),
         request: None,
         uncertain: false,
+        delivery,
     })
 }
 

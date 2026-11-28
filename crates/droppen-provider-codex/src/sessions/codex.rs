@@ -1246,7 +1246,16 @@ pub async fn parse_codex_transcript(paths: &Paths, file_path: &Path) -> std::io:
 /// on from ([`Resumable::resume`]).
 pub async fn read_codex_transcript(paths: &Paths, file_path: &Path) -> std::io::Result<Resumed> {
     let lines = ResumableLines::open(file_path).await?;
-    run(paths, lines, CodexParse::default(), ItemLog::new()).await
+    run(paths, lines, CodexParse::new(file_path), ItemLog::new()).await
+}
+
+/// Extract a session id from a Codex rollout path (filename UUID or stem).
+fn session_id_from_path(file_path: &Path) -> String {
+    file_path
+        .file_name()
+        .and_then(|name| id_from_file_name(&name.to_string_lossy()))
+        .or_else(|| file_path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+        .unwrap_or_default()
 }
 
 /// A parse of a Codex rollout under way: what reading one line needs to know
@@ -1254,10 +1263,24 @@ pub async fn read_codex_transcript(paths: &Paths, file_path: &Path) -> std::io::
 /// whole ([`Resumed::state`]).
 #[derive(Default)]
 struct CodexParse {
+    /// The session's id, used to look up `chat_deliveries` rows.
+    session_id: String,
     /// The calls waiting for their outputs, and the cell open.
     tools: CodexTools,
     /// The session's directory, from its `session_meta`.
     cwd: Option<String>,
+    /// Whether this rollout belongs to an instant chat (`cwd == chats_cwd`).
+    is_chat: bool,
+    /// Lazily opened delivery store for chat file inlines and image fallbacks.
+    deliveries: Option<droppen_sessions::chat_delivery::ChatDeliveries>,
+    /// Snapshot of `deliveries.rows()` before the first lookup.
+    deliveries_rows: Option<(i64, i64)>,
+    /// `local_images` read from an `event_msg` `user_message` that preceded
+    /// its matching `response_item` `message`.
+    pending_user_images: Vec<String>,
+    /// Index of the most recently emitted user text item, so a trailing
+    /// `event_msg` `user_message` carrying `local_images` can attach to it.
+    last_user_item: Option<usize>,
     /// The model the turn being read runs on. Codex names it once, in the
     /// `turn_context` that opens each turn, so every item below one belongs
     /// to it until the next one says otherwise — which is the only record of
@@ -1272,6 +1295,31 @@ struct CodexParse {
 }
 
 impl CodexParse {
+    fn new(file_path: &Path) -> Self {
+        Self {
+            session_id: session_id_from_path(file_path),
+            ..Self::default()
+        }
+    }
+
+    fn ensure_deliveries(&mut self, paths: &Paths) -> Option<&mut droppen_sessions::chat_delivery::ChatDeliveries> {
+        if self.session_id.is_empty() {
+            return None;
+        }
+        if self.deliveries.is_none() {
+            let deliveries = droppen_sessions::chat_delivery::ChatDeliveries::new(paths, Source::Codex, &self.session_id);
+            self.deliveries_rows = deliveries.rows();
+            self.deliveries = Some(deliveries);
+        }
+        self.deliveries.as_mut()
+    }
+
+    fn current(&self) -> bool {
+        self.deliveries
+            .as_ref()
+            .is_none_or(|deliveries| deliveries.rows() == self.deliveries_rows)
+    }
+
     /// Read one line of the rollout into `items`.
     fn line(&mut self, paths: &Paths, line: &str, items: &mut ItemLog) {
         if line.trim().is_empty() {
@@ -1280,6 +1328,17 @@ impl CodexParse {
         let Some(entry) = try_parse(line) else { return };
         if entry.get("type").and_then(Value::as_str) == Some("session_meta") {
             self.cwd = entry.get("payload").and_then(|p| p.get("cwd")).and_then(Value::as_str).map(str::to_owned);
+            if let Some(id) = entry.get("payload").and_then(|p| p.get("id")).and_then(Value::as_str) {
+                if !id.is_empty() {
+                    self.session_id = id.to_string();
+                }
+            }
+            if let Some(cwd) = self.cwd.as_deref() {
+                if Path::new(cwd) == droppen_sessions::chats_cwd(paths) {
+                    self.is_chat = true;
+                    let _ = self.ensure_deliveries(paths);
+                }
+            }
             return;
         }
         if entry.get("type").and_then(Value::as_str) == Some("turn_context") {
@@ -1301,38 +1360,189 @@ impl CodexParse {
             home: &paths.home,
             cwd: self.cwd.as_deref(),
         };
-        let tools = &mut self.tools;
 
         match entry.get("type").and_then(Value::as_str) {
-            // Every other `event_msg` echoes a response item, or is bookkeeping.
-            Some("event_msg") if payload.get("type").and_then(Value::as_str) == Some("item_completed") => {
-                tools.item_completed(items, payload, timestamp, model, context);
-            }
-            Some("response_item") => match payload.get("type").and_then(Value::as_str) {
-                Some("message") => push_message(items, payload, timestamp, model),
-                Some("reasoning") => push_reasoning(items, payload, timestamp, model),
-                Some("custom_tool_call") | Some("function_call") | Some("local_shell_call") => {
-                    tools.call(items, payload, timestamp, model);
+            Some("event_msg") => match payload.get("type").and_then(Value::as_str) {
+                Some("item_completed") => {
+                    self.last_user_item = None;
+                    self.tools.item_completed(items, payload, timestamp, model, context);
                 }
-                Some("function_call_output") | Some("custom_tool_call_output") => tools.output(items, payload, timestamp, context),
-                Some("web_search_call") => tools.web_search_call(items, payload, timestamp, model),
+                Some("user_message") => {
+                    let local_images: Vec<String> = payload
+                        .get("local_images")
+                        .and_then(Value::as_array)
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(Value::as_str)
+                                .filter(|path| !path.trim().is_empty())
+                                .map(str::to_owned)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !local_images.is_empty() {
+                        if let Some(idx) = self.last_user_item.take() {
+                            if let Some(item) = items.get_mut(idx) {
+                                merge_images(item, &local_images);
+                                return;
+                            }
+                        }
+                        self.pending_user_images.extend(local_images);
+                    }
+                }
+                _ => {}
+            },
+            Some("response_item") => match payload.get("type").and_then(Value::as_str) {
+                Some("message") => self.push_message(paths, items, payload, timestamp),
+                Some("reasoning") => {
+                    self.last_user_item = None;
+                    push_reasoning(items, payload, timestamp, model);
+                }
+                Some("custom_tool_call") | Some("function_call") | Some("local_shell_call") => {
+                    self.last_user_item = None;
+                    self.tools.call(items, payload, timestamp, model);
+                }
+                Some("function_call_output") | Some("custom_tool_call_output") => {
+                    self.last_user_item = None;
+                    self.tools.output(items, payload, timestamp, context);
+                }
+                Some("web_search_call") => {
+                    self.last_user_item = None;
+                    self.tools.web_search_call(items, payload, timestamp, model);
+                }
                 _ => {}
             },
             _ => {}
         }
     }
+
+    /// A user or assistant message, preserving native `local_images`,
+    /// `input_image` attachment-only turns, and chat delivery metadata.
+    fn push_message(&mut self, paths: &Paths, items: &mut ItemLog, payload: &serde_json::Map<String, Value>, timestamp: Option<&str>) {
+        // system/developer messages carry injected instructions; skip them.
+        let role = match payload.get("role").and_then(Value::as_str) {
+            Some("user") => Role::User,
+            Some("assistant") => Role::Assistant,
+            _ => return,
+        };
+        let parts = payload.get("content").and_then(Value::as_array).cloned().unwrap_or_default();
+        if role == Role::Assistant {
+            self.last_user_item = None;
+            let model = self.model.as_deref();
+            for part in parts {
+                let Some(text) = part.get("text").and_then(Value::as_str) else {
+                    continue;
+                };
+                if text.trim().is_empty() || is_wrapper_text(text) {
+                    continue;
+                }
+                items.push(by_model(make_item(role, ItemKind::Text, text, timestamp), model));
+            }
+            return;
+        }
+
+        let has_input_image = parts.iter().any(|part| {
+            part.get("type").and_then(Value::as_str) == Some("input_image") || part.get("image_url").is_some()
+        });
+        let text_parts: Vec<&str> = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .filter(|text| !text.trim().is_empty() && !is_wrapper_text(text))
+            .collect();
+        let joined = text_parts.join("\n");
+        let delivery = if self.is_chat || has_input_image {
+            self.ensure_deliveries(paths)
+                .and_then(|deliveries| deliveries.lookup(&joined, timestamp))
+        } else {
+            None
+        };
+        let mut extra_images = std::mem::take(&mut self.pending_user_images);
+        if let Some(delivery) = &delivery {
+            for path in &delivery.images {
+                if !extra_images.contains(path) {
+                    extra_images.push(path.clone());
+                }
+            }
+        }
+        let delivery_files: Vec<String> = delivery.as_ref().map(|d| d.files.clone()).unwrap_or_default();
+
+        if text_parts.is_empty() {
+            if has_input_image || !extra_images.is_empty() || !delivery_files.is_empty() {
+                let mut item = make_item(Role::User, ItemKind::Text, "", timestamp);
+                merge_images(&mut item, &extra_images);
+                merge_files(&mut item, &delivery_files);
+                self.last_user_item = Some(items.len());
+                items.push(item);
+            }
+            return;
+        }
+
+        let mut attached_once = false;
+        for text in text_parts {
+            let mut item = TranscriptItem::user_text(text, timestamp);
+            if !attached_once {
+                attached_once = true;
+                if !delivery_files.is_empty() {
+                    item.text = droppen_sessions::util::strip_chat_file_blocks(&item.text, &delivery_files)
+                        .trim()
+                        .to_string();
+                    merge_files(&mut item, &delivery_files);
+                }
+                merge_images(&mut item, &extra_images);
+                self.last_user_item = Some(items.len());
+            }
+            items.push(item);
+        }
+    }
 }
 
-/// Codex's parse, which the loader goes on from. It reads nothing besides
-/// the rollout ([`Resumable::inputs`] is the default): a thumbnail is a path
-/// resolved where it is written, and the mentioned-file chips, the one thing
-/// that looks at the filesystem, are left out of what a check compares.
+/// Merge `extra` image paths onto `item.images`, preserving order and avoiding duplicates.
+fn merge_images(item: &mut TranscriptItem, extra: &[String]) {
+    if extra.is_empty() {
+        return;
+    }
+    let mut merged = extra.to_vec();
+    if let Some(existing) = item.images.take() {
+        for path in existing {
+            if !merged.contains(&path) {
+                merged.push(path);
+            }
+        }
+    }
+    item.images = Some(merged);
+}
+
+/// Merge `extra` file paths onto `item.files`, preserving order and avoiding duplicates.
+fn merge_files(item: &mut TranscriptItem, extra: &[String]) {
+    if extra.is_empty() {
+        return;
+    }
+    let mut merged: Vec<droppen_sessions::util::FileRef> = extra
+        .iter()
+        .map(|path| droppen_sessions::util::FileRef {
+            name: Path::new(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: path.clone(),
+        })
+        .collect();
+    if let Some(existing) = item.files.take() {
+        for file in existing {
+            if !merged.iter().any(|seen| seen.path == file.path) {
+                merged.push(file);
+            }
+        }
+    }
+    item.files = Some(merged);
+}
+
+/// Codex's parse, which the loader goes on from.
 impl Resumable for CodexSessions {
-    fn read<'a>(&'a self, paths: &'a Paths, _file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, std::io::Result<Resumed>> {
-        Box::pin(run(paths, lines, CodexParse::default(), ItemLog::new()))
+    fn read<'a>(&'a self, paths: &'a Paths, file_path: &'a Path, lines: ResumableLines) -> BoxFuture<'a, std::io::Result<Resumed>> {
+        Box::pin(run(paths, lines, CodexParse::new(file_path), ItemLog::new()))
     }
 
-    // Not when the items are not the ones the parse made.
+    // Not when the items are not the ones the parse made, nor when delivery rows moved.
     fn resume<'a>(
         &'a self,
         paths: &'a Paths,
@@ -1345,10 +1555,22 @@ impl Resumable for CodexSessions {
             let Ok(parse) = state.downcast::<CodexParse>() else {
                 return Ok(None);
             };
-            if items.len() != parse.made {
+            if items.len() != parse.made || !parse.current() {
                 return Ok(None);
             }
             run(paths, lines, *parse, ItemLog::resume(items)).await.map(Some)
+        })
+    }
+
+    fn inputs<'a>(&'a self, paths: &'a Paths, file_path: &'a Path) -> BoxFuture<'a, u64> {
+        Box::pin(async move {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let session = session_id_from_path(file_path);
+            droppen_sessions::chat_delivery::ChatDeliveries::new(paths, Source::Codex, &session)
+                .rows()
+                .hash(&mut hasher);
+            hasher.finish()
         })
     }
 }
@@ -1374,30 +1596,6 @@ async fn run(paths: &Paths, mut lines: ResumableLines, mut parse: CodexParse, mu
 fn by_model(mut item: TranscriptItem, model: Option<&str>) -> TranscriptItem {
     item.model = model.map(str::to_owned);
     item
-}
-
-/// A user or assistant message, one item per non-empty text part.
-fn push_message(items: &mut ItemLog, payload: &serde_json::Map<String, Value>, timestamp: Option<&str>, model: Option<&str>) {
-    // system/developer messages carry injected instructions; skip them.
-    let role = match payload.get("role").and_then(Value::as_str) {
-        Some("user") => Role::User,
-        Some("assistant") => Role::Assistant,
-        _ => return,
-    };
-    let parts = payload.get("content").and_then(Value::as_array).cloned().unwrap_or_default();
-    for part in parts {
-        let Some(text) = part.get("text").and_then(Value::as_str) else {
-            continue;
-        };
-        if text.trim().is_empty() || is_wrapper_text(text) {
-            continue;
-        }
-        if role == Role::Assistant {
-            items.push(by_model(make_item(role, ItemKind::Text, text, timestamp), model));
-            continue;
-        }
-        items.push(TranscriptItem::user_text(text, timestamp));
-    }
 }
 
 /// Extended thinking, which Codex re-emits cumulatively.
@@ -1686,10 +1884,105 @@ mod tests {
     async fn an_attachment_suffix_becomes_files_on_the_item() {
         let (dir, path) = rollout(&[
             r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"look at this\n\n[1 attached file(s) — view with the Read tool:]\n- /tmp/a.png\n"}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"new wording\n\n[1 attached file(s):]\n- /tmp/b.txt\n"}]}}"#,
         ]);
         let items = parse_codex_transcript(&Paths::new(dir.path().to_path_buf()), &path).await.expect("parse");
         assert_eq!(items[0].text, "look at this");
         assert_eq!(items[0].images.as_deref(), Some(["/tmp/a.png".to_string()].as_slice()));
+        assert_eq!(items[1].text, "new wording");
+        assert_eq!(items[1].files.as_deref().unwrap()[0].path, "/tmp/b.txt");
+    }
+
+    /// Codex records native image attachments via `event_msg` `user_message`
+    /// (`local_images`) alongside `response_item` `input_image` parts, in
+    /// either order, and instant chats inline text files via `chat_file_block`.
+    #[tokio::test]
+    async fn codex_local_images_and_chat_inlines_render_in_transcript() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(dir.path().to_path_buf());
+        let chats = droppen_sessions::chats_cwd(&paths);
+        let note = paths.uploads_dir().join("u/note.txt").to_string_lossy().into_owned();
+        let img1 = paths.uploads_dir().join("u/one.png").to_string_lossy().into_owned();
+        let img2 = paths.uploads_dir().join("u/two.png").to_string_lossy().into_owned();
+        let img3 = paths.uploads_dir().join("u/three.png").to_string_lossy().into_owned();
+        let chat_text = format!("review{}", droppen_sessions::util::chat_file_block(&note, "hello"));
+        droppen_sessions::chat_delivery::record(
+            &paths,
+            Source::Codex,
+            "11111111-1111-1111-1111-111111111111",
+            "m-1",
+            &chat_text,
+            &[img3.clone()],
+            &[note.clone()],
+        );
+
+        let lines = [
+            serde_json::json!({
+                "type": "session_meta",
+                "payload": { "id": "11111111-1111-1111-1111-111111111111", "cwd": chats.to_string_lossy() }
+            }),
+            // Case 1: event_msg before response_item
+            serde_json::json!({
+                "type": "event_msg",
+                "timestamp": "2099-01-01T00:00:01.000Z",
+                "payload": { "type": "user_message", "message": "first", "local_images": [img1] }
+            }),
+            serde_json::json!({
+                "type": "response_item",
+                "timestamp": "2099-01-01T00:00:01.000Z",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "first" },
+                        { "type": "input_image", "image_url": "data:image/png;base64,AAAA" }
+                    ]
+                }
+            }),
+            // Case 2: image-only response_item followed by trailing event_msg
+            serde_json::json!({
+                "type": "response_item",
+                "timestamp": "2099-01-01T00:00:02.000Z",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_image", "image_url": "data:image/png;base64,BBBB" }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "type": "event_msg",
+                "timestamp": "2099-01-01T00:00:02.000Z",
+                "payload": { "type": "user_message", "message": "", "local_images": [img2] }
+            }),
+            // Case 3: chat turn with inlined file block stripped via chat_deliveries
+            serde_json::json!({
+                "type": "response_item",
+                "timestamp": "2099-01-01T00:00:03.000Z",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": chat_text },
+                        { "type": "input_image", "image_url": "data:image/png;base64,CCCC" }
+                    ]
+                }
+            }),
+        ];
+        let path = dir.path().join("rollout-2099-01-01T00-00-00-11111111-1111-1111-1111-111111111111.jsonl");
+        let body: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        std::fs::write(&path, body).expect("write");
+
+        let items = parse_codex_transcript(&paths, &path).await.expect("parse");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].text, "first");
+        assert_eq!(items[0].images.as_deref(), Some([img1].as_slice()));
+        assert_eq!(items[1].text, "");
+        assert_eq!(items[1].images.as_deref(), Some([img2].as_slice()));
+        assert_eq!(items[2].text, "review");
+        assert_eq!(items[2].images.as_deref(), Some([img3].as_slice()));
+        assert_eq!(items[2].files.as_deref().unwrap()[0].path, note);
     }
 
     #[tokio::test]

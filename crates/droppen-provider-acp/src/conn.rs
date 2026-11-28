@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol_schema::v1::{
     CancelNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as RpcError, FileSystemCapabilities, Implementation,
     InitializeRequest, JsonRpcMessage, LoadSessionRequest, NewSessionRequest, Notification, PromptRequest, Request, RequestId,
-    SetSessionConfigOptionRequest, TextContent, AGENT_METHOD_NAMES,
+    SetSessionConfigOptionRequest, AGENT_METHOD_NAMES,
 };
 use agent_client_protocol_schema::ProtocolVersion;
 use serde::Serialize;
@@ -35,7 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::Client;
 use super::{absolute, InjectError, Replay};
-use crate::protocol::{available_model_ids, config_options, ConfigOption, PromptResponse, SessionNotification};
+use crate::protocol::{available_model_ids, config_options, ConfigOption, InitializeResponse, PromptCapabilities, PromptResponse, SessionNotification};
 
 /// How long a write to the agent's stdin may block.
 const WRITE_TIMEOUT: std::time::Duration = if cfg!(test) {
@@ -129,6 +129,8 @@ pub(super) struct Conn {
     next: AtomicU64,
     /// The agent can close a session (`session/close`).
     can_close: bool,
+    /// Multimodal prompt capabilities advertised by the agent in `initialize`.
+    prompt_capabilities: PromptCapabilities,
     /// What the agent says; see [`Event`].
     pub(super) events: mpsc::UnboundedReceiver<Event>,
 }
@@ -158,6 +160,7 @@ impl Conn {
             pending,
             next: AtomicU64::new(0),
             can_close: false,
+            prompt_capabilities: PromptCapabilities::default(),
             events,
         })
     }
@@ -202,7 +205,13 @@ impl Conn {
             )
             .await?;
         self.can_close = init["agentCapabilities"]["sessionCapabilities"]["close"].is_object();
+        self.prompt_capabilities = InitializeResponse::read(&init).agent_capabilities.prompt_capabilities;
         Ok(init)
+    }
+
+    /// The multimodal prompt capabilities advertised by this agent during `initialize`.
+    pub(super) fn prompt_capabilities(&self) -> PromptCapabilities {
+        self.prompt_capabilities.clone()
     }
 
     /// Initialize, then create or reopen the session.
@@ -271,13 +280,13 @@ impl Conn {
     }
 
     /// Start a turn. Its end arrives as [`Event::Prompted`], after its updates.
-    pub(super) async fn prompt(&self, id: &str, text: String) -> Result<(), InjectError> {
+    pub(super) async fn prompt(&self, id: &str, content: Vec<ContentBlock>) -> Result<(), InjectError> {
         let request = self.next_id();
         self.pending.lock().unwrap().prompt = Some(request.clone());
         let prompt = Request {
             id: RequestId::Str(request),
             method: AGENT_METHOD_NAMES.session_prompt.into(),
-            params: Some(PromptRequest::new(id.to_owned(), vec![ContentBlock::Text(TextContent::new(text))])),
+            params: Some(PromptRequest::new(id.to_owned(), content)),
         };
         Ok(self.writer.send(&JsonRpcMessage::wrap(prompt)).await?)
     }

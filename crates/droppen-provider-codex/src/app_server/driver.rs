@@ -95,8 +95,10 @@ impl Driver {
         self.pending_since = Instant::now();
         self.checkpoint();
         let message = &self.state.queue[index];
+        let delivery = message.delivery.clone();
+        let message_id = message.id.clone();
         let thread_id = self.record.session_id.as_str();
-        if steer {
+        let outcome = if steer {
             let request = Request {
                 id: &id,
                 method: "turn/steer",
@@ -119,7 +121,21 @@ impl Driver {
                 },
             };
             write(&mut self.link, &request).await
+        };
+        if outcome.is_ok() {
+            if let Some(delivery) = delivery {
+                droppen_sessions::chat_delivery::record(
+                    &self.runs.host.paths,
+                    Source::Codex,
+                    &self.record.session_id,
+                    &message_id,
+                    &delivery.text,
+                    &delivery.images,
+                    &delivery.files,
+                );
+            }
         }
+        outcome
     }
 
     pub(super) async fn run(mut self) {

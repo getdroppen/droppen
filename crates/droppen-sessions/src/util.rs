@@ -458,7 +458,7 @@ pub fn strip_chat_file_blocks(text: &str, files: &[String]) -> String {
 pub fn parse_attachment_suffix(raw_text: &str) -> AttachmentSplit {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"(?s)\n\n\[\d+ attached (?:image )?file\(s\) — view with the Read tool:\]\n((?:- .+\n?)+)$")
+        regex::Regex::new(r"(?s)\n\n\[\d+ attached (?:image )?file\(s\)(?: — view with the Read tool)?:\]\n((?:- .+\n?)+)$")
             .expect("valid attachment pattern")
     });
     let Some(caps) = re.captures(raw_text) else {
