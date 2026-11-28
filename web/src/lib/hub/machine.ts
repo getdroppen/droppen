@@ -1241,13 +1241,13 @@ export class MachineChannel implements PipeOpener {
     this.setStatus("connecting");
     try {
       await this.link.waitOpen();
-      if (this.epoch !== epoch) throw new Error("channel closed");
+      if (this.epoch !== epoch) throw new Error("the device is no longer open on this page");
       const opened = await this.openChannel(new Set(), (step) => {
         if (this.epoch === epoch) this.setStep(step);
       });
       if (this.epoch !== epoch) {
         this.disposeOpened(opened, "done");
-        throw new Error("channel closed");
+        throw new Error("the device is no longer open on this page");
       }
       this.setStep(null);
       this.blocked = null;
