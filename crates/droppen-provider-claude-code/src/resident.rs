@@ -119,7 +119,7 @@ use journal::is_false;
 #[cfg(any(test, feature = "test-support"))]
 pub use journal::ClaudeRowsExt;
 use queue::AbsorbWatch;
-use wire::{answered_in, classify, classify_value, clip, clip_to, last_lines, recipe_root, running_turn, user_line, user_line_with_images, ControlRequest, Event, StdinLine, Wake};
+use wire::{answered_in, classify, classify_value, clip, clip_to, last_lines, recipe_root, running_turn, user_line, user_line_with_blocks, ControlRequest, Event, StdinLine, Wake};
 
 /// The mode flags every resident is started with.
 ///

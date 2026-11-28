@@ -246,7 +246,7 @@ fn text_hash(text: &str) -> String {
 /// The CLI prefixes one per image block when it writes the user entry. Only
 /// the leading run is touched, so a user who typed the same marker themselves
 /// further in keeps their words; the text hashed for the record has no markers.
-fn strip_image_markers(mut text: &str) -> &str {
+pub fn strip_image_markers(mut text: &str) -> &str {
     while let Some(rest) = text.strip_prefix("[Image #") {
         let Some(end) = rest.find(']') else { break };
         if end == 0 || !rest[..end].bytes().all(|byte| byte.is_ascii_digit()) {

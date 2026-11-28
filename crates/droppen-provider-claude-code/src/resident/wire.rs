@@ -21,17 +21,39 @@ pub(super) fn user_line(text: &str) -> String {
     user_line_with_images(text, &[])
 }
 
-/// The same with a chat's images as base64 content blocks, after the text.
-///
-/// This is how a tool-less chat receives an image: the block carries the bytes
-/// the model sees, and no path is named for a tool that does not exist. The
-/// CLI writes an `[Image #N]` marker into the text block for each one.
+/// The same with images as base64 content blocks, after the text.
 pub(super) fn user_line_with_images(text: &str, images: &[(&'static str, String)]) -> String {
-    let mut content = Vec::with_capacity(1 + images.len());
-    content.push(ContentBlock::Text { text });
+    user_line_with_blocks(text, images, &[])
+}
+
+/// One stream-json user line carrying optional text, inline base64 images,
+/// and inline base64 PDF documents.
+///
+/// Both coding sessions and tool-less chats use this for native multimodal
+/// delivery: images travel as `image` blocks and PDFs as `document` blocks so
+/// the model inspects them directly instead of invoking Read on a path. An
+/// empty text string is omitted whenever at least one media block is present.
+pub(super) fn user_line_with_blocks(
+    text: &str,
+    images: &[(&'static str, String)],
+    documents: &[(&'static str, String)],
+) -> String {
+    let mut content = Vec::with_capacity(1 + images.len() + documents.len());
+    if !text.is_empty() || (images.is_empty() && documents.is_empty()) {
+        content.push(ContentBlock::Text { text });
+    }
     for (media_type, data) in images {
         content.push(ContentBlock::Image {
-            source: ImageSource {
+            source: MediaSource {
+                kind: "base64",
+                media_type,
+                data,
+            },
+        });
+    }
+    for (media_type, data) in documents {
+        content.push(ContentBlock::Document {
+            source: MediaSource {
                 kind: "base64",
                 media_type,
                 data,
@@ -55,7 +77,7 @@ pub(super) enum StdinLine<'a> {
     ControlRequest { request_id: String, request: ControlRequest<'a> },
 }
 
-/// A user message: a text block, then any image blocks.
+/// A user message: an optional text block, then any image and document blocks.
 #[derive(serde::Serialize)]
 #[serde(tag = "role", rename = "user")]
 pub(super) struct UserMessage<'a> {
@@ -71,20 +93,25 @@ pub(super) enum ContentBlock<'a> {
         /// The text.
         text: &'a str,
     },
-    /// A chat's image, as bytes the model sees.
+    /// An image, as base64 bytes the model sees natively.
     Image {
         /// Where the bytes come from and of what type.
-        source: ImageSource<'a>,
+        source: MediaSource<'a>,
+    },
+    /// A PDF document, as base64 bytes the model sees natively.
+    Document {
+        /// Where the bytes come from and of what type.
+        source: MediaSource<'a>,
     },
 }
 
-/// One image's inline source, in the API's own shape.
+/// One image or document's inline source, in the API's own shape.
 #[derive(serde::Serialize)]
-pub(super) struct ImageSource<'a> {
+pub(super) struct MediaSource<'a> {
     /// `"base64"`.
     #[serde(rename = "type")]
     kind: &'static str,
-    /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
+    /// `image/png`, `image/jpeg`, `image/gif`, `image/webp`, or `application/pdf`.
     media_type: &'static str,
     /// The standard base64 payload.
     data: &'a str,
@@ -411,4 +438,33 @@ pub(super) fn clip_to(text: &str, cap: usize) -> String {
         return text.to_string();
     }
     text.chars().take(cap).chain(['…']).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_line_with_blocks_encodes_images_and_documents_and_omits_empty_text() {
+        let line = user_line_with_blocks(
+            "inspect",
+            &[("image/png", "iVBOR==".to_string())],
+            &[("application/pdf", "JVBERg==".to_string())],
+        );
+        let parsed: Value = serde_json::from_str(&line).expect("json");
+        let blocks = parsed["message"]["content"].as_array().expect("content array");
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "inspect");
+        assert_eq!(blocks[1]["type"], "image");
+        assert_eq!(blocks[1]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[2]["type"], "document");
+        assert_eq!(blocks[2]["source"]["media_type"], "application/pdf");
+
+        let media_only = user_line_with_blocks("", &[("image/png", "iVBOR==".to_string())], &[]);
+        let parsed: Value = serde_json::from_str(&media_only).expect("json");
+        let blocks = parsed["message"]["content"].as_array().expect("content array");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "image");
+    }
 }

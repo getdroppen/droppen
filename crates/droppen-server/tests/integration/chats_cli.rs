@@ -434,21 +434,38 @@ async fn a_queued_message_whose_upload_became_a_symlink_is_not_sent() {
     probe.stop().await;
 }
 
-/// A session is unchanged: its image is still a path in the prompt for the
-/// Read tool, and its process still has the ordinary tool set.
+/// A Claude coding session sends valid images as native `image` blocks and
+/// valid PDFs as native `document` blocks, falling back to the path suffix in
+/// the text block for non-PDF files while keeping the ordinary tool set.
 #[tokio::test]
-async fn a_session_keeps_its_path_based_attachment_delivery() {
+async fn a_session_sends_native_image_and_pdf_blocks_with_path_fallback() {
     let probe = support::Probe::start().await;
     let workspace = probe.workspace();
-    let image = probe.upload("shot.png", &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]).await["path"]
+    let png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2];
+    let pdf: &[u8] = b"%PDF-1.7\nhello";
+    let image = probe.upload("shot.png", png).await["path"]
         .as_str()
         .expect("the image path")
+        .to_string();
+    let doc = probe.upload("spec.pdf", pdf).await["path"]
+        .as_str()
+        .expect("the pdf path")
+        .to_string();
+    let notes = probe.upload("notes.txt", b"plain text").await["path"]
+        .as_str()
+        .expect("the notes path")
         .to_string();
     probe
         .send_ok(
             "POST",
             "/api/sessions/new",
-            json!({"source": "claude", "cwd": workspace.to_string_lossy(), "text": "look", "images": [image]}),
+            json!({
+                "source": "claude",
+                "cwd": workspace.to_string_lossy(),
+                "text": "look",
+                "images": [image],
+                "files": [doc, notes],
+            }),
             200,
         )
         .await;
@@ -457,10 +474,23 @@ async fn a_session_keeps_its_path_based_attachment_delivery() {
     assert_eq!(spawn.flag("--tools"), None);
     let line = support::wait_for_prompt_lines(&workspace, 1).await.remove(0);
     let content = line["message"]["content"].as_array().expect("content blocks");
-    assert_eq!(content.len(), 1, "a session's image is a path, not a block");
+    assert_eq!(content.len(), 3, "text + native image + native pdf: {line}");
     assert_eq!(
         content[0]["text"],
-        format!("look\n\n[1 attached file(s) — view with the Read tool:]\n- {image}")
+        format!("look\n\n[1 attached file(s) — view with the Read tool:]\n- {notes}"),
+        "only the non-PDF fallback file appears in the path suffix"
+    );
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["source"]["media_type"], "image/png");
+    assert_eq!(
+        droppen_provider::chat_attachments::image_bytes(content[1]["source"]["data"].as_str().expect("data")).as_deref(),
+        Some(png)
+    );
+    assert_eq!(content[2]["type"], "document");
+    assert_eq!(content[2]["source"]["media_type"], "application/pdf");
+    assert_eq!(
+        droppen_provider::chat_attachments::image_bytes(content[2]["source"]["data"].as_str().expect("data")).as_deref(),
+        Some(pdf)
     );
     probe.stop().await;
 }
