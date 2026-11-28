@@ -568,6 +568,36 @@ mod tests {
         assert_eq!(claims.owner(gone), None);
     }
 
+    /// Archiving moves a thread's rollout from `~/.codex/sessions` into
+    /// `~/.codex/archived_sessions` (plain or `.jsonl.zst`). The thread still
+    /// has its file, so booting must not drop its claim only for `migrate` to
+    /// recreate it on the same boot.
+    #[tokio::test]
+    async fn pruning_keeps_the_claim_of_an_archived_thread() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (a, _b) = instances(&dir);
+        std::fs::create_dir_all(a.codex_sessions()).expect("sessions dir");
+        let archived = a.codex_dir().join("archived_sessions");
+        std::fs::create_dir_all(&archived).expect("archived dir");
+
+        let plain = "66666666-2222-3333-4444-555555555555";
+        std::fs::write(archived.join(format!("rollout-2026-05-09T16-39-49-{plain}.jsonl")), "{}\n").expect("plain archived");
+        let compressed = "77777777-2222-3333-4444-555555555555";
+        let rollout = droppen_sessions::compressed::compress(b"{}\n");
+        std::fs::write(archived.join(format!("rollout-2026-05-09T16-39-49-{compressed}.jsonl.zst")), rollout).expect("compressed archived");
+        let gone = "88888888-2222-3333-4444-555555555555";
+
+        claim(&a, plain).await;
+        claim(&a, compressed).await;
+        claim(&a, gone).await;
+
+        assert_eq!(prune(&a).await, 1, "only the thread with no rollout anywhere");
+        let claims = Claims::all(&a).await;
+        assert_eq!(claims.owner(plain), Some("a"), "an archived plain thread keeps its claim");
+        assert_eq!(claims.owner(compressed), Some("a"), "an archived compressed thread keeps its claim");
+        assert_eq!(claims.owner(gone), None);
+    }
+
     /// No `~/.codex/sessions` is "no answer", not "nothing exists": a fresh
     /// machine, or a home directory that has not been written yet, must not
     /// disown every thread this instance made.
