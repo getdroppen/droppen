@@ -370,6 +370,19 @@ impl Driver {
         if let Err(error) = crate::sessions::claude::ClaudeCodeSessions.record_owned(&self.runs.host.paths, id).await {
             tracing::error!(session = %id, %error, "cannot record the adopted claude session as ours; it will list as external");
         }
+        // Carry the account binding over to the adopted/forked session id so
+        // subsequent turns and restarts keep the same billing account.
+        if let Some(account) = self.live.as_ref().and_then(|fp| fp.account.as_deref()) {
+            if let Err(error) = self
+                .runs
+                .host
+                .accounts
+                .bind_session_account(id, Some(account), AccountProvider::Claude)
+                .await
+            {
+                tracing::warn!(session = %id, account, %error, "cannot migrate account binding to adopted claude session");
+            }
+        }
         #[cfg(test)]
         let old = self.id.clone();
         self.id = id.to_string();

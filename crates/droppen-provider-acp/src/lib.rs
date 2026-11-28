@@ -466,6 +466,20 @@ impl ProviderRuns for AcpRuns {
     fn last_write<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Option<std::time::Instant>> {
         Box::pin(async move { AcpTranscripts::of(&self.host.paths).locate(id).await?.1.written_at().await })
     }
+
+    fn permission_holders(&self) -> Vec<String> {
+        self.acp_servers
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(key, handle)| {
+                handle
+                    .alive()
+                    .then(|| key.rsplit('/').next().map(str::to_owned))
+                    .flatten()
+            })
+            .collect()
+    }
 }
 
 impl Provider for Acp {
@@ -1103,6 +1117,7 @@ impl AcpRuns {
             in_flight,
             retire,
             interrupted: false,
+            interrupt_since: None,
             recorded_choice: None,
         };
         tokio::spawn(driver.run());

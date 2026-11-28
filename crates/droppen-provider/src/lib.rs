@@ -1005,6 +1005,13 @@ pub trait ProviderRuns: Send + Sync {
     fn question_holders(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// The sessions whose tool permission prompts can still be answered in the
+    /// turn that asked them. Defaults to [`Self::question_holders`]; providers
+    /// that support permissions without questions override this.
+    fn permission_holders(&self) -> Vec<String> {
+        self.question_holders()
+    }
 }
 
 /// When a file was last written, on the clock `Instant` keeps.
@@ -1187,7 +1194,8 @@ impl InjectionRegistry {
                 "questions whose process did not survive the restart can no longer be answered in their turn"
             );
         }
-        let cancelled_permissions = self.host.permissions.cancel_unheld(&held, permissions::now_ms());
+        let perm_held: std::collections::HashSet<String> = by_source.values().flat_map(|runs| runs.permission_holders()).collect();
+        let cancelled_permissions = self.host.permissions.cancel_unheld(&perm_held, permissions::now_ms());
         if cancelled_permissions > 0 {
             tracing::info!(
                 cancelled = cancelled_permissions,

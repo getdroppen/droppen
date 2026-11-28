@@ -415,6 +415,13 @@ pub(crate) fn apply(conn: &mut Connection, schema: &[&str]) -> rusqlite::Result<
     let at: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let newest = schema.len() as i64;
 
+    if at < 0 {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Integer,
+            format!("corrupt negative PRAGMA user_version ({at})").into(),
+        ));
+    }
     if at > newest {
         // The downgrade case the module note exists for. Not an error, not a
         // refusal — a line in the log and then business as usual.
@@ -752,5 +759,14 @@ mod tests {
             )
             .expect("read");
         assert_eq!(null, None);
+    }
+
+    #[test]
+    fn negative_user_version_is_rejected_instead_of_skipping_migrations() {
+        let mut conn = Connection::open_in_memory().expect("in-memory db");
+        conn.pragma_update(None, "user_version", -1i64).expect("set negative version");
+        let err = apply(&mut conn, SCHEMA).expect_err("negative user_version must fail");
+        assert!(err.to_string().contains("negative PRAGMA user_version"), "{err}");
+        assert_eq!(version(&conn), -1, "version must not be silently stamped as latest");
     }
 }

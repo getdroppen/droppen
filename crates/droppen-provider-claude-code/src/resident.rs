@@ -834,9 +834,21 @@ impl Run for ClaudeCode {
     }
 
     // Onto this server's hidden list: claude keeps no archive of its own.
-    // No gate: putting the transcript away starts no CLI.
-    fn archive<'a>(&'a self, _gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
+    // Take the spawn gate to check that no active turn or queued message is
+    // still running on this session before hiding it.
+    fn archive<'a>(&'a self, gate: &'a SpawnGate, id: &'a str) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
+            let _permit = gate.permit().await;
+            let busy = {
+                let residents = self.runs.residents.lock().expect("residents poisoned");
+                residents.get(id).is_some_and(|handle| {
+                    let state = handle.state();
+                    state.phase != Phase::Idle || state.queued > 0
+                })
+            };
+            if busy {
+                return Err("Claude session is running or has queued messages; stop it and clear the queue before archiving".to_string());
+            }
             crate::sessions::claude::archive::archive_claude_session(&self.runs.host.paths, id)
                 .await
                 .map_err(|_| "archive failed".to_string())

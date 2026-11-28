@@ -253,6 +253,15 @@ impl Db {
 /// statement that touches a page, a corrupt database would be discovered by the
 /// first real query rather than here, where there is still somewhere to put it.
 fn open_prepared(path: &Path, durability: Durability) -> rusqlite::Result<Connection> {
+    // Pre-create with 0600 on Unix before SQLite opens it so the file is never
+    // world-readable during the window between creation and `keep_to_ourselves`.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Err(error) = std::fs::OpenOptions::new().create(true).write(true).mode(0o600).open(path) {
+            tracing::warn!(path = %path.display(), %error, "cannot pre-create state database with 0600");
+        }
+    }
     let conn = Connection::open(path)?;
     // WAL survives the connection and is stored in the file, so this is a no-op
     // on every open after the first. `query_row` rather than `execute`, because
