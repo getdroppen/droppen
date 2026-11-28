@@ -81,13 +81,14 @@ use droppen_base::process_env::Env;
 use droppen_base::procs;
 use crate::record::{Recorder, SpawnSummary, Stage};
 use droppen_sessions::account::{AccountRef, LimitClass, RotationOutcome, RotationTrigger};
-use droppen_sessions::delivery::{QuestionState, ReceiptStatus};
+use droppen_sessions::delivery::{PermissionOption, PermissionState, QuestionState, ReceiptStatus};
 use droppen_sessions::{Injection, InjectionRunState, SessionStatus, Source};
 use droppen_base::time::iso8601;
 
+use droppen_provider::permissions::{self, PermissionSpec, Stored as StoredPermission};
 use droppen_provider::questions::{self, PermissionRequest, Stored};
 use droppen_provider::shim::{self, Link, Output, Sidecars, Spawn};
-use droppen_provider::common::{busy_message, new_uuid, AnswerOutcome, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
+use droppen_provider::common::{busy_message, new_uuid, AnswerOutcome, PermissionOutcome, PermissionReply, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 use droppen_provider::drafts::Draft;
 use droppen_provider::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_provider::{runs, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, Provider, ProviderRuns, Run, RunEntry, RunHost, SendTo, Sent, SpawnPermit, StartAt, WrittenAt};
@@ -545,6 +546,13 @@ enum Cmd {
         /// Who is answering, when the server knows.
         by: Option<String>,
         respond: tokio::sync::oneshot::Sender<AnswerOutcome>,
+    },
+    /// The user's decision on a tool permission prompt claude is blocked on.
+    RespondPermission {
+        request_id: String,
+        reply: PermissionReply,
+        by: Option<String>,
+        respond: tokio::sync::oneshot::Sender<PermissionOutcome>,
     },
 }
 
@@ -1189,6 +1197,7 @@ impl Provider for ClaudeCode {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             questions: true,
+            permissions: true,
             chats: true,
             chat_attachments: true,
             chat_inline_attachments: true,
@@ -1304,6 +1313,10 @@ impl Run for ClaudeCode {
 
     fn answer_question<'a>(&'a self, id: &'a str, request_id: &'a str, reply: Reply, by: Option<String>) -> BoxFuture<'a, AnswerOutcome> {
         Box::pin(self.runs.answer_question(id, request_id, reply, by))
+    }
+
+    fn respond_permission<'a>(&'a self, id: &'a str, request_id: &'a str, reply: PermissionReply, by: Option<String>) -> BoxFuture<'a, PermissionOutcome> {
+        Box::pin(self.runs.respond_permission(id, request_id, reply, by))
     }
 
     // Onto this server's hidden list: claude keeps no archive of its own.
@@ -1536,6 +1549,7 @@ impl ClaudeCodeRuns {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            permission: None,
             model: recipe.fingerprint.running_name().map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
@@ -1595,8 +1609,9 @@ impl ClaudeCodeRuns {
             ahead_noted: None,
             hold: None,
             asked: Vec::new(),
+            pending_permissions: Vec::new(),
             replay_asked: Vec::new(),
-            replay_refusals: Vec::new(),
+            replay_permissions: Vec::new(),
             replay_declines: Vec::new(),
             replay_gapped: false,
             draft: self.draft_writer(id),
@@ -1864,6 +1879,29 @@ impl ClaudeCodeRuns {
         }
         answer.await.unwrap_or(AnswerOutcome::NoResident)
     }
+
+    /// Hand the user's decision on a tool permission prompt to the live
+    /// resident for `id`.
+    pub(crate) async fn respond_permission(&self, id: &str, request_id: &str, reply: PermissionReply, by: Option<String>) -> PermissionOutcome {
+        let tx = {
+            let residents = self.residents.lock().expect("residents poisoned");
+            match residents.get(id) {
+                Some(handle) => handle.tx.clone(),
+                None => return PermissionOutcome::NoResident,
+            }
+        };
+        let (respond, answer) = tokio::sync::oneshot::channel();
+        let command = Cmd::RespondPermission {
+            request_id: request_id.to_string(),
+            reply,
+            by,
+            respond,
+        };
+        if tx.send(command).is_err() {
+            return PermissionOutcome::NoResident;
+        }
+        answer.await.unwrap_or(PermissionOutcome::NoResident)
+    }
 }
 
 /// Which session a spawn asks claude for.
@@ -1935,6 +1973,7 @@ impl ClaudeCodeRuns {
             awaiting_background: false,
             turn_started_at: Some(iso8601(SystemTime::now())),
             question: None,
+            permission: None,
             model: live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned),
         }));
         let (tx, rx) = mpsc::unbounded_channel();
@@ -2006,8 +2045,9 @@ impl ClaudeCodeRuns {
             // refused, and a second decision about the same limit.
             hold: record.payload.hold.clone(),
             asked: Vec::new(),
+            pending_permissions: Vec::new(),
             replay_asked: Vec::new(),
-            replay_refusals: Vec::new(),
+            replay_permissions: Vec::new(),
             replay_declines: Vec::new(),
             replay_gapped: false,
             // Empty, whatever the process is in the middle of: see the module
@@ -2531,11 +2571,13 @@ struct Driver {
     /// on the user and nothing may end the process or the turn from under it —
     /// see [`Driver::ask`].
     asked: Vec<OpenQuestion>,
-    /// What the history replayed so far leaves open: questions nobody has
-    /// answered, and permission prompts nobody has refused yet. Only meaningful
-    /// while `replaying` is; settled by [`Driver::settle_questions`].
+    /// The tool permission prompts claude is blocked on, oldest first.
+    pending_permissions: Vec<OpenPermission>,
+    /// What the history replayed so far leaves open: questions and permission
+    /// prompts nobody has settled yet. Only meaningful while `replaying` is;
+    /// settled by [`Driver::settle_questions`].
     replay_asked: Vec<OpenQuestion>,
-    replay_refusals: Vec<PermissionRequest>,
+    replay_permissions: Vec<OpenPermission>,
     /// The other control requests the history leaves unanswered, by id: each
     /// is declined again when the replay ends, as a refusal is.
     replay_declines: Vec<String>,
@@ -2571,6 +2613,32 @@ impl OpenQuestion {
             request_id: request.request_id.clone(),
             tool_use_id: request.tool_use_id.clone(),
             questions: request.questions(),
+        }
+    }
+}
+
+/// A tool permission prompt claude is blocked on, as the driver holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenPermission {
+    request_id: String,
+    tool_use_id: Option<String>,
+    tool_name: String,
+    input: Value,
+    reason: Option<String>,
+    permission_suggestions: Option<Value>,
+    options: Vec<PermissionOption>,
+}
+
+impl OpenPermission {
+    fn of(request: &PermissionRequest) -> OpenPermission {
+        OpenPermission {
+            request_id: request.request_id.clone(),
+            tool_use_id: request.tool_use_id.clone(),
+            tool_name: request.tool_name.clone(),
+            input: request.input.clone(),
+            reason: request.reason.clone(),
+            permission_suggestions: request.permission_suggestions.clone(),
+            options: permissions::claude_options(request),
         }
     }
 }
@@ -2845,7 +2913,7 @@ impl Driver {
                 // answered — so whatever the history had asked was settled
                 // before this line, by whoever was listening then.
                 self.replay_asked.clear();
-                self.replay_refusals.clear();
+                self.replay_permissions.clear();
                 self.replay_declines.clear();
             }
             // Mid-turn by definition: claude stops to ask, and the turn waits.
@@ -2857,12 +2925,12 @@ impl Driver {
                 if request.is_question() {
                     self.replay_asked.push(OpenQuestion::of(&request));
                 } else {
-                    self.replay_refusals.push(*request);
+                    self.replay_permissions.push(OpenPermission::of(&request));
                 }
             }
             Event::ControlCancel { request_id } => {
                 self.replay_asked.retain(|question| question.request_id != request_id);
-                self.replay_refusals.retain(|request| request.request_id != request_id);
+                self.replay_permissions.retain(|perm| perm.request_id != request_id);
                 self.replay_declines.retain(|declined| *declined != request_id);
             }
             // Declined again at the boundary, like a refusal: a request nobody
@@ -2876,11 +2944,11 @@ impl Driver {
             // answers is over.
             Event::Speech => {
                 self.replay_open = true;
-                if !self.replay_asked.is_empty() || !self.replay_refusals.is_empty() {
+                if !self.replay_asked.is_empty() || !self.replay_permissions.is_empty() {
                     let answered = answered_in(line);
                     let settled = |tool_use: &Option<String>| tool_use.as_ref().is_some_and(|id| answered.contains(id));
                     self.replay_asked.retain(|question| !settled(&question.tool_use_id));
-                    self.replay_refusals.retain(|request| !settled(&request.tool_use_id));
+                    self.replay_permissions.retain(|perm| !settled(&perm.tool_use_id));
                 }
             }
             Event::BackgroundTasks { tasks } => {
@@ -2997,7 +3065,7 @@ impl Driver {
         // transcript reads a tail ending on `AskUserQuestion` as a session
         // waiting for input — which is true, and would let go of the very turn
         // the question belongs to.
-        let asking = !self.replay_asked.is_empty();
+        let asking = !self.replay_asked.is_empty() || !self.replay_permissions.is_empty();
         open |= asking;
         // The reconstruction above is stdout's account of the session, and
         // stdout is not the only witness. Before a turn *nobody can see the
@@ -3136,9 +3204,6 @@ impl Driver {
     /// Refusals and declined requests are simply sent again. Doing it twice
     /// costs nothing, and a request left unanswered is a turn blocked for ever.
     async fn settle_questions(&mut self) {
-        for request in std::mem::take(&mut self.replay_refusals) {
-            self.refuse(&request).await;
-        }
         for request_id in std::mem::take(&mut self.replay_declines) {
             self.decline_request(Some(request_id)).await;
         }
@@ -3190,6 +3255,47 @@ impl Driver {
                     self.recorder.stdin(&line);
                     if let Err(error) = self.link.send_line(&line).await {
                         tracing::warn!(session = %self.id, %error, "cannot write a settled answer to claude");
+                    }
+                }
+            }
+        }
+        // Settle tool permission prompts the replay left open.
+        let waiting_permissions = std::mem::take(&mut self.replay_permissions);
+        let perm_store = self.runs.host.permissions().clone();
+        for stale in perm_store.pending_for(&self.id) {
+            if !waiting_permissions.iter().any(|perm| perm.request_id == stale.request_id) {
+                perm_store.close(&stale.request_id, PermissionState::Cancelled, now);
+            }
+        }
+        for perm in waiting_permissions {
+            let stored = perm_store.get(&perm.request_id);
+            match stored.as_ref().map(|s| s.state) {
+                None | Some(PermissionState::Pending) => {
+                    tracing::info!(session = %self.id, request = %perm.request_id, "claude is still waiting on a permission prompt from before the restart");
+                    self.hold_permission(perm);
+                }
+                Some(PermissionState::Cancelled) => {
+                    let response = stored
+                        .as_ref()
+                        .and_then(|s| s.delivery.clone())
+                        .unwrap_or_else(|| permissions::claude_deny(&perm.tool_name, true));
+                    let line = questions::control_response(&perm.request_id, &response);
+                    self.recorder.stdin(&line);
+                    if let Err(error) = self.link.send_line(&line).await {
+                        tracing::warn!(session = %self.id, %error, "cannot write a cancelled permission response to claude");
+                    }
+                }
+                Some(PermissionState::Resolved) => {
+                    let response = match stored.as_ref() {
+                        Some(StoredPermission {
+                            delivery: Some(delivery), ..
+                        }) => delivery.clone(),
+                        _ => permissions::claude_deny(&perm.tool_name, true),
+                    };
+                    let line = questions::control_response(&perm.request_id, &response);
+                    self.recorder.stdin(&line);
+                    if let Err(error) = self.link.send_line(&line).await {
+                        tracing::warn!(session = %self.id, %error, "cannot write a settled permission response to claude");
                     }
                 }
             }
@@ -3352,8 +3458,8 @@ impl Driver {
             }
             Event::Speech => {
                 // The result claude built from an answer comes back as a `user`
-                // line: the question it answers is over, by whatever path.
-                if !self.asked.is_empty() {
+                // line: the question or permission it answers is over, by whatever path.
+                if self.awaiting_user() {
                     let answered = answered_in(line);
                     let settled: Vec<String> = self
                         .asked
@@ -3364,6 +3470,15 @@ impl Driver {
                     for request_id in settled {
                         self.withdraw(&request_id, QuestionState::Cancelled, "claude has a result for it");
                     }
+                    let settled_perms: Vec<String> = self
+                        .pending_permissions
+                        .iter()
+                        .filter(|perm| perm.tool_use_id.as_ref().is_some_and(|id| answered.contains(id)))
+                        .map(|perm| perm.request_id.clone())
+                        .collect();
+                    for request_id in settled_perms {
+                        self.withdraw_permission(&request_id, "claude has a result for it");
+                    }
                 }
                 self.on_speech()
             }
@@ -3371,11 +3486,14 @@ impl Driver {
                 if request.is_question() {
                     self.ask(&request);
                 } else {
-                    self.refuse(&request).await;
+                    self.ask_permission(&request);
                 }
             }
             Event::ControlRequest { request_id } => self.decline_request(request_id).await,
-            Event::ControlCancel { request_id } => self.withdraw(&request_id, QuestionState::Cancelled, "claude withdrew it"),
+            Event::ControlCancel { request_id } => {
+                self.withdraw(&request_id, QuestionState::Cancelled, "claude withdrew it");
+                self.withdraw_permission(&request_id, "claude withdrew it");
+            }
             Event::Unparseable => tracing::debug!(session = %self.id, line = %clip(line), "claude wrote a line that is not JSON"),
             // Everything else — a subagent's forwarded stream, stream_event, the
             // other system subtypes, and whatever the next CLI release invents —
@@ -4235,7 +4353,7 @@ impl Driver {
             || self.hold.is_some()
             || self.awaiting_background
             || !self.delivered_ahead.is_empty()
-            || !self.asked.is_empty()
+            || self.awaiting_user()
         {
             return false;
         }
@@ -4679,42 +4797,150 @@ impl Driver {
         self.announce();
     }
 
-    /// Close every question this driver is holding open.
+    /// Whether claude is currently blocked waiting on user input (a question
+    /// or a tool permission prompt).
+    fn awaiting_user(&self) -> bool {
+        !self.asked.is_empty() || !self.pending_permissions.is_empty()
+    }
+
+    /// Close every question and permission prompt this driver is holding open.
     fn close_questions(&mut self, to: QuestionState, why: &str) {
         let open: Vec<String> = self.asked.iter().map(|question| question.request_id.clone()).collect();
         for request_id in open {
             self.withdraw(&request_id, to, why);
         }
+        let open_perms: Vec<String> = self.pending_permissions.iter().map(|perm| perm.request_id.clone()).collect();
+        for request_id in open_perms {
+            self.withdraw_permission(&request_id, why);
+        }
     }
 
-    /// Refuse a permission prompt, at once and in words the agent can act on.
-    ///
-    /// Every prompt but a question lands here. Before `--permission-prompt-tool`
-    /// the CLI refused these itself under `--permission-mode auto`; it now asks
-    /// instead, and the answer is the same refusal — remote-hand grants nothing
-    /// interactively, and an approval nobody is there to give would block the
-    /// turn for ever. See [`questions::permission_denial`].
-    async fn refuse(&mut self, request: &PermissionRequest) {
-        let message = questions::permission_denial(request);
-        let line = questions::control_response(&request.request_id, &questions::deny(&message));
-        tracing::info!(
-            session = %self.id,
-            tool = %request.tool_name,
-            reason = ?request.reason,
-            "claude asked for a permission Droppen does not grant; refused"
-        );
+    /// claude stopped to ask permission to run a tool: hold it open for the user.
+    fn ask_permission(&mut self, request: &PermissionRequest) {
+        self.on_speech();
+        tracing::info!(session = %self.id, request = %request.request_id, tool = %request.tool_name, "claude is asking for tool permission");
+        self.hold_permission(OpenPermission::of(request));
+    }
+
+    fn permission_spec(&self, perm: &OpenPermission) -> PermissionSpec {
+        let redact = |text: &str| self.runs.host.redact(text);
+        let req = PermissionRequest {
+            request_id: perm.request_id.clone(),
+            tool_name: perm.tool_name.clone(),
+            tool_use_id: perm.tool_use_id.clone(),
+            input: perm.input.clone(),
+            reason: perm.reason.clone(),
+            permission_suggestions: perm.permission_suggestions.clone(),
+        };
+        let title = permissions::claude_title(&req, redact);
+        let reason = perm.reason.as_deref().map(|r| permissions::clip_label(r, redact));
+        let input = permissions::format_input_preview(&perm.input, redact);
+        PermissionSpec {
+            request_id: perm.request_id.clone(),
+            session_id: self.id.clone(),
+            tool_call_id: perm.tool_use_id.clone(),
+            title,
+            tool_name: (!perm.tool_name.is_empty()).then(|| perm.tool_name.clone()),
+            reason,
+            input,
+            options: perm.options.clone(),
+        }
+    }
+
+    fn hold_permission(&mut self, perm: OpenPermission) {
+        let spec = self.permission_spec(&perm);
+        let fresh = self.runs.host.permissions().open(&spec, permissions::now_ms());
+        let headline = permissions::headline(&spec.title);
+        self.recorder
+            .lifecycle(Stage::Permission, Some(&format!("{} asked: {}", perm.request_id, spec.title)));
+        if fresh {
+            if let Some(alerts) = self.runs.host.alerts.get() {
+                alerts.question(self.runs.host.paths.clone(), Source::Claude, self.id.clone(), headline);
+            }
+        }
+        if !self.pending_permissions.iter().any(|open| open.request_id == perm.request_id) {
+            self.pending_permissions.push(perm);
+        }
+        self.publish();
+        self.announce();
+    }
+
+    fn withdraw_permission(&mut self, request_id: &str, why: &str) {
+        let Some(at) = self.pending_permissions.iter().position(|perm| perm.request_id == request_id) else {
+            return;
+        };
+        self.pending_permissions.remove(at);
+        if self.runs.host.permissions().close(request_id, PermissionState::Cancelled, permissions::now_ms()) {
+            tracing::info!(session = %self.id, request = %request_id, why, "a permission prompt closed without a decision");
+            self.recorder
+                .lifecycle(Stage::Permission, Some(&format!("{request_id} cancelled: {why}")));
+        }
+        self.publish();
+        self.announce();
+    }
+
+    async fn respond_permission(&mut self, request_id: &str, reply: PermissionReply, by: Option<String>) -> PermissionOutcome {
+        if self.replaying {
+            return PermissionOutcome::NotReady;
+        }
+        let Some(at) = self.pending_permissions.iter().position(|perm| perm.request_id == request_id) else {
+            return PermissionOutcome::Unknown;
+        };
+        let perm = self.pending_permissions[at].clone();
+        let (to, selected, response) = match reply {
+            PermissionReply::Select(option_id) => {
+                if !perm.options.iter().any(|opt| opt.id == option_id) {
+                    return PermissionOutcome::Invalid(format!("unknown permission option: {option_id}"));
+                }
+                let response = match option_id.as_str() {
+                    permissions::CLAUDE_ALLOW => permissions::claude_allow(&perm.input, None),
+                    permissions::CLAUDE_ALLOW_ALWAYS => permissions::claude_allow(&perm.input, perm.permission_suggestions.as_ref()),
+                    _ => permissions::claude_deny(&perm.tool_name, false),
+                };
+                (PermissionState::Resolved, Some(option_id), response)
+            }
+            PermissionReply::Cancel => (
+                PermissionState::Cancelled,
+                None,
+                permissions::claude_deny(&perm.tool_name, true),
+            ),
+        };
+        let store = self.runs.host.permissions().clone();
+        let now = permissions::now_ms();
+        let stored = match store.resolve(request_id, to, selected.as_deref(), Some(&response), by.as_deref(), now) {
+            Ok(stored) => stored,
+            Err(Some(current)) => return PermissionOutcome::Resolved(current.wire()),
+            Err(None) => {
+                let spec = self.permission_spec(&perm);
+                store.open(&spec, now);
+                match store.resolve(request_id, to, selected.as_deref(), Some(&response), by.as_deref(), now) {
+                    Ok(stored) => stored,
+                    Err(current) => return current.map_or(PermissionOutcome::Unknown, |current| PermissionOutcome::Resolved(current.wire())),
+                }
+            }
+        };
+        let line = questions::control_response(request_id, &response);
         self.recorder.lifecycle(
             Stage::Permission,
             Some(&format!(
-                "refused {}: {}",
-                request.tool_name,
-                request.reason.as_deref().unwrap_or("no reason given")
+                "{request_id} {} ({}) by {}",
+                to.as_str(),
+                selected.as_deref().unwrap_or("cancel"),
+                by.as_deref().unwrap_or("someone")
             )),
         );
         self.recorder.stdin(&line);
         if let Err(error) = self.link.send_line(&line).await {
-            tracing::warn!(session = %self.id, %error, "cannot refuse a permission prompt; the process is going");
+            tracing::warn!(session = %self.id, request = %request_id, %error, "cannot write a permission response to claude");
+            store.rewind(request_id, to, now);
+            return PermissionOutcome::Unreachable;
         }
+        tracing::info!(session = %self.id, request = %request_id, state = to.as_str(), "a permission prompt was decided");
+        self.pending_permissions.remove(at);
+        self.touch();
+        self.publish();
+        self.announce();
+        PermissionOutcome::Delivered(stored.wire())
     }
 
     /// Answer a control request this server has no handler for, so claude is
@@ -4858,6 +5084,15 @@ impl Driver {
                 respond,
             } => {
                 let outcome = self.answer(&request_id, reply, by).await;
+                let _ = respond.send(outcome);
+            }
+            Cmd::RespondPermission {
+                request_id,
+                reply,
+                by,
+                respond,
+            } => {
+                let outcome = self.respond_permission(&request_id, reply, by).await;
                 let _ = respond.send(outcome);
             }
         }
@@ -5213,7 +5448,7 @@ impl Driver {
         // A question open is a turn in flight, whatever `turn` says: claude is
         // blocked mid-turn, and the respawn a queued settings change could
         // bring would end it — and take the question with it.
-        if self.turn.is_some() || self.replaying || !self.asked.is_empty() {
+        if self.turn.is_some() || self.replaying || self.awaiting_user() {
             return;
         }
         // Steered messages first, and not as a policy choice: they are already
@@ -6080,7 +6315,7 @@ impl Driver {
         // input". Both are right, and either one acted on would throw away the
         // turn the question belongs to and push the queue into the middle of
         // it. The user takes as long as they take.
-        if !self.asked.is_empty() {
+        if self.awaiting_user() {
             self.idle_since = None;
             return;
         }
@@ -6159,7 +6394,7 @@ impl Driver {
         // A steered message is outstanding work even though no turn is open for
         // it: ending the process would take it with it. So is a held queue's
         // promise to continue the failed message.
-        if !self.queue.is_empty() || !self.delivered_ahead.is_empty() || self.hold.is_some() || !self.asked.is_empty() {
+        if !self.queue.is_empty() || !self.delivered_ahead.is_empty() || self.hold.is_some() || self.awaiting_user() {
             self.idle_since = None;
             return;
         }
@@ -6666,6 +6901,7 @@ impl Driver {
             shared.background = self.background.len();
             shared.tasks = self.background.wire();
             shared.question = self.asked.first().map(|question| question.request_id.clone());
+            shared.permission = self.pending_permissions.first().map(|perm| perm.request_id.clone());
             shared.model = self.live.as_ref().and_then(Fingerprint::running_name).map(str::to_owned);
         }
         // Only after a phase change: see `set_phase`. Everything else published
@@ -7858,6 +8094,7 @@ mod tests {
             awaiting_background: false,
             turn_started_at: None,
             question: None,
+            permission: None,
             model: None,
         }));
         claude.residents.lock().expect("residents").insert(HELD.to_string(), Handle { tx, shared });
@@ -11793,11 +12030,11 @@ done
         );
     }
 
-    /// Every prompt but a question is refused the moment it arrives, as
-    /// `--permission-mode auto` refused it before the prompt tool existed: a
-    /// write outside the workspace is not something a phone gets asked about.
+    /// A non-question `can_use_tool` prompt is held open for interactive approval
+    /// and delivers the chosen `allow` (or `allow_always` with suggestions) back
+    /// on stdin so the turn continues.
     #[tokio::test]
-    async fn every_other_permission_prompt_is_refused_at_once() {
+    async fn every_other_permission_prompt_is_held_and_answered_interactively() {
         let request = serde_json::json!({
             "type": "control_request",
             "request_id": "req-w1",
@@ -11807,6 +12044,7 @@ done
                 "input": {"file_path": "/etc/hosts", "content": "x"},
                 "tool_use_id": "toolu_w1",
                 "decision_reason": "outside the workspace",
+                "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Write"}]}],
             },
         });
         let harness = Harness::ordinary_with(&format!(
@@ -11815,7 +12053,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG"
   case "$line" in
     *control_response*)
-       printf '%s\n' '{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"toolu_w1","is_error":true,"content":"denied"}}]}}}}'
+       printf '%s\n' '{{"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"toolu_w1","content":"written"}}]}}}}'
        printf '%s\n' '{{"type":"result","subtype":"success","is_error":false}}' ;;
     *control_request*) : ;;
     *) printf '%s\n' '{request}' ;;
@@ -11826,27 +12064,35 @@ done
         .await;
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.send("write it to /etc/hosts");
-        until("the refusal and the turn's end", || {
-            harness.state().phase == Phase::Idle && harness.seen().len() == 2
-        })
-        .await;
-        let line = response_to(&harness.seen(), "req-w1").expect("refused");
-        let response = &line["response"]["response"];
-        assert_eq!(response["behavior"], "deny", "never allowed");
-        let message = response["message"].as_str().expect("a message");
-        assert!(
-            message.contains("Write") && message.contains("outside the workspace") && message.contains("Droppen"),
-            "{message}"
-        );
+        until("the pending permission", || harness.state().permission.is_some()).await;
+        assert_eq!(harness.state().permission.as_deref(), Some("req-w1"));
+        assert!(harness.state().question.is_none());
+        let info: droppen_sessions::ResidentInfo = harness.state().into();
+        assert!(info.asking, "asking while waiting on permission approval");
         assert!(
             harness.registry.host.questions().get("req-w1").is_none(),
             "a permission prompt is not a question"
         );
+        let stored = harness.registry.host.permissions().get("req-w1").expect("recorded in permissions");
+        assert_eq!(stored.state, PermissionState::Pending);
+        assert_eq!(stored.options.len(), 3, "allow, always allow (from suggestions), deny");
+
+        let outcome = harness
+            .registry
+            .respond_permission(SESSION, "req-w1", PermissionReply::Select(permissions::CLAUDE_ALLOW_ALWAYS.into()), Some("alice".into()))
+            .await;
+        assert!(matches!(outcome, PermissionOutcome::Delivered(_)), "{outcome:?}");
+        until("the turn's end", || harness.state().phase == Phase::Idle).await;
+        let line = response_to(&harness.seen(), "req-w1").expect("answered");
+        let response = &line["response"]["response"];
+        assert_eq!(response["behavior"], "allow");
+        assert_eq!(response["updatedInput"], serde_json::json!({"file_path": "/etc/hosts", "content": "x"}));
+        assert_eq!(response["updatedPermissions"], serde_json::json!([{"type": "addRules", "rules": [{"toolName": "Write"}]}]));
         assert_eq!(harness.injection().map(|run| run.state), Some(InjectionRunState::Ok));
     }
 
-    /// A refused permission prompt and a declined control request, as the
-    /// lines claude reads, whole and in the order it asked.
+    /// A denied permission prompt and a declined unknown control request reach
+    /// claude as exactly these bytes.
     #[tokio::test]
     async fn a_refusal_and_a_declined_request_reach_claude_as_exactly_these_bytes() {
         let write = r#"{"type":"control_request","request_id":"req-w1","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"/etc/hosts","content":"x"},"tool_use_id":"toolu_w1","decision_reason":"outside the workspace"}}"#;
@@ -11866,12 +12112,21 @@ done
         .await;
         until("the init", || harness.state().phase == Phase::Idle).await;
         harness.send("write it to /etc/hosts");
+        until("hook declined and permission pending", || {
+            harness.seen().len() == 2 && harness.state().permission.as_deref() == Some("req-w1")
+        })
+        .await;
+        let outcome = harness
+            .registry
+            .respond_permission(SESSION, "req-w1", PermissionReply::Select(permissions::CLAUDE_DENY.into()), None)
+            .await;
+        assert!(matches!(outcome, PermissionOutcome::Delivered(_)), "{outcome:?}");
         until("both to be answered", || harness.seen().len() == 3).await;
         assert_eq!(
             harness.seen()[1..],
             [
-                r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-w1","response":{"behavior":"deny","message":"Permission to use Write was denied (outside the workspace). This session runs under Droppen, which does not grant interactive permissions; do it another way or ask the user to."}}}"#,
                 r#"{"type":"control_response","response":{"subtype":"error","request_id":"hook-1","error":"Droppen does not handle this request"}}"#,
+                r#"{"type":"control_response","response":{"subtype":"success","request_id":"req-w1","response":{"behavior":"deny","message":"The user denied permission to use Write."}}}"#,
             ]
         );
     }

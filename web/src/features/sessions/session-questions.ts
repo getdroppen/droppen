@@ -250,8 +250,12 @@ export function sentOutcome(result: { answered?: boolean } | null | undefined): 
  */
 export function composerAnswersQuestion(input: {
   questions: readonly SessionQuestion[] | null | undefined;
+  permissions?: readonly { state: string }[] | null | undefined;
   row: ActivityRow;
 }): boolean {
   if (input.questions?.some((question) => question.state === "pending")) return true;
+  // A pending tool permission also sets `resident.asking`, but a typed message
+  // never answers a permission prompt (it must be approved or denied explicitly).
+  if (input.permissions?.some((permission) => permission.state === "pending")) return false;
   return residentOf(input.row)?.asking === true;
 }

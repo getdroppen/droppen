@@ -1561,6 +1561,7 @@ dependencies = [
  "droppen-http",
  "droppen-instance",
  "droppen-provider",
+ "droppen-search-path",
  "droppen-sessions",
  "futures-util",
  "gotcha",

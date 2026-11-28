@@ -325,3 +325,22 @@ test("a typed-in model gets the whole ladder, since no list names its rungs", ()
   assert.deepEqual(effortsOf(active, "claude"), EFFORT_FALLBACK.claude);
   assert.equal(defaultEffortOf(active, effortsOf(active, "claude")), "medium");
 });
+
+test("acp models never fall back to codex or claude effort ladders", () => {
+  assert.deepEqual(effortsOf(model("gpt-oss-120b-medium", { efforts: null, defaultEffort: null }), "acp"), []);
+  assert.deepEqual(effortsOf(model("gpt-oss-120b-medium", { efforts: [], defaultEffort: null }), "acp"), []);
+  assert.deepEqual(effortsOf(undefined, "acp"), []);
+  const opus = model("claude-opus-5-5", { efforts: ["low", "medium", "high"], defaultEffort: "high" });
+  assert.deepEqual(effortsOf(opus, "acp"), ["low", "medium", "high"]);
+  assert.equal(defaultEffortOf(opus, effortsOf(opus, "acp")), "high");
+});
+
+test("acp model ids containing slashes match listed entries verbatim", () => {
+  const acpModels: ModelInfo[] = [
+    model("fake:small", { efforts: ["low", "high"], defaultEffort: "low" }),
+    model("openrouter:vendor/big", { efforts: ["low", "high"], defaultEffort: "high" }),
+  ];
+  const { active, custom } = resolveModel(acpModels, "openrouter:vendor/big", "codex");
+  assert.equal(active.id, "openrouter:vendor/big");
+  assert.equal(custom, false);
+});

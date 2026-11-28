@@ -146,3 +146,94 @@ pub struct SessionQuestion {
     /// When claude asked it, ISO-8601.
     pub created_at: String,
 }
+
+/// What a permission option means: how clients style its button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionOptionKind {
+    /// Allow this single operation.
+    AllowOnce,
+    /// Allow this operation and remember the choice.
+    AllowAlways,
+    /// Reject this single operation.
+    RejectOnce,
+    /// Reject this operation and remember the choice.
+    RejectAlways,
+    /// Any other agent-defined option.
+    #[serde(other)]
+    Other,
+}
+
+/// One choice the user can pick on a permission prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionOption {
+    /// The option id sent back to the agent.
+    pub id: String,
+    /// Human-readable label shown on the button.
+    pub name: String,
+    /// Semantic kind of this option.
+    pub kind: PermissionOptionKind,
+}
+
+/// Where a permission prompt is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionState {
+    /// The agent is blocked waiting for a choice.
+    Pending,
+    /// The user selected one of the options.
+    Resolved,
+    /// The user cancelled, the turn was stopped, or the process exited.
+    Cancelled,
+}
+
+impl PermissionState {
+    /// The word the table stores.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PermissionState::Pending => "pending",
+            PermissionState::Resolved => "resolved",
+            PermissionState::Cancelled => "cancelled",
+        }
+    }
+
+    /// A stored word, read back.
+    pub fn from_stored(stored: &str) -> PermissionState {
+        match stored {
+            "pending" => PermissionState::Pending,
+            "resolved" => PermissionState::Resolved,
+            _ => PermissionState::Cancelled,
+        }
+    }
+}
+
+/// One tool permission prompt an agent asked, as a session's state carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPermission {
+    /// The request id used to answer this permission prompt.
+    pub request_id: String,
+    /// The tool call id the request is about, when the agent provided one.
+    pub tool_call_id: Nullable<String>,
+    /// Short summary of what the agent wants to do.
+    pub title: String,
+    /// The tool name or kind (`Bash`, `Write`, `shell`, `edit`, …).
+    pub tool_name: Nullable<String>,
+    /// Why permission is being requested, when the agent said.
+    pub reason: Nullable<String>,
+    /// Redacted preview of the tool input / command.
+    pub input: Nullable<String>,
+    /// Choices offered by the agent.
+    pub options: Vec<PermissionOption>,
+    /// Where it is in its life.
+    pub state: PermissionState,
+    /// The option id the user selected; `null` until resolved.
+    pub selected_option_id: Nullable<String>,
+    /// Who decided, when authentication is enabled.
+    pub answered_by: Nullable<String>,
+    /// When it was decided, ISO-8601.
+    pub answered_at: Nullable<String>,
+    /// When the agent asked, ISO-8601.
+    pub created_at: String,
+}

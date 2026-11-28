@@ -432,6 +432,9 @@ pub struct SessionState {
     /// who answered, and when. See [`droppen_provider::questions`]. Always
     /// present; empty for codex, which never asks.
     pub questions: Vec<droppen_sessions::delivery::SessionQuestion>,
+    /// The tool permission prompts the agent asked, oldest first: the ones it
+    /// is blocked on (`pending`), and the recent settled ones. Always present.
+    pub permissions: Vec<droppen_sessions::delivery::SessionPermission>,
 }
 
 /// Read one session's live state, or `None` when it no longer exists.
@@ -524,6 +527,11 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     } else {
         Vec::new()
     };
+    let permissions = if drive.providers.capabilities(source).permissions {
+        drive.injections.host.permissions().for_session(id, droppen_provider::permissions::now_ms())
+    } else {
+        Vec::new()
+    };
     Some(SessionState {
         summary,
         injection,
@@ -537,6 +545,7 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
         rotation,
         receipts,
         questions,
+        permissions,
     })
 }
 
@@ -626,6 +635,7 @@ pub async fn load_session_detail(drive: &Arc<Drive>, source: Source, id: &str) -
         rotation: state.rotation,
         receipts: state.receipts,
         questions: state.questions,
+        permissions: state.permissions,
         sig,
         items_changed: true,
         reset: true,

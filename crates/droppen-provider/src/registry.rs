@@ -14,7 +14,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
-use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, ProviderRuns, QueueOutcome, Reply, ResidentState, SendOptions, Sent, SpawnGate, StopTaskOutcome};
+use super::{drafts, AnswerOutcome, InjectError, InjectionRegistry, PermissionOutcome, PermissionReply, ProviderRuns, QueueOutcome, Reply, ResidentState, SendOptions, Sent, SpawnGate, StopTaskOutcome};
 use crate::models::Models;
 use droppen_sessions::{DriverStates, Injection, InjectionRunState, ResidentInfo, SessionSummary, Source};
 use droppen_http::error::ApiError;
@@ -77,6 +77,8 @@ pub struct Capabilities {
     /// Its sessions stop to ask the user questions, which this server keeps
     /// and answers into the turn that asked.
     pub questions: bool,
+    /// Its sessions stop to ask the user to approve or reject tool permissions.
+    pub permissions: bool,
     /// It runs instant chats: its sessions in the chats directory are listed
     /// as chats.
     pub chats: bool,
@@ -194,6 +196,11 @@ pub trait Run: Send + Sync {
     /// Answer a question the session's CLI is blocked on, or dismiss it.
     fn answer_question<'a>(&'a self, _id: &'a str, _request_id: &'a str, _reply: Reply, _by: Option<String>) -> BoxFuture<'a, AnswerOutcome> {
         Box::pin(std::future::ready(AnswerOutcome::NoResident))
+    }
+
+    /// Approve, reject, or cancel a tool permission prompt the session is blocked on.
+    fn respond_permission<'a>(&'a self, _id: &'a str, _request_id: &'a str, _reply: PermissionReply, _by: Option<String>) -> BoxFuture<'a, PermissionOutcome> {
+        Box::pin(std::future::ready(PermissionOutcome::NoResident))
     }
 
     /// Put the session away, so it leaves the list; or why not, in the words
@@ -507,6 +514,14 @@ impl ProviderRegistry {
         match self.run(source) {
             Some(run) => run.answer_question(id, request_id, reply, by).await,
             None => AnswerOutcome::NoResident,
+        }
+    }
+
+    /// See [`Run::respond_permission`].
+    pub async fn respond_permission(&self, source: Source, id: &str, request_id: &str, reply: PermissionReply, by: Option<String>) -> PermissionOutcome {
+        match self.run(source) {
+            Some(run) => run.respond_permission(id, request_id, reply, by).await,
+            None => PermissionOutcome::NoResident,
         }
     }
 

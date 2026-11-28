@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use droppen_instance::paths::Paths;
 
 use super::questions;
-use droppen_sessions::delivery::SessionQuestion;
+use droppen_sessions::delivery::{SessionPermission, SessionQuestion};
 
 /// The instant-chat persona: the text the CLI is actually launched with.
 pub const CHAT_SYSTEM_PROMPT: &str = concat!(
@@ -130,6 +130,9 @@ pub struct ResidentState {
     /// and *while the turn is still in flight*, and the send route, which turns
     /// a message typed while a question is open into its answer.
     pub question: Option<String>,
+    /// The tool permission prompt the agent is blocked on, by request id —
+    /// the oldest, should more than one be open at once.
+    pub permission: Option<String>,
     /// The model the process runs, as its CLI named it (Claude Code's
     /// `system:init`), else as it was asked for; `None` when unknown.
     ///
@@ -166,7 +169,7 @@ impl From<ResidentState> for droppen_sessions::ResidentInfo {
             awaiting_background: state.awaiting_background,
             stalled: state.stalled,
             turn_started_at: droppen_http::openapi_ext::Nullable(state.turn_started_at),
-            asking: state.question.is_some(),
+            asking: state.question.is_some() || state.permission.is_some(),
         }
     }
 }
@@ -258,6 +261,34 @@ pub enum AnswerOutcome {
     /// The answer is not one the question could be given.
     Invalid(String),
     /// The write to claude failed; the question is still pending.
+    Unreachable,
+}
+
+/// What the user chose for a tool permission prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionReply {
+    /// Select one of the options the agent offered, by its id.
+    Select(String),
+    /// Cancel / decline without choosing a specific option.
+    Cancel,
+}
+
+/// What a permission decision did, or why it could not.
+#[derive(Debug, Clone)]
+pub enum PermissionOutcome {
+    /// Delivered to the waiting agent: its turn goes on.
+    Delivered(SessionPermission),
+    /// Already settled by another device or closed: the record as it stands.
+    Resolved(SessionPermission),
+    /// This driver is not holding that permission request open.
+    Unknown,
+    /// This server holds no live process for the session.
+    NoResident,
+    /// The resident is still replaying its history after a restart.
+    NotReady,
+    /// The selected option id is not one this prompt offered.
+    Invalid(String),
+    /// Writing the decision to the agent failed; the prompt is still pending.
     Unreachable,
 }
 

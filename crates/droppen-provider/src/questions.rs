@@ -381,6 +381,8 @@ pub struct PermissionRequest {
     pub input: Value,
     /// Why the CLI is asking, in its own words, when it says.
     pub reason: Option<String>,
+    /// Rules Claude suggests applying if the user chooses "Always allow".
+    pub permission_suggestions: Option<Value>,
 }
 
 /// The tool that is a question rather than a permission.
@@ -414,6 +416,10 @@ impl PermissionRequest {
             reason: ["decision_reason", "blocked_path"]
                 .iter()
                 .find_map(|key| request.get(*key).and_then(text)),
+            permission_suggestions: request
+                .get("permission_suggestions")
+                .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
+                .cloned(),
         })
     }
 

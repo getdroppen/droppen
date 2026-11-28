@@ -35,7 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::Client;
 use super::{absolute, InjectError, Replay};
-use crate::protocol::{config_options, ConfigOption, PromptResponse, SessionNotification};
+use crate::protocol::{available_model_ids, config_options, ConfigOption, PromptResponse, SessionNotification};
 
 /// How long a write to the agent's stdin may block.
 const WRITE_TIMEOUT: std::time::Duration = if cfg!(test) {
@@ -117,6 +117,9 @@ pub(super) struct Opened {
     pub(super) replay: Replay,
     /// Its configuration options as they stand.
     pub(super) options: Vec<ConfigOption>,
+    /// Legacy `models.availableModels[].modelId` entries, when the agent reports
+    /// them alongside `configOptions` (used to infer per-model effort ladders).
+    pub(super) available_models: Vec<String>,
 }
 
 /// One agent's connection.
@@ -217,6 +220,7 @@ impl Conn {
                     id: id.to_string(),
                     replay: Vec::new(),
                     options: config_options(&created),
+                    available_models: available_model_ids(&created),
                 })
             }
             Some(id) => {
@@ -238,6 +242,7 @@ impl Conn {
                     id: id.to_string(),
                     replay: replayed,
                     options: config_options(&loaded),
+                    available_models: available_model_ids(&loaded),
                 })
             }
         }

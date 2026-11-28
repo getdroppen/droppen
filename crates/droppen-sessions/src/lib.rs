@@ -856,6 +856,10 @@ pub struct SessionDetail {
     /// first: the one it is blocked on, if any, and the recent ones with what
     /// became of them. At most 20, from the last week; empty for codex.
     pub questions: Vec<delivery::SessionQuestion>,
+    /// The tool permission prompts the agent asked, oldest first: the ones it
+    /// is blocked on and recent settled ones. At most 20, from the last week.
+    #[serde(default)]
+    pub permissions: Vec<delivery::SessionPermission>,
     /// Opaque transcript signature; echo it back via `?sig=` to poll cheaply.
     pub sig: String,
     /// False when `sig` matched: `items` is empty and client state stays as-is.

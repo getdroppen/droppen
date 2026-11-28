@@ -379,6 +379,30 @@ pub const SCHEMA: &[&str] = &[
          PRIMARY KEY (source, session_id, delivery_id)
      ) STRICT, WITHOUT ROWID;
      CREATE INDEX IF NOT EXISTS chat_deliveries_by_turn ON chat_deliveries (source, session_id, text_hash, at_ms)",
+    // 12 — interactive tool permission prompts the agent stopped to ask the
+    // user to approve or reject (ACP `session/request_permission` and Claude
+    // Code `can_use_tool`). Keyed by `request_id` for atomic compare-and-set
+    // across devices, with `delivery` stored so a surviving Claude resident can
+    // replay a settled control response across a server restart.
+    "CREATE TABLE IF NOT EXISTS session_permissions (
+         request_id         TEXT    NOT NULL PRIMARY KEY,
+         session_id         TEXT    NOT NULL,
+         tool_call_id       TEXT,
+         title              TEXT    NOT NULL,
+         tool_name          TEXT,
+         reason             TEXT,
+         input              TEXT,
+         options            TEXT    NOT NULL,
+         state              TEXT    NOT NULL,
+         selected_option_id TEXT,
+         delivery           TEXT,
+         answered_by        TEXT,
+         answered_ms        INTEGER,
+         created_ms         INTEGER NOT NULL,
+         updated_ms         INTEGER NOT NULL
+     ) STRICT;
+     CREATE INDEX IF NOT EXISTS session_permissions_by_session ON session_permissions (session_id, created_ms);
+     CREATE INDEX IF NOT EXISTS session_permissions_by_state ON session_permissions (state)",
 ];
 
 /// Bring `conn` up to the newest step, and say nothing if it is already there.

@@ -22,12 +22,13 @@ use crate::feed;
 use droppen_http::error::{ApiError, Hinted};
 use droppen_http::SendResult;
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
+use droppen_provider::permissions;
 use droppen_provider::questions::{self, Answer};
 use droppen_provider::receipts::{Kind, LOOKUP_CAP};
-use droppen_provider::{AccountChoice, AnswerOutcome, ContinueError, Reply, SendOptions};
+use droppen_provider::{AccountChoice, AnswerOutcome, ContinueError, PermissionOutcome, PermissionReply, Reply, SendOptions};
 use droppen_http::openapi_ext::{double_option, required_nullable, Nullable, Optional};
 use droppen_instance::paths::ClaudeRoot;
-use droppen_sessions::delivery::{QuestionState, ReceiptLookup, ReceiptStatus, SessionQuestion};
+use droppen_sessions::delivery::{PermissionState, QuestionState, ReceiptLookup, ReceiptStatus, SessionPermission, SessionQuestion};
 use droppen_sessions::sidecars::{is_agent_id, AgentPath, Checklist};
 use droppen_sessions::util::TranscriptItem;
 use droppen_provider::models::ModelRule;
@@ -404,6 +405,34 @@ pub struct SessionQuestions {
     pub questions: Vec<SessionQuestion>,
 }
 
+/// `POST /api/sessions/{source}/{id}/permissions/{requestId}` body.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct RespondPermission {
+    /// The option id chosen by the user (`SessionPermission::options[].id`).
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub option_id: Optional<String>,
+    /// Set `true` to cancel/decline without selecting a specific option.
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub cancel: Optional<bool>,
+}
+
+/// What answering a tool permission prompt did.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRespondResult {
+    /// The permission prompt as it now stands.
+    pub permission: SessionPermission,
+}
+
+/// A session's tool permission prompts.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPermissions {
+    /// Oldest first: the ones the agent is blocked on, and the recent settled ones.
+    pub permissions: Vec<SessionPermission>,
+}
+
 /// Query for `GET /api/sessions/{source}/{id}/history`.
 #[derive(Debug, Clone, Deserialize, Serialize, Schematic)]
 pub struct HistoryQuery {
@@ -477,7 +506,7 @@ pub(crate) fn validate_flags(rule: ModelRule, model: Option<&str>, effort: Optio
         return Err("invalid model".to_string());
     }
     let checks: [(&str, Option<&str>, &'static str, usize); 2] = [
-        ("effort", effort, r"^[a-z]+$", 20),
+        ("effort", effort, r"^[a-z][a-z0-9_-]*$", 32),
         ("permission", permission, r"^[A-Za-z][A-Za-z-]*$", 40),
     ];
     for (field, value, pattern, max_length) in checks {
@@ -887,6 +916,125 @@ pub async fn session_questions(
         Vec::new()
     };
     Ok(Json(SessionQuestions { questions }))
+}
+
+// ------------------------------------------------------------------ permissions
+
+/// Path parameters for `POST /api/sessions/{source}/{id}/permissions/{requestId}`.
+#[derive(Debug, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionPath {
+    /// Session source (`claude`, `codex`, or `acp`).
+    pub source: Source,
+    /// Session id.
+    pub id: String,
+    /// Permission request id.
+    pub request_id: String,
+}
+
+/// The tool permission prompts the agent asked in this session, oldest first.
+#[api(
+    id = "session_permissions",
+    group = "sessions",
+    summary = "Tool permission prompts the agent asked",
+    responses(200 = "The tool permission prompts, oldest first: the pending ones and recent settled ones")
+)]
+pub async fn session_permissions(
+    State(state): State<DriveState>,
+    ApiPath((source, id)): ApiPath<(Source, String)>,
+) -> Result<Json<SessionPermissions>, ApiError> {
+    let permissions = if state.drive.providers.capabilities(source).permissions {
+        state.drive.injections.host.permissions().for_session(&id, permissions::now_ms())
+    } else {
+        Vec::new()
+    };
+    Ok(Json(SessionPermissions { permissions }))
+}
+
+/// Approve, reject, or cancel a pending tool permission prompt.
+#[api(
+    id = "respond_permission",
+    group = "sessions",
+    summary = "Respond to a tool permission prompt",
+    responses(200 = "The decision was delivered to the waiting agent"),
+    errors(
+        400 = "Missing or unknown optionId",
+        404 = "No such permission prompt in this session",
+        409 = "Already decided or cancelled (`permission_settled`, with the record as it stands)"
+    )
+)]
+pub async fn respond_permission(
+    State(state): State<DriveState>,
+    #[api(skip)] MaybeIdentity(identity): MaybeIdentity,
+    ApiPath(PermissionPath { source, id, request_id }): ApiPath<PermissionPath>,
+    ApiJson(body): ApiJson<RespondPermission>,
+) -> Result<Json<PermissionRespondResult>, ApiError> {
+    let reply = if body.cancel.0 == Some(true) {
+        PermissionReply::Cancel
+    } else if let Some(option_id) = body.option_id.0.map(|id| id.trim().to_string()).filter(|id| !id.is_empty()) {
+        PermissionReply::Select(option_id)
+    } else {
+        return Err(ApiError::bad_request("either optionId or cancel=true is required"));
+    };
+    if !state.drive.providers.capabilities(source).permissions {
+        return Err(ApiError::not_found("no such permission prompt"));
+    }
+    writable_session(&state.drive, source, &id).await?;
+    let store = state.drive.injections.host.permissions().clone();
+    let stored = store
+        .get(&request_id)
+        .filter(|stored| stored.session_id == id)
+        .ok_or_else(|| ApiError::not_found("no such permission prompt"))?;
+    if stored.state != PermissionState::Pending {
+        return Err(permission_already_settled(stored.wire()));
+    }
+    let by = identity.map(|identity| identity.username);
+    let result = match state.drive.providers.respond_permission(source, &id, &request_id, reply, by).await {
+        PermissionOutcome::Delivered(permission) => Ok(PermissionRespondResult { permission }),
+        PermissionOutcome::Resolved(permission) => Err(permission_already_settled(permission)),
+        PermissionOutcome::Invalid(why) => Err(ApiError::bad_request(why)),
+        PermissionOutcome::NotReady => Err(ApiError::conflict(
+            "the session is still reconnecting after a server restart; try again in a moment",
+        )),
+        PermissionOutcome::Unreachable => Err(ApiError::conflict(
+            "the permission response could not be written to the agent; the prompt is still open",
+        )),
+        PermissionOutcome::Unknown | PermissionOutcome::NoResident => {
+            store.close(&request_id, PermissionState::Cancelled, permissions::now_ms());
+            match store.get(&request_id) {
+                Some(current) => Err(permission_already_settled(current.wire())),
+                None => Err(ApiError::not_found("no such permission prompt")),
+            }
+        }
+    };
+    if result.is_ok() {
+        state.drive.injections.host.announce(source, &id);
+    }
+    result.map(Json)
+}
+
+#[derive(Serialize)]
+struct PermissionSettled<'a> {
+    error: &'static str,
+    hint: &'a str,
+    permission: SessionPermission,
+}
+
+fn permission_already_settled(permission: SessionPermission) -> ApiError {
+    let hint = match (permission.state, permission.answered_by.0.as_deref()) {
+        (PermissionState::Resolved, Some(by)) => format!("{by} already decided this permission"),
+        (PermissionState::Resolved, None) => "this permission was already decided".to_string(),
+        (PermissionState::Cancelled, _) => "this permission prompt is no longer waiting".to_string(),
+        (PermissionState::Pending, _) => "this permission prompt can no longer be answered".to_string(),
+    };
+    ApiError::refusal(
+        StatusCode::CONFLICT,
+        PermissionSettled {
+            error: "permission_settled",
+            hint: &hint,
+            permission,
+        },
+    )
 }
 
 /// Answer a question the agent is waiting on.
@@ -2252,6 +2400,8 @@ impl DriveState {
             .get("/api/sessions/{source}/{id}/questions", session_questions)
             .post("/api/sessions/{source}/{id}/questions/{requestId}/answer", answer_question)
             .post("/api/sessions/{source}/{id}/questions/{requestId}/dismiss", dismiss_question)
+            .get("/api/sessions/{source}/{id}/permissions", session_permissions)
+            .post("/api/sessions/{source}/{id}/permissions/{requestId}", respond_permission)
             .put("/api/sessions/{source}/{id}/title", rename_session)
             .put("/api/sessions/{source}/{id}/pin", pin_session)
             .post("/api/sessions/{source}/{id}/archive", archive_session)

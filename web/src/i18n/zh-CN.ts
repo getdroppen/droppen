@@ -765,6 +765,10 @@ export const zhCN: Record<string, string> = {
   "type your answer…": "输入你的回答…",
   "send as your answer": "作为回答发送",
   "answer the question above first": "先回答上面的问题",
+  "permission required": "需要授权",
+  "PERMISSION": "权限请求",
+  "decided": "已处理",
+  "cancelled": "已取消",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
   // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.

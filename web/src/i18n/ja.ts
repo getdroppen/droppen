@@ -766,6 +766,10 @@ export const ja: Record<string, string> = {
   "type your answer…": "回答を入力…",
   "send as your answer": "回答として送信",
   "answer the question above first": "先に上の質問に回答してください",
+  "permission required": "許可が必要",
+  "PERMISSION": "権限リクエスト",
+  "decided": "処理済み",
+  "cancelled": "キャンセル済み",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
   // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.

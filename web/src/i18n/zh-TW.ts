@@ -765,6 +765,10 @@ export const zhTW: Record<string, string> = {
   "type your answer…": "輸入你的回答…",
   "send as your answer": "作為回答傳送",
   "answer the question above first": "先回答上面的問題",
+  "permission required": "需要授權",
+  "PERMISSION": "權限請求",
+  "decided": "已處理",
+  "cancelled": "已取消",
   // The activity bar while the agent thinks (turn-status.tsx).
   "thinking…": "思考中…",
   // A session opening with nothing to show yet, under the spinner (session-opening.tsx); "connecting…" is below.

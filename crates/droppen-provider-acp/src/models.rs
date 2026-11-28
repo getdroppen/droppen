@@ -40,7 +40,6 @@ impl AcpModels {
     ///
     /// With the models, how many were left out: see [`ModelList::hidden`].
     async fn agent_models(&self, agent: &str) -> (Vec<ModelInfo>, ModelListSource, u32) {
-        use crate::protocol::{category, option_for};
         let Some(agent) = crate::agents::AcpAgentRegistry::of(&self.paths).get(agent) else {
             return (Vec::new(), ModelListSource::Fallback, 0);
         };
@@ -59,30 +58,90 @@ impl AcpModels {
         let runs = &self.runs;
         let shown = |text: &str| droppen_base::text::clip(&runs.redact_acp(&agent, text), crate::agents::MAX_AGENT_WORD);
         let usable = |id: &str| runs.acp_id_shown(id);
-        let effort = option_for(&options, category::THOUGHT_LEVEL);
-        let efforts = effort.map(|effort| {
+        let (models, hidden) = build_models(&options.options, &options.available_models, shown, usable);
+        (models, ModelListSource::Cache, hidden)
+    }
+}
+
+/// Turn an agent's fresh session options (and optional `models.availableModels`
+/// ids) into the composer's [`ModelInfo`] list and hidden count.
+///
+/// When an agent publishes both a session-level `thought_level` option and
+/// `models.availableModels` containing `{modelId}-{effort}` variants (as
+/// Antigravity does), each model gets its own exact effort ladder instead of
+/// inheriting the default model's ladder: e.g. `claude-opus-5-5` keeps
+/// `low..high` without `xhigh`, and `gpt-oss-120b-medium` gets `[]`.
+///
+/// When an agent publishes no `thought_level` option at all, every model gets
+/// `Some(vec![])` (`[]`) rather than `None`, so the composer knows the model
+/// has no effort ladder and hides the picker instead of inventing a fallback.
+fn build_models(
+    options: &[crate::protocol::ConfigOption],
+    available_models: &[String],
+    shown: impl Fn(&str) -> String,
+    usable: impl Fn(&str) -> bool,
+) -> (Vec<ModelInfo>, u32) {
+    use std::collections::HashSet;
+    use crate::protocol::{category, option_for};
+
+    let effort = option_for(options, category::THOUGHT_LEVEL);
+    let base_efforts: Vec<String> = effort
+        .map(|effort| {
             effort
                 .values()
                 .iter()
                 .map(|value| value.value.clone())
                 .filter(|value| usable(value))
                 .collect::<Vec<_>>()
-        });
-        let default_effort = effort.and_then(|effort| effort.current_value.clone()).filter(|value| usable(value));
-        let offered = option_for(&options, category::MODEL).map(|model| model.values()).unwrap_or_default();
-        let models: Vec<ModelInfo> = offered
+        })
+        .unwrap_or_default();
+    let base_default = effort.and_then(|effort| effort.current_value.clone()).filter(|value| usable(value));
+    let offered = option_for(options, category::MODEL).map(|model| model.values()).unwrap_or_default();
+
+    // Activate per-model derivation only when `available_models` actually uses
+    // the `{model_id}-{effort}` variant convention for at least one listed
+    // model and effort, so agents with plain `availableModels` lists are
+    // unaffected.
+    let available_set: HashSet<&str> = available_models.iter().map(String::as_str).collect();
+    let has_per_model_variants = !base_efforts.is_empty()
+        && !available_set.is_empty()
+        && offered
             .iter()
-            .filter(|value| usable(&value.value))
-            .map(|value| ModelInfo {
+            .any(|m| base_efforts.iter().any(|e| available_set.contains(format!("{}-{e}", m.value).as_str())));
+
+    let models: Vec<ModelInfo> = offered
+        .iter()
+        .filter(|value| usable(&value.value))
+        .map(|value| {
+            let (efforts, default_effort) = if base_efforts.is_empty() {
+                (Vec::new(), None)
+            } else if has_per_model_variants {
+                let matched: Vec<String> = base_efforts
+                    .iter()
+                    .filter(|e| available_set.contains(format!("{}-{e}", value.value).as_str()))
+                    .cloned()
+                    .collect();
+                if !matched.is_empty() {
+                    let def = base_default.as_ref().filter(|d| matched.contains(d)).cloned();
+                    (matched, def)
+                } else if available_set.contains(value.value.as_str()) {
+                    (Vec::new(), None)
+                } else {
+                    (base_efforts.clone(), base_default.clone())
+                }
+            } else {
+                (base_efforts.clone(), base_default.clone())
+            };
+            ModelInfo {
                 id: value.value.clone(),
                 label: Nullable((!value.name.is_empty() && value.name != value.value).then(|| shown(&value.name))),
-                efforts: Nullable(efforts.clone()),
-                default_effort: Nullable(default_effort.clone()),
-            })
-            .collect();
-        let hidden = u32::try_from(offered.len() - models.len()).unwrap_or(u32::MAX);
-        (models, ModelListSource::Cache, hidden)
-    }
+                efforts: Nullable(Some(efforts)),
+                default_effort: Nullable(default_effort),
+            }
+        })
+        .collect();
+    let hidden = u32::try_from(offered.len() - models.len()).unwrap_or(u32::MAX);
+    (models, hidden)
 }
 
 impl Models for AcpModels {
@@ -129,6 +188,71 @@ impl Models for AcpModels {
 
     fn model_rule(&self) -> ModelRule {
         ModelRule::new(ACP_MODEL_PATTERN, 200)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{available_model_ids, config_options};
+    use serde_json::json;
+
+    #[test]
+    fn per_model_efforts_are_derived_from_available_model_variants() {
+        let answer = json!({
+            "configOptions": [
+                {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "gemini-4-neon",
+                 "options": [
+                     {"value": "gemini-4-neon", "name": "Gemini 4 Neon"},
+                     {"value": "claude-opus-5-5", "name": "Claude Opus 5.5"},
+                     {"value": "gpt-oss-120b-medium", "name": "GPT-OSS 120B (Medium)"},
+                 ]},
+                {"id": "thought_level", "name": "Thinking Level", "category": "thought_level", "type": "select", "currentValue": "high",
+                 "options": [
+                     {"value": "low", "name": "Low"},
+                     {"value": "medium", "name": "Medium"},
+                     {"value": "high", "name": "High"},
+                     {"value": "xhigh", "name": "Extra"},
+                 ]},
+            ],
+            "models": {
+                "availableModels": [
+                    {"modelId": "gemini-4-neon-low"},
+                    {"modelId": "gemini-4-neon-medium"},
+                    {"modelId": "gemini-4-neon-high"},
+                    {"modelId": "gemini-4-neon-xhigh"},
+                    {"modelId": "claude-opus-5-5-low"},
+                    {"modelId": "claude-opus-5-5-medium"},
+                    {"modelId": "claude-opus-5-5-high"},
+                    {"modelId": "gpt-oss-120b-medium"},
+                ]
+            }
+        });
+        let options = config_options(&answer);
+        let available = available_model_ids(&answer);
+        let (models, hidden) = build_models(&options, &available, str::to_owned, |_| true);
+        assert_eq!(hidden, 0);
+        assert_eq!(models[0].efforts.0.as_deref(), Some(["low", "medium", "high", "xhigh"].map(str::to_owned).as_slice()));
+        assert_eq!(models[0].default_effort.0.as_deref(), Some("high"));
+        assert_eq!(models[1].efforts.0.as_deref(), Some(["low", "medium", "high"].map(str::to_owned).as_slice()));
+        assert_eq!(models[1].default_effort.0.as_deref(), Some("high"));
+        assert_eq!(models[2].efforts.0.as_deref(), Some([].as_slice()));
+        assert_eq!(models[2].default_effort.0, None);
+    }
+
+    #[test]
+    fn agent_without_thought_level_publishes_empty_effort_ladder() {
+        let answer = json!({
+            "configOptions": [
+                {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "m1",
+                 "options": [{"value": "m1", "name": "M1"}]}
+            ]
+        });
+        let options = config_options(&answer);
+        let (models, hidden) = build_models(&options, &[], str::to_owned, |_| true);
+        assert_eq!(hidden, 0);
+        assert_eq!(models[0].efforts.0.as_deref(), Some([].as_slice()), "empty vec, not None");
+        assert_eq!(models[0].default_effort.0, None);
     }
 }
 
