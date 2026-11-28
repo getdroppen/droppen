@@ -80,13 +80,6 @@ export function AccountScreen({ account, link }: { account: CloudAccount; link: 
             <ArrowLeftIcon className="size-3.5 shrink-0" />
             {t("my devices")}
           </button>
-          <SignOutChoice account={account}>
-            {(ask) => (
-              <button type="button" className={cn(quiet, "h-7 px-2")} onClick={ask}>
-                {t("sign out")}
-              </button>
-            )}
-          </SignOutChoice>
         </>
       }
     >

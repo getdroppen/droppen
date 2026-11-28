@@ -572,6 +572,7 @@ export function DeviceRow({
   onTerminal,
   onResend,
   onOpen,
+  primaryOpen = false,
   onOpenSession,
   onReEnroll,
   onDismissReEnroll,
@@ -599,6 +600,8 @@ export function DeviceRow({
   resending?: boolean;
   /** Open it (a host): the app on it, or on its copy. */
   onOpen?: () => void;
+  /** Render the Open button as the page's single primary CTA. */
+  primaryOpen?: boolean;
   onOpenSession?: (row: SessionSummary) => void;
   /** "Remove it, then add it again": the way to a new identity (review D3). */
   onReEnroll?: () => void;
@@ -783,9 +786,10 @@ export function DeviceRow({
           >
             {onOpen && view.host && (
               <Button
+                variant={primaryOpen ? "primary" : "secondary"}
                 data-testid={`open-${id}`}
                 onClick={onOpen}
-                className="h-7 px-2.5 text-xs pointer-coarse:h-9 group-hover/summary:border-fg"
+                className={cn("h-7 px-2.5 text-xs pointer-coarse:h-9", !primaryOpen && "group-hover/summary:border-fg")}
                 title={view.presence === "online" || !view.hasCopy ? t("open") : t("read the copy")}
                 aria-label={view.presence === "online" || !view.hasCopy ? t("open") : t("read the copy")}
               >

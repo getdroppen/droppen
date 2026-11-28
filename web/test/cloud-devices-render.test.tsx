@@ -1290,8 +1290,9 @@ test("removed devices are folded at the bottom, out of the list; 「添加设备
   assert.doesNotMatch(page.html, /<details data-testid="removed-devices"[^>]*open/, "folded");
   assert.ok(page.html.includes("removed devices (1)"));
   assert.ok(page.html.slice(page.html.indexOf('data-testid="removed-devices"')).includes(`data-testid="device-${other}"`));
-  // One 「添加设备」, the view's one primary action; it asks a browser or phone, or a device that runs AI.
-  assert.match(page.html, /data-variant="primary"[^>]*data-testid="add-device"/);
+  // Once an AI host exists, opening it is primary and 「添加设备」 is secondary; it asks a browser or phone, or a device that runs AI.
+  assert.match(page.html, /data-variant="secondary"[^>]*data-testid="add-device"/);
+  assert.equal((page.html.match(/data-variant="primary"/g) ?? []).length, 1);
   const press = (testId: string) => (tree: El[]) => (tree.find((e) => e.props["data-testid"] === testId)!.props.onClick as () => void)();
   const pick = (kind: string) => (tree: El[]) => (tree.find((e) => e.type === AddChooser)!.props.onPick as (kind: string) => void)(kind);
   const asked = drive(DevicesPanel, props, [press("add-device")]);
@@ -1336,12 +1337,15 @@ test("just signed up, with no device that runs AI: the first-run card leads, 「
   const code = drive(DevicesPanel, props, [(tree) => (cardOf(tree).props.onCode as () => void)()]);
   assert.equal(code.tree.find((e) => e.type === AddComputer)?.props.initialMode, "code");
   assert.equal(typeof cardOf(page.tree).props.pairWith, "function", "a sign-in window's browser new to the account is paired from the card");
-  // Once a device runs AI: no card, nothing folded, this device's settings above the list, 「添加设备」 the primary again.
+  // Once a device runs AI: no card, nothing folded in more-settings, devices lead above this-device, opening the host is primary, and security/keys stays folded.
   await hub.enroll(a, "m-1");
   const after = drive(DevicesPanel, props, []);
   assert.doesNotMatch(after.html, /data-testid="first-host"|data-testid="more-settings"/);
-  assert.match(after.html, /data-variant="primary"[^>]*data-testid="add-device"/);
-  assert.ok(after.html.indexOf('data-testid="direct-connections"') < after.html.indexOf('data-testid="device-list"'));
+  assert.match(after.html, /data-variant="secondary"[^>]*data-testid="add-device"/);
+  assert.match(after.html, /data-variant="primary"[^>]*data-testid="open-m-1"/);
+  assert.equal((after.html.match(/data-variant="primary"/g) ?? []).length, 1);
+  assert.ok(after.html.indexOf('data-testid="device-list"') < after.html.indexOf('data-testid="direct-connections"'));
+  assert.match(after.html, /data-testid="security-settings"/);
   assert.match(after.html, /data-testid="rotate-keys"/);
 });
 
@@ -1387,10 +1391,11 @@ test("the first-run card goes with a word that the device joined, as the guide's
   assert.equal((html.match(/data-variant="primary"/g) ?? []).length, 1);
   assert.match(html, /data-variant="secondary" data-testid="add-device"/);
   assert.doesNotMatch(html, /data-testid="more-settings"/, "nothing folded any more");
-  // Put away ("done"): the page as it is with a device that runs AI.
+  // Put away ("done"): the page as it is with a device that runs AI (opening the host is primary).
   const done = draw(<Page then={(t) => (t.find((e) => e.type === NewDeviceReady)!.props.onDone as () => void)()} />);
   assert.doesNotMatch(done, /first-host-joined/);
-  assert.match(done, /data-variant="primary"[^>]*data-testid="add-device"/);
+  assert.match(done, /data-variant="primary"[^>]*data-testid="open-m-1"/);
+  assert.match(done, /data-variant="secondary"[^>]*data-testid="add-device"/);
 
   // Opened the guide instead: it says so itself (its own last step), so the page adds nothing when the device joins.
   function ViaGuide() {

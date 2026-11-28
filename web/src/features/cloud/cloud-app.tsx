@@ -869,16 +869,16 @@ export function GenesisScreen({ account, onDone }: { account: CloudAccount; onDo
           {t("This browser now holds this account's device keys. They stay on this device and are never sent to our servers: everything you see here is decrypted on this device.")}
         </p>
         <p className="text-xs leading-5 text-muted">
-          {t("Twelve recovery words let you get back in if you lose every device. They are shown once, and nobody — not the hub, not us — can recover them for you.")}
+          {t("You can add 12 recovery words now or any time later from your account settings to get back in if you lose every device.")}
         </p>
         <ErrorLine message={error} />
-        <button type="button" data-variant="primary" disabled={busy !== null} onClick={() => void create(true)} className={primary}>
-          {busy === "with" && <CircleNotchIcon className="size-3.5 animate-spin" />}
-          {t("create keys with recovery words")}
-        </button>
-        <button type="button" disabled={busy !== null} onClick={() => void create(false)} className={quiet}>
+        <button type="button" data-variant="primary" disabled={busy !== null} onClick={() => void create(false)} className={primary}>
           {busy === "without" && <CircleNotchIcon className="size-3.5 animate-spin" />}
-          {t("skip the recovery words")}
+          {t("start using Droppen")}
+        </button>
+        <button type="button" disabled={busy !== null} onClick={() => void create(true)} className={quiet}>
+          {busy === "with" && <CircleNotchIcon className="size-3.5 animate-spin" />}
+          {t("set up recovery words now")}
         </button>
       </Panel>
     </Centered>

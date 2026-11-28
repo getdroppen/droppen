@@ -797,4 +797,9 @@ export const cloudDevicesJa: Record<string, string> = {
   "the page before a reload": "再読み込み前のページ",
   "What this browser's connections to your devices did, kept in this tab for the last 30 minutes. Device ids are hashed, and text that is not Droppen's own is withheld: no tokens, keys, messages, names, paths or addresses are kept. Copy the newest (up to 60,000 characters) or download all of it to send for analysis.": "このブラウザーとあなたのデバイスとの接続で何が起きたかを、このタブに直近 30 分間保存します。デバイス ID はハッシュ化され、Droppen 自身の言葉でないテキストは記録しません。トークン・鍵・メッセージの内容・名前・パス・アドレスは保存しません。最新の部分（最大 60,000 文字）をコピーするか、すべてをダウンロードして分析に送れます。",
   "What this browser's connections to your devices did, for troubleshooting: copy it or download it to send.": "このブラウザーとあなたのデバイスとの接続の記録です。問題の調査に使えます。コピーまたはダウンロードして送れます。",
+  "You can add 12 recovery words now or any time later from your account settings to get back in if you lose every device.": "すべてのデバイスを失ったときに戻れるよう、12 個のリカバリーワードは今すぐ、または後でアカウント設定からいつでも作成できます。",
+  "start using Droppen": "Droppen を使い始める",
+  "set up recovery words now": "今すぐリカバリーワードを設定",
+  "security & keys": "セキュリティと鍵",
+  "identity key renewal and rotation": "ID 鍵の更新とローテーション",
 };

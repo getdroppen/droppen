@@ -797,4 +797,9 @@ export const cloudDevicesZhTW: Record<string, string> = {
   "the page before a reload": "重新整理前的頁面",
   "What this browser's connections to your devices did, kept in this tab for the last 30 minutes. Device ids are hashed, and text that is not Droppen's own is withheld: no tokens, keys, messages, names, paths or addresses are kept. Copy the newest (up to 60,000 characters) or download all of it to send for analysis.": "這個瀏覽器與你的裝置之間的連線做了什麼，在本分頁裡保留最近 30 分鐘。裝置 ID 已做雜湊處理，不是 Droppen 自己說的文字一律不記：不保留權杖、金鑰、訊息內容、名稱、路徑或位址。可複製最新的部分（最多 60,000 個字元），或下載全部，傳出去分析。",
   "What this browser's connections to your devices did, for troubleshooting: copy it or download it to send.": "這個瀏覽器與你的裝置之間的連線情況，用於排查問題：可複製或下載後傳送。",
+  "You can add 12 recovery words now or any time later from your account settings to get back in if you lose every device.": "你可以現在或稍後隨時在帳戶設定裡建立 12 個復原詞，以便在遺失所有裝置時找回帳戶。",
+  "start using Droppen": "開始使用 Droppen",
+  "set up recovery words now": "現在就設定復原詞",
+  "security & keys": "安全與金鑰",
+  "identity key renewal and rotation": "身分金鑰更換與輪換",
 };
