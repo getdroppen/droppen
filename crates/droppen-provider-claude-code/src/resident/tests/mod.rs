@@ -947,11 +947,16 @@ async fn a_session_records_everything_the_replay_will_need() {
 
     harness.release();
     until("the result", || harness.state().phase == Phase::Idle).await;
-    until("the transcripts to be picked up", || {
+    // Wait on the recording file's own completion signals rather than the
+    // driver's phase: the recorder writes asynchronously on a background task,
+    // and the transcript tailer can flush both files before `release()` while
+    // `Stdout(result)` and `Stage::Result` are still queued for the writer.
+    until("the recording to include the result and transcripts", || {
         let events = harness.recording();
-        events
-            .iter()
-            .any(|event| matches!(event, Event::Transcript { file, .. } if file == "agent:a1"))
+        staged(&events, crate::record::Stage::Result)
+            && events
+                .iter()
+                .any(|event| matches!(event, Event::Transcript { file, .. } if file == "agent:a1"))
             && events
                 .iter()
                 .filter(|event| matches!(event, Event::Transcript { file, .. } if file == "main"))
