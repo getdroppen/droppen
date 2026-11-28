@@ -64,6 +64,10 @@ export type PipeMessage =
 /** One sub-stream of the channel to the machine: ordered messages each way. */
 export interface Pipe {
   send(message: PipeMessage): void;
+  /** Wait until this pipe's send queue has drained below its backpressure threshold. */
+  drain?(): Promise<void>;
+  /** Acknowledge `bytes` of received binary payload consumed by the reader (flow control). */
+  ack?(bytes: number): void;
   /**
    * Done with it, both ways. Whether `onclose` then fires is up to the
    * channel; the adapters here cope with either.
@@ -165,6 +169,9 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
     // `done` once it has ended or failed, from either side.
     let state: "head" | "body" | "done" = "head";
     let body: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const rxQueue: Uint8Array[] = [];
+    let rxClosed = false;
+    let pulling = false;
 
     const settle = () => {
       state = "done";
@@ -176,6 +183,7 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
     const fail = (error: unknown) => {
       if (state === "done") return;
       const before = state;
+      rxQueue.length = 0;
       settle();
       const aborted = signal.aborted;
       logged({ stage: before, ...(aborted ? { error: "aborted" } : errorFields(error)) }, aborted ? undefined : "warn");
@@ -198,8 +206,25 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
           start: (controller) => {
             body = controller;
           },
+          pull: pipe.ack
+            ? (controller) => {
+                const next = rxQueue.shift();
+                if (next) {
+                  controller.enqueue(next);
+                  pipe.ack?.(next.byteLength);
+                  if (rxClosed && rxQueue.length === 0) controller.close();
+                  return;
+                }
+                if (rxClosed) {
+                  controller.close();
+                  return;
+                }
+                pulling = true;
+              }
+            : undefined,
           // The reader walked away: so does the request.
           cancel: () => {
+            rxQueue.length = 0;
             if (state === "done") return;
             settle();
             logged({ cancelled: true });
@@ -218,14 +243,32 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
       }
       if (state === "body" && message.kind === "binary") {
         moved.rx += message.data.length;
-        body?.enqueue(message.data);
+        if (pipe.ack) {
+          if (pulling && body) {
+            pulling = false;
+            body.enqueue(message.data);
+            pipe.ack(message.data.byteLength);
+          } else {
+            rxQueue.push(message.data);
+          }
+        } else {
+          body?.enqueue(message.data);
+        }
       }
     };
     pipe.onclose = (code) => {
       if (state === "body" && code === 0) {
         settle();
         logged({});
-        body?.close();
+        if (pipe.ack) {
+          rxClosed = true;
+          if (rxQueue.length === 0) {
+            pulling = false;
+            body?.close();
+          }
+        } else {
+          body?.close();
+        }
         return;
       }
       fail(new TypeError(`tunnel: the pipe closed before the answer ended (${code})`));
@@ -234,6 +277,9 @@ function tunnelFetch(opener: PipeOpener, request: Request, kind: "rpc" | "blob" 
     sendBody(pipe, request, () => state === "done", kind === "blob" ? BLOB_UPLOAD_MAX : null, moved).catch(fail);
   });
 }
+
+/** Chunk size when slicing large request body buffers so send backpressure kicks in smoothly. */
+const SEND_CHUNK = 64 * 1024;
 
 /**
  * The request body up the pipe, then its end. It goes up while the answer may
@@ -259,7 +305,19 @@ async function sendBody(pipe: Pipe, request: Request, finished: () => boolean, l
         void reader.cancel();
         throw new BodyTooLargeError(limit);
       }
-      pipe.send({ kind: "binary", data: value });
+      if (pipe.drain && value.byteLength > SEND_CHUNK) {
+        for (let at = 0; at < value.byteLength; at += SEND_CHUNK) {
+          if (finished()) {
+            void reader.cancel();
+            return;
+          }
+          pipe.send({ kind: "binary", data: value.subarray(at, Math.min(at + SEND_CHUNK, value.byteLength)) });
+          await pipe.drain();
+        }
+      } else {
+        pipe.send({ kind: "binary", data: value });
+        if (pipe.drain) await pipe.drain();
+      }
       moved.tx = sent;
     }
   }

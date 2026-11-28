@@ -682,6 +682,8 @@ export class Session {
     } catch {
       env = null;
     }
+    // A newer direct path may have replaced `direct` (or detached it) while WebCrypto was decrypting.
+    if (p.direct !== direct) return [];
     // `down` belongs on the hub path only.
     if (!env || env.type === "down") {
       this.detachDirect("failed", true, nowMs);

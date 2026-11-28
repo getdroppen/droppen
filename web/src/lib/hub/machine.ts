@@ -68,6 +68,7 @@ import {
   type Frame,
   fromUtf8,
   HandshakeError,
+  INITIAL_WINDOW,
   MessageReader,
   type PathStats,
   serverFeatures,
@@ -464,21 +465,34 @@ class FrameQueue {
   }
 }
 
+/** Bridge message header on the wire (`[kind u8][len u32]`). */
+const BRIDGE_HEADER = 5;
+
 /** A pipe that may be opened before its channel is up, and attaches when it is. */
 class BridgePipe implements Pipe {
   onmessage: ((message: PipeMessage) => void) | null = null;
   onclose: ((code: number) => void) | null = null;
   private stream: ChannelStream | null = null;
   private readonly pending: PipeMessage[] = [];
+  private attachWaiters: (() => void)[] = [];
   private closed = false;
   private readonly reader = new MessageReader();
+  private readonly pullCredit: boolean;
+  /** Raw bytes currently sitting in `reader` waiting for a complete bridge message. */
+  private partialBytes = 0;
+  /** Portion of `partialBytes` already pre-credited so a single message larger than half a window cannot deadlock. */
+  private partialCredited = 0;
+  /** Payload bytes of delivered binary messages already covered by `partialCredited`, deducted from future `ack`s. */
+  private payloadPreCredited = 0;
 
   constructor(
     readonly kind: PipeKind,
     readonly meta: PipeMeta,
     /** Told once when the pipe is over, either way (the channel counts its open pipes for the connection log). */
     private readonly done: () => void = () => undefined,
-  ) {}
+  ) {
+    this.pullCredit = kind === "rpc" || kind === "blob";
+  }
 
   attach(stream: ChannelStream): void {
     if (this.closed) {
@@ -486,10 +500,27 @@ class BridgePipe implements Pipe {
       return;
     }
     this.stream = stream;
+    if (this.pullCredit) stream.manualCredit = true;
     stream.ondata = (data) => {
+      if (this.pullCredit) this.partialBytes += data.length;
       this.reader.push(data);
       try {
         for (let m = this.reader.next(); m; m = this.reader.next()) {
+          if (this.pullCredit) {
+            const wireLen = BRIDGE_HEADER + m.payload.length;
+            this.partialBytes = Math.max(0, this.partialBytes - wireLen);
+            const pre = Math.min(this.partialCredited, wireLen);
+            this.partialCredited -= pre;
+            if (m.kind === "binary") {
+              const headerCredit = Math.max(0, BRIDGE_HEADER - pre);
+              const payloadPre = Math.max(0, pre - BRIDGE_HEADER);
+              if (headerCredit > 0) stream.consumed(headerCredit);
+              this.payloadPreCredited += payloadPre;
+            } else {
+              const rest = wireLen - pre;
+              if (rest > 0) stream.consumed(rest);
+            }
+          }
           if (m.kind === "head") {
             const head = decodeResponseHead(m.payload);
             this.onmessage?.({ kind: "head", status: head.status, headers: head.headers });
@@ -497,17 +528,45 @@ class BridgePipe implements Pipe {
           else if (m.kind === "binary") this.onmessage?.({ kind: "binary", data: m.payload });
           else this.onmessage?.({ kind: "end" });
         }
+        if (this.pullCredit) {
+          const uncredited = this.partialBytes - this.partialCredited;
+          if (uncredited >= INITIAL_WINDOW / 2) {
+            this.partialCredited += uncredited;
+            stream.consumed(uncredited);
+          }
+        }
       } catch {
         stream.close(4400);
       }
     };
     stream.onclose = (code) => this.fail(code);
     for (const m of this.pending.splice(0)) this.send(m);
+    for (const wake of this.attachWaiters.splice(0)) wake();
+  }
+
+  async drain(): Promise<void> {
+    if (this.closed) return;
+    if (!this.stream) {
+      await new Promise<void>((resolve) => {
+        this.attachWaiters.push(resolve);
+      });
+    }
+    if (this.closed || !this.stream) return;
+    await this.stream.drain();
+  }
+
+  ack(bytes: number): void {
+    if (this.closed || !this.stream || !this.pullCredit || bytes <= 0) return;
+    const pre = Math.min(this.payloadPreCredited, bytes);
+    this.payloadPreCredited -= pre;
+    const credit = bytes - pre;
+    if (credit > 0) this.stream.consumed(credit);
   }
 
   fail(code: number): void {
     if (this.closed) return;
     this.closed = true;
+    for (const wake of this.attachWaiters.splice(0)) wake();
     this.done();
     this.onclose?.(code);
   }
@@ -536,6 +595,7 @@ class BridgePipe implements Pipe {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    for (const wake of this.attachWaiters.splice(0)) wake();
     this.done();
     this.stream?.close(0);
   }
@@ -594,6 +654,8 @@ export class MachineChannel implements PipeOpener {
    */
   private readonly directHistory = new DirectHistory();
   private connecting: Promise<ChannelDriver> | null = null;
+  /** Bumped on {@link close} so an in-flight `connect` or `move` cannot install a channel after close. */
+  private epoch = 0;
   /** The machine's DH key the installed channel's handshake went to. */
   private responder: Bytes | null = null;
   /** Listening to the account while a channel is installed (only then): a renewal of the machine's key closes it. */
@@ -921,8 +983,17 @@ export class MachineChannel implements PipeOpener {
     return driver && !driver.isClosed && !this.ending.has(driver) ? driver : null;
   }
 
+  /** Close an opened channel that was superseded or cancelled before installation. */
+  private disposeOpened(opened: OpenedChannel, rule: "done" | "moved" = "done"): void {
+    opened.direct?.close();
+    closeRules.set(opened.driver, rule);
+    opened.driver.close(1000, rule);
+    opened.off();
+  }
+
   /** Drop the channel (a machine let go of, a sign-out). Whoever watches its status hears that it is no longer open. */
   close(): void {
+    this.epoch += 1;
     this.direct?.close();
     this.direct = null;
     if (this.driver) closeRules.set(this.driver, "done");
@@ -932,13 +1003,14 @@ export class MachineChannel implements PipeOpener {
     this.unwatchKey();
     this.carrierOff?.();
     this.carrierOff = null;
+    this.setStep(null);
     this.setPaths(null);
     this.setRoute(null);
     // A device let go of is asked afresh next time: a refusal from before must not keep it off the pickers meanwhile.
     const refused = this.refusal !== null || this.lastRefusal !== null;
     this.refusal = null;
     this.lastRefusal = null;
-    if (this.status === "open" || (refused && this.status === "error")) this.setStatus("idle");
+    if (this.status === "open" || this.status === "connecting" || (refused && this.status === "error")) this.setStatus("idle");
   }
 
   /**
@@ -949,6 +1021,7 @@ export class MachineChannel implements PipeOpener {
   move(exclude: ReadonlySet<string> = new Set()): Promise<boolean> {
     if (!this.live()) return this.ensure().then(() => true);
     this.moving ??= (async () => {
+      const epoch = this.epoch;
       try {
         const old = this.driver;
         const oldDirect = this.direct;
@@ -956,15 +1029,29 @@ export class MachineChannel implements PipeOpener {
         const from = this.route;
         this.log("path.switch", { why: "move", from: from ? routeName(from) : null, avoid: [...exclude].join(",") || undefined });
         const next = await this.openChannel(exclude);
+        if (this.epoch !== epoch) {
+          this.disposeOpened(next, "done");
+          return false;
+        }
+        // Re-read the active channel in case a reconnect or another replacement swapped it while `openChannel` ran.
+        const current = this.driver;
+        const currentDirect = this.direct;
+        const currentOff = this.carrierOff;
         this.log("path.switch", { why: "moved", from: from ? routeName(from) : null, to: routeName(next.route) });
         this.install(next);
         this.checkKey();
-        // The old channel lives on a moment for what is in flight on it, then goes.
+        // The old channel (and any intermediate replacement) lives on a moment for what is in flight on it, then goes.
         setTimeout(() => {
-          oldDirect?.close();
-          if (old) closeRules.set(old, "moved");
-          old?.close(1000, "moved");
-          oldOff?.();
+          currentDirect?.close();
+          if (current) closeRules.set(current, "moved");
+          current?.close(1000, "moved");
+          currentOff?.();
+          if (old && old !== current) {
+            oldDirect?.close();
+            closeRules.set(old, "moved");
+            old.close(1000, "moved");
+            oldOff?.();
+          }
         }, MOVE_GRACE_MS);
         return true;
       } catch (error) {
@@ -1150,10 +1237,18 @@ export class MachineChannel implements PipeOpener {
   }
 
   private async connect(): Promise<ChannelDriver> {
+    const epoch = this.epoch;
     this.setStatus("connecting");
     try {
       await this.link.waitOpen();
-      const opened = await this.openChannel(new Set(), (step) => this.setStep(step));
+      if (this.epoch !== epoch) throw new Error("the device is no longer open on this page");
+      const opened = await this.openChannel(new Set(), (step) => {
+        if (this.epoch === epoch) this.setStep(step);
+      });
+      if (this.epoch !== epoch) {
+        this.disposeOpened(opened, "done");
+        throw new Error("the device is no longer open on this page");
+      }
       this.setStep(null);
       this.blocked = null;
       this.install(opened);
@@ -1162,6 +1257,7 @@ export class MachineChannel implements PipeOpener {
       this.checkKey();
       return opened.driver;
     } catch (error) {
+      if (this.epoch !== epoch) throw error;
       this.setStep(null);
       this.blocked = error instanceof ChannelBlocked ? error.kind : null;
       // A timeout or a lost link after an earlier refusal is not that refusal any more.
@@ -1226,159 +1322,161 @@ export class MachineChannel implements PipeOpener {
       const queue = new FrameQueue();
       let routeTo = (f: Frame) => queue.push(f);
       const ch = carrier.reserve((f) => routeTo(f));
-      // The channel as the connection log names it: its carrier and its `ch` there.
-      const on = `ch:${relay ?? "hub"}/${ch}`;
-      this.log("channel.try", { attempt: attempt + 1, via: routeName(route), on });
-      const started = performance.now();
-      carrier.send({ type: "open", ch, peer: this.machine });
-      const { initiator, message } = await startHandshake(chain, this.account.noiseKeys, this.account.deviceId, this.machine, Date.now(), utf8(CLIENT_INFO));
-      carrier.send({ type: "data", ch, payload: message });
-      this.log("handshake.start", { on });
-      const first = await queue.next(REPLY_TIMEOUT_MS);
-      if (!first) {
-        this.log("timeout", { timer: "REPLY_TIMEOUT_MS", limitMs: REPLY_TIMEOUT_MS, elapsedMs: performance.now() - started, on });
-        carrier.release(ch);
-        if (!relay) throw new Error("the device did not answer");
-        this.options.relays?.noteFailure(relay, "the device did not answer");
-        skip.add(relay);
-        continue;
-      }
-      if (first.type === "close") {
-        this.log("handshake.fail", { on, code: first.code, reason: first.reason, ms: performance.now() - started });
-        carrier.release(ch);
-        if (first.code === AGENT_UNSAVED) {
-          this.refuse({ kind: "unsaved" });
-          throw new Error("the device could not save its record of who connects to it");
-        }
-        if (first.code === AGENT_HANDSHAKE_REFUSED && !resynced) {
-          // The agent could not open the hello: it may have renewed its key
-          // before this device heard. The chain says, then one more try.
-          resynced = true;
-          await this.resync();
+      let handedOff = false;
+      try {
+        // The channel as the connection log names it: its carrier and its `ch` there.
+        const on = `ch:${relay ?? "hub"}/${ch}`;
+        this.log("channel.try", { attempt: attempt + 1, via: routeName(route), on });
+        const started = performance.now();
+        carrier.send({ type: "open", ch, peer: this.machine });
+        const { initiator, message } = await startHandshake(chain, this.account.noiseKeys, this.account.deviceId, this.machine, Date.now(), utf8(CLIENT_INFO));
+        carrier.send({ type: "data", ch, payload: message });
+        this.log("handshake.start", { on });
+        const first = await queue.next(REPLY_TIMEOUT_MS);
+        if (!first) {
+          this.log("timeout", { timer: "REPLY_TIMEOUT_MS", limitMs: REPLY_TIMEOUT_MS, elapsedMs: performance.now() - started, on });
+          if (!relay) throw new Error("the device did not answer");
+          this.options.relays?.noteFailure(relay, "the device did not answer");
+          skip.add(relay);
           continue;
         }
-        if (relay) {
-          if (first.code === RELAY_OFFLINE || first.code === LINK_LOST) {
-            // Not on this relay (any more): another one.
-            skip.add(relay);
+        if (first.type === "close") {
+          this.log("handshake.fail", { on, code: first.code, reason: first.reason, ms: performance.now() - started });
+          if (first.code === AGENT_UNSAVED) {
+            this.refuse({ kind: "unsaved" });
+            throw new Error("the device could not save its record of who connects to it");
+          }
+          if (first.code === AGENT_HANDSHAKE_REFUSED && !resynced) {
+            // The agent could not open the hello: it may have renewed its key
+            // before this device heard. The chain says, then one more try.
+            resynced = true;
+            await this.resync();
             continue;
           }
-          if (first.code === RELAY_FORBIDDEN) {
-            this.refuse({ kind: "notAccepted", by: "relay", why: first.reason || null });
-            throw new ChannelRefused("relay", first.reason || null);
+          if (relay) {
+            if (first.code === RELAY_OFFLINE || first.code === LINK_LOST) {
+              // Not on this relay (any more): another one.
+              skip.add(relay);
+              continue;
+            }
+            if (first.code === RELAY_FORBIDDEN) {
+              this.refuse({ kind: "notAccepted", by: "relay", why: first.reason || null });
+              throw new ChannelRefused("relay", first.reason || null);
+            }
+            continue;
+          }
+          // The hub carries no channels (`RH_HUB_CHANNEL_RELAY=off`): the link
+          // remembers it until it reconnects. With relays to go to, the next
+          // pass looks for one as a channel with nowhere else to go does (it
+          // waits longer for the machine to come on one, and looks again before
+          // giving up); with none, no relay can carry this one.
+          if (first.code === HUB_NO_CHANNELS) {
+            if (this.options.relays) continue;
+            throw this.blockedNow();
+          }
+          if (first.code === HUB_OFFLINE) {
+            this.setStatus("offline", first.reason);
+            throw new Error("the device is offline");
+          }
+          if (first.code === HUB_FORBIDDEN) {
+            this.refuse({ kind: "notAccepted", by: "hub", why: first.reason || null });
+            throw new ChannelRefused("hub", first.reason || null);
           }
           continue;
         }
-        // The hub carries no channels (`RH_HUB_CHANNEL_RELAY=off`): the link
-        // remembers it until it reconnects. With relays to go to, the next
-        // pass looks for one as a channel with nowhere else to go does (it
-        // waits longer for the machine to come on one, and looks again before
-        // giving up); with none, no relay can carry this one.
-        if (first.code === HUB_NO_CHANNELS) {
-          if (this.options.relays) continue;
-          throw this.blockedNow();
-        }
-        if (first.code === HUB_OFFLINE) {
-          this.setStatus("offline", first.reason);
-          throw new Error("the device is offline");
-        }
-        if (first.code === HUB_FORBIDDEN) {
-          this.refuse({ kind: "notAccepted", by: "hub", why: first.reason || null });
-          throw new ChannelRefused("hub", first.reason || null);
-        }
-        continue;
-      }
-      if (first.type !== "data") continue;
-      try {
-        // Entries the agent has that this device lacks (a removal, a
-        // pending recovery, its renewal) are merged into a copy of the account's chain,
-        // which becomes its view once held against what this browser
-        // verified — on a refusal too. A fork either shows is latched.
-        const { transport, reply } = await this.account.completeHandshake((merged) =>
-          finishHandshake(initiator, merged.chain, merged.clock, first.payload, DEFAULT_REKEY, Date.now()),
-        );
-        const responder = copy(transport.remoteStatic);
-        if (!this.isCurrentKey(responder)) {
-          // The reply taught this device that the machine renewed its key
-          // (its entries were merged just now): no channel to the old key.
-          // It is closed, and the next try goes to the new one.
-          carrier.send({ type: "close", ch, code: 1000, reason: "a renewed key" });
-          carrier.release(ch);
-          continue;
-        }
-        this.handshakeMs = performance.now() - started;
-        this.lastRefusal = null;
-        this.refusal = null;
-        const features = serverFeatures(reply.server);
-        const paths = features.includes(CLIENT_FEATURE);
-        this.log("handshake.done", { on, ms: this.handshakeMs, paths, direct: features.includes(DIRECT_FEATURE) });
-        const driver = new ChannelDriver(ch, transport, "initiator", (f) => void carrier.send(f), Date.now, paths ? { paths: { probeRelay: true } } : {});
-        const openedAt = performance.now();
-        const offSample = connLog.addSampler(on, channelSampler(driver, () => this.pipesOpen));
-        driver.onpathevent = (event) => this.logPathEvent(on, driver, event);
-        const take = (f: Frame) => {
-          if (f.type === "close") this.ending.add(driver);
-          driver.receive(f);
-        };
-        for (const f of queue.drain()) take(f);
-        routeTo = take;
-        let direct: DirectPaths | null = null;
-        // The connection log hears the rule's decisions: gone (the channel is closed), and slow but kept.
-        const watchRelay = watchRelayPath(driver, relayLink, (stats) => this.logRelaySilent(on, driver, stats));
-        const slowLog = this.relaySlowLogger(on, driver);
-        driver.onpaths = (stats) => {
-          if (this.driver === driver) this.setPaths(stats);
-          slowLog(stats);
-          watchRelay(stats);
-        };
-        const offGoaway = relayLink?.onGoaway(({ retryMs }) => {
-          // The relay is draining: move before it closes.
-          if (this.driver === driver && relay) void this.moveOff(driver, relay, retryMs);
-        });
-        driver.onclose = (code, reason, local) => {
-          carrier.release(ch);
-          offGoaway?.();
-          direct?.close();
-          if (this.direct === direct) this.direct = null;
-          // Logged once what the close must do is done (and it never throws), before the status it leads to.
-          offSample();
-          this.logClose(on, driver, { code, reason, local: local === true, openedAt, route });
-          if (this.driver === driver) {
-            this.driver = null;
-            this.responder = null;
-            this.unwatchKey();
-            this.setPaths(null);
-            this.setRoute(null);
-            // Unless a successor is already opening (a pipe came while this
-            // one was ending), or failed to: that status is the one to show.
-            if (this.status === "open") this.setStatus("idle");
+        if (first.type !== "data") continue;
+        try {
+          // Entries the agent has that this device lacks (a removal, a
+          // pending recovery, its renewal) are merged into a copy of the account's chain,
+          // which becomes its view once held against what this browser
+          // verified — on a refusal too. A fork either shows is latched.
+          const { transport, reply } = await this.account.completeHandshake((merged) =>
+            finishHandshake(initiator, merged.chain, merged.clock, first.payload, DEFAULT_REKEY, Date.now()),
+          );
+          const responder = copy(transport.remoteStatic);
+          if (!this.isCurrentKey(responder)) {
+            // The reply taught this device that the machine renewed its key
+            // (its entries were merged just now): no channel to the old key.
+            // It is closed, and the next try goes to the new one.
+            carrier.send({ type: "close", ch, code: 1000, reason: "a renewed key" });
+            continue;
           }
-        };
-        if (paths && features.includes(DIRECT_FEATURE) && this.options.direct) {
-          direct = this.directPathsFor(driver, { account: chain.account, device: this.account.deviceId, machine: this.machine });
+          this.handshakeMs = performance.now() - started;
+          this.lastRefusal = null;
+          this.refusal = null;
+          const features = serverFeatures(reply.server);
+          const paths = features.includes(CLIENT_FEATURE);
+          this.log("handshake.done", { on, ms: this.handshakeMs, paths, direct: features.includes(DIRECT_FEATURE) });
+          const driver = new ChannelDriver(ch, transport, "initiator", (f) => void carrier.send(f), Date.now, paths ? { paths: { probeRelay: true } } : {});
+          const openedAt = performance.now();
+          const offSample = connLog.addSampler(on, channelSampler(driver, () => this.pipesOpen));
+          driver.onpathevent = (event) => this.logPathEvent(on, driver, event);
+          const take = (f: Frame) => {
+            if (f.type === "close") this.ending.add(driver);
+            driver.receive(f);
+          };
+          for (const f of queue.drain()) take(f);
+          routeTo = take;
+          let direct: DirectPaths | null = null;
+          // The connection log hears the rule's decisions: gone (the channel is closed), and slow but kept.
+          const watchRelay = watchRelayPath(driver, relayLink, (stats) => this.logRelaySilent(on, driver, stats));
+          const slowLog = this.relaySlowLogger(on, driver);
+          driver.onpaths = (stats) => {
+            if (this.driver === driver) this.setPaths(stats);
+            slowLog(stats);
+            watchRelay(stats);
+          };
+          const offGoaway = relayLink?.onGoaway(({ retryMs }) => {
+            // The relay is draining: move before it closes.
+            if (this.driver === driver && relay) void this.moveOff(driver, relay, retryMs);
+          });
+          driver.onclose = (code, reason, local) => {
+            carrier.release(ch);
+            offGoaway?.();
+            direct?.close();
+            if (this.direct === direct) this.direct = null;
+            // Logged once what the close must do is done (and it never throws), before the status it leads to.
+            offSample();
+            this.logClose(on, driver, { code, reason, local: local === true, openedAt, route });
+            if (this.driver === driver) {
+              this.driver = null;
+              this.responder = null;
+              this.unwatchKey();
+              this.setPaths(null);
+              this.setRoute(null);
+              // Unless a successor is already opening (a pipe came while this
+              // one was ending), or failed to: that status is the one to show.
+              if (this.status === "open") this.setStatus("idle");
+            }
+          };
+          if (paths && features.includes(DIRECT_FEATURE) && this.options.direct) {
+            direct = this.directPathsFor(driver, { account: chain.account, device: this.account.deviceId, machine: this.machine });
+          }
+          if (relay) this.options.relays?.noteSuccess(relay);
+          handedOff = true;
+          return { driver, direct, route, off: () => offGoaway?.(), responder, logOn: on, attempt: attempt + 1 };
+        } catch (error) {
+          this.log("handshake.fail", { on, ...errorFields(error, "why"), refused: error instanceof HandshakeError && error.kind === "refused" });
+          if (error instanceof HandshakeError && error.kind === "refused") {
+            this.lastRefusal = error.reply?.status === "stale" ? "stale" : "needEntries";
+            // Stale: our attestation had not reached the agent; NeedEntries:
+            // it is behind. Either way: sync, attest again, retry.
+            await this.account.sync();
+            await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+            continue;
+          }
+          if (!resynced) {
+            // Any other failure — the reply does not open, say: the machine may
+            // have renewed its key before this device heard. The chain says,
+            // then one more try.
+            resynced = true;
+            await this.resync();
+            continue;
+          }
+          throw error;
         }
-        if (relay) this.options.relays?.noteSuccess(relay);
-        return { driver, direct, route, off: () => offGoaway?.(), responder, logOn: on, attempt: attempt + 1 };
-      } catch (error) {
-        this.log("handshake.fail", { on, ...errorFields(error, "why"), refused: error instanceof HandshakeError && error.kind === "refused" });
-        carrier.release(ch);
-        if (error instanceof HandshakeError && error.kind === "refused") {
-          this.lastRefusal = error.reply?.status === "stale" ? "stale" : "needEntries";
-          // Stale: our attestation had not reached the agent; NeedEntries:
-          // it is behind. Either way: sync, attest again, retry.
-          await this.account.sync();
-          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
-          continue;
-        }
-        if (!resynced) {
-          // Any other failure — the reply does not open, say: the machine may
-          // have renewed its key before this device heard. The chain says,
-          // then one more try.
-          resynced = true;
-          await this.resync();
-          continue;
-        }
-        throw error;
+      } finally {
+        if (!handedOff) carrier.release(ch);
       }
     }
     if (this.lastRefusal === "stale") this.refuse({ kind: "unconfirmed" });

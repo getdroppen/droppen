@@ -45,6 +45,8 @@ import { Serial } from "./serial";
 export const CHANNEL_GONE = 4502;
 /** What may sit in a direct path's DataChannel buffer before the driver stops handing it more. */
 export const DIRECT_BUDGET = 1024 * 1024;
+/** Default per-stream queued send threshold for {@link ChannelStream.drain}. */
+export const SEND_BUDGET = 512 * 1024;
 
 /** The paths' state, for the path indicator and logs. */
 export interface PathStats {
@@ -134,7 +136,13 @@ export interface DriverDiagnostics {
 export class ChannelStream {
   ondata: ((data: Bytes) => void) | null = null;
   onclose: ((code: number) => void) | null = null;
+  /**
+   * When true, the driver does not automatically return receive-window credit on
+   * delivery to `ondata`; the consumer calls {@link consumed} as bytes are read.
+   */
+  manualCredit = false;
   private ended = false;
+  private drainWaiters: { maxBytes: number; resolve: () => void }[] = [];
 
   constructor(
     readonly sid: number,
@@ -149,6 +157,20 @@ export class ChannelStream {
     this.driver.streamSend(this, data);
   }
 
+  /** Wait until this stream's unsent send queue drops to `maxBytes` or fewer (or the stream ends). */
+  drain(maxBytes = SEND_BUDGET): Promise<void> {
+    if (this.ended || this.driver.streamPendingBytes(this) <= maxBytes) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.drainWaiters.push({ maxBytes, resolve });
+    });
+  }
+
+  /** Acknowledge `bytes` of received stream data consumed by the reader (when `manualCredit` is true). */
+  consumed(bytes: number): void {
+    if (this.ended || bytes <= 0) return;
+    this.driver.streamConsumed(this, bytes);
+  }
+
   /** Close once what was sent before has gone. */
   close(code = 0): void {
     if (this.ended) return;
@@ -160,9 +182,22 @@ export class ChannelStream {
   }
 
   /** @internal */
+  notifyDrained(pendingBytes: number): void {
+    if (this.drainWaiters.length === 0) return;
+    const remaining: { maxBytes: number; resolve: () => void }[] = [];
+    for (const w of this.drainWaiters) {
+      if (pendingBytes <= w.maxBytes) w.resolve();
+      else remaining.push(w);
+    }
+    this.drainWaiters = remaining;
+  }
+
+  /** @internal */
   end(code: number): void {
     if (this.ended) return;
     this.ended = true;
+    const waiters = this.drainWaiters.splice(0);
+    for (const w of waiters) w.resolve();
     this.onclose?.(code);
   }
 }
@@ -311,6 +346,18 @@ export class ChannelDriver {
   }
 
   /** @internal */
+  streamPendingBytes(stream: ChannelStream): number {
+    return this.session.mux.pendingBytes(stream.sid);
+  }
+
+  /** @internal */
+  streamConsumed(stream: ChannelStream, bytes: number): void {
+    if (this.closed || !this.streams.has(stream.sid)) return;
+    this.session.mux.consumed(stream.sid, bytes);
+    this.kick();
+  }
+
+  /** @internal */
   streamClose(stream: ChannelStream, code: number): void {
     if (this.closed || !this.streams.has(stream.sid)) return;
     try {
@@ -442,7 +489,7 @@ export class ChannelDriver {
       }
       case "data": {
         const stream = this.streams.get(event.sid);
-        this.session.mux.consumed(event.sid, event.data.length);
+        if (!stream || !stream.manualCredit) this.session.mux.consumed(event.sid, event.data.length);
         stream?.ondata?.(event.data);
         break;
       }
@@ -509,9 +556,20 @@ export class ChannelDriver {
   }
 
   private room(): Room {
+    let direct = false;
+    if (this.direct !== null) {
+      try {
+        direct = this.direct.bufferedAmount() < DIRECT_BUDGET;
+      } catch {
+        // The DataChannel threw (closed or broken): detach only the direct path so the channel survives on the carrier.
+        this.session.detachDirect("failed", true, this.clock());
+        this.pathsChanged();
+        this.kick();
+      }
+    }
     return {
       relay: this.held === null && this.sendWindow.canSend(MAX_PAYLOAD_LEN),
-      direct: this.direct !== null && this.direct.bufferedAmount() < DIRECT_BUDGET,
+      direct,
     };
   }
 
@@ -531,6 +589,9 @@ export class ChannelDriver {
       if (!room.relay && !room.direct) return;
       const polled = await this.session.poll(room, this.clock(), this.now());
       if (!polled) return;
+      if (polled.data) {
+        this.streams.get(polled.data.sid)?.notifyDrained(this.session.mux.pendingBytes(polled.data.sid));
+      }
       if (polled.wire.type === "relay") {
         this.held = polled.wire.frame;
         continue;
