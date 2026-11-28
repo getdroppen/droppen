@@ -7,7 +7,7 @@
  * storage; this file keeps the vocabulary and the checking.
  */
 import type { components } from "@/api/hub-schema";
-import { type Bytes, fromHex } from "@/lib/e2e";
+import { type Bytes, fromHex } from "@/lib/e2e/bytes";
 import type { AuthenticationResponseJSON, PasskeyChallenge } from "./passkey";
 
 export interface HubSession {

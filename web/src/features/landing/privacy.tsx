@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { SIGNUP_CONFIG } from "@/lib/hub/api";
+import { SIGNUP_CONFIG } from "@/lib/hub/api-views";
 import { PLAN_TABLE } from "@/lib/hub/plan";
 import "./copy";
 import { LegalContact, LegalFootLink, LegalSection } from "./legal-kit";

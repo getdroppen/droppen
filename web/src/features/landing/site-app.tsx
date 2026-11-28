@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
-import { HubApi } from "@/lib/hub/api";
 import { appUrl } from "@/lib/hub/hosts";
+import { createWaitlistApi } from "@/lib/hub/waitlist";
 import { FrontPageView } from "./front-pages";
 import { frontPage, usePathname } from "./route";
 
@@ -16,7 +16,7 @@ import { frontPage, usePathname } from "./route";
  */
 export function SiteApp() {
   const pathname = usePathname();
-  const api = useMemo(() => new HubApi(), []);
+  const api = useMemo(() => createWaitlistApi(), []);
   const front = frontPage(pathname);
   useEffect(() => {
     if (!front) location.replace(appUrl(`${location.pathname}${location.search}${location.hash}`));
