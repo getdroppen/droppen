@@ -18,7 +18,7 @@
 //!   with itself.
 //! * **two instances** — two servers, running at once, on one set of sessions.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::time::Duration;

@@ -43,9 +43,6 @@ use droppen_instance::instance::DEFAULT_INSTANCE;
 use droppen_instance::paths::{ClaudeRoot, Paths};
 use droppen_base::time::parse_iso_ms;
 
-/// How much silence is replayed before it is compressed, by default.
-const DEFAULT_MAX_GAP: Duration = Duration::from_secs(3);
-
 /// How often the progress line is printed, at most.
 const PROGRESS_EVERY: Duration = Duration::from_millis(500);
 

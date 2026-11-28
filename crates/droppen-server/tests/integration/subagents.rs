@@ -5,7 +5,7 @@
 //! database. Both are seeded here as the CLIs write them, and read back through
 //! the list, the detail and the read-mark routes.
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 

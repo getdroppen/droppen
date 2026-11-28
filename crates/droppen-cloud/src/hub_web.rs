@@ -185,14 +185,18 @@ impl HubWebs {
 
 /// Ask `hub` (`wss://…`) for its discovery document.
 async fn fetch(hub: &str) -> Found {
-    // No proxy, as the agent's websocket to the same hub takes none; no
-    // redirects: the document is the hub's own, at its own address.
-    let Ok(http) = reqwest::Client::builder()
-        .timeout(LOOKUP_TIMEOUT)
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-    else {
+    // Reuse one HTTP client across discovery lookups so TLS setup and pools are
+    // not rebuilt on every call. No proxy, as the agent's websocket to the same
+    // hub takes none; no redirects: the document is the hub's own, at its own address.
+    static HTTP: std::sync::OnceLock<Option<reqwest::Client>> = std::sync::OnceLock::new();
+    let Some(http) = HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(LOOKUP_TIMEOUT)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .ok()
+    }) else {
         return NOTHING;
     };
     let url = format!("{}{DISCOVERY_PATH}", web_origin(hub));

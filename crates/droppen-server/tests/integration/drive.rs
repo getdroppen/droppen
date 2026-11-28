@@ -1,7 +1,7 @@
 //! The rest of the session-driving surface: rename, archive, older transcript
 //! pages, subagent transcripts and the composer preferences.
 
-mod support;
+use crate::support;
 
 use std::io::Write;
 

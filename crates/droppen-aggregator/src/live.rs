@@ -173,7 +173,7 @@ impl Outbox {
         use std::sync::atomic::Ordering;
         let _ = self
             .bytes
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| Some(b.saturating_sub(len)));
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |b| Some(b.saturating_sub(len)));
     }
 
     /// Subscription `s` ended here (`frame` says why): the connection lets go of it.

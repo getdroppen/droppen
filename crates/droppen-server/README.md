@@ -74,7 +74,7 @@ cargo clippy -p droppen-server --all-targets --all-features -- -D warnings
   `Nullable<T>` / `Optional<T>` / `AnyValue` 这三个 zod 对齐包装和文档二进制的 `BinaryBody`。
 - **`crates/droppen-server/src/export.rs`** — `export-openapi` 命令。用与线上服务相同的路由注册（`app::routes`）调
   `GotchaRouter::into_openapi` 生成文档再写盘：不起服务、不占端口、没有请求，也就不再需要
-  实例锁或关掉登录守卫。`crates/droppen-server/tests/probe.rs` 守住线上文档与 `openapi/openapi.json` 一致，
+  实例锁或关掉登录守卫。`crates/droppen-server/tests/integration/probe.rs` 守住线上文档与 `openapi/openapi.json` 一致，
   `crates/droppen-server/src/export.rs` 的测试守住导出与线上文档一致。
 - **`crates/droppen-server/src/shutdown.rs`** — 服务端自己 serve 之后的停机流程：SIGINT/SIGTERM、放在 state 里的
   `CancellationToken`（让活着的 websocket 与 listener 同时收到停机），以及按序拆掉 feeds /
@@ -389,6 +389,6 @@ replay 只做一件事：把 `transcript` / `sidecar` 事件按原始时间轴�
 - `rust-embed` 的 derive 在目录缺失时直接让构建失败 → `crates/droppen-server/build.rs` 判断 `web/dist` 是否存在，
   以 `web_dist_missing` cfg 的形式交给 crate 选择占位实现。
 
-`crates/droppen-server/tests/probe.rs` 里有一条测试专门守住文档与声明的一致性：断言
+`crates/droppen-server/tests/integration/probe.rs` 里有一条测试专门守住文档与声明的一致性：断言
 `GET /api/sessions/{source}/{id}` 由 `errors(..)` 声明的 `404` 在、派生出的 `default` 不在，
 并把线上文档与 `openapi/openapi.json` 逐值比对。升级 gotcha 后先看它。

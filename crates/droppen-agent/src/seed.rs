@@ -324,6 +324,7 @@ impl FileSeedStore {
     }
 
     /// The newest staging, if any.
+    #[cfg(test)]
     pub(crate) fn staged(&self) -> Result<Option<StagedSeed>, String> {
         Ok(self.stagings()?.into_iter().max_by_key(|s| s.created_ms))
     }

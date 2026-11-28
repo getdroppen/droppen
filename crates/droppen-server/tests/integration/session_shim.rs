@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use droppen_provider::shim::{self, LinkError, Output, Sidecars, Spawn};
 
-mod common;
+use crate::common;
 
 /// Point `shim_program` at the binary cargo just built for this test.
 fn use_the_real_binary() {

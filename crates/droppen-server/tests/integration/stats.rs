@@ -4,7 +4,7 @@
 //! the window ends today by construction, so a literal date would fall out of it
 //! the day after it was written.
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::time::SystemTime;

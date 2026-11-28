@@ -123,7 +123,10 @@ impl Chats {
     pub fn new(paths: Arc<Paths>) -> Arc<Self> {
         Arc::new(Self {
             paths,
-            http: reqwest::Client::builder().build().expect("build the chat HTTP client"),
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("build the chat HTTP client"),
             lock: tokio::sync::Mutex::new(()),
         })
     }

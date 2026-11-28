@@ -25,7 +25,7 @@
 //! written by hand — because the point of this file is that the mechanism works,
 //! not that the code agrees with itself.
 
-mod support;
+use crate::support;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

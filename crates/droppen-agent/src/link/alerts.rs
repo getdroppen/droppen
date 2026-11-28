@@ -25,13 +25,14 @@ use droppen_base::time::now_ms_u64;
 /// cannot hold any of it back. A host renewing its identity key
 /// (`docs/host-identity-rotation.md` §3.4 "告警") is a note with the new
 /// fingerprint, as the device list shows it.
+#[cfg(test)]
 pub(crate) fn account_change(entry: &Entry, prev: Option<&Entry>) -> Option<String> {
     account_change_in(entry, prev, None)
 }
 
-/// [`account_change`], with what an ending renewal pause marker names
-/// (`paused`, from this agent's chain: [`pause_notice_edges`]): its start's
-/// removals, and for a completion only the control that comes back.
+/// Format an account-change alert for `entry`, with what an ending renewal
+/// pause marker names (`paused`, from this agent's chain: [`pause_notice_edges`]):
+/// its start's removals, and for a completion only the control that comes back.
 pub(crate) fn account_change_in(entry: &Entry, prev: Option<&Entry>, paused: Option<&[(String, Vec<String>)]>) -> Option<String> {
     let signer = match &entry.draft.signer {
         Signer::Device(id) => id.clone(),

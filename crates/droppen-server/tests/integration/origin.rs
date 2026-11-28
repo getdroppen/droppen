@@ -6,7 +6,7 @@
 //! request. What the tests pin down is therefore the *refusal* as much as the
 //! allowance — including that a tool with no `Origin` at all is unaffected.
 
-mod common;
+use crate::common;
 
 use common::header;
 use serde_json::Value;

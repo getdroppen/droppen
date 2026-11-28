@@ -19,8 +19,7 @@
 //! The CLI-backed half needs the fake `claude` on `PATH` and lives in
 //! `tests/chats_cli.rs`, in its own binary so the two fixtures stay separate.
 
-#[path = "common/mod.rs"]
-mod common;
+use crate::common;
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};

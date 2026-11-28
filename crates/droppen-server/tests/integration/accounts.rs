@@ -1,6 +1,6 @@
 //! The account store, over HTTP, against a synthetic home.
 
-mod support;
+use crate::support;
 
 use serde_json::{json, Value};
 use support::{common, Probe};

@@ -11,7 +11,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use serde_json::Value;
 
-mod common;
+use crate::common;
 
 use common::TestServer;
 

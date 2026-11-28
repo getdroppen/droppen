@@ -19,7 +19,7 @@
 //! ([`common::TestServer::start_guarded_at`]); everything else in this suite
 //! runs with it switched off.
 
-mod common;
+use crate::common;
 
 use common::header;
 use std::path::Path;

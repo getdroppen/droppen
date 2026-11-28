@@ -7,7 +7,7 @@
 //! variable of its own — so these tests never touch `PATH`. It gives every
 //! session it creates the same id, which is what two different agents may do.
 
-mod common;
+use crate::common;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use std::time::Duration;
 use common::TestServer;
 use serde_json::{json, Value};
 
-const FAKE_AGENT: &str = include_str!("support/fake_acp_agent.py");
+const FAKE_AGENT: &str = include_str!("../support/fake_acp_agent.py");
 /// The id the stand-in gives every session it creates.
 const SESSION: &str = "f00dfeed0123456789abcdef01234567";
 

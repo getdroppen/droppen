@@ -10,7 +10,7 @@
 //! blocks and its text files inlined — without a tool that could read anything
 //! else.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::time::{Duration, Instant};

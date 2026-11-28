@@ -505,15 +505,18 @@ pub(crate) fn validate_flags(rule: ModelRule, model: Option<&str>, effort: Optio
     if model.is_some_and(|model| !rule.admits(model)) {
         return Err("invalid model".to_string());
     }
-    let checks: [(&str, Option<&str>, &'static str, usize); 2] = [
-        ("effort", effort, r"^[a-z][a-z0-9_-]*$", 32),
-        ("permission", permission, r"^[A-Za-z][A-Za-z-]*$", 40),
-    ];
-    for (field, value, pattern, max_length) in checks {
-        let Some(value) = value else { continue };
-        let re = regex::Regex::new(pattern).expect("valid flag pattern");
-        if value.chars().count() > max_length || !re.is_match(value) {
-            return Err(format!("invalid {field}"));
+    static EFFORT_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static PERMISSION_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    if let Some(value) = effort {
+        let re = EFFORT_RE.get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9_-]*$").expect("valid effort pattern"));
+        if value.chars().count() > 32 || !re.is_match(value) {
+            return Err("invalid effort".to_string());
+        }
+    }
+    if let Some(value) = permission {
+        let re = PERMISSION_RE.get_or_init(|| regex::Regex::new(r"^[A-Za-z][A-Za-z-]*$").expect("valid permission pattern"));
+        if value.chars().count() > 40 || !re.is_match(value) {
+            return Err("invalid permission".to_string());
         }
     }
     Ok(())

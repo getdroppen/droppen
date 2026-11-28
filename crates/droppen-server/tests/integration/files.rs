@@ -7,7 +7,7 @@
 //! two implementations are meant to answer the same request identically, and a
 //! difference discovered by a user is a difference discovered too late.
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::time::{Duration, SystemTime};

@@ -447,8 +447,6 @@ mod tests {
     /// store one.
     #[tokio::test]
     async fn a_fired_task_records_the_permission_it_started_with() {
-        use std::sync::Arc;
-
         let dir = tempfile::tempdir().expect("tempdir");
         let (paths, drive) = crate::fake::drive(dir.path());
         let cwd = dir.path().join("workspace");

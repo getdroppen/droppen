@@ -1,6 +1,6 @@
 //! The quota panel: what the `/usage` probes cost, and how often they run.
 
-mod support;
+use crate::support;
 
 use std::time::SystemTime;
 

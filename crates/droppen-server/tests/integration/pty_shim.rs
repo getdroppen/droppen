@@ -28,7 +28,7 @@ use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-mod common;
+use crate::common;
 
 use common::sh;
 

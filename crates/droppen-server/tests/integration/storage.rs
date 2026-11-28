@@ -15,7 +15,7 @@
 //! job, and it is tested below too: an install upgrading from an older build is
 //! seeded from the file it already had, once.
 
-mod common;
+use crate::common;
 
 use droppen_instance::db::scope;
 use serde_json::{json, Value};
