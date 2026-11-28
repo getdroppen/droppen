@@ -91,9 +91,9 @@ function Plans({ signup }: { signup: SignupMode }) {
       <div className="mx-auto max-w-[68rem] px-6 pb-20 max-md:px-4 max-md:pb-16">
         <Card className="gap-0 overflow-hidden p-0">
           <div className="overflow-x-auto overscroll-x-contain">
-            <Table aria-label={t("Compare")} data-testid="compare-table" className="min-w-[48rem] table-fixed border-collapse text-left">
+            <Table aria-label={t("Compare")} data-testid="compare-table" className="min-w-[36rem] md:min-w-[44rem] table-fixed border-collapse text-left">
               <colgroup>
-                <col className="w-[14rem] max-md:w-[9rem]" />
+                <col className="w-[13rem] max-md:w-[8.5rem]" />
                 <col />
                 <col />
                 <col />

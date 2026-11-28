@@ -337,13 +337,13 @@ test("maintenance is folded after both paths, and the old anchors open the part 
 
 test("it reads in zh-CN, zh-TW and ja, with nothing left in English", () => {
   const cn = text(draw("zh-CN"));
-  assert.ok(cn.includes("下载 Droppen") && cn.includes("运行服务器") && cn.includes("管理安装"));
+  assert.ok(cn.includes("下载 Droppen") && cn.includes("命令行安装") && cn.includes("管理安装"));
   const tw = text(draw("zh-TW"));
-  assert.ok(tw.includes("下載 Droppen") && tw.includes("執行伺服器") && tw.includes("管理安裝"));
+  assert.ok(tw.includes("下載 Droppen") && tw.includes("指令行安裝") && tw.includes("管理安裝"));
   const jp = text(draw("ja"));
-  assert.ok(jp.includes("Droppen をダウンロード") && jp.includes("サーバーを動かす") && jp.includes("インストールの管理"));
+  assert.ok(jp.includes("Droppen をダウンロード") && jp.includes("コマンドラインでインストール") && jp.includes("インストールの管理"));
   for (const words of [cn, tw, jp]) {
-    assert.doesNotMatch(words, /Download Droppen|Run the server|Manage your installation|Nothing to install: any browser works/);
+    assert.doesNotMatch(words, /Download Droppen|Command-line install|Manage your installation|Nothing to install: any browser works/);
   }
 });
 

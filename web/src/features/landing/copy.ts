@@ -44,7 +44,7 @@ const LINES: readonly CopyRow[] = [
     "Agent 仍在電腦上執行。在手機或瀏覽器上核准權限、查看輸出、傳送指令，不必守在電腦前。",
     "Agent はコンピュータ上で動き続けます。スマホやブラウザから権限を承認し、出力を確認し、指示を送れます。デスクにいる必要はありません。",
   ],
-  ["Start free", "开始试用", "開始試用", "無料で始める"],
+  ["Start free", "免费开始", "免費開始", "無料で始める"],
   ["Sign up on the web", "在网页上注册", "在網頁上註冊", "Web で登録"],
   ["Open web app", "打开网页版", "開啟網頁版", "Web アプリを開く"],
   ["Join the waitlist", "加入等候名单", "加入等候名單", "ウェイトリストに登録"],
@@ -144,8 +144,8 @@ const LINES: readonly CopyRow[] = [
 
   [
     "Start free. Then install Droppen on your computer.",
-    "先开始试用，再在电脑上安装 Droppen。",
-    "先開始試用，再在電腦上安裝 Droppen。",
+    "免费开始，再在电脑上安装 Droppen。",
+    "免費開始，再在電腦上安裝 Droppen。",
     "まず無料で始めて、コンピュータに Droppen をインストールします。",
   ],
 
@@ -160,8 +160,8 @@ const LINES: readonly CopyRow[] = [
   ["All computers, one list.", "所有电脑，一个列表。", "所有電腦，一個清單。", "すべてのコンピュータを、ひとつのリストで。"],
   [
     "Connect Mac and Linux computers to one account. See all Claude Code and Codex sessions in real time. Tasks that need your input are marked.",
-    "将多台 Mac 和 Linux 电脑接入同一个账户。实时查看所有 Claude Code 和 Codex 会话。需要你确认的任务会标出来。",
-    "將多台 Mac 與 Linux 電腦接入同一個帳戶。即時查看所有 Claude Code 與 Codex 工作階段。需要你確認的任務會標示出來。",
+    "将多台 Mac 和 Linux 电脑接入同一个账号。实时查看所有 Claude Code 和 Codex 会话。需要你确认的任务会标出来。",
+    "將多台 Mac 與 Linux 電腦接入同一個帳號。即時查看所有 Claude Code 與 Codex 工作階段。需要你確認的任務會標示出來。",
     "複数の Mac と Linux コンピュータをひとつのアカウントに接続。すべての Claude Code と Codex セッションをリアルタイムで確認でき、対応が必要なタスクには印が付きます。",
   ],
   ["Code on the left, terminal on the right.", "左边代码，右边终端。", "左邊程式碼，右邊終端機。", "左にコード、右にターミナル。"],
@@ -216,7 +216,7 @@ const LINES: readonly CopyRow[] = [
     "{{pro}} 天離線查看 · {{gb}} GB 中繼流量",
     "オフライン閲覧 {{pro}} 日 · 中継 {{gb}} GB",
   ],
-  ["Compare all plans", "比较所有方案", "比較所有方案", "すべてのプランを比較"],
+  ["Compare all plans", "比较所有套餐", "比較所有套餐", "すべてのプランを比較"],
   ["Recommended", "推荐", "推薦", "おすすめ"],
   ["USD / month", "美元 / 月", "美元 / 月", "USD / 月"],
   ["Extra usage is billed", "超出部分按用量计费", "超出部分按用量計費", "超過分は従量課金"],

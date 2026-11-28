@@ -13,16 +13,17 @@ interface NetLabels {
 }
 
 function NetworkLive({ label, labels }: { label: string; labels: NetLabels }) {
+  const directPath = `M${PORTS.pc}C${PORTS.pc.split(" ")[0]} 120 220 72 300 72H640C700 72 735 110 ${PORTS.client}`;
+  const relayPath = `M${PORTS.pc}C250 193 285 220 350 220C395 220 390 156 ${PORTS.relayLeft}M${PORTS.relayRight}C510 162 545 205 610 205C670 205 690 160 ${PORTS.client}`;
   return (
     <svg viewBox={VIEW_BOX} role="img" aria-label={label} focusable="false" className="block h-auto w-full" fill="none" style={MODEL_STYLE}>
       <Ground />
-      {/* The direct path goes over the relay, not into it: a dashed line that meets
-          the relay's left port would read as a hop through the relay. */}
-      <path d={`M${PORTS.pc}C${PORTS.pc.split(" ")[0]} 120 220 72 300 72H640C700 72 735 110 ${PORTS.client}`} stroke={INK.muted} strokeWidth={1.1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
-      <DiagramText x={450} y={62} className="max-lg:hidden">{labels.direct}</DiagramText>
-      <path d={`M${PORTS.pc}C250 193 285 220 350 220C395 220 390 156 ${PORTS.relayLeft}M${PORTS.relayRight}C510 162 545 205 610 205C670 205 690 160 ${PORTS.client}`} stroke={INK.fg} strokeWidth={1.15} vectorEffect="non-scaling-stroke" />
+      {/* Direct is the preferred path (solid ink with the live packet); relay is the automatic fallback (dashed muted). */}
+      <path d={relayPath} stroke={INK.muted} strokeWidth={1.1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
       <DiagramText x={650} y={232} className="max-lg:hidden">{labels.relay}</DiagramText>
-      <MovingPacket path={`M${PORTS.pc}C250 193 285 220 350 220C395 220 390 156 ${PORTS.relayLeft}L${PORTS.relayRight}C510 162 545 205 610 205C670 205 690 160 ${PORTS.client}`} rest={{ x: 320, y: 220 }} duration={4.4} />
+      <path d={directPath} stroke={INK.fg} strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
+      <DiagramText x={450} y={62} ink="fg" className="max-lg:hidden">{labels.direct}</DiagramText>
+      <MovingPacket path={directPath} rest={{ x: 470, y: 72 }} duration={3.4} />
       <Computer />
       <Phone />
       <ServerRack />
