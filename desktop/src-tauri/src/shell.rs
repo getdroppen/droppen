@@ -131,6 +131,7 @@ struct Inner {
     token: Option<String>,
     path: String,
     booting: bool,
+    boot_thread: Option<std::thread::JoinHandle<()>>,
     /// Set by [`Shell::shutdown`]: a start still in progress must not leave a
     /// server running behind a quitting app.
     quitting: bool,
@@ -174,6 +175,8 @@ pub struct Shell {
     /// Held for every login and hand-off, so a restart and a re-login never
     /// race each other into two logins.
     connecting: Mutex<()>,
+    /// Serialises read-modify-write updates to `state.json`.
+    state_lock: Mutex<()>,
     relogins: Mutex<VecDeque<Instant>>,
     me: Weak<Shell>,
 }
@@ -257,6 +260,7 @@ impl Shell {
                 token: None,
                 path: String::new(),
                 booting: false,
+                boot_thread: None,
                 quitting: false,
                 shown_port: None,
                 handed_off: None,
@@ -266,6 +270,7 @@ impl Shell {
             }),
             ui,
             connecting: Mutex::new(()),
+            state_lock: Mutex::new(()),
             relogins: Mutex::new(VecDeque::new()),
             me: me.clone(),
         })
@@ -304,6 +309,7 @@ impl Shell {
         if self.port() != Some(port) {
             return;
         }
+        let _guard = self.state_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         match ShellState::remember_port(&self.dirs.state_file(), port) {
             Ok(true) => log::info!("port {port} kept for the next launch"),
             Ok(false) => {}
@@ -340,6 +346,23 @@ impl Shell {
 
     fn fail(&self, message: String) {
         log::error!("{message}");
+        // Stop supervision on terminal failure so a broken server is not restarted behind the error page; *Try again* starts fresh.
+        let supervisor = {
+            let mut inner = self.inner();
+            if inner.quitting {
+                None
+            } else {
+                inner.supervisor.take()
+            }
+        };
+        if let Some(supervisor) = supervisor {
+            let pid = supervisor.pid();
+            let stopped = supervisor.stop(STOP_GRACE);
+            log::info!("stopped server after failure: {stopped:?} (pid {pid:?})");
+            if let Some(pid) = pid {
+                PidRecord::clear(&self.dirs.pid_file(), pid);
+            }
+        }
         self.set_phase(Phase::Failed(message));
         self.ui.show_start_page();
     }
@@ -347,28 +370,34 @@ impl Shell {
     /// Start, or start again after *Try again*, on a thread of its own. Gives
     /// the login back its recoveries. A second call while one runs does nothing.
     pub fn boot(&self) {
-        {
-            let mut inner = self.inner();
-            if inner.booting || inner.quitting {
-                return;
-            }
-            inner.booting = true;
-            inner.budget = Budget::FULL;
-            inner.held_by = None;
-        }
         let Some(shell) = self.me.upgrade() else { return };
-        std::thread::Builder::new()
+        let mut inner = self.inner();
+        if inner.booting || inner.quitting {
+            return;
+        }
+        inner.booting = true;
+        inner.budget = Budget::FULL;
+        inner.held_by = None;
+        let handle = std::thread::Builder::new()
             .name("droppen-boot".into())
             .spawn(move || {
                 shell.set_phase(Phase::Starting);
                 let outcome = shell.try_boot();
-                shell.inner().booting = false;
+                let quitting = {
+                    let mut inner = shell.inner();
+                    inner.booting = false;
+                    inner.quitting
+                };
+                if quitting {
+                    return;
+                }
                 match outcome {
                     Ok(()) => shell.set_phase(Phase::Running),
                     Err(error) => shell.fail(error),
                 }
             })
             .expect("spawn the boot thread");
+        let _previous = inner.boot_thread.replace(handle);
     }
 
     fn try_boot(&self) -> Result<(), String> {
@@ -424,7 +453,7 @@ impl Shell {
         let shell = std::env::var("SHELL")
             .ok()
             .filter(|shell| shell.starts_with('/'))
-            .unwrap_or_else(|| "/bin/zsh".into());
+            .unwrap_or_else(default_shell);
         // In an AppImage, in the environment the server gets: the login
         // shell's PATH starts from AppRun's otherwise, which puts the mount's
         // folders first.
@@ -453,7 +482,11 @@ impl Shell {
         // loaded on it ([`Shell::loaded_on`]): until then the old port's origin
         // holds the login and the device keys, and a start that fails must go
         // back to it next time.
-        let saved = ShellState::load(&self.dirs.state_file()).port;
+        let state_file = self.dirs.state_file();
+        let saved = {
+            let _guard = self.state_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            ShellState::load(&state_file).port
+        };
         let port = port::pick(saved, &self.dirs.support).map_err(|error| format!("Droppen found no free port for its server: {error}"))?;
         if saved != Some(port) {
             log::info!("port {port} (was {saved:?}; kept once the window loads on it)");
@@ -462,10 +495,9 @@ impl Shell {
         }
         self.port.store(port, Ordering::SeqCst);
 
-        // What the app keeps across launches: an earlier login still to be
-        // removed is recorded there (the port only once the window loaded).
-        let state_file = self.dirs.state_file();
-        let mut state = ShellState::load(&state_file);
+        if self.inner().quitting {
+            return Err("Droppen is quitting.".into());
+        }
 
         // The account, before the server is ever up.
         let cli = self.cli(&path, port);
@@ -481,8 +513,15 @@ impl Shell {
         // memory too), while the account is app-internal from here on and so
         // never holds the instance behind a login nobody can pass.
         let login_name = accounts::legacy_username(std::env::var("USER").ok().as_deref());
+        let mut recorded_replaced: Option<String> = {
+            let _guard = self.state_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            ShellState::load(&state_file).replaced_login
+        };
         let record = |old: &str| {
             log::info!("the app's earlier login is {old}, from before its account was {APP_ACCOUNT}: moving to {APP_ACCOUNT}");
+            recorded_replaced = Some(old.to_string());
+            let _guard = self.state_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = ShellState::load(&state_file);
             state.replaced_login = Some(old.to_string());
             if let Err(error) = state.save(&state_file) {
                 log::warn!("cannot save the app state (the old login is removed this run all the same): {error}");
@@ -502,6 +541,9 @@ impl Shell {
             None => {}
         }
         let credential = ready.credential;
+        if self.inner().quitting {
+            return Err("Droppen is quitting.".into());
+        }
         // Until the marker records it, every start finishes the cleanup an
         // older build's first start may have left: that build inherited the
         // machine-wide accounts, and a start cut short before removing them
@@ -517,9 +559,12 @@ impl Shell {
 
         {
             let mut inner = self.inner();
+            if inner.quitting {
+                return Err("Droppen is quitting.".into());
+            }
             inner.path = path.clone();
             inner.credential = Some(credential);
-            inner.replaced_login = state.replaced_login.clone();
+            inner.replaced_login = recorded_replaced;
         }
         // Whatever an earlier server wrote must not vouch for this one.
         instance::forget_port(&self.instance_dir);
@@ -642,18 +687,30 @@ impl Shell {
             }
             // A start or a re-login in progress handles this server itself.
             let Ok(guard) = shell.connecting.try_lock() else { return };
-            let (needs_login, booting) = {
+            let (needs_login, booting, quitting) = {
                 let inner = shell.inner();
                 let failed = matches!(inner.phase, Phase::Failed(_));
-                (needs_login(inner.token.is_some(), failed, inner.shown_port, port), inner.booting)
+                (
+                    needs_login(inner.token.is_some(), failed, inner.shown_port, port),
+                    inner.booting,
+                    inner.quitting,
+                )
             };
-            if booting {
+            if booting || quitting {
                 return;
             }
             if !needs_login {
                 log::info!("server back on port {port}");
                 shell.inner().held_by = None;
                 shell.set_phase(Phase::Running);
+                return;
+            }
+            if !shell.count_relogin() {
+                shell.fail(format!(
+                    "Droppen keeps restarting and losing its sign-in on this device ({RELOGINS} times in {} minutes), so it stopped signing in \
+                     again by itself. Try again; if it keeps happening, quit Droppen and open it again.",
+                    RELOGIN_WINDOW.as_secs() / 60
+                ));
                 return;
             }
             log::info!("server back on port {port}; logging in again");
@@ -708,7 +765,7 @@ impl Shell {
                 continue;
             }
             match self.login_recovering(port) {
-                Ok(login) => break (port, login),
+                Ok((port, login)) => break (port, login),
                 Err(LoginFailure::Fatal(message)) => return Err(message),
                 Err(LoginFailure::Transient(why)) => {
                     last = why;
@@ -777,6 +834,7 @@ impl Shell {
                 }
                 self.inner().replaced_login = None;
                 let state_file = self.dirs.state_file();
+                let _guard = self.state_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 let mut state = ShellState::load(&state_file);
                 state.replaced_login = None;
                 if let Err(error) = state.save(&state_file) {
@@ -881,15 +939,16 @@ impl Shell {
 
     /// Log in with the stored password, spending the recoveries a refusal
     /// allows: one server restart (which clears a lockout, kept in memory by
-    /// the server), then one new password.
-    fn login_recovering(&self, port: u16) -> Result<Login, LoginFailure> {
+    /// the server), then one new password. Returns the port the login actually
+    /// succeeded on (a restart may move the server to a new port).
+    fn login_recovering(&self, port: u16) -> Result<(u16, Login), LoginFailure> {
         let credential = self
             .inner()
             .credential
             .clone()
             .ok_or_else(|| LoginFailure::Fatal("Droppen has no login for its server yet.".into()))?;
         match server::login(port, &credential.username, &credential.password) {
-            Ok(login) => return Ok(login),
+            Ok(login) => return Ok((port, login)),
             Err(ApiError::Refused) => log::warn!("the server refused the stored login"),
             Err(error) => return Err(LoginFailure::Transient(error.to_string())),
         }
@@ -898,13 +957,15 @@ impl Shell {
         // server keeps it in memory) and changes nothing else. Only if the
         // password itself is wrong does the app make a new one — which also
         // revokes every login of the account.
+        let mut active_port = port;
         if self.spend(|budget| &mut budget.lockout_restart) {
             log::warn!("restarting the server to clear a lockout (once per run)");
-            let Some(port) = self.restart_server(Duration::from_secs(60)) else {
+            let Some(restarted_port) = self.restart_server(Duration::from_secs(60)) else {
                 return Err(LoginFailure::Transient("the server did not come back after the restart".into()));
             };
-            match server::login(port, &credential.username, &credential.password) {
-                Ok(login) => return Ok(login),
+            active_port = restarted_port;
+            match server::login(active_port, &credential.username, &credential.password) {
+                Ok(login) => return Ok((active_port, login)),
                 Err(ApiError::Refused) => log::warn!("refused after a restart too: the stored password is probably not the account's"),
                 Err(error) => return Err(LoginFailure::Transient(error.to_string())),
             }
@@ -913,12 +974,12 @@ impl Shell {
         if self.spend(|budget| &mut budget.password_reset) {
             log::warn!("setting a new password for {} (once per run)", credential.username);
             let path = self.inner().path.clone();
-            let port = self.port().unwrap_or(port);
+            let port = self.port().unwrap_or(active_port);
             let credential = self
                 .reset_password(&credential.username, &self.cli(&path, port))
                 .map_err(LoginFailure::Fatal)?;
             match server::login(port, &credential.username, &credential.password) {
-                Ok(login) => return Ok(login),
+                Ok(login) => return Ok((port, login)),
                 Err(ApiError::Refused) => log::error!("the new password was refused too"),
                 Err(error) => return Err(LoginFailure::Transient(error.to_string())),
             }
@@ -1041,12 +1102,13 @@ impl Shell {
     }
 
     /// Stop everything, at quit: revoke the app's login, stop the server
-    /// (`SIGTERM`, then `SIGKILL` after the grace period), forget its pid.
+    /// (`SIGTERM`, then `SIGKILL` after the grace period), join any in-flight
+    /// boot thread so no server can start behind a quitting app, and forget its pid.
     pub fn shutdown(&self) {
-        let (supervisor, token) = {
+        let (supervisor, token, boot_thread) = {
             let mut inner = self.inner();
             inner.quitting = true;
-            (inner.supervisor.take(), inner.token.take())
+            (inner.supervisor.take(), inner.token.take(), inner.boot_thread.take())
         };
         if let (Some(token), Some(port)) = (token, self.port()) {
             match server::logout(port, &token) {
@@ -1062,7 +1124,36 @@ impl Shell {
                 PidRecord::clear(&self.dirs.pid_file(), pid);
             }
         }
+        if let Some(handle) = boot_thread {
+            if handle.thread().id() != std::thread::current().id() {
+                let _ = handle.join();
+            }
+        }
+        let late = self.inner().supervisor.take();
+        if let Some(supervisor) = late {
+            let pid = supervisor.pid();
+            let stopped = supervisor.stop(STOP_GRACE);
+            log::info!("late server stopped at quit: {stopped:?} (pid {pid:?})");
+            if let Some(pid) = pid {
+                PidRecord::clear(&self.dirs.pid_file(), pid);
+            }
+        }
         self.set_phase(Phase::Stopped);
+    }
+}
+
+fn default_shell() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "/bin/zsh".into()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if std::path::Path::new("/bin/bash").is_file() {
+            "/bin/bash".into()
+        } else {
+            "/bin/sh".into()
+        }
     }
 }
 

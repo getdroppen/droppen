@@ -41,7 +41,10 @@ pub use droppen_search_path::{base_dirs, build};
 /// or in `env` alone when given (an AppImage's, without what its AppRun set:
 /// `crate::appimage`).
 pub fn login_shell_path(shell: &Path, home: &Path, env: Option<&[(String, String)]>, timeout: Duration) -> Option<String> {
+    use std::os::unix::process::CommandExt;
+
     const MARK: &str = "__DROPPEN_PATH__";
+    const MAX_SHELL_OUTPUT: usize = 1024 * 1024;
     let mut command = Command::new(shell);
     if let Some(env) = env {
         command.env_clear().envs(env.iter().map(|(name, value)| (name, value)));
@@ -52,8 +55,10 @@ pub fn login_shell_path(shell: &Path, home: &Path, env: Option<&[(String, String
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .process_group(0)
         .spawn()
         .ok()?;
+    let pid = child.id();
     let mut stdout = child.stdout.take()?;
     // Read on a thread and stop at the closing marker rather than at EOF:
     // something a start-up file left running in the background can hold the
@@ -65,17 +70,34 @@ pub fn login_shell_path(shell: &Path, home: &Path, env: Option<&[(String, String
         loop {
             match stdout.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
-                Ok(read) => text.extend_from_slice(&chunk[..read]),
+                Ok(read) => {
+                    let room = MAX_SHELL_OUTPUT.saturating_sub(text.len());
+                    if room == 0 {
+                        break;
+                    }
+                    text.extend_from_slice(&chunk[..read.min(room)]);
+                }
             }
             if let Some(path) = fenced(&String::from_utf8_lossy(&text), MARK) {
                 let _ = send.send(path);
                 return;
             }
+            if text.len() >= MAX_SHELL_OUTPUT {
+                break;
+            }
         }
     });
     let path = receive.recv_timeout(timeout).ok();
-    // By pid, and only the shell this started; a no-op once it has exited.
+    // Kill the shell's own process group if still running so hung rc-file children do not survive.
     if matches!(child.try_wait(), Ok(None)) {
+        if let Ok(pgid) = libc::pid_t::try_from(pid) {
+            if pgid > 0 {
+                // SAFETY: `process_group(0)` made `pid` the leader of its own process group.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+            }
+        }
         let _ = child.kill();
     }
     let _ = child.wait();

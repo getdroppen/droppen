@@ -21,8 +21,50 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Roll a log over at this size, keeping one previous file (`.1`).
 pub const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
+struct LogWriter {
+    path: PathBuf,
+    file: Option<File>,
+    written: u64,
+    max_bytes: u64,
+}
+
+impl LogWriter {
+    fn open(path: &Path, max_bytes: u64) -> Self {
+        let file = open_append(path).ok();
+        let written = file.as_ref().and_then(|f| f.metadata().ok()).map(|m| m.len()).unwrap_or(0);
+        Self {
+            path: path.to_path_buf(),
+            file,
+            written,
+            max_bytes,
+        }
+    }
+
+    fn write_line(&mut self, bytes: &[u8]) {
+        if self.written.saturating_add(bytes.len() as u64) > self.max_bytes && self.written > 0 {
+            if let Some(mut file) = self.file.take() {
+                let _ = file.flush();
+            }
+            let _ = std::fs::rename(&self.path, rolled(&self.path));
+            self.file = open_append_no_rotate(&self.path).ok();
+            self.written = 0;
+        }
+        if let Some(file) = self.file.as_mut() {
+            if file.write_all(bytes).is_ok() {
+                self.written = self.written.saturating_add(bytes.len() as u64);
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        if let Some(file) = self.file.as_mut() {
+            let _ = file.flush();
+        }
+    }
+}
+
 struct FileLogger {
-    file: Mutex<Option<File>>,
+    writer: Mutex<LogWriter>,
     echo: bool,
 }
 
@@ -39,28 +81,24 @@ impl log::Log for FileLogger {
         if self.echo {
             eprint!("{line}");
         }
-        if let Ok(mut guard) = self.file.lock() {
-            if let Some(file) = guard.as_mut() {
-                let _ = file.write_all(line.as_bytes());
-            }
+        if let Ok(mut guard) = self.writer.lock() {
+            guard.write_line(line.as_bytes());
         }
     }
 
     fn flush(&self) {
-        if let Ok(mut guard) = self.file.lock() {
-            if let Some(file) = guard.as_mut() {
-                let _ = file.flush();
-            }
+        if let Ok(mut guard) = self.writer.lock() {
+            guard.flush();
         }
     }
 }
 
-/// Install the logger, writing to `path` (rolled first if it is too big).
-/// A second call, or a log file that cannot be opened, leaves stderr only.
+/// Install the logger, writing to `path` (rolled first if it is too big, and
+/// rolled online as it grows past [`MAX_LOG_BYTES`]). A second call, or a log
+/// file that cannot be opened, leaves stderr only.
 pub fn init(path: &Path, echo: bool) {
-    let file = open_append(path).ok();
     let logger = FileLogger {
-        file: Mutex::new(file),
+        writer: Mutex::new(LogWriter::open(path, MAX_LOG_BYTES)),
         echo,
     };
     if log::set_boxed_logger(Box::new(logger)).is_ok() {
@@ -69,7 +107,8 @@ pub fn init(path: &Path, echo: bool) {
 }
 
 /// Open `path` for appending, rolling it to `<path>.1` first when it has grown
-/// past [`MAX_LOG_BYTES`]. Used for the server's output too.
+/// past [`MAX_LOG_BYTES`]. Used when starting the server so a fresh run rolls
+/// an oversized `server.log`.
 ///
 /// The file is this user's alone (`0600`, made so if an earlier build left it
 /// wider), in a directory that is too (`0700`).
@@ -79,6 +118,16 @@ pub fn open_append(path: &Path) -> std::io::Result<File> {
     }
     if std::fs::metadata(path).map(|meta| meta.len() > MAX_LOG_BYTES).unwrap_or(false) {
         let _ = std::fs::rename(path, rolled(path));
+    }
+    open_append_no_rotate(path)
+}
+
+/// Open `path` for appending (`0600` in a `0700` directory) without rolling it:
+/// used by short-lived helper commands writing to `server.log` while the
+/// supervised server holds the file open.
+pub fn open_append_no_rotate(path: &Path) -> std::io::Result<File> {
+    if let Some(parent) = path.parent() {
+        crate::dirs::create_private_dir(parent)?;
     }
     let file = OpenOptions::new().create(true).append(true).mode(0o600).open(path)?;
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
@@ -178,5 +227,17 @@ mod tests {
         assert_eq!(mode(&older), 0o600);
         assert_eq!(mode(older.parent().expect("parent")), 0o700);
         assert_eq!(std::fs::read_to_string(&older).expect("read"), "before\nafter\n", "appended, not replaced");
+    }
+
+    #[test]
+    fn the_file_logger_rolls_online_past_the_limit() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("logs/desktop.log");
+        let mut writer = LogWriter::open(&path, 20);
+        writer.write_line(b"first-line-12345\n"); // 17 bytes
+        writer.write_line(b"second-line\n"); // 17 + 12 > 20 -> rolls first-line to .1
+        writer.flush();
+        assert_eq!(std::fs::read_to_string(&path).expect("current"), "second-line\n");
+        assert_eq!(std::fs::read_to_string(rolled(&path)).expect("rolled"), "first-line-12345\n");
     }
 }

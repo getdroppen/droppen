@@ -76,9 +76,27 @@ pub fn claim_waiting(dir: &Path, wait: Duration) -> io::Result<Claim> {
     }
 }
 
-/// Ask the running app to show its window. Whether it heard.
+/// Ask the running app to show its window. Whether it heard. Retries briefly
+/// in case the first launch just took the lock and has not bound `app.sock` yet.
 pub fn ask_to_show(dir: &Path) -> bool {
-    let Ok(mut stream) = UnixStream::connect(dir.join("app.sock")) else {
+    let socket = dir.join("app.sock");
+    let mut stream = None;
+    for attempt in 0..5 {
+        match UnixStream::connect(&socket) {
+            Ok(connected) => {
+                stream = Some(connected);
+                break;
+            }
+            Err(error)
+                if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused)
+                    && attempt < 4 =>
+            {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => return false,
+        }
+    }
+    let Some(mut stream) = stream else {
         return false;
     };
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
