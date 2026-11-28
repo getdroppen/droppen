@@ -82,6 +82,12 @@ impl Source {
             Source::Acp => "acp",
         }
     }
+
+    /// Parse a wire name (`"claude"`, `"codex"`, `"acp"`), staying in lockstep
+    /// with `Source`'s serde representation.
+    pub fn parse(raw: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(raw.to_string())).ok()
+    }
 }
 
 impl std::fmt::Display for Source {

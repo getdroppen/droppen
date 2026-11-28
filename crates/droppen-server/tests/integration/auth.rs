@@ -1328,13 +1328,15 @@ async fn the_notify_capability_opens_its_one_route_and_no_other() {
     assert_eq!(status, 400, "a claude session's token reaches the handler: {body}");
     let (status, body) = json_as(&server, "POST", "/api/notify", &mint(DEFAULT_INSTANCE, "codex/019a"), &nudge).await;
     assert_eq!(status, 400, "so does a codex session's: {body}");
+    let (status, body) = json_as(&server, "POST", "/api/notify", &mint(DEFAULT_INSTANCE, "acp/abc"), &nudge).await;
+    assert_eq!(status, 400, "and an acp session's: {body}");
 
     let encoded = serde_json::to_vec(&nudge).expect("encode");
     let (status, _) = server.request("POST", "/api/notify", &[("Content-Type", "application/json")], &encoded).await;
     assert_eq!(status, 401, "no token");
     for (token, what) in [
         (mint("staging", "claude/abc"), "a token another instance minted"),
-        (mint(DEFAULT_INSTANCE, "acp/abc"), "a token for a session of no CLI the capability knows"),
+        (mint(DEFAULT_INSTANCE, "gemini/abc"), "a token for a session of no CLI the capability knows"),
         (mint(DEFAULT_INSTANCE, "claude/"), "a token for no session"),
         ("rhn1.abc.def".to_string(), "a token nobody minted"),
     ] {

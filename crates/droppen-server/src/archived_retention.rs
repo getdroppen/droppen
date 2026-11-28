@@ -23,7 +23,9 @@ use droppen_instance::instance::InstanceLock;
 use droppen_instance::paths::Paths;
 use droppen_provider::ProviderRegistry;
 use droppen_sessions::purge::forget_settled;
-use droppen_sessions::{Purged, Source};
+use droppen_sessions::Purged;
+#[cfg(test)]
+use droppen_sessions::Source;
 use droppen_workbench::prefs::PrefsStore;
 use tokio_util::sync::CancellationToken;
 
@@ -45,34 +47,7 @@ pub async fn purge_once(paths: &Paths, providers: &ProviderRegistry, refresh: &R
     let cutoff = now_ms() - window;
 
     let mut total = Purged::default();
-    // Only work in flight keeps a transcript: an idle resident may still be
-    // alive after an archive, and skipping on its mere presence would keep the
-    // transcript until the server restarts. Codex and ACP archive only from
-    // idle and close their driver, so their `resident` is already `None`.
-    //
-    // Claude's registrations are shared through `~/.claude/sessions`, so a
-    // session resumed in somebody's terminal — or by a sibling instance on the
-    // shared local root — is in `live` and is not deleted under the running
-    // CLI. A registration exists for the whole life of a CLI, idle included,
-    // and every resident this server started has one too, so a registration
-    // only vetoes when this registry holds no resident for the id: an idle
-    // resident of ours is exactly the case retention must still delete.
-    let live = droppen_provider_claude_code::sessions::claude::live_claude_sessions(paths).await;
-    // Bound once so the source names below stay out of the layer count
-    // (`layers.json`'s `sourceMatches`, held by a gate test).
-    let (claude_source, acp_source, codex_source) = (Source::Claude, Source::Acp, Source::Codex);
-    let claude_skip = |id: &str| {
-        work_in_flight(providers, claude_source, id)
-            || (live.contains_key(id) && providers.resident_state(claude_source, id).is_none())
-    };
-    let acp_skip = |id: &str| work_in_flight(providers, acp_source, id);
-    let codex_skip = |id: &str| work_in_flight(providers, codex_source, id);
-
-    let claude = droppen_provider_claude_code::sessions::claude::archive::purge_archived(paths, cutoff, &claude_skip).await;
-    let acp = droppen_provider_acp::sessions::purge_archived(paths, cutoff, &acp_skip).await;
-    let codex = droppen_provider_codex::sessions::purge::purge_archived(paths, cutoff, &codex_skip).await;
-
-    for (source, purged) in [(Source::Claude, claude), (Source::Acp, acp), (Source::Codex, codex)] {
+    for (source, purged) in providers.purge_archived(paths, cutoff).await {
         for id in &purged.ids {
             forget_settled(paths, source, id).await;
         }
@@ -91,14 +66,6 @@ pub async fn purge_once(paths: &Paths, providers: &ProviderRegistry, refresh: &R
         );
     }
     total
-}
-
-/// Whether this server has work in flight for the session, which the CLI could
-/// still write to.
-fn work_in_flight(providers: &ProviderRegistry, source: Source, id: &str) -> bool {
-    providers.resident_state(source, id).is_some_and(|state| {
-        state.phase != droppen_provider::Phase::Idle || state.queued > 0 || state.background > 0 || state.awaiting_background
-    })
 }
 
 /// Start the hourly pass. Returns immediately; the task stops on `cancel`.
@@ -258,7 +225,7 @@ mod tests {
     }
 
     fn providers(home: &Path) -> Arc<ProviderRegistry> {
-        ProviderRegistry::new(injection_registry(home), |_, _| {})
+        ProviderRegistry::new(injection_registry(home), crate::app::register_providers)
     }
 
     async fn with_pref(paths: &Paths, retention: ArchivedRetention) {

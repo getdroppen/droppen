@@ -978,6 +978,7 @@ mod tests {
             chat_attachments: true,
             chat_inline_attachments: true,
             schedules: true,
+            rotations: true,
         };
         assert_eq!(providers.capabilities(Source::Claude), all);
         assert_eq!(
@@ -986,6 +987,7 @@ mod tests {
                 questions: false,
                 permissions: false,
                 chat_inline_attachments: false,
+                rotations: false,
                 ..all
             }
         );

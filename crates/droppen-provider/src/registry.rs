@@ -51,6 +51,24 @@ pub trait Provider: Send + Sync {
     /// ([`ContinueError::Unsupported`]), its sessions switching accounts in
     /// place.
     fn continue_on_account<'a>(&'a self, id: &'a str, new_id: &'a str) -> BoxFuture<'a, Result<PathBuf, ContinueError>>;
+
+    /// Permanently delete archived transcripts older than `cutoff_ms` for this
+    /// provider, skipping any session with work in flight.
+    fn purge_archived<'a>(
+        &'a self,
+        _paths: &'a droppen_instance::paths::Paths,
+        _cutoff_ms: i64,
+    ) -> BoxFuture<'a, droppen_sessions::Purged> {
+        Box::pin(std::future::ready(droppen_sessions::Purged::default()))
+    }
+}
+
+/// Whether a session's resident state indicates work in flight that a
+/// retention purge must not delete underneath a running CLI.
+pub fn has_work_in_flight(state: Option<&ResidentState>) -> bool {
+    state.is_some_and(|state| {
+        state.phase != super::Phase::Idle || state.queued > 0 || state.background > 0 || state.awaiting_background
+    })
 }
 
 /// Why a session could not be continued on an account
@@ -93,6 +111,9 @@ pub struct Capabilities {
     pub chat_inline_attachments: bool,
     /// Scheduled tasks can run on it.
     pub schedules: bool,
+    /// Its sessions support automatic account rotation and continuation from
+    /// the local login root.
+    pub rotations: bool,
 }
 
 /// A message for one of a provider's sessions.
@@ -532,6 +553,21 @@ impl ProviderRegistry {
             Some(run) => run.archive(&self.gate, id).await,
             None => Err(format!("no provider runs {source} sessions")),
         }
+    }
+
+    /// Permanently delete archived transcripts older than `cutoff_ms` across
+    /// every registered provider.
+    pub async fn purge_archived(
+        &self,
+        paths: &droppen_instance::paths::Paths,
+        cutoff_ms: i64,
+    ) -> Vec<(Source, droppen_sessions::Purged)> {
+        let mut results = Vec::with_capacity(self.providers.len());
+        for (&source, provider) in &self.providers {
+            let purged = provider.purge_archived(paths, cutoff_ms).await;
+            results.push((source, purged));
+        }
+        results
     }
 }
 
