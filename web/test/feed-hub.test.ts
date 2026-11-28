@@ -8,7 +8,7 @@
 // channels it carried and the next one re-subscribes them; and silence closes a
 // socket that only looks open.
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { compressionAllowed, FeedHub, HEARTBEAT_MS, hubBackoff, SILENCE_MS, type FeedHubDeps, type HubSocket } from "../src/app/feed-hub.js";
 import { homeMachine, openMachine, transportFor } from "../src/lib/machines/registry.js";
@@ -43,7 +43,12 @@ class FakeSocket implements HubSocket {
   }
 }
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function advance(t: TestContext, ms: number) {
+  t.mock.timers.tick(ms);
+  await flush();
+}
 
 /** Wait for `cond`; `ms` only keeps a broken test from hanging (it is no claim about how fast). */
 async function until(cond: () => boolean, what: string, ms = 10_000): Promise<void> {
@@ -186,6 +191,7 @@ test("compressed frames are read in order with the text frames around them", asy
 });
 
 test("a dropped connection closes its channels, and the next one re-subscribes the feeds that come back", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hub, sockets, events } = harness();
   t.after(() => hub.stop());
   await flush();
@@ -202,7 +208,7 @@ test("a dropped connection closes its channels, and the next one re-subscribes t
   // The feed comes back while the hub is still reconnecting: it waits.
   const again = hub.open({ source: "claude", id: "a", since: 9, fp: "f" })!;
   assert.equal(again.readyState, 0);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await advance(t, 300);
   assert.equal(sockets.length, 2, "reconnected after the backoff");
   sockets[1]!.open();
   assert.equal(sockets[1]!.sent.length, 1, "re-asked for the moment the new socket opens");
@@ -212,6 +218,7 @@ test("a dropped connection closes its channels, and the next one re-subscribes t
 });
 
 test("kick probes a socket that only looks open, and replaces it when nothing answers", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hub, sockets } = harness({ probeMs: 20 });
   t.after(() => hub.stop());
   await flush();
@@ -219,10 +226,13 @@ test("kick probes a socket that only looks open, and replaces it when nothing an
   sockets[0]!.frame({ type: "hello", features: ["sub", "ping"], compress: null });
   hub.kick();
   assert.deepEqual(sockets[0]!.sent.at(-1), { type: "ping" }, "the page coming back asks the socket to prove it");
-  await until(() => sockets.length === 2, "replaced after the wake probe", 1_500);
+  await advance(t, 20);
+  await advance(t, 300);
+  assert.equal(sockets.length, 2, "replaced after the wake probe");
 });
 
 test("kick keeps a socket that answers the probe", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hub, sockets } = harness({ probeMs: 20 });
   t.after(() => hub.stop());
   await flush();
@@ -230,7 +240,7 @@ test("kick keeps a socket that answers the probe", async (t) => {
   sockets[0]!.frame({ type: "hello", features: ["sub", "ping"], compress: null });
   hub.kick();
   sockets[0]!.frame({ type: "pong" });
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await advance(t, 150);
   assert.equal(sockets.length, 1, "it answered: it lived through the pause");
   assert.equal(sockets[0]!.readyState, 1);
 });
@@ -360,6 +370,7 @@ test("a socket that only looks open is pinged, and closed once it has been silen
 // `onopen`, so its retry streak never reset — every later hub drop grew its
 // backoff towards eight seconds and set off an auth check every third time.
 test("a channel opened on a live hub resets its feed's retry streak", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hub, sockets } = harness();
   t.after(() => hub.stop());
   await flush();
@@ -386,10 +397,10 @@ test("a channel opened on a live hub resets its feed's retry streak", async (t) 
   await flush();
   for (let i = 0; i < 3; i++) {
     sockets.at(-1)!.close(); // the hub drops; the feed backs off and comes back
-    await new Promise((resolve) => setTimeout(resolve, 300)); // the hub's backoff (random 0: 250 ms)
+    await advance(t, 300); // the hub's backoff (random 0: 250 ms)
     sockets.at(-1)!.open();
     sockets.at(-1)!.frame({ type: "hello", features: ["sub"], compress: null });
-    await new Promise((resolve) => setTimeout(resolve, 600)); // the feed's (500 ms): onto a live hub
+    await advance(t, 600); // the feed's (500 ms): onto a live hub
   }
   assert.deepEqual(streaks, [1, 1, 1], "each drop starts the streak over, because each reconnect was heard");
 });
@@ -422,6 +433,7 @@ test("silence gives the socket up at once, even if it never reports closing", as
 });
 
 test("a frame still decoding for a replaced socket neither holds up nor leaks into the next", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let release: (() => void) | undefined;
   const { hub, sockets, frames } = harness({
     inflate: (data) =>
@@ -435,7 +447,7 @@ test("a frame still decoding for a replaced socket neither holds up nor leaks in
   sockets[0]!.frame({ type: "hello", features: ["sub"], compress: "deflate-raw" });
   sockets[0]!.binary({ type: "sessions:snapshot", sessions: [], from: "old" });
   sockets[0]!.close();
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await advance(t, 300);
   sockets[1]!.open();
   sockets[1]!.frame({ type: "hello", features: ["sub"], compress: "deflate-raw" });
   sockets[1]!.frame({ type: "sessions:delta", from: "new" });
@@ -525,6 +537,7 @@ function poolOver(hub: FeedHub, idleSockets = 2) {
 }
 
 test("a tree going away cleans up the list before the transcript in it: the transcript's feed does not bring the socket back", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hub, sockets } = harness();
   const pool = poolOver(hub);
   t.after(() => {
@@ -545,12 +558,13 @@ test("a tree going away cleans up the list before the transcript in it: the tran
   release();
   // The feed's channel was dropped while it was still watched: it retries
   // after half a second. Nothing may open a socket for it.
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  await advance(t, 700);
   assert.equal(sockets.length, 1, "no socket reopened for a list that has stopped");
   assert.equal(sockets[0]!.readyState, 3);
 });
 
 test("away and back: the list comes back from a new connection's snapshot, never from frames kept while nobody listened", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const { hub, sockets, frames } = harness();
   const pool = poolOver(hub);
   t.after(() => {
@@ -565,7 +579,7 @@ test("away and back: the list comes back from a new connection's snapshot, never
   await flush();
   hub.stop();
   release();
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  await advance(t, 700);
   // Whatever socket exists now and says anything, says it to nobody.
   for (const socket of sockets.slice(1)) {
     socket.open();
