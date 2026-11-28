@@ -714,24 +714,34 @@ pub async fn list_codex_sessions(paths: &Paths) -> Vec<SessionSummary> {
 
 /// Every thread id with a rollout file, or `None` when there is no corpus.
 ///
-/// A rollout in either form: one Codex compressed is not one that is gone.
+/// Scans both `~/.codex/sessions` and `~/.codex/archived_sessions`, and accepts
+/// a rollout in either form: one Codex archived or compressed is not one that
+/// is gone.
 ///
 /// `None` and an empty set are different answers and the caller depends on it:
 /// no `~/.codex/sessions` at all means codex has never run here, which is no
 /// evidence that any particular thread is gone. See
 /// [`super::codex_claims::prune`], the only caller.
 pub(super) async fn rollout_ids(paths: &Paths) -> Option<HashSet<String>> {
-    let dir = paths.codex_sessions();
-    if !tokio::fs::try_exists(&dir).await.unwrap_or(false) {
+    let sessions = paths.codex_sessions();
+    if !tokio::fs::try_exists(&sessions).await.unwrap_or(false) {
         return None;
     }
-    Some(
-        collect_session_files(&dir)
-            .await
-            .iter()
-            .filter_map(|(name, _)| id_from_file_name(name))
-            .collect(),
-    )
+    let archived = paths.codex_dir().join("archived_sessions");
+    let mut ids: HashSet<String> = collect_session_files(&sessions)
+        .await
+        .iter()
+        .filter_map(|(name, _)| id_from_file_name(name))
+        .collect();
+    if tokio::fs::try_exists(&archived).await.unwrap_or(false) {
+        ids.extend(
+            collect_session_files(&archived)
+                .await
+                .iter()
+                .filter_map(|(name, _)| id_from_file_name(name)),
+        );
+    }
+    Some(ids)
 }
 
 /// The overlays a listing and a single-row lookup both apply to Codex rows.
