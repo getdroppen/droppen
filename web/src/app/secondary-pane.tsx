@@ -423,6 +423,7 @@ export function PaneLeafContent({
   /** The device a picker naming none picks from (default: the home). */
   defaultMachine?: MachineKey;
 }) {
+  const { t: tr } = useTranslation();
   const home = useHomeMachine();
   const mixed = usePaneTreeMixed();
   // Re-rendered as devices come and go: a pane's device may leave the page.
@@ -460,7 +461,7 @@ export function PaneLeafContent({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border bg-panel px-2">
           <SquaresFourIcon className="size-3.5 shrink-0 text-faint" />
-          <span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted">pick content for this pane</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-2xs text-muted">{tr("pick content for this pane")}</span>
           <PaneActions content={content} onSwitch={() => undefined} onClose={onClose} />
         </header>
         <PanePicker
@@ -544,9 +545,9 @@ function PaneActions({
           title={tr("change content")}
           aria-label={tr("change content")}
           onClick={onSwitch}
-          className="shrink-0 rounded px-1.5 py-0.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
+          className="shrink-0 px-1.5 py-0.5 font-mono text-2xs text-muted hover:bg-hover hover:text-fg"
         >
-          switch
+          {tr("switch")}
         </button>
       )}
       <button

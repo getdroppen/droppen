@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { useMachineNavigate } from "@/app/machine-route";
@@ -47,6 +48,8 @@ export function TerminalsView() {
   });
   const terminals = data?.terminals ?? [];
 
+  const [createError, setCreateError] = useState<string | null>(null);
+
   const create = useMutation({
     mutationFn: async () => {
       const res = await api.POST("/api/terminals", { body: {} });
@@ -54,11 +57,12 @@ export function TerminalsView() {
       return res.data;
     },
     onSuccess: (t) => {
+      setCreateError(null);
       void queryClient.invalidateQueries({ queryKey: mq(machine, "terminals") });
       void navigate({ to: "/terminals", search: { id: t.id } });
     },
     // The server's own sentence when it wrote one (`hint`), else its code.
-    onError: (err: Error) => window.alert(`create failed: ${errorText(err)}`),
+    onError: (err: Error) => setCreateError(tr("create failed: {{msg}}", { msg: errorText(err) })),
   });
 
   const rename = useMutation({
@@ -121,7 +125,7 @@ export function TerminalsView() {
               type="button"
               title={tr("new terminal")}
               onClick={() => create.mutate()}
-              className="flex size-5 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
+              className="flex size-5 items-center justify-center text-muted hover:bg-hover hover:text-fg"
             >
               <PlusIcon className="size-3.5" />
             </button>
@@ -154,7 +158,7 @@ export function TerminalsView() {
               <ContextMenuContent>
                 <ContextMenuItem onClick={() => doRename(t)}>{tr("rename")}</ContextMenuItem>
                 <ContextMenuItem onClick={() => void navigator.clipboard.writeText(t.id)}>
-                  copy terminal id
+                  {tr("copy terminal id")}
                 </ContextMenuItem>
                 <ContextMenuItem danger onClick={() => kill.mutate(t.id)}>
                   {tr("kill terminal")}
@@ -162,13 +166,18 @@ export function TerminalsView() {
               </ContextMenuContent>
             </ContextMenu>
           ))}
+          {createError && (
+            <div data-signal="failed" className="border-b border-border px-3 py-2 font-mono text-2xs text-danger">
+              {createError}
+            </div>
+          )}
           {!isPending && error && (
             <div data-testid="terminals-error" className="p-3 text-2xs text-warn">
               {errorText(error)}
             </div>
           )}
           {!isPending && !error && terminals.length === 0 && (
-            <div className="p-3 text-2xs text-faint">no terminals — create one with +</div>
+            <div className="p-3 text-2xs text-faint">{tr("no terminals — create one with +")}</div>
           )}
         </div>
       </Panel>
@@ -179,7 +188,7 @@ export function TerminalsView() {
               type="button"
               title={tr("back to terminal list")}
               onClick={() => void navigate({ to: "/terminals", search: {} })}
-              className="flex size-6 shrink-0 items-center justify-center rounded text-muted hover:bg-hover"
+              className="flex size-6 shrink-0 items-center justify-center text-muted hover:bg-hover"
             >
               <CaretLeftIcon className="size-4" />
             </button>
@@ -192,7 +201,7 @@ export function TerminalsView() {
           ))}
           {!activeId && (
             <div className="flex h-full items-center justify-center font-mono text-xs text-faint">
-              select or create a terminal
+              {tr("select or create a terminal")}
             </div>
           )}
         </div>

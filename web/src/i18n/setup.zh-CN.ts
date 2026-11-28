@@ -48,7 +48,7 @@ export const setupZhCN: Record<string, string> = {
   "That link works only on the device itself, not through Droppen.": "这个链接只能在这台设备本身上使用，不能经由 Droppen。",
   /* the first account, made by this device's owner without the code */
   "You opened this page as this device's owner. This device has no account yet: create one to sign in from other devices; from then on every browser signs in, this one too.":
-    "你以这台设备主人的身份打开了这个页面。这台设备还没有账号：创建一个，就能从其它设备登录；从那以后每个浏览器都要登录，包括这一个。",
+    "你以这台设备主人的身份打开了这个页面。这台设备还没有账号：创建一个，就能从其他设备登录；从那以后每个浏览器都要登录，包括这一个。",
   "The setup code is needed now. `{{command}} setup-code` on this device shows it, or run `{{command}} open` there again.":
     "现在需要设置码。在这台设备上运行 `{{command}} setup-code` 可以查看，或者在那里重新运行 `{{command}} open`。",
   "That name belongs to the Droppen app's own account on this device. Pick another.": "这个名字已被这台设备上 Droppen App 自己的账号占用，请换一个。",

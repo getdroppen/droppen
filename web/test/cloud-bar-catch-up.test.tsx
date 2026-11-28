@@ -76,7 +76,7 @@ test("the session list while only the index catches up; sessions x/y once sessio
   assert.equal(sessions?.text, "updating from hub · sessions 3/7");
   assert.equal(sessions?.title, "recent sessions kept on this device: 3 of 7 up to date", "the tooltip says what the 7 is");
   assert.equal(catchUpText(SESSIONS, zh, NOW)?.text, "正在从云端更新 · 会话 3/7");
-  assert.equal(catchUpText(SESSIONS, zh, NOW)?.title, "本设备保留的最近会话：7 个中 3 个已是最新");
+  assert.equal(catchUpText(SESSIONS, zh, NOW)?.title, "这台设备保留的最近会话：7 个中 3 个已是最新");
 
   // y is every session followed now, a failing or waiting one too; the index catching up as well does not hide the count.
   const mixed = progress({ catchingUp: counts(1, 0, 2), waiting: counts(0, 0, 1), retrying: counts(0, 0, 1), synced: counts(0, 1, 3) });
@@ -90,7 +90,7 @@ test("a percentage while a big download runs: big by its pages or by how long it
   assert.equal(big?.text, "updating from hub · sessions 3/7 · 42%", "17 of 40 pages: rounded down, never ahead of itself");
   assert.equal(big?.title, "recent sessions kept on this device: 3 of 7 up to date · 17 of 40 pieces fetched");
   assert.equal(catchUpText(downloading(SESSIONS, 17, 40), zh, NOW)?.text, "正在从云端更新 · 会话 3/7 · 42%");
-  assert.equal(catchUpText(downloading(SESSIONS, 17, 40), zh, NOW)?.title, "本设备保留的最近会话：7 个中 3 个已是最新 · 40 块中已取回 17 块");
+  assert.equal(catchUpText(downloading(SESSIONS, 17, 40), zh, NOW)?.title, "这台设备保留的最近会话：7 个中 3 个已是最新 · 40 块中已取回 17 块");
   assert.equal(catchUpText(downloading(INDEX, 4, 10), en, NOW)?.text, "updating from hub · session list · 40%");
 
   // A small one says no percentage, until it has run for a while.

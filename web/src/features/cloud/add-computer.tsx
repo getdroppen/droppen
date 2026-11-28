@@ -242,6 +242,9 @@ export function CodeRoundView({
         <code data-testid="enroll-stdin-command" className="border border-border bg-raised px-2.5 py-2 font-mono text-2xs break-all text-fg select-all">
           {stdinCommand}
         </code>
+        <div className="flex">
+          <CopyButton text={stdinCommand} label={t("copy command")} />
+        </div>
       </div>
       <div className={cn(pad, "flex flex-col gap-3")}>
         <CapsLabel>{t("02 · waiting for it")}</CapsLabel>

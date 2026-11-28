@@ -4,14 +4,14 @@
 export const linkHandoffZhCN: Record<string, string> = {
   // The device's page.
   "Check that the fingerprint there matches this one, then add this device.": "核对那边显示的指纹和这里一致，然后加入这台设备。",
-  "Come back here: this device joins your account by itself.": "回到这里，这台设备会自己加入你的账户。",
+  "Come back here: this device joins your account by itself.": "回到这里，这台设备会自己加入你的账号。",
   "waiting for droppen.app… the link works for another {{left}}": "等待 droppen.app… 链接还能用 {{left}}",
   "waiting for droppen.app…": "等待 droppen.app…",
   "open the browser again": "重新打开浏览器",
   "copy link": "复制链接",
   "The wrong browser opened? Copy the link into the one you use droppen.app in, on this device.": "打开的不是你常用的浏览器？复制链接，粘贴到这台设备上你登录 droppen.app 的那个浏览器里。",
   "Whoever opens this link can add this device to their own Droppen account: never send it to anyone, and open it only on this device.":
-    "谁打开这个链接，谁就能把这台设备加进自己的 Droppen 账户：不要发给任何人，只在这台设备上打开。",
+    "谁打开这个链接，谁就能把这台设备加进自己的 Droppen 账号：不要发给任何人，只在这台设备上打开。",
   "continue in a browser tab instead": "改在浏览器标签页里继续",
   // droppen.app's /link.
   "handing the code to the device…": "正在把注册码交给设备…",
@@ -38,7 +38,7 @@ export const linkHandoffZhCN: Record<string, string> = {
   "This sign-in is no longer open on this device: it was used, cancelled or started again. If it did not finish, start again from Droppen on this device.":
     "这台设备上已没有这次登录：它已被使用、取消或重新开始。如果没有完成，请在这台设备的 Droppen 里重新开始。",
   "This answer does not belong to the sign-in open on this device. Nothing was added.": "这个答复不属于这台设备上正在进行的登录。没有加入任何设备。",
-  "This device is in a Droppen account already.": "这台设备已经在一个 Droppen 账户里了。",
+  "This device is in a Droppen account already.": "这台设备已经在一个 Droppen 账号里了。",
   "This device could not reach droppen.app. Check its connection, then start again from Droppen on this device.":
     "这台设备连不上 droppen.app。请检查网络，然后在这台设备的 Droppen 里重新开始。",
   "Droppen on this device did not answer. Is it still running?": "这台设备上的 Droppen 没有响应。它还在运行吗？",

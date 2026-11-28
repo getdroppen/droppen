@@ -11,13 +11,13 @@ export const crossDeviceZhCN: Record<string, string> = {
   "set as main device": "设为主设备",
   "The main device keeps your screens and layouts.": "主设备保存你的屏幕与布局。",
   "this device is not on this page": "这台设备不在本页",
-  "It may have been removed from the account, or the link is from another account.": "它可能已从账户中移除，或者这个链接来自另一个账户。",
+  "It may have been removed from the account, or the link is from another account.": "它可能已从账号中移除，或者这个链接来自另一个账号。",
   "offline — a new session needs it online": "离线 — 新建会话需要它在线",
   "waiting for another of your devices to confirm": "等待你的另一台设备确认",
   "this device does not accept control from this browser": "这台设备不接受这个浏览器的控制",
   "on this device: {{name}}": "所在设备：{{name}}",
   "The device that keeps this screen runs an older Droppen and cannot keep panes of other devices: they went back to it. Update it, then choose them again.":
-    "保存这个屏幕的设备上 Droppen 版本较旧，存不下其它设备的窗格，这些窗格已回到它自己。升级它之后再重新选择。",
+    "保存这个屏幕的设备上 Droppen 版本较旧，存不下其他设备的窗格，这些窗格已回到它自己。升级它之后再重新选择。",
   // The local app showing other devices through its gateway (S1-7, features/gateway, the sessions list).
   "read-only here: this session is on another device": "只读：这个会话在另一台设备上",
   "there is no copy of this session on this device yet": "这台设备上还没有这个会话的副本",

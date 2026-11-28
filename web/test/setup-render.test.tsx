@@ -286,7 +286,7 @@ test("step 02 shows how the sign-in stands under the choices, with one primary o
   );
   assert.match(drawWhere({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }), /data-choice="droppen"/);
   const zh = draw(<WhereStep progress={started} tools={undefined} online onChange={noop} signIn={signInAt({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null })} />, "zh-CN");
-  assert.match(zh, /这台设备已加入你的 Droppen 账户/);
+  assert.match(zh, /这台设备已加入你的 Droppen 账号/);
 });
 
 test("step 02 says why it cannot sign in from here, and that a device in an account stays there on “Only on this device”", () => {
@@ -302,7 +302,7 @@ test("step 02 says why it cannot sign in from here, and that a device in an acco
   assert.match(stays, /data-testid="where-stays-linked"[^>]*>This device stays in your Droppen account\. To take it out, use Settings → Access → Droppen\.</);
   assert.doesNotMatch(stays, /where-linked/);
   assert.doesNotMatch(where({ kind: "none" }, "local"), /where-stays-linked/);
-  assert.match(where({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }, "local", "zh-CN"), /这台设备仍在你的 Droppen 账户里/);
+  assert.match(where({ kind: "linked", email: "ada@example.com", device: "studio", fingerprint: null }, "local", "zh-CN"), /这台设备仍在你的 Droppen 账号里/);
 });
 
 test("choosing “Only on this device” ends a sign-in under way or one that stopped, and nothing else", () => {
@@ -337,7 +337,7 @@ test("the guide's toast once this device is in the account: only after it was se
   assert.deepEqual(linkedToast(true, "none", "first"), { toast: false, pending: false }, "cancelled: forgotten");
   // The words are the guide's, in every language.
   assert.equal(LINKED_TOAST, "This device is in your Droppen account");
-  assert.equal(welcomeZhCN[LINKED_TOAST], "这台设备已加入你的 Droppen 账户");
+  assert.equal(welcomeZhCN[LINKED_TOAST], "这台设备已加入你的 Droppen 账号");
 });
 
 test("a double click and a held Enter press one primary, not the next step's too", () => {

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BrandMark } from "@/components/brand-mark";
+import { PrefsControls } from "@/components/prefs-controls";
 import { useSearch } from "@tanstack/react-router";
 import { CircleNotchIcon } from "@phosphor-icons/react";
 import { ApiError } from "@/api/errors";
@@ -48,14 +49,17 @@ export function LoginView() {
   };
 
   const field =
-    "h-8 w-full rounded border border-border bg-bg px-2 font-mono text-xs text-fg placeholder:text-faint focus:border-fg focus:outline-none";
+    "h-8 w-full border border-border bg-bg px-2 font-mono text-xs text-fg placeholder:text-faint focus:border-fg focus:outline-none";
 
   return (
     <div className="flex h-full w-full items-center justify-center p-6">
       <form onSubmit={submit} className="flex w-full max-w-72 flex-col gap-3">
-        <div className="mb-3 flex items-center gap-2.5">
-          <BrandMark size={20} title="Droppen" />
-          <span className="font-mono text-sm font-medium text-fg">Droppen</span>
+        <div className="mb-3 flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <BrandMark size={20} title="Droppen" />
+            <span className="font-mono text-sm font-medium text-fg">Droppen</span>
+          </div>
+          <PrefsControls />
         </div>
         <div className="flex items-center gap-2 border-b border-border pb-2">
           <h1 data-label="" className="label-caps text-2xs text-muted">{t("sign in")}</h1>

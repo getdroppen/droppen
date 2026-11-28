@@ -302,7 +302,7 @@ test("the card reads in zh-CN, zh-TW and ja, on every kind of device, and says �
         "在 App 里点「登录 Droppen」",
         "它会打开一个四步的设置向导。",
         // The App's own words for its guide's step and its card (i18n/welcome.ts), through the browser.
-        "在设置向导的「在哪里用」一步，选择「在手机和其它设备上也能用」，再点击「登录 Droppen」",
+        "在设置向导的「在哪里用」一步，选择「在手机和其他设备上也能用」，再点击「登录 Droppen」",
         "浏览器会打开 droppen.app：登录后，核对指纹与 App 中显示的一致，再点击「加入这台设备」。",
       ],
       linux: ["在那台设备的终端里运行：", "复制命令", "再点「登录 Droppen」", "那台设备没有浏览器（比如服务器）？", "用一次性注册码"],

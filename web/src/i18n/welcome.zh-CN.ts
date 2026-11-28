@@ -16,7 +16,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Finishing up": "收尾", // shell.step.wrap
   "skipped": "已跳过", // shell.state.skipped
   "Every step can be skipped and changed later in Settings.": "每一步都能跳过，之后都能在「设置」里改。", // shell.railFoot
-  "Offline. Installing, signing in and Droppen need the internet; everything else works.": "现在没有联网：安装、登录和 Droppen 需要联网，其它都能用。", // shell.offline
+  "Offline. Installing, signing in and Droppen need the internet; everything else works.": "现在没有联网：安装、登录和 Droppen 需要联网，其他都能用。", // shell.offline
   "Language": "语言", // shell.language
   // Welcome (A.2)
   "Droppen for Mac": "Droppen · Mac 版", // welcome.kicker
@@ -24,7 +24,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Droppen is running on this device.": "Droppen 已经在这台设备上运行了。", // welcome.title
   "About three minutes to put it to work: get Claude Code or Codex ready, decide where you'll use it, then start your first session. Skip anything you like; all of it can be changed later in Settings.": "花 3 分钟左右把它用起来：准备好 Claude Code 或 Codex，决定在哪里用，然后开始第一个会话。哪一步都可以跳过，之后都能在「设置」里改。", // welcome.body
   "Find Claude Code and Codex; install and sign in where needed.": "找到 Claude Code 和 Codex，需要时安装、登录。", // welcome.sum.tools
-  "Only on this device, or on your phone and other devices too.": "只在这台设备上用，还是手机和其它设备也要用。", // welcome.sum.where
+  "Only on this device, or on your phone and other devices too.": "只在这台设备上用，还是手机和其他设备也要用。", // welcome.sum.where
   "Pick a folder and send a first message.": "选一个文件夹，发出第一条消息。", // welcome.sum.first
   "Start at login, notifications, your phone.": "登录时启动、通知、手机。", // welcome.sum.wrap
   "Your phone, and a last look at your settings.": "手机，再确认一下设置。",
@@ -130,9 +130,9 @@ export const welcomeZhCN: Record<string, string> = {
   "02 · Where to use it": "02 · 在哪里用", // where.kicker
   "Where will you use Droppen?": "你会在哪里用 Droppen？", // where.title
   "Droppen runs on this device either way. This only decides what else can reach it, and you can change it any time in Settings.": "不管选哪个，Droppen 都在这台设备上运行；这里只决定还有什么能连到它，随时可以在「设置」里改。", // where.body
-  "On my phone and other devices too": "在手机和其它设备上也能用", // where.droppen.title
+  "On my phone and other devices too": "在手机和其他设备上也能用", // where.droppen.title
   "Sign in to Droppen": "登录 Droppen", // where.droppen.action
-  "Open droppen.app on your phone or any other device and carry on with this device's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.": "在手机或其它设备上打开 droppen.app，接着用这台设备上的会话。内容端到端加密，droppen.app 看不到。会打开浏览器登录或注册。", // where.droppen.body
+  "Open droppen.app on your phone or any other device and carry on with this device's sessions. Content is end-to-end encrypted; droppen.app can't read it. Your browser opens to sign in or create an account.": "在手机或其他设备上打开 droppen.app，接着用这台设备上的会话。内容端到端加密，droppen.app 看不到。会打开浏览器登录或注册。", // where.droppen.body
   "Recommended": "推荐", // where.recommended
   "Only on this device": "只在这台设备上用", // where.local.title
   "Skip": "跳过", // where.local.action
@@ -140,7 +140,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Also": "另外", // where.also
   "Let browsers on my local network in too": "让局域网里的浏览器也能访问", // where.lan.title
   "Set a password for this device (advanced)": "设置这台设备的密码（高级）", // where.lan.action
-  "An iPad or another device on the same Wi‑Fi opens this Mac's address in a browser and signs in with the password. Doesn't go through droppen.app, and works alongside either choice above.": "同一个 Wi‑Fi 下的 iPad 或其它设备，用浏览器打开这台 Mac 的地址，输入密码进入。不经过 droppen.app，可以和上面任一选项同时用。", // where.lan.body
+  "An iPad or another device on the same Wi‑Fi opens this Mac's address in a browser and signs in with the password. Doesn't go through droppen.app, and works alongside either choice above.": "同一个 Wi‑Fi 下的 iPad 或其他设备，用浏览器打开这台 Mac 的地址，输入密码进入。不经过 droppen.app，可以和上面任一选项同时用。", // where.lan.body
   "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in the app's menu-bar menu or in Settings → Desktop app: it opens signed in. Once this device has a password, a browser asks for it.": "这台设备上的 Droppen 应用永远不用密码。这台设备上的浏览器，在应用的菜单栏菜单或 设置 → 桌面 App 里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。", // where.browserNote, Mac
   "The Droppen app on this device never asks for a password. For a browser on this device, choose Open in Browser in Settings → Desktop app: it opens signed in. Once this device has a password, a browser asks for it.": "这台设备上的 Droppen 应用永远不用密码。这台设备上的浏览器，在 设置 → 桌面 App 里选「在浏览器中打开」，打开时已经登录。给这台设备设了密码以后，浏览器会要这个密码。", // where.browserNote, Linux
   "Sign in in the browser": "在浏览器中登录", // where.go.droppen
@@ -148,16 +148,16 @@ export const welcomeZhCN: Record<string, string> = {
   "Change it later in Settings → Access.": "之后在 设置 → 访问 里改。", // where.changeLater
   "droppen.app needs the internet. Choose “Only on this device” for now; sign in later from Settings → Access → Droppen.": "登录 droppen.app 需要联网。先选「只在这台设备上用」，之后在 设置 → 访问 → Droppen 里登录。", // where.offline
   "Continue in your browser": "在浏览器里继续", // where.wait.title
-  "Sign in to droppen.app, or create an account.": "登录 droppen.app，或者注册一个账户。", // where.wait.1
+  "Sign in to droppen.app, or create an account.": "登录 droppen.app，或者注册一个账号。", // where.wait.1
   "Check that the fingerprint there matches this one, then choose Allow.": "核对那边显示的指纹和这里一致，然后点「同意」。", // where.wait.2
-  "Come back here. This Mac joins your account by itself.": "回到这里，这台 Mac 会自己加入你的账户。", // where.wait.3
+  "Come back here. This Mac joins your account by itself.": "回到这里，这台 Mac 会自己加入你的账号。", // where.wait.3
   "Fingerprint": "指纹", // where.fingerprint
   "Open the browser again": "重新打开浏览器", // where.reopen
   "Copy link": "复制链接", // where.copyLink
   "The link works for 10 minutes ({{left}} left).": "链接 10 分钟内有效（还剩 {{left}}）。", // where.expires
   "Waiting for droppen.app…": "等待 droppen.app…", // where.waiting
   "Keep going; I'll finish in the browser": "先继续，浏览器里登录好了会提示我", // where.keepGoing
-  "This device is in your Droppen account": "这台设备已加入你的 Droppen 账户", // where.linked.title
+  "This device is in your Droppen account": "这台设备已加入你的 Droppen 账号", // where.linked.title
   "Open droppen.app on your phone and sign in as {{email}}. “{{device}}” is there.": "在手机上打开 droppen.app，用 {{email}} 登录，就能看到「{{device}}」。", // where.linked.body
   "Device name": "设备名称", // where.deviceName
   "Scan with your phone": "用手机扫一扫", // where.scan
@@ -166,7 +166,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Your plan's devices that run AI are all in use. Remove one at droppen.app or change plan; until then this Mac works on its own.": "你的套餐里可运行 AI 的设备已经用满。到 droppen.app 移除一台或换套餐；在那之前这台 Mac 照常单独使用。", // where.err.limit
   "Only on this device for now": "先只在这台设备上用", // where.localNow
   "A password for browsers on your network": "给局域网里的浏览器设一个密码", // where.lan.formTitle
-  "Browsers on other devices sign in with this name and password. The Droppen app on this Mac doesn't need it.": "其它设备上的浏览器用这个名字和密码登录。这台 Mac 上的 Droppen 应用不需要它。", // where.lan.formBody
+  "Browsers on other devices sign in with this name and password. The Droppen app on this Mac doesn't need it.": "其他设备上的浏览器用这个名字和密码登录。这台 Mac 上的 Droppen 应用不需要它。", // where.lan.formBody
   "Password": "密码", // where.lan.pw
   "Password again": "再输一次", // where.lan.pw2
   "At least 12 characters.": "至少 12 个字符。", // where.lan.rule
@@ -230,7 +230,7 @@ export const welcomeZhCN: Record<string, string> = {
   "Run setup again": "重新运行", // after.settings.rerun
   "Claude Code is signed in. You can go back to Droppen.": "Claude Code 已登录，可以回到 Droppen 了。", // after.signedInToast
   // Step 02 · Where to use it (A.4)
-  "This device stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "这台设备仍在你的 Droppen 账户里。要把它移出，请到 设置 → 访问 → Droppen。", // where.local.stays (as built)
+  "This device stays in your Droppen account. To take it out, use Settings → Access → Droppen.": "这台设备仍在你的 Droppen 账号里。要把它移出，请到 设置 → 访问 → Droppen。", // where.local.stays (as built)
   "This window cannot sign this device in. See Settings → Access → Droppen.": "这个窗口不能让这台设备登录。请看 设置 → 访问 → Droppen。", // where.unavailable (as built)
   // Step 04 · Finishing up (A.6)
   "Turn it on or off any time from the Droppen icon in the menu bar or in Settings → Desktop app.": "随时可以在菜单栏的 Droppen 图标或 设置 → 桌面 App 里打开或关闭。", // wrap.login.menuBar

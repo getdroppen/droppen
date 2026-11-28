@@ -397,7 +397,7 @@ test("a refusal of a renewal reads in words, in the reader's language", () => {
   assert.doesNotMatch(renewalErrorText(new RenewalError("unconfirmed", "x", "stale", []), t), /\{\{ids\}\}|open Droppen on/, "the sole admin: no one else to open");
   // The row says the failure itself in the reader's language, not its message.
   const row = draw(<RenewalLine id="m-1" status={{ kind: "retrying", atMs: Date.now() + 60_000, error: waits.message, cause: waits }} viewerAdmin />, "zh-CN");
-  assert.ok(row.includes("没能更换身份密钥：它在等你的另一台完整设备确认账户的最新变更"), row);
+  assert.ok(row.includes("没能更换身份密钥：它在等你的另一台完整设备确认账号的最新变更"), row);
   assert.doesNotMatch(row, /vouch/);
 });
 

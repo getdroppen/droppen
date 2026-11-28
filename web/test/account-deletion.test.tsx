@@ -232,7 +232,7 @@ test("the form: what it means, the address to type, the proof, and its button he
   assert.ok(both.includes("For a few days, this e-mail address cannot be used to sign up again."));
   // In Chinese.
   const cn = form(methods(), 7, "zh-CN");
-  for (const s of ["谁都无法恢复", "之后 7 天内，这个邮箱不能再用来注册。", "请输入账户的邮箱地址以确认：", "永久删除账户"]) assert.ok(cn.includes(s), s);
+  for (const s of ["谁都无法恢复", "之后 7 天内，这个邮箱不能再用来注册。", "请输入账号的邮箱地址以确认：", "永久删除账号"]) assert.ok(cn.includes(s), s);
 });
 
 test("a deletion the hub refuses leaves this browser as it was; one it took leaves the account", async () => {
@@ -394,8 +394,8 @@ test("the words: the new refusals in the reader's language, and the deleted acco
   assert.equal(errorText(new HubApiError(410, "account_deleted", "x")), "this account was deleted");
   await i18next.changeLanguage("zh-CN");
   try {
-    assert.equal(authErrorText(new HubApiError(403, "account_suspended", "x"), "login"), "这个账户已被停用，暂时无法登录");
-    assert.equal(errorText(new HubApiError(400, "confirm_mismatch", "x")), "这不是这个账户的邮箱地址：请照所示原样输入");
+    assert.equal(authErrorText(new HubApiError(403, "account_suspended", "x"), "login"), "这个账号已被停用，暂时无法登录");
+    assert.equal(errorText(new HubApiError(400, "confirm_mismatch", "x")), "这不是这个账号的邮箱地址：请照所示原样输入");
   } finally {
     await i18next.changeLanguage("en");
   }

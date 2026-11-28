@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CaretRightIcon, CircleNotchIcon } from "@phosphor-icons/react";
+import { CaretRightIcon, CheckIcon, CircleNotchIcon, CopyIcon } from "@phosphor-icons/react";
 import { BrandMark } from "@/components/brand-mark";
+import { PrefsControls } from "@/components/prefs-controls";
 import { ApiError } from "@/api/errors";
+import { useCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { currentUser, isDesktopApp, isLocalOwner, localOpenFailure, LOGIN_PATH, pageDroppenCommand, setupAccount } from "@/lib/auth";
 import { desktopSystem } from "@/lib/desktop-app";
@@ -162,7 +164,24 @@ export async function submitSetup(
   }
 }
 
-const command = "rounded border border-border bg-raised px-2 py-1.5 font-mono text-2xs break-all whitespace-pre-wrap text-fg";
+function CommandBox({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const { copied, copy } = useCopy();
+  return (
+    <div className="flex items-stretch border border-border bg-raised">
+      <pre className="min-w-0 flex-1 px-2 py-1.5 font-mono text-2xs break-all whitespace-pre-wrap text-fg select-all">{text}</pre>
+      <button
+        type="button"
+        onClick={() => copy(text)}
+        aria-label={copied ? t("copied") : t("copy command")}
+        title={copied ? t("copied") : t("copy command")}
+        className="flex shrink-0 items-center justify-center border-l border-border px-2 text-muted hover:bg-hover hover:text-fg"
+      >
+        {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      </button>
+    </div>
+  );
+}
 
 /** A refusal or a broken rule, and the way on when there is one. */
 export function SetupProblemLine({ problem, testId = "setup-error" }: { problem: SetupProblem; testId?: string }) {
@@ -339,9 +358,12 @@ export function SetupPage({ owner, localOpenError = null }: { owner: boolean; lo
   return (
     <div className="flex h-full w-full overflow-y-auto p-6" data-testid="setup-view" data-owner={owner ? "true" : "false"}>
       <div className="m-auto flex w-full max-w-80 flex-col gap-3">
-        <div className="mb-3 flex items-center gap-2.5">
-          <BrandMark size={20} title="Droppen" />
-          <span className="font-mono text-sm font-medium text-fg">Droppen</span>
+        <div className="mb-3 flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5">
+            <BrandMark size={20} title="Droppen" />
+            <span className="font-mono text-sm font-medium text-fg">Droppen</span>
+          </div>
+          <PrefsControls />
         </div>
         <div className="flex items-center gap-2 border-b border-border pb-2">
           <h1 data-label="" className="label-caps text-2xs text-muted">{t("set up this device")}</h1>
@@ -374,7 +396,7 @@ export function SetupPage({ owner, localOpenError = null }: { owner: boolean; lo
                     : t("This is the Droppen app's own server. In the app's menu-bar menu or in Settings → Desktop app, choose Open in Browser: it opens this page signed in, and the first account is made there.")}
                 </p>
                 <p>{t("Or create the account on this device, without a code:")}</p>
-                <pre className={command}>{`${pageDroppenCommand()} user add <name>`}</pre>
+                <CommandBox text={`${pageDroppenCommand()} user add <name>`} />
               </div>
             ) : (
               <>
@@ -384,7 +406,7 @@ export function SetupPage({ owner, localOpenError = null }: { owner: boolean; lo
                       command: pageDroppenCommand(),
                     })}
                   </p>
-                  <pre className={command}>{`${pageDroppenCommand()} open`}</pre>
+                  <CommandBox text={`${pageDroppenCommand()} open`} />
                 </div>
                 {/* Collapsed: the code is the way in from another device, and the way of last resort on this one. */}
                 <details className="group border-t border-border pt-3" data-testid="setup-with-code">
@@ -401,7 +423,7 @@ export function SetupPage({ owner, localOpenError = null }: { owner: boolean; lo
                     <FirstAccountForm withCode />
                     <div className="flex flex-col gap-1.5 text-2xs text-faint" data-testid="setup-help">
                       <p>{t("Or create the account on this device, without a code:")}</p>
-                      <pre className={command}>{`${pageDroppenCommand()} user add <name>`}</pre>
+                      <CommandBox text={`${pageDroppenCommand()} user add <name>`} />
                     </div>
                   </div>
                 </details>

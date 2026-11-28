@@ -626,7 +626,7 @@ function SessionsPanel({ detailOpen, unified, devices }: { detailOpen: boolean; 
 
 
   const archiveFolder = async (dir: string, list: SessionSummary[]) => {
-    if (!window.confirm(`Archive all ${list.length} sessions under "${basename(dir)}"?`)) return;
+    if (!window.confirm(t('Archive all {{n}} sessions under "{{dir}}"?', { n: list.length, dir: basename(dir) }))) return;
     const results = await Promise.allSettled(
       list.map((s) =>
         api

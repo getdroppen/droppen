@@ -351,15 +351,15 @@ test("the hub's refusals read in words, in the reader's language — never its m
   const { errorText } = await import("../src/features/cloud/ui.js");
   const e = (status: number, code: string) => new HubApiError(status, code, `RAW HUB MESSAGE ${code}`);
   const cases: [HubApiError | TypeError, string, string][] = [
-    [e(429, "device_rate"), "this account added as many new devices as it may today: try again tomorrow", "这个账户今天添加的新设备已达上限，请明天再试"],
+    [e(429, "device_rate"), "this account added as many new devices as it may today: try again tomorrow", "这个账号今天添加的新设备已达上限，请明天再试"],
     [
       e(429, "too_many_pending_devices"),
       "too many new devices are waiting to be added to this account: add them from a device already in it, or try again in 30 minutes",
-      "等待加入这个账户的新设备太多了：请先在已加入的设备上添加它们，或 30 分钟后再试",
+      "等待加入这个账号的新设备太多了：请先在已加入的设备上添加它们，或 30 分钟后再试",
     ],
     [e(429, "too_many_enrollments"), "too many devices are being added at once: finish adding them, or let them lapse, then try again", "同时在添加的设备太多了：请先完成添加，或等它们失效后再试"],
     [e(403, "pairing_window_closed"), "this browser signed in too long ago to make a code: sign in again, or use the QR code", "这个浏览器登录太久，不能再获取数字码：请重新登录，或改用二维码"],
-    [e(429, "too_many_pairings"), "too many codes are open in this account: try again in 10 minutes, or use the QR code", "这个账户打开的数字码太多了：请 10 分钟后再试，或改用二维码"],
+    [e(429, "too_many_pairings"), "too many codes are open in this account: try again in 10 minutes, or use the QR code", "这个账号打开的数字码太多了：请 10 分钟后再试，或改用二维码"],
     [e(429, "pairing_full"), "this code was tried too often: start again for a new one", "这个数字码尝试次数过多：请重新开始获取新的"],
     [e(503, "unavailable"), "Droppen is not answering properly right now: try again in a moment", "Droppen 暂时无法正常响应，请稍后再试"],
     [e(500, "internal"), "Droppen is not answering properly right now: try again in a moment", "Droppen 暂时无法正常响应，请稍后再试"],

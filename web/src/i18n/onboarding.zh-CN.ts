@@ -25,19 +25,19 @@ export const onboardingZhCN: Record<string, string> = {
   "On the page that opens on that device, sign in with its local login and click Sign in to Droppen (it is also under Settings → Access → Droppen).":
     "在那台设备打开的页面上，用本地登录进去，点「登录 Droppen」（也在「设置 → 访问 → Droppen」里）。",
   "A {{app}} window opens there: sign in to this account, check that the fingerprint matches the one its page shows, and click add this device.":
-    "那边会弹出 {{app}} 窗口：登录这个账户，核对指纹和它页面上显示的一致，然后点「加入这台设备」。",
+    "那边会弹出 {{app}} 窗口：登录这个账号，核对指纹和它页面上显示的一致，然后点「加入这台设备」。",
   "This account is on {{hub}}, not droppen.app: on that page, open advanced first and set the hub address to {{hub}}.":
-    "这个账户在 {{hub}} 上，不在 droppen.app：先在那个页面上打开「高级选项」，把 Hub 地址设成 {{hub}}。",
-  "Is that window's browser new to your account? It shows a code first: add it from here.": "那个窗口所在的浏览器还没加入你的账户？它会先显示一个配对码，在这里添加它：",
+    "这个账号在 {{hub}} 上，不在 droppen.app：先在那个页面上打开「高级选项」，把 Hub 地址设成 {{hub}}。",
+  "Is that window's browser new to your account? It shows a code first: add it from here.": "那个窗口所在的浏览器还没加入你的账号？它会先显示一个配对码，在这里添加它：",
   "03 · it comes online here": "03 · 在这里等它上线",
-  "{{name}} joined the account; waiting for it to come online…": "{{name}} 已加入账户，正在等它上线…",
+  "{{name}} joined the account; waiting for it to come online…": "{{name}} 已加入账号，正在等它上线…",
   "waiting for the new device to come online…": "正在等新设备上线…",
   "Keep this page open: it notices the new device by itself.": "这个页面开着就行，新设备上线会自动提示。",
   "{{name}} is online": "{{name}} 已上线",
-  "{{name}} is in your account": "{{name}} 已加入你的账户",
+  "{{name}} is in your account": "{{name}} 已加入你的账号",
   "Now you can put the two devices on one screen.": "现在可以把两台设备放进同一个屏幕",
   "{{a}} and {{b}}, side by side: each pane opens on its own device's latest session, or a terminal on it, and you can change what each one shows.":
-    "{{a}} 和 {{b}} 并排：每个格子打开各自设备上最近的会话（没有会话就开一个终端），每个格子里放什么都可以再换。",
+    "{{a}} 和 {{b}} 并排：每个窗格打开各自设备上最近的会话（没有会话就开一个终端），每个窗格里放什么都可以再换。",
   "Open it to start a session there. Add another device the same way to see both on one screen.": "打开它，就能在上面开会话。用同样的方法再加一台设备，就能在一个屏里同时看。",
   "put them on one screen": "放进同一个屏幕",
   "open {{name}}": "打开 {{name}}",
@@ -57,7 +57,7 @@ export const onboardingZhCN: Record<string, string> = {
   "Open the .dmg and drag Droppen to Applications.": "打开 .dmg，把 Droppen 拖进「应用程序」。",
   "Open Droppen": "打开 Droppen",
   "It opens a short setup guide, four steps.": "它会打开一个四步的设置向导。",
-  "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.": "在设置向导的「在哪里用」一步，选择「在手机和其它设备上也能用」，再点击「登录 Droppen」。浏览器会打开 {{app}}：登录后，核对指纹与 App 中显示的一致，再点击「加入这台设备」。之后也可以在「设置 → 访问 → Droppen」中登录。",
+  "In the setup guide's Where to use it step, choose “On my phone and other devices too”, then click Sign in to Droppen. Your browser opens {{app}}: sign in, check that the fingerprint matches the one the app shows, then click add this device. Later, the same is under Settings → Access → Droppen.": "在设置向导的「在哪里用」一步，选择「在手机和其他设备上也能用」，再点击「登录 Droppen」。浏览器会打开 {{app}}：登录后，核对指纹与 App 中显示的一致，再点击「加入这台设备」。之后也可以在「设置 → 访问 → Droppen」中登录。",
   "Sign in to Droppen in the App": "在 App 里点「登录 Droppen」",
   "A {{app}} window opens: sign in, then click add this device.": "会弹出 {{app}} 窗口：登录后点「加入这台设备」。",
   "Open Terminal on that Mac and run:": "在那台 Mac 上打开「终端」运行：",
@@ -67,7 +67,7 @@ export const onboardingZhCN: Record<string, string> = {
   "It installs and starts Droppen, and makes a local login for it.": "它会安装并启动 Droppen，并创建一个本地登录。",
   "Sign in on its page": "在它的页面上登录",
   "On the page it opens, sign in with that login, then click Sign in to Droppen.": "在它打开的页面上用这个本地登录进去，再点「登录 Droppen」。",
-  "Add it": "加入账户",
+  "Add it": "加入账号",
   "No browser on that device, like a server?": "那台设备没有浏览器（比如服务器）？",
   "use a one-time code": "用一次性注册码",
   "There is no Windows app yet.": "暂时还没有 Windows 版 App。",
@@ -93,18 +93,18 @@ export const onboardingZhCN: Record<string, string> = {
   // The hints
   "Add another device to see both on one screen.": "再加一台设备，就能在一个屏里同时看",
   "add": "添加",
-  "Each pane can show a different device's content.": "每个格子都可以放不同设备的内容",
-  "Make a screen with the rail's +, then pick a device in each pane.": "用左侧栏的「+」建一个屏幕，再给每个格子选设备。",
+  "Each pane can show a different device's content.": "每个窗格都可以放不同设备的内容",
+  "Make a screen with the rail's +, then pick a device in each pane.": "用左侧栏的「+」建一个屏幕，再给每个窗格选设备。",
 
   // The local page's first run
-  "Sign in to Droppen to see your other devices here, and to use this one from your phone.": "登录 Droppen，就能在这里看到你的其它设备，也能在手机上用这一台。",
+  "Sign in to Droppen to see your other devices here, and to use this one from your phone.": "登录 Droppen，就能在这里看到你的其他设备，也能在手机上用这一台。",
   "not now": "以后再说",
 
   // droppen.app/link opened by hand
   "Droppen is not on that device yet?": "那台设备上还没装 Droppen？",
 
   // The one-time code
-  "For a Linux server, or any device with no browser: it joins your account from its command line.": "适用于 Linux 服务器，或任何没有浏览器的设备：它从命令行加入你的账户。",
+  "For a Linux server, or any device with no browser: it joins your account from its command line.": "适用于 Linux 服务器，或任何没有浏览器的设备：它从命令行加入你的账号。",
   "The code expires in {{time}}.": "注册码有效期还剩 {{time}}。",
   "Keep this page open: it is what adds the device once the command runs there.": "请保持这个页面打开：命令在那台设备上运行后，由这个页面完成添加。",
   "This code has expired.": "这个注册码已过期。",
