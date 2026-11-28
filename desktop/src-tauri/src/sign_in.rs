@@ -20,21 +20,33 @@ static WATCH: Mutex<Option<SignInWatch>> = Mutex::new(None);
 /// open it in the browser, fragment and all, and watch for the device joining.
 pub fn opened<R: Runtime>(app: &AppHandle<R>, url: &Url) {
     let port = app.state::<Arc<Shell>>().port();
-    let url = sign_in::browser_url(url, port);
+    let target = sign_in::browser_url(url, port);
     // The address carries the attempt's state: the host only, in the log.
-    let host = url.host_str().unwrap_or_default().to_string();
+    let scheme = target.scheme().to_string();
+    let host = target.host_str().unwrap_or_default().to_string();
     #[cfg(feature = "e2e")]
     log::info!(
-        "would open the Droppen sign-in at {}://{host} in the browser (e2e build: not opened)",
-        url.scheme()
+        "would open the Droppen sign-in at {scheme}://{host} in the browser (e2e build: not opened)"
     );
     #[cfg(not(feature = "e2e"))]
     {
-        log::info!("opening the Droppen sign-in at {}://{host} in the browser", url.scheme());
-        // Not the error: the opener's quotes the address it could not open
-        // (on macOS, `open`'s command line), state and all.
-        if crate::opening::url(app, url.as_str()).is_err() {
-            log::warn!("cannot open the browser for the Droppen sign-in at {}://{host}", url.scheme());
+        #[cfg(not(target_os = "linux"))]
+        use droppen_desktop_core::browser;
+        #[cfg(target_os = "linux")]
+        use crate::linux_browser as browser;
+
+        log::info!("opening the Droppen sign-in at {scheme}://{host} in the browser");
+        // Route through `browser::open_secret` so the attempt's `state` and
+        // ephemeral key never appear in `/usr/bin/open`, `xdg-open`, or
+        // browser command-line arguments (`/proc/<pid>/cmdline` / `ps`).
+        let address = target.to_string();
+        let spawned = std::thread::Builder::new().name("droppen-sign-in-open".into()).spawn(move || {
+            if browser::open_secret(&address).is_err() {
+                log::warn!("cannot open the browser for the Droppen sign-in at {scheme}://{host}");
+            }
+        });
+        if let Err(error) = spawned {
+            log::warn!("cannot open the browser for the Droppen sign-in: {:?}", error.kind());
         }
     }
     watch(app);

@@ -349,11 +349,10 @@ fn app_page(url: &Url) -> Option<String> {
 pub enum Route {
     /// Let it load.
     Here,
-    /// Do not load it — it is the web app's login or setup page — log in
-    /// again and go to this path instead.
-    Relogin(String),
-    /// Do not load it; hand it to the system (a `mailto:` link).
-    System,
+    /// Do not load it — the main frame's init script asked the app to log in
+    /// again and go to `next`, carrying the settings channel's action token
+    /// (never accepted from an unauthenticated subframe navigation).
+    Relogin(String, String),
     /// Do not load it at all, and say nothing.
     Refuse,
     /// Do not load it: a page asks the app to restart into its downloaded
@@ -366,7 +365,7 @@ pub enum Route {
     CheckForUpdates(String),
     /// Do not load it: the app's Settings → Desktop app asks it to open the
     /// page in this device's browser (`init.js`, `openInBrowser`), with the
-    /// settings channel's token — never the login nonce, or it is ignored.
+    /// settings channel's action token — never the login nonce, or it is ignored.
     OpenInBrowser(String),
     /// Do not load it: Settings → Desktop app turns Start at Login on (`true`)
     /// or off, with the same token.
@@ -387,11 +386,15 @@ pub fn route(url: &Url, port: Option<u16>) -> Route {
     match url.scheme() {
         // The bundled start-up page, and what pages make on the fly.
         "tauri" | "about" | "blob" | "data" => Route::Here,
+        // Refuse raw HTTP navigations to `/login` or `/setup` so a cross-origin
+        // iframe cannot revoke the window's session or trigger a relogin loop;
+        // the main frame's `init.js` intercepts SPA transitions and asks over
+        // `droppen-desktop://relogin` with its origin-gated token instead.
         "http" | "https" => match port.and_then(|port| login_redirect(url, port)) {
-            Some(next) => Route::Relogin(next),
+            Some(_) => Route::Refuse,
             None => Route::Here,
         },
-        "mailto" => Route::System,
+        APP_SCHEME if url.host_str() == Some("relogin") => Route::Relogin(login_next(url), token(url)),
         APP_SCHEME if url.host_str() == Some("settings") => settings_route(url),
         APP_SCHEME if url.host_str() == Some("update") && url.path() == "/restart" => Route::RestartToUpdate(token(url)),
         APP_SCHEME if url.host_str() == Some("update") && url.path() == "/check" => Route::CheckForUpdates(token(url)),
@@ -666,36 +669,34 @@ mod tests {
     }
 
     #[test]
-    fn the_login_page_is_turned_into_a_relogin() {
+    fn the_login_page_is_refused_over_http_and_relogin_requires_app_scheme() {
         let port = 51_234;
-        assert_eq!(
-            route(&url("http://127.0.0.1:51234/login?next=%2Fsettings"), Some(port)),
-            Route::Relogin("/settings".into())
-        );
-        assert_eq!(route(&url("http://127.0.0.1:51234/login"), Some(port)), Route::Relogin("/".into()));
-        assert_eq!(
-            route(&url("http://127.0.0.1:51234/login?next=%2F%2Fevil.example"), Some(port)),
-            Route::Relogin("/".into())
-        );
+        assert_eq!(route(&url("http://127.0.0.1:51234/login?next=%2Fsettings"), Some(port)), Route::Refuse);
+        assert_eq!(route(&url("http://127.0.0.1:51234/login"), Some(port)), Route::Refuse);
         assert_eq!(route(&url("http://127.0.0.1:51234/sessions"), Some(port)), Route::Here);
         assert_eq!(route(&url("http://127.0.0.1:51234/loginx"), Some(port)), Route::Here);
+        assert_eq!(
+            route(&url("droppen-desktop://relogin?token=tok&next=%2Fsettings"), Some(port)),
+            Route::Relogin("/settings".into(), "tok".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://relogin?token=tok"), Some(port)),
+            Route::Relogin("/".into(), "tok".into())
+        );
+        assert_eq!(
+            route(&url("droppen-desktop://relogin?token=tok&next=%2F%2Fevil.example"), Some(port)),
+            Route::Relogin("/".into(), "tok".into())
+        );
     }
 
     #[test]
-    fn the_setup_page_is_turned_into_a_relogin_too() {
-        // The app's own account is app-internal, so its instance is always in
-        // its setup state: a dead token sends the web app to `/setup`, which in
-        // the window means the app's login lapsed.
+    fn the_setup_page_is_refused_over_http_too() {
+        // Raw HTTP `/setup` navigations are refused so subframes cannot trigger
+        // main-window relogins; main-frame transitions go through
+        // `droppen-desktop://relogin`.
         let port = 51_234;
-        assert_eq!(route(&url("http://127.0.0.1:51234/setup"), Some(port)), Route::Relogin("/".into()));
-        assert_eq!(
-            route(&url("http://127.0.0.1:51234/setup?next=%2Fsettings"), Some(port)),
-            Route::Relogin("/settings".into())
-        );
-        assert_eq!(
-            route(&url("http://127.0.0.1:51234/setup?next=%2F%5Cevil.example"), Some(port)),
-            Route::Relogin("/".into())
-        );
+        assert_eq!(route(&url("http://127.0.0.1:51234/setup"), Some(port)), Route::Refuse);
+        assert_eq!(route(&url("http://127.0.0.1:51234/setup?next=%2Fsettings"), Some(port)), Route::Refuse);
         assert_eq!(route(&url("http://127.0.0.1:51234/setupx"), Some(port)), Route::Here);
         assert_eq!(route(&url("http://127.0.0.1:51234/settings/setup"), Some(port)), Route::Here);
         // Another port's setup page is not the app's server.
@@ -793,7 +794,7 @@ mod tests {
         // pushed to the browser.
         assert_eq!(route(&url("https://www.example.com/embed"), port), Route::Here);
         assert_eq!(route(&url("http://127.0.0.1:8700/"), port), Route::Here);
-        assert_eq!(route(&url("mailto:someone@example.com"), port), Route::System);
+        assert_eq!(route(&url("mailto:someone@example.com"), port), Route::Refuse);
         assert_eq!(route(&url("file:///etc/passwd"), port), Route::Refuse);
         assert_eq!(route(&url("javascript:alert(1)"), port), Route::Refuse);
         // Before the server is up nothing is a login page.

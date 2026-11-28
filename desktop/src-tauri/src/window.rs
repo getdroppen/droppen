@@ -143,13 +143,13 @@ fn allow_navigation<R: Runtime>(app: &AppHandle<R>, label: &str, url: &Url) -> b
     let shell = app.state::<Arc<Shell>>();
     match web::route(url, shell.port()) {
         Route::Here => true,
-        Route::Relogin(next) => {
+        Route::Relogin(next, token) => {
+            if !crate::desktop_settings::from_app_page(app, label, &token) {
+                log::warn!("relogin request without this launch's token, or outside the app's page, was ignored");
+                return false;
+            }
             log::info!("the web app in window {label} asked for its login page; logging in again instead");
             shell.relogin(next, label.to_string());
-            false
-        }
-        Route::System => {
-            open_in_browser(app, url);
             false
         }
         Route::Refuse => {
@@ -157,11 +157,11 @@ fn allow_navigation<R: Runtime>(app: &AppHandle<R>, label: &str, url: &Url) -> b
             false
         }
         Route::RestartToUpdate(token) => {
-            crate::updater::restart_asked_by_page(app, &token);
+            crate::updater::restart_asked_by_page(app, label, &token);
             false
         }
         Route::CheckForUpdates(token) => {
-            crate::updater::check_asked_by_page(app, &token);
+            crate::updater::check_asked_by_page(app, label, &token);
             false
         }
         Route::OpenInBrowser(token) => {
@@ -198,12 +198,20 @@ fn page_loaded<R: Runtime>(window: &WebviewWindow<R>, payload: &PageLoadPayload<
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(window.label().to_string(), web::for_return(url));
     }
-    if let (Some(port), PageLoadEvent::Finished) = (port, payload.event()) {
+    if let Some(port) = port {
         if web::is_server(url, port) {
-            shell.loaded_on(port);
-            // The page's Settings → Desktop app section reads the state this
-            // hands it, and the page may have loaded before it is opened.
-            crate::desktop_settings::page_loaded(window, port);
+            if payload.event() == PageLoadEvent::Started {
+                // Deliver the origin-gated action token early so an SPA
+                // redirect to `/login` or `/setup` during boot can ask for
+                // a relogin immediately.
+                crate::desktop_settings::page_loaded(window, port);
+            } else if payload.event() == PageLoadEvent::Finished {
+                shell.loaded_on(port);
+                // The page's Settings → Desktop app section reads the state
+                // this hands it, and the page may have loaded before it is
+                // opened.
+                crate::desktop_settings::page_loaded(window, port);
+            }
         }
     }
     match (web::leaves_the_app(url, port), payload.event()) {
