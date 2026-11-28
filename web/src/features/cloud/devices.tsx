@@ -254,7 +254,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   if (section.kind === "words") {
     // A page of its own, over 「我的设备」 until they are written down.
     return (
-      <div className="fixed inset-0 z-50 bg-bg">
+      <div className="pt-safe px-safe fixed inset-0 z-50 bg-bg">
         <RecoveryWords words={section.words} title={t("your new recovery words")} onDone={() => setSection({ kind: "list" })} />
       </div>
     );

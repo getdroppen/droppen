@@ -66,7 +66,7 @@ export function AccountScreen({ account, link }: { account: CloudAccount; link: 
   if (words) {
     // A page of its own until they are written down, as in 「我的设备」.
     return (
-      <div className="fixed inset-0 z-50 bg-bg">
+      <div className="pt-safe px-safe fixed inset-0 z-50 bg-bg">
         <RecoveryWords words={words} title={t("your new recovery words")} onDone={() => setWords(null)} />
       </div>
     );

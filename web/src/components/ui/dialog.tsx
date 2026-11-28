@@ -19,9 +19,11 @@ export function DialogContent({
   return (
     <BaseDialog.Portal>
       <BaseDialog.Backdrop className="fixed inset-0 z-40 bg-black/20 dark:bg-black/60" />
+      {/* Centred in the window below the top safe-area inset (0 except in a
+          home-screen app iOS opens under its status bar), with a 1rem margin. */}
       <BaseDialog.Popup
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto border border-border-strong bg-bg p-3 outline-none",
+          "fixed top-[calc(50%+env(safe-area-inset-top,0px)/2)] left-1/2 z-50 max-h-[calc(100dvh-2rem-env(safe-area-inset-top,0px))] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto border border-border-strong bg-bg p-3 outline-none",
           className,
         )}
       >

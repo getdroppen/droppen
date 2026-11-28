@@ -74,6 +74,7 @@ composer 的附加文件/拍照与 ghost 选项为 24px，主发送按钮为 26p
 - 套准标记（9×9px 的「+」，`mark` 色）只画在大面积接缝：shell 页头线与 rail/列表分隔线的交点、分屏缝的 T 形交点、文档型内容框与分区线的交点。宽度 < 768px 或窗格 < 480px 时不画；列表、行、卡片、弹窗、菜单内从不画。
 - dialog / form 中的模型与 effort 可换行，长模型名不能推宽弹窗；多行输入保留原有 rows 和 resize。
 - 文档本身不滚动，各视图/窗格持有自己的滚动容器。保留 `min-w-0`、`min-h-0`、safe-area、`.pb-safe`、键盘 inset 和 transcript 的滚动锚点规则。
+- 页面按 `viewport-fit=cover` 铺满屏幕，四边的 safe-area 都由页面自己让开：body 让开上、左、右（较新的 iOS 会把主屏幕 web app 画到状态栏下面，即使 status bar style 是 `default`），最底部的 chrome 用 `.pb-safe` 让开下边；铺满整个窗口的 `fixed inset-0` 层不在 body 的内边距里，自己加 `pt-safe px-safe`（遮罩层除外），dialog 居中在顶部 inset 以下。
 
 ## 5. 功能特有的合理例外
 
