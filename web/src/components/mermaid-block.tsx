@@ -19,11 +19,25 @@ function isDark(): boolean {
   return typeof document !== "undefined" && document.documentElement.classList.contains("dark");
 }
 
+const themeListeners = new Set<() => void>();
+let sharedThemeObserver: MutationObserver | null = null;
+
 function subscribeTheme(onChange: () => void): () => void {
   if (typeof document === "undefined" || typeof MutationObserver === "undefined") return () => undefined;
-  const observer = new MutationObserver(onChange);
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-  return () => observer.disconnect();
+  themeListeners.add(onChange);
+  if (!sharedThemeObserver) {
+    sharedThemeObserver = new MutationObserver(() => {
+      for (const listener of [...themeListeners]) listener();
+    });
+    sharedThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  }
+  return () => {
+    themeListeners.delete(onChange);
+    if (themeListeners.size === 0 && sharedThemeObserver) {
+      sharedThemeObserver.disconnect();
+      sharedThemeObserver = null;
+    }
+  };
 }
 
 function useDiagramTheme(): DiagramTheme {

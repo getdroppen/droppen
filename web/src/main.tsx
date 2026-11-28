@@ -20,6 +20,7 @@ import { IconContext } from "@phosphor-icons/react";
 import { createRoot } from "react-dom/client";
 import { loadPage } from "./app/page-load";
 import { router } from "./app/router";
+import { AppErrorBoundary } from "./components/error-boundary";
 import { startBadgeSync } from "./lib/badge";
 // Side-effect import: the module's `beforeinstallprompt` listener has to be in
 // place before the browser fires it, which happens well before React mounts.
@@ -108,9 +109,11 @@ if (returning) {
   registerSw();
   root.render(
     <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
+      <AppErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </AppErrorBoundary>
     </StrictMode>,
   );
 } else {
@@ -123,7 +126,9 @@ if (returning) {
       return loadPage(root, hubPages, ({ SiteApp }) =>
         root.render(
           <StrictMode>
-            <SiteApp />
+            <AppErrorBoundary>
+              <SiteApp />
+            </AppErrorBoundary>
           </StrictMode>,
         ),
       );
@@ -136,7 +141,9 @@ if (returning) {
       return loadPage(root, hubPages, ({ MovePage }) =>
         root.render(
           <StrictMode>
-            <MovePage origins={move} />
+            <AppErrorBoundary>
+              <MovePage origins={move} />
+            </AppErrorBoundary>
           </StrictMode>,
         ),
       );
@@ -149,11 +156,13 @@ if (returning) {
     return loadPage(root, hubPages, ({ CloudApp }) =>
       root.render(
         <StrictMode>
-          <QueryClientProvider client={queryClient}>
-            <CloudApp>
-              <RouterProvider router={router} />
-            </CloudApp>
-          </QueryClientProvider>
+          <AppErrorBoundary>
+            <QueryClientProvider client={queryClient}>
+              <CloudApp>
+                <RouterProvider router={router} />
+              </CloudApp>
+            </QueryClientProvider>
+          </AppErrorBoundary>
         </StrictMode>,
       ),
     );

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, memo, useContext, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -331,7 +331,7 @@ function copyFormula(event: React.MouseEvent | React.KeyboardEvent, copied: stri
  * message, where Enter means one. An agent's reply is markdown as written,
  * its single newlines soft.
  */
-export function Markdown({ text, className, lineBreaks = false }: { text: string; className?: string; lineBreaks?: boolean }) {
+export const Markdown = memo(function Markdown({ text, className, lineBreaks = false }: { text: string; className?: string; lineBreaks?: boolean }) {
   const { t } = useTranslation();
   const math = useMathKit(text);
   const copied = t("copied");
@@ -352,4 +352,4 @@ export function Markdown({ text, className, lineBreaks = false }: { text: string
       </ReactMarkdown>
     </div>
   );
-}
+});

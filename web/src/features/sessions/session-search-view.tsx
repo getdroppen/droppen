@@ -506,7 +506,7 @@ export function useSessionSearch(host: SearchHost): SessionSearch {
         setError(errorText(err));
       }
     },
-    [cancelJump, startJump],
+    [api, cancelJump, startJump],
   );
 
   // Search on a pause in typing.
