@@ -306,6 +306,11 @@ impl Args {
     // connects the moment it returns from spawning us.
     let _ = std::fs::remove_file(&args.socket);
     let listener = UnixListener::bind(&args.socket).map_err(|error| format!("pty-shim: cannot bind {}: {error}", args.socket.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&args.socket, std::fs::Permissions::from_mode(0o600));
+    }
     // Recorded now, compared at unlink time: see `unlink_if_ours`.
     let identity = path_identity(&args.socket);
 
@@ -576,9 +581,17 @@ async fn keep_serving(
 
 /// Accept clients for as long as the shim lives.
 async fn accept_loop(listener: Arc<UnixListener>, shim: Arc<Shim>) {
+    use crate::client::PeerUserExt;
+
     loop {
         match listener.accept().await {
-            Ok((stream, _)) => serve_client(stream, shim.clone()),
+            Ok((stream, _)) => {
+                if !stream.is_same_user() {
+                    tracing::warn!("pty-shim: refusing connection from another user");
+                    continue;
+                }
+                serve_client(stream, shim.clone());
+            }
             Err(error) => {
                 tracing::warn!(%error, "pty-shim: accept failed");
                 // A listener that cannot accept will not start again on its own;
@@ -608,10 +621,13 @@ fn serve_client(stream: UnixStream, shim: Arc<Shim>) {
     // What the lock guards
     // is a list of senders with no invariant a panic could have left half
     // built, so taking it back is both safe and better than dying.
-    shim.clients
+    let mut clients = shim
+        .clients
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(commands.clone());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    clients.retain(|tx| !tx.is_closed());
+    clients.push(commands.clone());
+    drop(clients);
     shim.live.fetch_add(1, Ordering::SeqCst);
     shim.attached.store(true, Ordering::SeqCst);
 
@@ -726,7 +742,7 @@ impl Shim {
                                 return;
                             }
                         }
-                        proto::KILL => terminate_shell(self.shell_pid),
+                        proto::KILL => terminate_shell(self.shell_pid, self.exit_code.clone()),
                         _ => {}
                     },
                     Some(Command::Exit(code)) => {
@@ -907,11 +923,16 @@ pub fn kill_shell(shell_pid: u32, signal: libc::c_int) {
 /// (`portable_pty`'s killer is `Child::kill`), so escalating is the behaviour
 /// that was already there, with a chance to shut down cleanly added in front of
 /// it.
-fn terminate_shell(shell_pid: u32) {
+fn terminate_shell(shell_pid: u32, exit_code: Arc<AtomicI64>) {
+    if exit_code.load(Ordering::Acquire) != NOT_EXITED {
+        return;
+    }
     kill_shell(shell_pid, libc::SIGTERM);
     tokio::spawn(async move {
         tokio::time::sleep(KILL_ESCALATION).await;
-        if droppen_base::procs::alive(shell_pid) {
+        // Re-check `exit_code` so a shell that already exited and was reaped
+        // cannot have a recycled PID killed by `SIGKILL`.
+        if exit_code.load(Ordering::Acquire) == NOT_EXITED && droppen_base::procs::alive(shell_pid) {
             tracing::info!(shell_pid, "the shell ignored SIGTERM; killing it");
             kill_shell(shell_pid, libc::SIGKILL);
         }

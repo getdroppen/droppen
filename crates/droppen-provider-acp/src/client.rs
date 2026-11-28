@@ -250,11 +250,42 @@ impl Client {
     }
 
     async fn read_text_file(&self, request: ReadTextFileParams) -> Result<Value, Error> {
+        use tokio::io::AsyncReadExt;
+
+        /// Maximum bytes `fs/read_text_file` will read into memory from a single file.
+        const MAX_READ_TEXT_BYTES: u64 = 16 * 1024 * 1024;
+
         let path = absolute(&request.path)?;
-        let text = tokio::fs::read(path)
+        let meta = tokio::fs::metadata(path)
             .await
             .map_err(|error| Error::new(RESOURCE_NOT_FOUND, format!("cannot read {}: {error}", path.display())))?;
-        let text = String::from_utf8_lossy(&text);
+        if !meta.is_file() {
+            return Err(Error::new(
+                INVALID_PARAMS,
+                format!("refusing to read non-regular file {}", path.display()),
+            ));
+        }
+        if meta.len() > MAX_READ_TEXT_BYTES {
+            return Err(Error::new(
+                INVALID_PARAMS,
+                format!("{} exceeds the {} byte read limit", path.display(), MAX_READ_TEXT_BYTES),
+            ));
+        }
+        let file = tokio::fs::File::open(path)
+            .await
+            .map_err(|error| Error::new(RESOURCE_NOT_FOUND, format!("cannot read {}: {error}", path.display())))?;
+        let mut bytes = Vec::with_capacity(meta.len().min(MAX_READ_TEXT_BYTES) as usize);
+        file.take(MAX_READ_TEXT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|error| Error::new(RESOURCE_NOT_FOUND, format!("cannot read {}: {error}", path.display())))?;
+        if bytes.len() as u64 > MAX_READ_TEXT_BYTES {
+            return Err(Error::new(
+                INVALID_PARAMS,
+                format!("{} exceeds the {} byte read limit", path.display(), MAX_READ_TEXT_BYTES),
+            ));
+        }
+        let text = String::from_utf8_lossy(&bytes);
         // `line` is 1-based; both it and `limit` count lines.
         let start = request.line.map_or(0, |line| line.saturating_sub(1) as usize);
         let content = if start == 0 && request.limit.is_none() {
@@ -402,6 +433,17 @@ mod tests {
 
     fn client(dir: &Path) -> Arc<Client> {
         Client::new(dir.to_path_buf(), droppen_base::process_env::clean_env_bare())
+    }
+
+    #[tokio::test]
+    async fn read_text_file_rejects_non_regular_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = client(dir.path());
+        let err = client
+            .handle("fs/read_text_file", json!({"path": dir.path()}))
+            .await
+            .expect_err("directory must be rejected");
+        assert_eq!(err.code, INVALID_PARAMS);
     }
 
     #[tokio::test]

@@ -180,6 +180,11 @@ pub async fn vapid_public(paths: &Paths) -> std::io::Result<String> {
     Ok(ece::vapid_public_b64(&vapid_key(paths).await?))
 }
 
+/// Maximum push subscriptions retained per instance. Browsers periodically
+/// rotate endpoints without unsubscribing the old one; capping the table
+/// bounds both storage and per-event fan-out.
+pub const MAX_SUBSCRIPTIONS: usize = 64;
+
 /// Store a subscription, replacing any earlier one with the same endpoint.
 pub async fn upsert(paths: &Paths, endpoint: String, p256dh: String, auth: String, label: Option<String>) -> std::io::Result<()> {
     let db = droppen_instance::db::at(paths.instance_db());
@@ -225,6 +230,14 @@ pub async fn upsert(paths: &Paths, endpoint: String, p256dh: String, auth: Strin
             "INSERT INTO push_subscriptions (endpoint, payload) VALUES (?1, ?2)
              ON CONFLICT (endpoint) DO UPDATE SET payload = excluded.payload",
             (&endpoint, encode(&row)),
+        )?;
+        // Evict the oldest subscriptions if the table grew past the ceiling.
+        tx.execute(
+            "DELETE FROM push_subscriptions
+             WHERE rowid NOT IN (
+                 SELECT rowid FROM push_subscriptions ORDER BY rowid DESC LIMIT ?1
+             )",
+            (MAX_SUBSCRIPTIONS as i64,),
         )?;
         Ok(())
     })
@@ -495,5 +508,20 @@ mod tests {
 
         sub.auth = "!!!".into();
         assert!(!sub.keys_are_well_formed(), "and it has to be base64url at all");
+    }
+
+    #[tokio::test]
+    async fn subscriptions_are_capped_by_evicting_the_oldest() {
+        let (_dir, paths) = paths();
+        let (p256dh, auth) = valid_keys();
+        for i in 0..(MAX_SUBSCRIPTIONS + 5) {
+            upsert(&paths, format!("https://push.example/{i}"), p256dh.clone(), auth.clone(), None)
+                .await
+                .expect("upsert");
+        }
+        let all = read(&paths).await.subscriptions;
+        assert_eq!(all.len(), MAX_SUBSCRIPTIONS);
+        assert_eq!(all.first().unwrap().endpoint, "https://push.example/5");
+        assert_eq!(all.last().unwrap().endpoint, format!("https://push.example/{}", MAX_SUBSCRIPTIONS + 4));
     }
 }
