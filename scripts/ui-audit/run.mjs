@@ -163,11 +163,12 @@ if (!liveUrl) {
     if (!base) throw new Error("the Vite server did not report a local URL");
   } else {
     distDir = await fs.mkdtemp(path.join(os.tmpdir(), "droppen-ui-audit-dist-"));
-    const [{ build }, { default: react }, { default: tailwindcss }] = await Promise.all([
-      import(pathToFileURL(requireFromWeb.resolve("vite")).href),
-      import(pathToFileURL(requireFromWeb.resolve("@vitejs/plugin-react")).href),
-      import(pathToFileURL(requireFromWeb.resolve("@tailwindcss/vite")).href),
-    ]);
+    // Import sequentially: on Node 22, `@vitejs/plugin-react` (CJS) calls
+    // `require("vite")` while `vite` (ESM) is still loading if `Promise.all`
+    // races the two dynamic imports (`ERR_INTERNAL_ASSERTION`).
+    const { build } = await import(pathToFileURL(requireFromWeb.resolve("vite")).href);
+    const { default: react } = await import(pathToFileURL(requireFromWeb.resolve("@vitejs/plugin-react")).href);
+    const { default: tailwindcss } = await import(pathToFileURL(requireFromWeb.resolve("@tailwindcss/vite")).href);
     await build({
       configFile: false,
       root: web,
