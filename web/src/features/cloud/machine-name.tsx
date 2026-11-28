@@ -544,23 +544,17 @@ export function MachineNotes({
 }
 
 /**
- * The open machine in the cloud bar: its name (the id beside it, quietly).
- * It is renamed on 「我的设备」, not here.
+ * The open machine in the cloud bar: its name (with its id in the tooltip,
+ * falling back to the id until a name arrives). It is renamed on 「我的设备」,
+ * not here.
  */
 export function BarMachineName({ machine, mirror }: { machine: string; mirror: MachineMirror | null | undefined }) {
   useRenamed();
   const status = useMirrorStatus(mirror);
   const name = shownName(machine, status);
   return (
-    <>
-      <span data-testid="bar-machine-name" className="truncate text-fg" title={machine}>
-        {name ?? machine}
-      </span>
-      {name && (
-        <span className="truncate text-faint max-sm:hidden" title={machine}>
-          {machine}
-        </span>
-      )}
-    </>
+    <span data-testid="bar-machine-name" className="truncate text-fg" title={machine}>
+      {name ?? machine}
+    </span>
   );
 }

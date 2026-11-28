@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
 import { MachineLink, useMachineNavigate } from "@/app/machine-route";
+import { CaretRightIcon } from "@phosphor-icons/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "@/api/schema";
@@ -12,7 +13,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTab } from "@/components/ui/tabs";
 import { Content, Panel, PanelHeader } from "@/components/panel";
-import { useShowHiddenFiles } from "@/features/files/use-files-prefs";
 import { AccessSection } from "@/features/settings/access-section";
 import { SettingsUpdatesRow } from "@/features/updates/updates-row";
 import { ScheduleSection } from "@/features/settings/schedule-section";
@@ -109,9 +109,6 @@ export function PreferencesSection() {
   const onMain = machine === home;
   const { t } = useTranslation();
   const { prefs, save } = usePrefs();
-  // Not a server pref: what the file browser hides is a per-browser habit, and
-  // it takes effect in an open file list without a save round-trip.
-  const [showHiddenFiles, setShowHiddenFiles] = useShowHiddenFiles();
 
   return (
     <SettingsSection title={t("preferences")}>
@@ -240,18 +237,6 @@ export function PreferencesSection() {
         ) : (
           <LoadingValue />
         )}
-      </SettingRow>
-      <SettingRow className="mt-3" label={t("show hidden files")} hint={t("dot-files in the file browser · this device only")}>
-        <Tabs
-          className="w-full"
-          value={showHiddenFiles ? "show" : "hide"}
-          onValueChange={(v) => setShowHiddenFiles(v === "show")}
-        >
-          <TabsList className="w-full">
-            <TabsTab value="hide">{t("hide")}</TabsTab>
-            <TabsTab value="show">{t("show")}</TabsTab>
-          </TabsList>
-        </Tabs>
       </SettingRow>
       <SettingRow className="mt-3" label={t("delete archived data after")} hint={t("archived sessions and their transcripts · checked hourly")}>
         {prefs ? (
@@ -406,21 +391,21 @@ function NotificationsSection() {
           </SettingsNote>
         )}
       </SettingRow>
+      <PhoneNotificationsDisclosure />
     </SettingsSection>
   );
 }
 
 /**
  * Bark: the channel a *session* reaches for when it decides something is worth
- * interrupting you for. The other half of NotificationsSection above, and
- * deliberately a separate one — that switch is this browser's, and this is the
- * server's, configured once and shared by every device the user carries.
+ * interrupting you for. Folded under NotificationsSection so General stays
+ * scannable while keeping this server-scoped channel right beside Web Push.
  *
  * The device key is write-only from here. The server answers with a mask
  * (`https://api.day.app/••••Wc31`), so a page that has been left open, or
  * anything that scrapes it, cannot send to the user's phone.
  */
-function PhoneNotificationsSection() {
+function PhoneNotificationsDisclosure() {
   const api = useApi();
   const machine = useMachine();
   const { t } = useTranslation();
@@ -458,8 +443,15 @@ function PhoneNotificationsSection() {
   const armed = config?.hasEndpoint ?? false;
 
   return (
-    <SettingsSection title={t("phone notifications")}>
-      <SettingsColumn className="flex flex-col gap-2">
+    <details data-testid="bark-notifications" className="group mt-3 border-t border-border pt-3">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-fg select-none [&::-webkit-details-marker]:hidden">
+        <CaretRightIcon className="size-3 shrink-0 text-muted transition-transform group-open:rotate-90" />
+        <span>{t("phone notifications")}</span>
+        <span className="ml-auto font-mono text-2xs font-normal text-muted">
+          {armed ? (config?.enabled ? t("enabled") : t("disabled")) : "Bark"}
+        </span>
+      </summary>
+      <SettingsColumn className="mt-2.5 flex flex-col gap-2">
         <SettingsHint>
           {t(
             "Lets a session interrupt you on purpose — when it is blocked on a decision, has found something you would want to stop for, or has finished. Delivered by Bark on iOS; the device key stays on the server and is never given to the agent.",
@@ -488,7 +480,7 @@ function PhoneNotificationsSection() {
         <SettingsHint>{t("Tapping a notification opens the session it came from. Leave it empty for no link.")}</SettingsHint>
         <div className="flex flex-wrap items-center gap-2">
           <Button
-            variant="primary"
+            variant="secondary"
             disabled={!dirty || save.isPending}
             onClick={() => {
               setSent(false);
@@ -535,7 +527,7 @@ function PhoneNotificationsSection() {
         {save.isError && <SettingsNote tone="danger">{save.error.message}</SettingsNote>}
         {test.isError && <SettingsNote tone="danger">{test.error.message}</SettingsNote>}
       </SettingsColumn>
-    </SettingsSection>
+    </details>
   );
 }
 
@@ -582,81 +574,6 @@ function InstallSection() {
   );
 }
 
-/** OpenAI-compatible endpoint (OpenRouter etc.) for API-backed instant chats. */
-function ChatProviderSection() {
-  const api = useApi();
-  const machine = useMachine();
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data: provider } = useQuery({
-    queryKey: mq(machine, "chat-provider"),
-    queryFn: async () => (await api.GET("/api/chat-provider")).data,
-  });
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState<string | null>(null);
-
-  const save = useMutation({
-    mutationFn: async () => {
-      const res = await api.PUT("/api/chat-provider", {
-        body: {
-          ...(baseUrl !== null ? { baseUrl } : {}),
-          ...(apiKey !== "" ? { apiKey } : {}),
-          ...(model !== null ? { model } : {}),
-        },
-      });
-      return res.data;
-    },
-    onSuccess: (data) => {
-      if (data) queryClient.setQueryData(mq(machine, "chat-provider"), data);
-      void queryClient.invalidateQueries({ queryKey: mq(machine, "chat-provider-models") });
-      setApiKey("");
-      setBaseUrl(null);
-      setModel(null);
-    },
-  });
-
-  const dirty = baseUrl !== null || apiKey !== "" || model !== null;
-
-  return (
-    <SettingsSection title={t("instant chat · api provider")}>
-      <SettingsColumn className="flex flex-col gap-2">
-        <SettingField label={t("base url (openai-compatible)")}>
-          <Input
-            value={baseUrl ?? provider?.baseUrl ?? ""}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://openrouter.ai/api/v1"
-            className="font-mono"
-          />
-        </SettingField>
-        <SettingField
-          label={t("api key")}
-          hint={provider?.hasKey ? t("· saved (enter a new one to replace)") : undefined}
-        >
-          <Input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={provider?.hasKey ? "••••••••" : "sk-or-…"}
-            className="font-mono"
-          />
-        </SettingField>
-        <SettingField label={t("default model")}>
-          <Input
-            value={model ?? provider?.model ?? ""}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="openai/gpt-5.5"
-            className="font-mono"
-          />
-        </SettingField>
-        <Button variant="primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
-          {t("save")}
-        </Button>
-      </SettingsColumn>
-    </SettingsSection>
-  );
-}
-
 function GeneralSettings() {
   const { t } = useTranslation();
   // Server info and counts arrive over the global websocket feed.
@@ -687,9 +604,7 @@ function GeneralSettings() {
       <PreferencesSection />
       <MessageRenderingSection />
       <NotificationsSection />
-      <PhoneNotificationsSection />
       <InstallSection />
-      <ChatProviderSection />
       <SettingsUpdatesRow />
       <SettingsSection title={t("server info")} className="border-b-0">
         {isPending && <Spinner />}

@@ -2,6 +2,7 @@ import { Menu } from "@base-ui/react/menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
+  ChartBarIcon,
   ChatsCircleIcon,
   CodeIcon,
   GearIcon,
@@ -65,6 +66,7 @@ const NAV = [
   { to: "/chat", label: "Instant Chat", icon: LightningIcon },
   { to: "/terminals", label: "Terminals", icon: TerminalWindowIcon },
   { to: "/files", label: "Files", icon: TreeViewIcon },
+  { to: "/stats", label: "usage dashboard", icon: ChartBarIcon },
 ] as const;
 
 function ThemeToggle() {
@@ -475,12 +477,12 @@ function RootLayoutInner() {
           )}
         >
           <RailHint
-            label={t("usage dashboard")}
+            label="Droppen"
             render={
               <MachineLink
-                machine={sectionMachine}
-                to="/stats"
-                aria-label={t("usage dashboard")}
+                machine={routeMachine}
+                to="/sessions"
+                aria-label="Droppen"
                 className="flex items-center justify-center hover:opacity-80 max-[480px]:mr-[4px] max-[480px]:size-[28px] min-[480px]:max-md:mr-3 min-[480px]:max-md:size-8 max-md:shrink-0 md:mb-2 md:h-8 md:w-full md:border-b md:border-border"
               />
             }
