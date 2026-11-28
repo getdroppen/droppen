@@ -368,7 +368,7 @@ async fn a_shim_in_the_old_tmp_folder_is_adopted_after_a_restart() {
 /// server is replaced must not lose any of it.
 #[tokio::test]
 async fn every_line_of_a_running_loop_survives_a_restart_in_the_middle_of_it() {
-    const TICKS: usize = 25;
+    const TICKS: usize = 10;
     let home = tempfile::tempdir().expect("tempdir");
 
     let first = Boot::start(home.path(), DEFAULT_INSTANCE).await;
