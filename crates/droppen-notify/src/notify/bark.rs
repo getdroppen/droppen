@@ -200,7 +200,7 @@ pub async fn send(endpoint: &str, nudge: &Nudge) -> Result<(), String> {
         return Err("the configured endpoint is not an https URL".to_string());
     }
     let client = CLIENT.as_ref().ok_or_else(|| "no HTTP client".to_string())?;
-    let response = client
+    let mut response = client
         .post(endpoint)
         .json(&payload(nudge))
         .send()
@@ -209,8 +209,20 @@ pub async fn send(endpoint: &str, nudge: &Nudge) -> Result<(), String> {
     let status = response.status();
     if !status.is_success() {
         // Bark says why in the body, and the body is the only part of this worth
-        // repeating: the URL holds the device key.
-        let detail = response.text().await.unwrap_or_default();
+        // repeating: the URL holds the device key. Cap the read so a hostile or
+        // broken endpoint cannot OOM the server with a huge error payload.
+        const MAX_ERROR_BODY_BYTES: usize = 4096;
+        let mut raw = Vec::new();
+        while raw.len() < MAX_ERROR_BODY_BYTES {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    let take = (MAX_ERROR_BODY_BYTES - raw.len()).min(chunk.len());
+                    raw.extend_from_slice(&chunk[..take]);
+                }
+                _ => break,
+            }
+        }
+        let detail = String::from_utf8_lossy(&raw);
         let detail = detail.trim();
         let detail: String = detail.chars().take(200).collect();
         return Err(if detail.is_empty() {

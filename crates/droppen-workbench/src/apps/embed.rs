@@ -182,11 +182,16 @@ impl ProxyClient for HttpClient {
             }
         }
 
-        let response = match self.request(outgoing).await {
-            Ok(response) => response,
-            Err(error) => {
+        const UPSTREAM_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+        let response = match tokio::time::timeout(UPSTREAM_HTTP_TIMEOUT, self.request(outgoing)).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => {
                 tracing::debug!(%error, port, "embedded app unreachable");
                 return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
+            }
+            Err(_) => {
+                tracing::debug!(port, "embedded app request timed out");
+                return text(StatusCode::GATEWAY_TIMEOUT, UNREACHABLE);
             }
         };
 
@@ -209,25 +214,41 @@ async fn websocket(mut request: Request<Body>, port: u16, path: &str) -> Respons
         return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
     };
 
-    let mut upstream = match TcpStream::connect(("127.0.0.1", port)).await {
-        Ok(stream) => stream,
-        Err(error) => {
+    const UPSTREAM_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    const UPSTREAM_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+    let mut upstream = match tokio::time::timeout(UPSTREAM_CONNECT_TIMEOUT, TcpStream::connect(("127.0.0.1", port))).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(error)) => {
             tracing::debug!(%error, port, "cannot reach the embedded app's websocket");
             return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
+        }
+        Err(_) => {
+            tracing::debug!(port, "connecting to embedded app websocket timed out");
+            return text(StatusCode::GATEWAY_TIMEOUT, UNREACHABLE);
         }
     };
 
     let head = request_head(request.method().as_str(), path, request.headers());
-    if let Err(error) = upstream.write_all(&head).await {
-        tracing::debug!(%error, port, "cannot forward the websocket handshake");
+    if tokio::time::timeout(UPSTREAM_HANDSHAKE_TIMEOUT, upstream.write_all(&head))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "handshake write timed out"))
+        .and_then(|r| r)
+        .is_err()
+    {
+        tracing::debug!(port, "cannot forward the websocket handshake");
         return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
     }
 
-    let (status, headers, pending) = match upstream.read_head().await {
-        Ok(head) => head,
-        Err(error) => {
+    let (status, headers, pending) = match tokio::time::timeout(UPSTREAM_HANDSHAKE_TIMEOUT, upstream.read_head()).await {
+        Ok(Ok(head)) => head,
+        Ok(Err(error)) => {
             tracing::debug!(%error, port, "the embedded app did not answer the handshake");
             return text(StatusCode::BAD_GATEWAY, UNREACHABLE);
+        }
+        Err(_) => {
+            tracing::debug!(port, "the embedded app handshake timed out");
+            return text(StatusCode::GATEWAY_TIMEOUT, UNREACHABLE);
         }
     };
     if status != StatusCode::SWITCHING_PROTOCOLS {
