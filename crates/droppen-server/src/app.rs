@@ -145,8 +145,14 @@ impl RemoteHandApp {
                 }
             }
         });
-        let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, false, Arc::new(NotifyTokens));
-        auth.attach_agents_credential(Arc::new(AgentsTokens));
+        let auth = droppen_auth::Auth::new(
+            &paths,
+            &instance,
+            &auth_settings,
+            false,
+            Arc::new(NotifyTokens),
+            Arc::new(AgentsTokens),
+        );
         let logins = logins();
         let drive = droppen_drive::Drive::new(paths.clone(), &instance, auth, transcript_sources(), register_providers, logins.clone(), NotifyDecoration::new(paths.clone(), instance.as_ref().clone()));
         let feeds = FeedRegistry::new();

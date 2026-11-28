@@ -1355,7 +1355,7 @@ async fn the_built_in_agents_say_whether_their_executable_is_on_path() {
 /// turn, and read trimmed transcripts over the loopback agent bus using the
 /// stateless `rha1` token injected into `session/new`'s `mcpServers`.
 #[tokio::test]
-async fn acp_sessions_communicate_through_the_local_agent_bus() {
+async fn two_acp_sessions_discover_and_message_each_other_through_the_agent_bus() {
     let home = tempfile::tempdir().expect("tempdir");
     let program = install_fake(home.path());
     let mut dirs = workdirs(home.path(), &["work-a", "work-b"]);
@@ -1370,7 +1370,6 @@ async fn acp_sessions_communicate_through_the_local_agent_bus() {
     let id_b = start(&server, "fake", &work_b, "beta task").await;
     wait_for(&server, &id_b, "beta first turn", finished).await;
 
-    // Extract the `droppen-agents` URL and `rha1` token from alpha's `session/new`.
     let new_a = calls(&work_a)
         .into_iter()
         .find(|c| c["method"] == "session/new")
@@ -1394,24 +1393,25 @@ async fn acp_sessions_communicate_through_the_local_agent_bus() {
 
     let http = reqwest::Client::new();
 
-    // 1. Unauthenticated requests are rejected even when server auth is off.
-    let unauth = http.get(format!("{base_url}/api/agents")).send().await.expect("get");
-    assert_eq!(unauth.status(), 401);
-
-    // 2. A notify (`rhn1`) token is never accepted on `/api/agents`.
+    // Even with server auth off, `/api/agents` requires a verified `AgentsGrant`,
+    // and a `rhn1` notify token minted from the same secret is never accepted.
+    assert_eq!(http.get(format!("{base_url}/api/agents")).send().await.expect("get").status(), 401);
     let secret = droppen_notify::notify::store::read_secret(&server.paths)
         .await
         .expect("secret minted with rha1 token");
     let notify_token = droppen_notify::notify::token::mint(&secret, "default", &format!("acp/{id_a}"));
-    let wrong_domain = http
-        .get(format!("{base_url}/api/agents"))
-        .bearer_auth(&notify_token)
-        .send()
-        .await
-        .expect("get");
-    assert_eq!(wrong_domain.status(), 401);
+    assert_eq!(
+        http.get(format!("{base_url}/api/agents"))
+            .bearer_auth(&notify_token)
+            .send()
+            .await
+            .expect("get")
+            .status(),
+        401
+    );
 
-    // 3. `GET /api/agents` lists beta and identifies alpha as `self`.
+    // Listing peers returns beta and excludes alpha from `agents` while naming
+    // alpha in `self`.
     let list_resp = http
         .get(format!("{base_url}/api/agents"))
         .bearer_auth(&token_a)
@@ -1429,7 +1429,8 @@ async fn acp_sessions_communicate_through_the_local_agent_bus() {
         .unwrap_or_else(|| panic!("beta not in peers: {listed:#}"));
     assert_eq!(beta_peer["canReceive"], true);
 
-    // 4. Sending to self is rejected with 400.
+    // A session cannot address itself, and sending to a peer delivers the
+    // `<cross-session-message>` envelope as an ordinary turn on beta.
     let self_send = http
         .post(format!("{base_url}/api/agents/send"))
         .bearer_auth(&token_a)
@@ -1439,7 +1440,6 @@ async fn acp_sessions_communicate_through_the_local_agent_bus() {
         .expect("self send");
     assert_eq!(self_send.status(), 400);
 
-    // 5. `POST /api/agents/send` delivers `<cross-session-message>` to beta.
     let before_b = texts(&server.get_json(&format!("/api/sessions/acp/{id_b}")).await).len();
     let send_resp = http
         .post(format!("{base_url}/api/agents/send"))
@@ -1472,7 +1472,7 @@ async fn acp_sessions_communicate_through_the_local_agent_bus() {
     assert!(delivered.contains("hop=\"1\""), "missing hop: {delivered}");
     assert!(delivered.contains("please inspect auth.rs"), "missing body: {delivered}");
 
-    // 6. `GET /api/agents/acp/{id_b}/transcript` returns trimmed transcript + status.
+    // Reading beta's transcript returns trimmed items and pending-gate flags.
     let tr_resp = http
         .get(format!("{base_url}/api/agents/acp/{id_b}/transcript"))
         .bearer_auth(&token_a)
@@ -1492,8 +1492,8 @@ async fn acp_sessions_communicate_through_the_local_agent_bus() {
 
     server.stop().await;
 
-    // 7. Under forced auth, `rha1` authenticates `/api/agents` ONLY — never
-    //    `/api/sessions` or `/api/notify`.
+    // With authentication enforced, the stateless `rha1` token still opens
+    // `/api/agents` after a restart and never opens `/api/sessions` or `/api/notify`.
     let guarded = TestServer::start_forced_at(home.path()).await;
     let guarded_url = format!("http://127.0.0.1:{}", guarded.addr.port());
     assert_eq!(

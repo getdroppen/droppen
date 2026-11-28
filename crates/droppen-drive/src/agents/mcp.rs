@@ -1,24 +1,163 @@
 //! Pure-Rust stdio JSON-RPC 2.0 MCP server (`droppen mcp-agents`).
 //!
-//! Spawned by ACP agents (via `session/new` / `session/load` `mcpServers`),
-//! Claude Code (`--mcp-config`), and Codex (`mcp_servers`) to expose Droppen's
-//! local cross-session agent bus (`list_agents`, `send_message`, `read_session`).
-//!
-//! Stdout is reserved exclusively for line-delimited JSON-RPC 2.0 responses;
-//! no logs or diagnostics may ever be written to stdout.
+//! Spawned as a child by ACP agents, Claude Code, or Codex to expose Droppen's
+//! local cross-session agent bus (`list_agents`, `send_message`,
+//! `read_session`). Stdout carries nothing but line-delimited JSON-RPC 2.0
+//! frames; no logs or diagnostics are ever written there.
 
 use std::io::{BufRead, Write};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use droppen_base::process_env::{AGENTS_TOKEN_ENV, AGENTS_URL_ENV};
 
-use super::{AGENTS_LIST_PATH, AGENTS_SEND_PATH, MCP_SERVER_NAME};
+use super::routes::{AGENTS_LIST_PATH, AGENTS_SEND_PATH};
+use super::token::MCP_SERVER_NAME;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_PROTOCOL_VERSION: &str = "2025-03-26";
+
+#[derive(Debug, Deserialize)]
+struct RpcRequest {
+    id: Option<Value>,
+    method: String,
+    #[serde(default)]
+    params: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct RpcResponse {
+    jsonrpc: &'static str,
+    id: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<RpcError>,
+}
+
+#[derive(Debug, Serialize)]
+struct RpcError {
+    code: i64,
+    message: String,
+}
+
+impl RpcResponse {
+    fn ok(id: Value, result: impl Serialize) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            id,
+            result: Some(serde_json::to_value(result).expect("serializable RPC result")),
+            error: None,
+        }
+    }
+
+    fn method_not_found(id: Value, method: &str) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            id,
+            result: None,
+            error: Some(RpcError {
+                code: -32601,
+                message: format!("method not found: {method}"),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeParams {
+    protocol_version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeResult {
+    protocol_version: String,
+    capabilities: ToolsCapability,
+    server_info: ServerInfo,
+}
+
+#[derive(Debug, Serialize)]
+struct ToolsCapability {
+    tools: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct ServerInfo {
+    name: &'static str,
+    version: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct ToolListResult {
+    tools: Vec<ToolDef>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolDef {
+    name: &'static str,
+    description: &'static str,
+    input_schema: Value,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ToolCallParams {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    arguments: Value,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolCallResult {
+    content: Vec<TextContent>,
+    is_error: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct TextContent {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: String,
+}
+
+impl ToolCallResult {
+    fn text(text: String, is_error: bool) -> Self {
+        Self {
+            content: vec![TextContent { kind: "text", text }],
+            is_error,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListAgentsArgs {
+    cwd: Option<String>,
+    source: Option<String>,
+    active_only: Option<bool>,
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SendMessageArgs {
+    target: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadSessionArgs {
+    target: String,
+    limit: Option<u64>,
+    include_tools: Option<bool>,
+}
 
 /// Run the stdio MCP server using `DROPPEN_AGENTS_URL` and `DROPPEN_AGENTS_TOKEN`.
 pub async fn run() -> Result<(), String> {
@@ -38,6 +177,8 @@ pub async fn run() -> Result<(), String> {
         .build()
         .map_err(|error| format!("cannot initialize HTTP client: {error}"))?;
 
+    // Read stdin on a dedicated OS thread so blocking reads never stall the
+    // tokio runtime while an HTTP call or timeout is in flight.
     let (tx, rx) = mpsc::channel::<std::io::Result<String>>(16);
     std::thread::spawn(move || {
         let stdin = std::io::stdin();
@@ -76,17 +217,15 @@ async fn serve_lines<W: Write>(
         if trimmed.is_empty() {
             continue;
         }
-        let Ok(msg) = serde_json::from_str::<Value>(trimmed) else {
+        let Ok(req) = serde_json::from_str::<RpcRequest>(trimmed) else {
             continue;
         };
-        let Some(id) = msg.get("id").cloned() else {
-            // Notification (e.g. `notifications/initialized`): no response.
+        let Some(id) = req.id else {
+            // Notifications (such as `notifications/initialized`) expect no reply.
             continue;
         };
-        let method = msg.get("method").and_then(Value::as_str).unwrap_or_default();
-        let params = msg.get("params").cloned().unwrap_or(Value::Null);
 
-        let response = dispatch(client, base_url, token, id, method, params).await;
+        let response = dispatch(client, base_url, token, id, &req.method, req.params).await;
         let encoded = serde_json::to_string(&response).map_err(|error| format!("encode failed: {error}"))?;
         writer
             .write_all(encoded.as_bytes())
@@ -108,65 +247,45 @@ async fn dispatch(
     id: Value,
     method: &str,
     params: Value,
-) -> Value {
+) -> RpcResponse {
     match method {
         "initialize" => {
-            let version = params
-                .get("protocolVersion")
-                .and_then(Value::as_str)
-                .unwrap_or(DEFAULT_PROTOCOL_VERSION);
-            ok_response(
+            let parsed: InitializeParams = serde_json::from_value(params).unwrap_or_default();
+            let protocol_version = parsed
+                .protocol_version
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| DEFAULT_PROTOCOL_VERSION.to_string());
+            RpcResponse::ok(
                 id,
-                json!({
-                    "protocolVersion": version,
-                    "capabilities": { "tools": {} },
-                    "serverInfo": {
-                        "name": MCP_SERVER_NAME,
-                        "version": droppen_http::SERVER_VERSION
-                    }
-                }),
+                InitializeResult {
+                    protocol_version,
+                    capabilities: ToolsCapability {
+                        tools: serde_json::Map::new(),
+                    },
+                    server_info: ServerInfo {
+                        name: MCP_SERVER_NAME,
+                        version: droppen_http::SERVER_VERSION,
+                    },
+                },
             )
         }
-        "ping" | "server/discover" => ok_response(id, json!({})),
-        "tools/list" => ok_response(id, json!({ "tools": tool_definitions() })),
+        "ping" | "server/discover" => RpcResponse::ok(id, serde_json::Map::<String, Value>::new()),
+        "tools/list" => RpcResponse::ok(id, ToolListResult { tools: tool_definitions() }),
         "tools/call" => {
-            let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            let result = call_tool(client, base_url, token, name, &args).await;
-            ok_response(id, result)
+            let parsed: ToolCallParams = serde_json::from_value(params).unwrap_or_default();
+            let result = call_tool(client, base_url, token, &parsed.name, parsed.arguments).await;
+            RpcResponse::ok(id, result)
         }
-        _ => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "error": {
-                "code": -32601,
-                "message": format!("method not found: {method}")
-            }
-        }),
+        _ => RpcResponse::method_not_found(id, method),
     }
 }
 
-fn ok_response(id: Value, result: Value) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "result": result
-    })
-}
-
-fn tool_result(text: String, is_error: bool) -> Value {
-    json!({
-        "content": [{ "type": "text", "text": text }],
-        "isError": is_error
-    })
-}
-
-fn tool_definitions() -> Value {
-    json!([
-        {
-            "name": "list_agents",
-            "description": "List other AI agent sessions (Claude Code, Codex, and ACP agents such as Antigravity) running on this Droppen instance so you can coordinate with them.",
-            "inputSchema": {
+fn tool_definitions() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "list_agents",
+            description: "List other AI agent sessions (Claude Code, Codex, and ACP agents such as Antigravity) running on this Droppen instance so you can coordinate with them.",
+            input_schema: json!({
                 "type": "object",
                 "properties": {
                     "cwd": { "type": "string", "description": "Optional working directory prefix filter." },
@@ -174,24 +293,24 @@ fn tool_definitions() -> Value {
                     "activeOnly": { "type": "boolean", "description": "Only return currently active/running sessions." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum number of sessions to return (default 20)." }
                 }
-            }
+            }),
         },
-        {
-            "name": "send_message",
-            "description": "Send a cross-session message to another Droppen agent session (Claude Code, Codex, or ACP). Delivery is asynchronous; use read_session to inspect progress or wait for a reply.",
-            "inputSchema": {
+        ToolDef {
+            name: "send_message",
+            description: "Send a cross-session message to another Droppen agent session (Claude Code, Codex, or ACP). Delivery is asynchronous; use read_session to inspect progress or wait for a reply.",
+            input_schema: json!({
                 "type": "object",
                 "required": ["target", "message"],
                 "properties": {
                     "target": { "type": "string", "description": "Target session ref from list_agents (e.g. 'claude/<id>', 'acp/<id>', 'codex/<id>') or a unique Claude agentName." },
                     "message": { "type": "string", "description": "Plain-text message to send (max 16 KiB)." }
                 }
-            }
+            }),
         },
-        {
-            "name": "read_session",
-            "description": "Read recent trimmed transcript messages and live status (including whether it is waiting on a user permission or question) from another Droppen agent session.",
-            "inputSchema": {
+        ToolDef {
+            name: "read_session",
+            description: "Read recent trimmed transcript messages and live status (including whether it is waiting on a user permission or question) from another Droppen agent session.",
+            input_schema: json!({
                 "type": "object",
                 "required": ["target"],
                 "properties": {
@@ -199,89 +318,101 @@ fn tool_definitions() -> Value {
                     "limit": { "type": "integer", "minimum": 1, "maximum": 30, "description": "Maximum recent messages to return (default 10)." },
                     "includeTools": { "type": "boolean", "description": "Include compact one-line tool call summaries (default false)." }
                 }
-            }
-        }
-    ])
+            }),
+        },
+    ]
 }
 
-async fn call_tool(client: &reqwest::Client, base_url: &str, token: &str, name: &str, args: &Value) -> Value {
+async fn call_tool(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    name: &str,
+    args: Value,
+) -> ToolCallResult {
     match name {
         "list_agents" => {
+            let args: ListAgentsArgs = serde_json::from_value(args).unwrap_or_default();
             let mut params: Vec<(&str, String)> = Vec::new();
-            if let Some(cwd) = args.get("cwd").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                params.push(("cwd", cwd.to_string()));
+            if let Some(cwd) = args.cwd.filter(|s| !s.is_empty()) {
+                params.push(("cwd", cwd));
             }
-            if let Some(source) = args.get("source").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                params.push(("source", source.to_string()));
+            if let Some(source) = args.source.filter(|s| !s.is_empty()) {
+                params.push(("source", source));
             }
-            if let Some(active) = args.get("activeOnly").and_then(Value::as_bool) {
+            if let Some(active) = args.active_only {
                 params.push(("activeOnly", active.to_string()));
             }
-            if let Some(limit) = args.get("limit").and_then(Value::as_u64) {
+            if let Some(limit) = args.limit {
                 params.push(("limit", limit.to_string()));
             }
             let url = format!("{base_url}{AGENTS_LIST_PATH}");
             execute_request(client.get(&url).bearer_auth(token).query(&params)).await
         }
         "send_message" => {
-            let Some(target) = args.get("target").and_then(Value::as_str) else {
-                return tool_result("missing required argument: target".to_string(), true);
-            };
-            let Some(message) = args.get("message").and_then(Value::as_str) else {
-                return tool_result("missing required argument: message".to_string(), true);
+            let args: SendMessageArgs = match serde_json::from_value(args) {
+                Ok(parsed) => parsed,
+                Err(error) => return ToolCallResult::text(format!("invalid arguments: {error}"), true),
             };
             let url = format!("{base_url}{AGENTS_SEND_PATH}");
             execute_request(
                 client
                     .post(&url)
                     .bearer_auth(token)
-                    .json(&json!({ "target": target, "message": message })),
+                    .json(&json!({ "target": args.target, "message": args.message })),
             )
             .await
         }
         "read_session" => {
-            let Some(target) = args.get("target").and_then(Value::as_str).map(str::trim) else {
-                return tool_result("missing required argument: target".to_string(), true);
+            let args: ReadSessionArgs = match serde_json::from_value(args) {
+                Ok(parsed) => parsed,
+                Err(error) => return ToolCallResult::text(format!("invalid arguments: {error}"), true),
             };
+            let target = args.target.trim();
             let Some((source, id)) = target.split_once('/') else {
-                return tool_result(
+                return ToolCallResult::text(
                     format!("target must be '<source>/<id>' (from list_agents), got '{target}'"),
                     true,
                 );
             };
             if source.is_empty() || id.is_empty() || id.contains('/') || id.contains("..") {
-                return tool_result(format!("invalid target ref: '{target}'"), true);
+                return ToolCallResult::text(format!("invalid target ref: '{target}'"), true);
             }
             let mut params: Vec<(&str, String)> = Vec::new();
-            if let Some(limit) = args.get("limit").and_then(Value::as_u64) {
+            if let Some(limit) = args.limit {
                 params.push(("limit", limit.to_string()));
             }
-            if let Some(include_tools) = args.get("includeTools").and_then(Value::as_bool) {
+            if let Some(include_tools) = args.include_tools {
                 params.push(("includeTools", include_tools.to_string()));
             }
             let url = format!("{base_url}/api/agents/{source}/{id}/transcript");
             execute_request(client.get(&url).bearer_auth(token).query(&params)).await
         }
-        other => tool_result(format!("unknown tool: {other}"), true),
+        other => ToolCallResult::text(format!("unknown tool: {other}"), true),
     }
 }
 
-async fn execute_request(req: reqwest::RequestBuilder) -> Value {
+async fn execute_request(req: reqwest::RequestBuilder) -> ToolCallResult {
     match req.send().await {
         Ok(resp) => {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             if status.is_success() {
-                tool_result(text, false)
+                ToolCallResult::text(text, false)
             } else {
                 let message = serde_json::from_str::<Value>(&text)
                     .ok()
-                    .and_then(|v| v.get("error").or_else(|| v.get("message")).and_then(Value::as_str).map(str::to_string))
+                    .and_then(|v| {
+                        v.get("error")
+                            .or_else(|| v.get("message"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
                     .unwrap_or_else(|| format!("HTTP {}: {text}", status.as_u16()));
-                tool_result(message, true)
+                ToolCallResult::text(message, true)
             }
         }
-        Err(error) => tool_result(format!("cannot reach Droppen server: {error}"), true),
+        Err(error) => ToolCallResult::text(format!("cannot reach Droppen server: {error}"), true),
     }
 }
 
@@ -324,15 +455,9 @@ mod tests {
 
         let mut output = Vec::new();
         let client = reqwest::Client::new();
-        serve_lines(
-            rx,
-            &mut output,
-            &client,
-            &format!("http://{addr}"),
-            "rha1.test-token",
-        )
-        .await
-        .expect("serve");
+        serve_lines(rx, &mut output, &client, &format!("http://{addr}"), "rha1.test-token")
+            .await
+            .expect("serve");
         server.abort();
 
         let lines: Vec<Value> = String::from_utf8(output)

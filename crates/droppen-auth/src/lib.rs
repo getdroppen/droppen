@@ -300,7 +300,7 @@ pub struct Auth {
     /// How [`guard`] checks the notify capability on its one route.
     notify: Arc<dyn NotifyCredential>,
     /// How [`guard`] checks the loopback agent-bus capability on `/api/agents/*`.
-    agents: std::sync::OnceLock<Arc<dyn AgentsCredential>>,
+    agents: Arc<dyn AgentsCredential>,
     /// The cloud agent's per-boot loopback credential (hex), see the module docs.
     internal: String,
 }
@@ -327,6 +327,7 @@ impl Auth {
         settings: &AuthSettings,
         disabled: bool,
         notify: Arc<dyn NotifyCredential>,
+        agents: Arc<dyn AgentsCredential>,
     ) -> Arc<Self> {
         let mode = match (disabled, settings.enabled()) {
             (true, _) | (_, Some(false)) => Mode::Off,
@@ -348,7 +349,7 @@ impl Auth {
             paths: paths.clone(),
             instance: instance.name().to_string(),
             notify,
-            agents: std::sync::OnceLock::new(),
+            agents,
             internal: {
                 use rand::RngCore;
                 let mut bytes = [0u8; 32];
@@ -439,11 +440,6 @@ impl Auth {
     /// the secret, the MAC and the token format are that module's, and this one
     /// has no business knowing any of them. What belongs here is *where* the
     /// question is asked, which is the guard and nowhere else.
-    /// Attach the verifier for `/api/agents/*` loopback session tokens.
-    pub fn attach_agents_credential(&self, agents: Arc<dyn AgentsCredential>) {
-        let _ = self.agents.set(agents);
-    }
-
     async fn notify_caller(&self, headers: &HeaderMap) -> Option<NotifyGrant> {
         self.notify.caller(&self.paths, &self.instance, headers).await
     }
@@ -452,11 +448,10 @@ impl Auth {
         if !peer.is_some_and(|p| p.ip().is_loopback()) {
             return None;
         }
-        let verifier = self.agents.get()?;
-        if !verifier.is_agents_request(method, path) {
+        if !self.agents.is_agents_request(method, path) {
             return None;
         }
-        verifier.caller(&self.paths, &self.instance, headers).await
+        self.agents.caller(&self.paths, &self.instance, headers).await
     }
 }
 
@@ -882,12 +877,29 @@ mod tests {
         }
     }
 
+    struct NoAgents;
+
+    impl AgentsCredential for NoAgents {
+        fn is_agents_request(&self, _method: &Method, _path: &str) -> bool {
+            false
+        }
+
+        fn caller<'a>(
+            &'a self,
+            _paths: &'a Paths,
+            _instance: &'a str,
+            _headers: &'a HeaderMap,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentsGrant>> + Send + 'a>> {
+            Box::pin(async { None })
+        }
+    }
+
     /// The subsystem a server with the default settings builds for its
     /// instance `unittest` under `home`, and that instance's paths.
     pub(crate) fn auth_at(home: &Path) -> (Paths, Arc<Auth>) {
         let paths = Paths::for_instance(home.to_path_buf(), "unittest");
         let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
-        let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(NoNotify));
+        let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(NoNotify), Arc::new(NoAgents));
         (paths, auth)
     }
 
@@ -1136,7 +1148,7 @@ mod tests {
             let home = tempfile::tempdir().expect("tempdir");
             let paths = Paths::for_instance(home.path().to_path_buf(), "unittest");
             let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
-            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(proves));
+            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(proves), Arc::new(NoAgents));
             let mut router = gotcha::axum::Router::new()
                 .route("/api/notify", gotcha::axum::routing::post(found))
                 .route("/api/settings", gotcha::axum::routing::get(found))
@@ -1161,5 +1173,81 @@ mod tests {
         );
         assert_eq!(send(Proves(|| None), "POST", "/api/notify").await.0, StatusCode::UNAUTHORIZED, "no grant, no admission");
         assert_eq!(send(Proves(planted), "GET", "/api/settings").await.0, StatusCode::UNAUTHORIZED, "and no other route");
+    }
+
+    /// An agent-bus capability is accepted only on its own routes from a
+    /// loopback peer, stays inside [`AgentsGrant`], and never turns into an
+    /// [`AuthIdentity`].
+    #[tokio::test]
+    async fn the_agents_port_admits_only_loopback_grants_and_never_hands_out_an_identity() {
+        use gotcha::axum::body::Body;
+        use gotcha::axum::extract::ConnectInfo;
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+        use tower_service::Service;
+
+        struct Proves(fn() -> Option<AgentsGrant>);
+        impl AgentsCredential for Proves {
+            fn is_agents_request(&self, method: &Method, path: &str) -> bool {
+                method == Method::GET && path == "/api/agents"
+            }
+
+            fn caller<'a>(
+                &'a self,
+                _paths: &'a Paths,
+                _instance: &'a str,
+                _headers: &'a HeaderMap,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentsGrant>> + Send + 'a>> {
+                Box::pin(std::future::ready((self.0)()))
+            }
+        }
+
+        async fn found(request: Request) -> String {
+            let extensions = request.extensions();
+            let grant = extensions.get::<AgentsGrant>();
+            format!(
+                "{} {} {}",
+                grant.is_some(),
+                grant.and_then(|grant| grant.get::<AuthIdentity>()).is_some(),
+                extensions.get::<AuthIdentity>().is_some()
+            )
+        }
+
+        async fn send(proves: Proves, path: &str, peer: Option<SocketAddr>) -> (StatusCode, String) {
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::for_instance(home.path().to_path_buf(), "unittest");
+            let instance = InstanceDirs::new(&paths.data_dir(), "unittest").expect("instance");
+            let auth = Auth::new(&paths, &instance, &AuthSettings::default(), false, Arc::new(NoNotify), Arc::new(proves));
+            let mut router = gotcha::axum::Router::new()
+                .route("/api/agents", gotcha::axum::routing::get(found))
+                .route("/api/settings", gotcha::axum::routing::get(found))
+                .layer(layer(auth));
+            let mut request = gotcha::axum::http::Request::builder().method("GET").uri(path).body(Body::empty()).expect("request");
+            if let Some(peer) = peer {
+                request.extensions_mut().insert(ConnectInfo(peer));
+            }
+            let response = router.call(request).await.expect("infallible");
+            let status = response.status();
+            let body = gotcha::axum::body::to_bytes(response.into_body(), 1 << 16).await.expect("body");
+            (status, String::from_utf8_lossy(&body).into_owned())
+        }
+
+        let planted = || {
+            Some(AgentsGrant::new(AuthIdentity {
+                username: "peer".into(),
+                token_sha256: None,
+            }))
+        };
+        let loopback = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41234));
+        let remote = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)), 41234));
+
+        assert_eq!(
+            send(Proves(planted), "/api/agents", loopback).await,
+            (StatusCode::OK, "true true false".to_string()),
+            "a loopback grant admits /api/agents without conferring an AuthIdentity"
+        );
+        assert_eq!(send(Proves(planted), "/api/agents", remote).await.0, StatusCode::UNAUTHORIZED, "non-loopback peers are refused");
+        assert_eq!(send(Proves(planted), "/api/agents", None).await.0, StatusCode::UNAUTHORIZED, "an unknown peer is refused");
+        assert_eq!(send(Proves(|| None), "/api/agents", loopback).await.0, StatusCode::UNAUTHORIZED, "no grant, no admission");
+        assert_eq!(send(Proves(planted), "/api/settings", loopback).await.0, StatusCode::UNAUTHORIZED, "and no other route");
     }
 }

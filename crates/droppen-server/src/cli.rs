@@ -61,7 +61,19 @@ pub enum Command {
     SessionShim(droppen_provider::shim::SessionShimArgs),
     /// Stdio MCP bridge exposing Droppen's local cross-session agent bus.
     #[command(hide = true)]
-    McpAgents,
+    McpAgents(McpAgentsArgs),
+}
+
+/// `mcp-agents`'s command line: configuration travels in `DROPPEN_AGENTS_*`
+/// environment variables rather than flags so tokens never appear in `ps`.
+#[derive(Debug, Default, PartialEq, Eq, Args)]
+pub struct McpAgentsArgs;
+
+impl McpAgentsArgs {
+    /// Run the stdio MCP bridge until EOF on stdin.
+    pub async fn run(self) -> Result<(), String> {
+        droppen_drive::agents::mcp::run().await
+    }
 }
 
 /// Arguments a command takes and ignores.
@@ -207,7 +219,7 @@ impl Command {
             // them a command that always answers "no channel configured".
             Command::Notify(args) => args.run().await.map_err(GotchaError::message),
             // Hidden: launched by ACP/Claude/Codex as their `droppen-agents` stdio MCP server.
-            Command::McpAgents => droppen_drive::agents::mcp::run().await.map_err(GotchaError::message),
+            Command::McpAgents(args) => args.run().await.map_err(GotchaError::message),
             Command::Up(_) => unreachable!("`up` never reaches the async dispatcher"),
         }
     }

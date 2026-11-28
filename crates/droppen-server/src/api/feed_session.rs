@@ -61,7 +61,7 @@ async fn a_rotation_decision_reaches_an_open_session_feed_without_waiting_for_th
     let dir = tempfile::tempdir().expect("tempdir");
     let paths = Arc::new(Paths::new(dir.path().to_path_buf()));
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-    let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
+    let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens), std::sync::Arc::new(crate::app::AgentsTokens));
     let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins(), crate::app::NotifyDecoration::new(paths.clone(), instance.clone()));
     let feeds = FeedRegistry::new();
     drive.injections.host.attach_listeners(feeds.clone(), droppen_http::refresh::Refresh::new(global::GlobalFeed::new()));
@@ -172,7 +172,7 @@ pub(crate) fn claude_turns(id: &str, from: usize, turns: usize) -> String {
 pub(crate) fn test_drive(dir: &Path) -> (Arc<Paths>, Arc<Drive>) {
     let paths = Arc::new(Paths::new(dir.to_path_buf()));
     let instance = droppen_instance::instance::InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
-    let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens));
+    let auth = droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens), std::sync::Arc::new(crate::app::AgentsTokens));
     let drive = Drive::new(paths.clone(), &instance, auth, crate::app::transcript_sources(), crate::app::register_providers, crate::app::logins(), crate::app::NotifyDecoration::new(paths.clone(), instance.clone()));
     (paths, drive)
 }
@@ -463,7 +463,7 @@ async fn a_page_is_sent_the_count_and_never_the_words() {
     let paths = Arc::new(Paths::new(harness._home.path().to_path_buf()));
     let instance = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("valid name");
     let drive = Arc::new(droppen_drive::Drive {
-        auth: droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens)),
+        auth: droppen_auth::Auth::new(&paths, &instance, &droppen_http::config::AuthSettings::default(), false, std::sync::Arc::new(crate::app::NotifyTokens), std::sync::Arc::new(crate::app::AgentsTokens)),
         injections: harness.injections.clone(),
         accounts: Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), crate::app::logins())),
         quota: Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), crate::app::logins())),
