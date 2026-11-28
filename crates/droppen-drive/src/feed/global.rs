@@ -534,33 +534,71 @@ struct SettingsFrame<'a> {
     plugins: &'a [droppen_plugin_sdk::PluginStatus],
 }
 
-/// Whether `frame` is about runtime-installed plugins: the `plugins` list or a
-/// `plugin-doc` write announcement. Both are this computer's own pages' alone
-/// (`docs/plugins/runtime.md` §5), so a cloud subscriber drops them.
-///
-/// The broadcast is shared by every subscriber, and session frames are almost
-/// all of its traffic: the cheap text check keeps parsing for a frame that
-/// cannot be one, and a session title that happens to contain `"plugin` still
-/// parses to a `sessions:*` type and goes through.
-fn plugin_frame(frame: &str) -> bool {
+/// Filter a broadcast plugin frame (`plugins` or `plugin-doc`) for a bridged
+/// (`cloud:`) subscriber (`docs/plugins/cloud.md` §6):
+/// - non-plugin frames pass through untouched;
+/// - `plugins` frames are filtered to entries with `enabled && cloud`, with
+///   `entry` set to `null` (never leaking the instance capability key);
+/// - `plugin-doc` frames pass through only while that plugin is enabled and
+///   switched on for droppen.app.
+async fn filter_cloud_plugin_frame(frame: String, plugins: &dyn PluginStatuses) -> Option<String> {
     if !frame.contains("\"plugin") {
-        return false;
+        return Some(frame);
     }
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(frame) else {
-        return false;
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&frame) else {
+        return Some(frame);
     };
-    matches!(
-        value.get("type").and_then(serde_json::Value::as_str),
-        Some("plugins" | "plugin-doc")
-    )
+    match value.get("type").and_then(serde_json::Value::as_str) {
+        Some("plugins") => {
+            let list = value
+                .get("plugins")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let filtered: Vec<serde_json::Value> = list
+                .into_iter()
+                .filter(|item| {
+                    item.get("enabled").and_then(serde_json::Value::as_bool) == Some(true)
+                        && item.get("cloud").and_then(serde_json::Value::as_bool) == Some(true)
+                })
+                .map(|mut item| {
+                    if let Some(obj) = item.as_object_mut() {
+                        obj.insert("entry".to_string(), serde_json::Value::Null);
+                    }
+                    item
+                })
+                .collect();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("plugins".to_string(), serde_json::Value::Array(filtered));
+            }
+            serde_json::to_string(&value).ok()
+        }
+        Some("plugin-doc") => {
+            let id = value.get("plugin").and_then(serde_json::Value::as_str)?;
+            plugins.is_cloud_enabled(id).await.then_some(frame)
+        }
+        _ => Some(frame),
+    }
 }
 
-/// The plugin host's status, which a local client's opening `settings` frame
-/// carries. The host is not below the feed, so the entry answers this from it.
+/// The plugin host's status, which a local or cloud client's opening
+/// `settings` frame carries. The host is not below the feed, so the entry
+/// answers this from it.
 pub trait PluginStatuses: Send + Sync {
     /// Every installed plugin as this instance sees it, read off the async
     /// runtime.
     fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>>;
+
+    /// Installed plugins that droppen.app may show (`enabled && cloud`), with
+    /// `entry: None`.
+    fn cloud_status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
+        Box::pin(async { Vec::new() })
+    }
+
+    /// Whether `id` is installed, enabled, and switched on for droppen.app.
+    fn is_cloud_enabled<'a>(&'a self, _id: &'a str) -> futures_util::future::BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
 }
 
 /// Where Claude Code keeps its projects, which the `settings` frame names.
@@ -668,10 +706,13 @@ where
     if options.enabled && !send_within(&mut sender, Message::Text(hello_frame(options).into()), limit, shutdown).await {
         return;
     }
-    // A cloud subscriber is told there are no plugins, so `settings` says
-    // `plugins: []` just as `/api/settings` does for it (`docs/plugins/
-    // runtime.md` §5); the live frames are filtered below.
-    let plugins = if cloud { Vec::new() } else { state.plugins.status().await };
+    // A cloud subscriber gets only plugins enabled and switched on for
+    // droppen.app, with `entry: None` (`docs/plugins/cloud.md` §6).
+    let plugins = if cloud {
+        state.plugins.cloud_status().await
+    } else {
+        state.plugins.status().await
+    };
     let attached = attach(
         &state.global,
         &state.drive,
@@ -708,12 +749,17 @@ where
             frame = attachment.next_frame() => match frame {
                 Some(frame) => {
                     // The broadcast is shared, so the filter is the
-                    // subscriber's: a cloud socket drops what only this
-                    // computer's own pages may hear (`docs/plugins/runtime.md`
-                    // §5).
-                    if cloud && plugin_frame(&frame) {
-                        continue;
-                    }
+                    // subscriber's: a cloud socket receives only cloud-enabled
+                    // plugins (with `entry: null`) and their `plugin-doc`
+                    // frames (`docs/plugins/cloud.md` §6).
+                    let frame = if cloud {
+                        let Some(filtered) = filter_cloud_plugin_frame(frame, state.plugins.as_ref()).await else {
+                            continue;
+                        };
+                        filtered
+                    } else {
+                        frame
+                    };
                     if !send_within(&mut sender, encode(frame, compress), limit, shutdown).await {
                         break;
                     }
@@ -976,15 +1022,57 @@ mod tests {
         assert_eq!(snapshot_frame(&after), format!(r#"{{"type":"sessions:snapshot","sessions":[{row}]}}"#));
     }
 
-    /// The filter is by type, not by the word: a session's title is arbitrary
-    /// text and may well contain `"plugin`.
-    #[test]
-    fn only_the_plugin_frames_are_plugin_frames() {
-        assert!(plugin_frame(r#"{"type":"plugins","plugins":[]}"#));
-        assert!(plugin_frame(r#"{"type":"plugin-doc","plugin":"tasks","name":"state","revision":1}"#));
-        assert!(!plugin_frame(r#"{"type":"sessions:delta","upserts":[{"title":"a \"plugin\" thing"}]}"#));
-        assert!(!plugin_frame(r#"{"type":"screens:changed","listRevision":1}"#));
-        assert!(!plugin_frame("not json"));
+    /// Cloud feed frame filtering: non-plugin frames pass through unchanged;
+    /// `plugins` frames keep only `enabled && cloud` plugins with `entry: null`;
+    /// `plugin-doc` frames pass through only for cloud-enabled plugins.
+    #[tokio::test]
+    async fn cloud_plugin_frames_are_filtered_to_cloud_enabled_plugins() {
+        struct OnlyCloudTasks;
+        impl PluginStatuses for OnlyCloudTasks {
+            fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
+                Box::pin(async { Vec::new() })
+            }
+            fn is_cloud_enabled<'a>(&'a self, id: &'a str) -> futures_util::future::BoxFuture<'a, bool> {
+                let ok = id == "tasks";
+                Box::pin(async move { ok })
+            }
+        }
+        let host = OnlyCloudTasks;
+        let plugins_frame = serde_json::json!({
+            "type": "plugins",
+            "plugins": [
+                {"id": "tasks", "enabled": true, "cloud": true, "entry": "/plugins/secret/tasks/1/dist/index.js"},
+                {"id": "notes", "enabled": true, "cloud": false, "entry": "/plugins/secret/notes/1/dist/index.js"},
+                {"id": "off", "enabled": false, "cloud": true, "entry": null}
+            ]
+        })
+        .to_string();
+        let filtered: serde_json::Value = serde_json::from_str(
+            &filter_cloud_plugin_frame(plugins_frame, &host)
+                .await
+                .expect("plugins frame kept"),
+        )
+        .unwrap();
+        assert_eq!(filtered["plugins"].as_array().unwrap().len(), 1);
+        assert_eq!(filtered["plugins"][0]["id"], "tasks");
+        assert!(filtered["plugins"][0]["entry"].is_null(), "capability key never leaks");
+
+        let allowed_doc = r#"{"type":"plugin-doc","plugin":"tasks","name":"state","revision":1}"#;
+        assert_eq!(
+            filter_cloud_plugin_frame(allowed_doc.to_string(), &host).await.as_deref(),
+            Some(allowed_doc)
+        );
+        let blocked_doc = r#"{"type":"plugin-doc","plugin":"notes","name":"state","revision":1}"#;
+        assert!(filter_cloud_plugin_frame(blocked_doc.to_string(), &host).await.is_none());
+
+        let session_delta = r#"{"type":"sessions:delta","upserts":[{"title":"a \"plugin\" thing"}]}"#;
+        assert_eq!(
+            filter_cloud_plugin_frame(session_delta.to_string(), &host).await.as_deref(),
+            Some(session_delta)
+        );
+        let screens = r#"{"type":"screens:changed","listRevision":1}"#;
+        assert_eq!(filter_cloud_plugin_frame(screens.to_string(), &host).await.as_deref(), Some(screens));
+        assert_eq!(filter_cloud_plugin_frame("not json".to_string(), &host).await.as_deref(), Some("not json"));
     }
 
     #[test]

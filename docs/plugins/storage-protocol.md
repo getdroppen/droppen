@@ -115,13 +115,11 @@ name is one path segment, so `/` is sent as `%2F`.
 | `GET /api/plugins/{id}/docs/{name}` | — | `200 Doc`; `404 doc_not_found` |
 | `PUT /api/plugins/{id}/docs/{name}` | `{ expectedRevision: number \| null, value }` | `200 Doc`; `409 Conflict`; `413 too_large` |
 | `POST /api/plugins/{id}/batch` | `{ writes: [{ name, expectedRevision, value }] }` | `200 { docs: Doc[] }`; `409 Conflict`; `413 too_large` |
-| `GET /api/plugins/{id}/docs/{name}/history?offset=&limit=` | — | `200 { versions: DocVersion[], more: boolean }`, newest first, one page |
 
 ```ts
 interface Doc<T> { name: string; revision: number; updatedAt: string; value: T }
 interface DocMeta { name: string; revision: number; updatedAt: string }
 interface Conflict<T> { error: "conflict"; message: string; doc: string; current: Doc<T> | null }
-interface DocVersion<T> { revision: number; updatedAt: string; updatedBy: string | null; value: T }
 ```
 
 - **Compare-and-set.** `expectedRevision: null` means "must not exist yet";
@@ -137,12 +135,10 @@ interface DocVersion<T> { revision: number; updatedAt: string; updatedBy: string
   oldest past versions (of any document) are forgotten; only live documents
   that alone exceed the limit refuse a write. Over a limit: `413 { error:
   "too_large", message, limit }`.
-- **History.** Every write keeps the value it replaced; per document the newest
-  50 versions are kept, and at most 16 MiB of them. It is a safety net for a
-  plugin's own bugs, not an API to build features on. A page is `limit`
-  versions (10 by default, at most 50) after skipping `offset`, cut short once
-  their values pass 8 MiB (the first is always there); `more` says whether
-  older ones remain.
+- **History.** Every write keeps the value it replaced in the SQLite
+  `doc_history` table; per document the newest 50 versions are kept, and at
+  most 16 MiB of them. It is a write-side safety net for recovery, with no
+  HTTP read endpoint.
 - **Feed.** After every committed write, the global feed (`/api/events`) sends
   one frame per written document: `{ "type": "plugin-doc", "plugin": <id>,
   "name": <doc>, "revision": <n> }`. That is what `host.storage.watch` listens

@@ -12,7 +12,7 @@ import { screensFeedEvent, type ScreensFeedEvent } from "./screen-sync";
 import { holdsPageLogin, invalidateDownloadTicket, onSignedOut, serverRestarted } from "@/lib/auth";
 import { useMachine } from "@/lib/machines/context";
 import { LOCAL, sessionKey, type MachineKey, type SessionRef } from "@/lib/machines/key";
-import { homeMachine, isOpen, perMachine, transportFor } from "@/lib/machines/registry";
+import { isOpen, perMachine, transportFor } from "@/lib/machines/registry";
 import { noteWsFailure } from "@/lib/ws-url";
 import { browserInflate, compressionAllowed, FeedHub } from "./feed-hub";
 import { loadSessionList, saveSessionList } from "@/features/sessions/feed-persist";
@@ -411,9 +411,8 @@ function startList(machine: MachineKey, store: GlobalFeedStore): () => void {
   };
 
   const feedHub = feedHubFor(machine);
-  // Plugins live on the home machine (`lib/machines/registry.ts`): their
-  // documents' news is only ever its feed's.
-  const plugins = machine === homeMachine() ? pluginEventsFor(machine) : null;
+  // Every machine's feed delivers its own plugin frames (`docs/plugins/cloud.md` §6).
+  const plugins = pluginEventsFor(machine);
   feedHub.start({
     onOpen: () => store.publish({ connected: true }),
     onClose: () => store.publish({ connected: false }),

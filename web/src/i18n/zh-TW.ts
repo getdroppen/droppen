@@ -1039,4 +1039,13 @@ export const zhTW: Record<string, string> = {
   "ACP agents": "ACP 代理",
   "{{name}} cannot start: {{why}} (checked {{ago}})": "{{name}} 啟動不了：{{why}}（{{ago}}檢查）",
   "delete": "刪除",
+  "Show on droppen.app": "在 droppen.app 上顯示",
+  "show {{name}} on droppen.app?": "在 droppen.app 上顯示 {{name}}？",
+  "Turning this on lets {{name}} run inside a sandboxed frame on droppen.app and make requests to this device over the encrypted relay. Turn this on only for plugins you trust.": "開啟後，{{name}} 可在 droppen.app 的沙盒框架中執行，並透過加密中繼向這台裝置發起請求。請僅對信任的外掛開啟。",
+  "running on {{device}}": "執行於 {{device}}",
+  "{{device}} is offline": "{{device}} 已離線",
+  "Plugins run live on their device and are not available while it is offline.": "外掛直接在其所屬裝置上即時執行，裝置離線時無法使用。",
+  "{{device}} is offline — plugins run live on their device": "{{device}} 已離線 — 外掛在其所屬裝置上即時執行",
+  "the {{name}} plugin is not available on droppen.app": "外掛 {{name}} 未在 droppen.app 上開放",
+  "Turn on \"Show on droppen.app\" in Settings › Plugins on the device itself.": "請在該裝置上的「設定 › 外掛」中開啟「在 droppen.app 上顯示」。",
 };

@@ -1,19 +1,25 @@
 /**
  * Plugin panes in layouts.
  *
- * A pane that shows plugin content is `{kind: "plugin", plugin, pane, state?}`.
+ * A pane that shows plugin content is `{kind: "plugin", plugin, pane, state?, machine?}`.
  * Layouts saved before plugins existed hold `{kind: "tasks"}`; that is read as
  * the tasks plugin's checklist pane, forever. The checklist is also *saved* in
- * the old form, so a layout saved now still means something to a previous
- * binary (whose sanitizer turns unknown kinds into an empty picker).
+ * the old form when on the home machine with empty state, so a layout saved now
+ * still means something to a previous binary (whose sanitizer turns unknown
+ * kinds into an empty picker).
  */
 import type { PaneState } from "@droppen/plugin-sdk";
+import type { MachineKey } from "@/lib/machines/key";
+import { PLUGIN_PAGE_PANE_ID } from "./frame/protocol";
+
+export { PLUGIN_PAGE_PANE_ID };
 
 export interface PluginPaneContent {
   kind: "plugin";
   plugin: string;
   pane: string;
   state?: PaneState;
+  machine?: MachineKey;
 }
 
 /** Old layout kinds and the plugin pane each one now is. */
@@ -30,8 +36,10 @@ export function readPaneContent<C extends { kind: string }>(content: C): C | Plu
 /** Content as the layout stores it: the legacy form while a rollback may still need it. */
 export function storePaneContent(content: PluginPaneContent): PluginPaneContent | { kind: string } {
   const empty = !content.state || Object.keys(content.state).length === 0;
-  for (const [kind, legacy] of Object.entries(LEGACY)) {
-    if (empty && legacy.plugin === content.plugin && legacy.pane === content.pane) return { kind };
+  if (!content.machine && empty) {
+    for (const [kind, legacy] of Object.entries(LEGACY)) {
+      if (legacy.plugin === content.plugin && legacy.pane === content.pane) return { kind };
+    }
   }
   return content;
 }

@@ -295,6 +295,8 @@ enum PaneContent {
         pane: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         state: Option<serde_json::Map<String, Value>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        machine: Option<String>,
     },
     Files {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -381,8 +383,9 @@ impl PaneContent {
             | PaneContent::Chat { machine: on, .. }
             | PaneContent::Terminal { machine: on, .. }
             | PaneContent::NewSession { machine: on }
+            | PaneContent::Plugin { machine: on, .. }
             | PaneContent::Files { machine: on, .. } => *on = Some(machine.to_owned()),
-            PaneContent::Tasks | PaneContent::Plugin { .. } | PaneContent::Browser { .. } => {}
+            PaneContent::Tasks | PaneContent::Browser { .. } => {}
         }
         self
     }
@@ -619,6 +622,7 @@ impl ScreenContent for serde_json::Map<String, Value> {
             plugin: plugin.to_owned(),
             pane: pane.to_owned(),
             state,
+            machine: None,
         })
     }
 }
@@ -765,7 +769,7 @@ mod stored_bytes {
             bytes(&layout),
             concat!(
                 r#"{"type":"split","id":"s1","direction":"column","ratio":0.25,"children":[{"type":"split","id":"s2","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l1","content":{"kind":"tasks"}},"#,
-                r#"{"type":"leaf","id":"l2","content":{"kind":"plugin","plugin":"tasks","pane":"checklist","state":{"zeta":1,"alpha":"a","on":true,"none":null}}}]},"#,
+                r#"{"type":"leaf","id":"l2","content":{"kind":"plugin","plugin":"tasks","pane":"checklist","state":{"zeta":1,"alpha":"a","on":true,"none":null},"machine":"d-7f3a"}}]},"#,
                 r#"{"type":"split","id":"s3","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l3","content":{"kind":"browser","id":"b-1"}},"#,
                 r#"{"type":"split","id":"s4","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l4","content":{"kind":"picker"}},"#,
                 r#"{"type":"split","id":"s5","direction":"row","ratio":0.5,"children":[{"type":"leaf","id":"l5","content":{"kind":"picker"}},"#,
@@ -853,8 +857,11 @@ mod plugin_pane_tests {
         });
         assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content);
         let mut extra = content.clone();
-        extra["machine"] = json!("elsewhere");
+        extra["unknown"] = json!("dropped");
         assert_eq!(PaneContent::sanitize(Some(&extra)).to_value(), content, "unknown fields go, the pane stays");
+        let mut on_other = content.clone();
+        on_other["machine"] = json!("elsewhere");
+        assert_eq!(PaneContent::sanitize(Some(&on_other)).to_value(), on_other, "plugin panes keep their device");
         let bare = json!({ "kind": "plugin", "plugin": "tasks", "pane": "c" });
         assert_eq!(PaneContent::sanitize(Some(&bare)).to_value(), bare);
         let layout = json!({ "type": "leaf", "id": "plugin-1", "content": content });
@@ -927,6 +934,7 @@ mod file_pane_tests {
             json!({ "kind": "files", "path": "/srv", "machine": "d-7f3a" }),
             json!({ "kind": "picker", "machine": "d-7f3a" }),
             json!({ "kind": "new-session", "machine": "d-7f3a" }),
+            json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist", "machine": "d-7f3a" }),
         ] {
             assert_eq!(PaneContent::sanitize(Some(&content)).to_value(), content, "{content}");
             let layout = json!({ "type": "leaf", "id": "p", "content": content });
@@ -965,8 +973,9 @@ mod file_pane_tests {
         // Kinds that are on no device of their own never carry one.
         let tasks = PaneContent::sanitize(Some(&json!({ "kind": "tasks", "machine": "d-7f3a" }))).to_value();
         assert_eq!(tasks, json!({ "kind": "tasks" }));
+        // A plugin pane with an unusable device drops the device and keeps the pane.
         let plugin = PaneContent::sanitize(Some(
-            &json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist", "machine": "d-7f3a" }),
+            &json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist", "machine": "bad\nline" }),
         ))
         .to_value();
         assert_eq!(plugin, json!({ "kind": "plugin", "plugin": "tasks", "pane": "checklist" }));

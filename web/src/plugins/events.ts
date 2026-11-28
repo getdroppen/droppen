@@ -1,5 +1,6 @@
 /**
- * Plugin news from the global feed, for the host's registry and storage.
+ * Plugin news from each machine's global feed, for the host's registry and
+ * storage (`docs/plugins/runtime.md` §6, `docs/plugins/cloud.md` §6).
  *
  * The feed (`app/global-feed.tsx`) hands every `plugin-doc` and `plugins` frame
  * here, and says when it has reconnected (a `sessions:snapshot`), after which

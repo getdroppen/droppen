@@ -229,18 +229,76 @@ impl<T> LockRecoverExt<T> for Mutex<T> {
 }
 
 /// Whether this request came over the cloud agent's bridge and speaks for a
-/// device (`droppen_auth` resolves it from the agent's headers). Nothing of the
-/// plugin host is served to one.
+/// device (`droppen_auth` resolves it from the agent's headers).
 pub trait CloudIdentityExt {
     /// Whether this request came over the cloud agent's bridge and speaks for
-    /// a device. Nothing of the plugin host is served to one.
+    /// a device.
     fn is_cloud(&self) -> bool;
+
+    /// Whether this request is the agent's own hub-copy syncer
+    /// (`cloud:agent-sync`), which never sees plugin status or documents so
+    /// the hub copy stays free of them (`docs/plugins/cloud.md` §6).
+    fn is_agent_sync(&self) -> bool;
 }
 
 impl CloudIdentityExt for droppen_auth::MaybeIdentity {
     fn is_cloud(&self) -> bool {
         self.0.as_ref().is_some_and(|identity| identity.username.starts_with("cloud:"))
     }
+
+    fn is_agent_sync(&self) -> bool {
+        self.0.as_ref().is_some_and(|identity| identity.username == "cloud:agent-sync")
+    }
+}
+
+/// The largest serialized package bundle answered by `GET /api/plugins/{id}/package`
+/// (kept comfortably under the bridge's 64 MiB frame budget).
+pub const MAX_PACKAGE_BUNDLE_BYTES: usize = 48 * 1024 * 1024;
+
+/// How one file in a [`PackageBundle`] is encoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageEncoding {
+    /// Plain UTF-8 text (JavaScript, CSS, JSON, SVG).
+    Utf8,
+    /// Standard base64 (binary assets such as images and fonts).
+    Base64,
+}
+
+impl PackageEncoding {
+    /// Wire string representation.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Utf8 => "utf8",
+            Self::Base64 => "base64",
+        }
+    }
+}
+
+/// One file inside a [`PackageBundle`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageFile {
+    /// Relative `/`-separated path inside the package directory.
+    pub path: String,
+    /// Media type by extension.
+    pub content_type: &'static str,
+    /// Encoding of [`Self::data`].
+    pub encoding: PackageEncoding,
+    /// UTF-8 source or base64 bytes.
+    pub data: String,
+}
+
+/// An installed plugin package's files at its current build, delivered over
+/// the end-to-end channel to a cloud sandbox frame (`docs/plugins/cloud.md` §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageBundle {
+    /// Plugin id.
+    pub id: String,
+    /// Current build id (`<version>-<12 hex>`).
+    pub build: String,
+    /// Entry module path relative to the package root.
+    pub entry: String,
+    /// All regular files inside the package (excluding `.droppen-install.json`).
+    pub files: Vec<PackageFile>,
 }
 
 impl Plugins {
@@ -379,6 +437,172 @@ impl Plugins {
         tokio::task::spawn_blocking(move || plugins.status()).await.unwrap_or_else(|error| {
             tracing::error!(%error, "cannot read the plugins' status");
             Vec::new()
+        })
+    }
+
+    /// Every installed plugin that droppen.app may show (`enabled && cloud`),
+    /// with `entry: None` so the instance's capability key never leaves the
+    /// machine (`docs/plugins/cloud.md` §6).
+    pub fn cloud_status(&self) -> Vec<PluginStatus> {
+        let installed = self.installed();
+        if installed.is_empty() {
+            return Vec::new();
+        }
+        installed
+            .iter()
+            .map(|package| self.evaluate(package, None))
+            .filter(|status| status.enabled && status.cloud)
+            .collect()
+    }
+
+    /// [`Self::cloud_status`], off the async runtime.
+    pub async fn cloud_status_async(self: &Arc<Self>) -> Vec<PluginStatus> {
+        let plugins = self.clone();
+        tokio::task::spawn_blocking(move || plugins.cloud_status()).await.unwrap_or_else(|error| {
+            tracing::error!(%error, "cannot read the cloud plugins' status");
+            Vec::new()
+        })
+    }
+
+    /// Whether `id` is installed, enabled (and compatible), and switched on for
+    /// droppen.app.
+    pub fn is_cloud_enabled(&self, id: &str) -> bool {
+        self.status_of(id).is_some_and(|status| status.enabled && status.cloud)
+    }
+
+    /// [`Self::is_cloud_enabled`], off the async runtime.
+    pub async fn is_cloud_enabled_async(self: &Arc<Self>, id: String) -> bool {
+        let plugins = self.clone();
+        tokio::task::spawn_blocking(move || plugins.is_cloud_enabled(&id))
+            .await
+            .unwrap_or(false)
+    }
+
+    /// Require that `id` is installed, enabled, and switched on for
+    /// droppen.app; anything else is `PluginError::NotFound` so a cloud caller
+    /// cannot tell an unknown plugin from a local-only or disabled one.
+    pub fn require_cloud_enabled(&self, id: &str) -> Result<PluginStatus, PluginError> {
+        let status = self.status_of(id).ok_or_else(|| PluginError::NotFound(id.to_string()))?;
+        if !status.enabled || !status.cloud {
+            return Err(PluginError::NotFound(id.to_string()));
+        }
+        Ok(status)
+    }
+
+    /// All regular files of an installed plugin's current build, for
+    /// `GET /api/plugins/{id}/package`.
+    pub fn package_bundle(&self, id: &str, require_cloud: bool) -> Result<PackageBundle, PluginError> {
+        use base64::Engine as _;
+
+        if !valid_id(id) {
+            return Err(PluginError::NotFound(id.to_string()));
+        }
+        let package = self.installed_package(id).ok_or_else(|| PluginError::NotFound(id.to_string()))?;
+        let status = self.evaluate(&package, None);
+        if require_cloud {
+            if !status.enabled || !status.cloud {
+                return Err(PluginError::NotFound(id.to_string()));
+            }
+        } else if !status.enabled {
+            return Err(PluginError::Disabled {
+                id: id.to_string(),
+                reason: status.reason,
+            });
+        }
+
+        let dir = self.package_dir(id);
+        let root = std::fs::canonicalize(&dir).map_err(|_| PluginError::NotFound(id.to_string()))?;
+        let record_path = root.join(install::RECORD_FILE);
+        let mut rel_paths = Vec::new();
+        let mut stack = vec![(root.clone(), String::new())];
+        while let Some((current, prefix)) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&current) else {
+                continue;
+            };
+            for entry in entries.filter_map(Result::ok) {
+                let file_name = entry.file_name();
+                let Some(name) = file_name.to_str() else {
+                    continue;
+                };
+                let rel = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                if install::is_record_path(&rel) {
+                    continue;
+                }
+                let path = entry.path();
+                let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if meta.file_type().is_symlink() {
+                    continue;
+                }
+                if meta.is_dir() {
+                    stack.push((path, rel));
+                } else if meta.is_file() {
+                    rel_paths.push((rel, path));
+                }
+            }
+        }
+        rel_paths.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut files = Vec::with_capacity(rel_paths.len());
+        let mut total_bytes: usize = 0;
+        for (rel, path) in rel_paths {
+            let Ok(canon) = std::fs::canonicalize(&path) else {
+                continue;
+            };
+            if !canon.starts_with(&root) || same_file(&canon, &record_path) {
+                continue;
+            }
+            let bytes = std::fs::read(&canon).map_err(|error| {
+                PluginError::Install(InstallError::Failed(format!("cannot read package file {rel}: {error}")))
+            })?;
+            let ct = content_type(&rel);
+            let is_text = matches!(
+                ct,
+                "text/javascript" | "text/css" | "application/json" | "image/svg+xml"
+            ) || rel.ends_with(".map")
+                || rel.ends_with(".txt");
+            let (encoding, data) = if is_text {
+                match String::from_utf8(bytes) {
+                    Ok(text) => (PackageEncoding::Utf8, text),
+                    Err(err) => (
+                        PackageEncoding::Base64,
+                        base64::engine::general_purpose::STANDARD.encode(err.into_bytes()),
+                    ),
+                }
+            } else {
+                (
+                    PackageEncoding::Base64,
+                    base64::engine::general_purpose::STANDARD.encode(&bytes),
+                )
+            };
+            total_bytes = total_bytes.saturating_add(data.len() + rel.len());
+            if total_bytes > MAX_PACKAGE_BUNDLE_BYTES {
+                return Err(PluginError::Install(InstallError::TooLarge {
+                    message: format!("plugin {id:?} package exceeds {MAX_PACKAGE_BUNDLE_BYTES} bytes"),
+                    limit: MAX_PACKAGE_BUNDLE_BYTES as u64,
+                }));
+            }
+            files.push(PackageFile {
+                path: rel,
+                content_type: ct,
+                encoding,
+                data,
+            });
+        }
+        // Guard against a concurrent package swap mixing files from two builds.
+        if install::recorded_build(&root).as_deref() != Some(package.build.as_str()) {
+            return Err(PluginError::NotFound(id.to_string()));
+        }
+        Ok(PackageBundle {
+            id: id.to_string(),
+            build: package.build,
+            entry: package.entry,
+            files,
         })
     }
 
@@ -662,11 +886,6 @@ impl Plugins {
         let docs = store.batch(writes, by)?;
         self.published(id, &docs);
         Ok(docs)
-    }
-
-    /// One page of a document's past versions, newest first.
-    pub fn history(&self, id: &str, name: &str, offset: usize, limit: Option<usize>) -> Result<store::HistoryPage, PluginError> {
-        Ok(self.require_enabled(id)?.history(name, offset, limit)?)
     }
 
     /// Tell every client which documents moved.

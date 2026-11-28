@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SourceIcon } from "@/components/source-icon";
-import { RobotIcon, CaretLeftIcon, FolderIcon, SquaresFourIcon, ChatsCircleIcon, PlusIcon, SparkleIcon, TerminalWindowIcon, TerminalIcon, XIcon, LightningIcon } from "@phosphor-icons/react";
+import { RobotIcon, CaretLeftIcon, FolderIcon, SquaresFourIcon, ChatsCircleIcon, PlusIcon, PuzzlePieceIcon, SparkleIcon, TerminalWindowIcon, TerminalIcon, XIcon, LightningIcon } from "@phosphor-icons/react";
 import { Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
 import { localize } from "@droppen/plugin-sdk";
 import { useTranslation } from "react-i18next";
@@ -22,7 +22,6 @@ import { readPaneContent, storePaneContent, type PluginPaneContent } from "@/plu
 import { PluginIcon } from "@/plugins/boundary";
 import { PluginPane, usePluginPaneOptions, usePluginPaneTitle } from "@/plugins/plugin-pane";
 import { DeviceChip, DevicePicker, readOnlyHere } from "@/features/machines/device-picker";
-import { isCloud } from "@/lib/hub/config";
 import { useApi, useHoldMachine, useHomeMachine, useMachine, useOpenMachines } from "@/lib/machines/context";
 import { isOpen, shellKind } from "@/lib/machines/registry";
 import { sessionKey, type MachineKey } from "@/lib/machines/key";
@@ -271,7 +270,7 @@ function PanePicker({
 }) {
   const { t: tr } = useTranslation();
   const [level, setLevel] = useState<null | "session" | "chat" | "terminal">(null);
-  const pluginPanes = usePluginPaneOptions();
+  const pluginPanes = usePluginPaneOptions(machine);
   const locale = hostLocale();
   const several = useOpenMachines().length > 1;
   const AddDeviceHint = cloudParts()?.AddDeviceHint;
@@ -289,20 +288,33 @@ function PanePicker({
               {devices}
             </div>
           )}
-          {pluginPanes.map(({ plugin, pane }) => {
+          {pluginPanes.map((opt) => {
             return (
               <button
-                key={`${plugin.id}/${pane.id}`}
+                key={opt.key}
                 type="button"
-                data-plugin={plugin.id}
-                onClick={() => onPick(storePaneContent({ kind: "plugin", plugin: plugin.id, pane: pane.id }) as PaneContent)}
+                data-plugin={opt.pluginId}
+                onClick={() =>
+                  onPick(
+                    storePaneContent({
+                      kind: "plugin",
+                      plugin: opt.pluginId,
+                      pane: opt.paneId,
+                      ...(opt.state ? { state: opt.state } : {}),
+                    }) as PaneContent,
+                  )
+                }
                 className="flex items-center gap-2.5 border border-border bg-bg px-3 py-2.5 text-left hover:border-fg hover:bg-hover"
               >
-                <PluginIcon host={plugin.host} icon={pane.icon} className="size-4 shrink-0 text-muted" />
+                {opt.local?.icon ? (
+                  <PluginIcon host={opt.local.host} icon={opt.local.icon} className="size-4 shrink-0 text-muted" />
+                ) : (
+                  <PuzzlePieceIcon className="size-4 shrink-0 text-muted" />
+                )}
                 <span className="min-w-0">
-                  <span className="block text-xs font-medium">{localize(pane.label, locale)}</span>
-                  {pane.description && (
-                    <span className="block truncate font-mono text-2xs text-faint">{localize(pane.description, locale)}</span>
+                  <span className="block text-xs font-medium">{localize(opt.label, locale)}</span>
+                  {opt.description && (
+                    <span className="block truncate font-mono text-2xs text-faint">{localize(opt.description, locale)}</span>
                   )}
                 </span>
               </button>
@@ -572,9 +584,6 @@ function PaneLeafBody({
     queryFn: async () => (await api.GET("/api/terminals")).data,
     enabled: content.kind === "terminal",
   });
-  // A page a hub serves shows no plugin pane, even one mirrored in a saved
-  // layout (docs/plugins/runtime.md §5).
-  if (isCloud() && content.kind === "plugin") return null;
   const terminalTitle =
     content.kind === "terminal"
       ? (terminals?.terminals.find((t) => t.id === content.id)?.title ?? "terminal")
@@ -598,7 +607,7 @@ function PaneLeafBody({
       </header>}
       {content.kind === "plugin" && (
         <PluginPane
-          key={`${content.plugin}/${content.pane}`}
+          key={`${machine}/${content.plugin}/${content.pane}`}
           content={content}
           onState={(state) => setContent(storePaneContent({ ...content, state }) as PaneContent)}
           onReset={() => setContent({ kind: "picker" })}

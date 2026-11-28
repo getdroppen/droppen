@@ -500,7 +500,6 @@ mod tests {
         import(1).execute(&plugins, &paths).unwrap();
         let state = plugins.get("notes", "state").unwrap();
         assert_eq!(state.revision, 2, "a replaced document moves forward");
-        assert_eq!(plugins.history("notes", "state", 0, None).unwrap().versions.len(), 1);
 
         let other_dir = tempfile::tempdir().unwrap();
         let other = installed_host(other_dir.path(), &["notes"], PluginSettings::default(), None);

@@ -132,7 +132,7 @@ async fn a_body_over_axums_default_limit_reaches_the_routes_with_a_raised_one() 
 }
 
 #[tokio::test]
-async fn a_cloud_identity_is_refused_everywhere() {
+async fn a_cloud_identity_sees_only_cloud_enabled_plugins_and_cannot_manage_them() {
     use gotcha::axum::extract::Request as ExtractRequest;
     use gotcha::axum::middleware::Next;
     use gotcha::axum::response::Response as HttpResponse;
@@ -149,16 +149,26 @@ async fn a_cloud_identity_is_refused_everywhere() {
     let (state, router) = crate::api::test_support::guarded_router(home.path(), Some(false)).await;
     state.plugins.install(&droppen_plugins::testing::package_bytes("tasks", "0.1.0"), None).unwrap();
     let mut router = router.layer(gotcha::axum::middleware::from_fn(as_cloud));
-    // Empty or malformed bodies on purpose: the refusal must come before
-    // the extractors, so these are 404 and never 400.
+
+    // While `cloud` is off, `GET /api/plugins` returns an empty list, and every
+    // management or per-plugin route returns 404 plugin_not_found before body
+    // extraction.
+    let res = router
+        .call(Request::builder().method("GET").uri(LIST).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = gotcha::axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let list: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(list["plugins"], json!([]));
+
     for (method, uri, body) in [
-        ("GET", LIST, Body::empty()),
         ("POST", LIST, Body::empty()),
         ("PUT", "/api/plugins/tasks/enabled", Body::empty()),
         ("PUT", "/api/plugins/tasks/cloud", Body::empty()),
-        // A well-formed one too: the droppen.app switch is the consent a
-        // device must never give itself.
         ("PUT", "/api/plugins/tasks/cloud", Body::from(r#"{"cloud":true}"#)),
+        ("GET", "/api/plugins/tasks/package", Body::empty()),
+        ("POST", "/api/plugins/tasks/fetch", Body::empty()),
         ("PUT", "/api/plugins/tasks/docs/state", Body::empty()),
         ("POST", "/api/plugins/tasks/batch", Body::empty()),
         ("GET", "/api/plugins/tasks/docs", Body::empty()),
@@ -174,6 +184,67 @@ async fn a_cloud_identity_is_refused_everywhere() {
     }
     assert!(state.plugins.cloud_decision("tasks").is_none(), "a device switched nothing");
     assert!(!state.plugins.status_of("tasks").unwrap().cloud);
+
+    // Switch `tasks` on for droppen.app locally: now cloud sees it (with
+    // `entry: null`), can fetch its package and read/write its documents,
+    // while management routes still refuse.
+    state
+        .plugins
+        .set_cloud("tasks", true, None, droppen_plugins::DecisionReason::Settings)
+        .unwrap();
+    let res = router
+        .call(Request::builder().method("GET").uri(LIST).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let list: serde_json::Value =
+        serde_json::from_slice(&gotcha::axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap()).unwrap();
+    assert_eq!(list["plugins"].as_array().unwrap().len(), 1);
+    assert_eq!(list["plugins"][0]["id"], json!("tasks"));
+    assert_eq!(list["plugins"][0]["entry"], json!(null));
+
+    let res = router
+        .call(
+            Request::builder()
+                .method("GET")
+                .uri("/api/plugins/tasks/package")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let pkg: serde_json::Value =
+        serde_json::from_slice(&gotcha::axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap()).unwrap();
+    assert_eq!(pkg["id"], json!("tasks"));
+    assert_eq!(pkg["entry"], json!("dist/index.js"));
+    assert!(pkg["files"].as_array().unwrap().iter().any(|f| f["path"] == "dist/index.js"));
+
+    let res = router
+        .call(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/plugins/tasks/docs/state")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"expectedRevision":null,"value":{"ok":true}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // Management routes still refuse even after `cloud: true`.
+    for (method, uri, body) in [
+        ("PUT", "/api/plugins/tasks/enabled", Body::from(r#"{"enabled":false}"#)),
+        ("PUT", "/api/plugins/tasks/cloud", Body::from(r#"{"cloud":false}"#)),
+        ("DELETE", "/api/plugins/tasks", Body::empty()),
+    ] {
+        let res = router
+            .call(Request::builder().method(method).uri(uri).body(body).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+    }
 }
 
 /// The droppen.app switch over HTTP, from a local caller: off after an

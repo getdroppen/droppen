@@ -564,8 +564,14 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
         .get::<gotcha::axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|c| c.0);
     let bridged = auth.bridged(request.headers(), peer);
+    let plugin_caller = bridged.as_ref().and_then(|_| {
+        let value = request.headers().get(droppen_http::bridge::PLUGIN_HEADER)?.to_str().ok()?;
+        let valid = !value.is_empty() && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_graphic());
+        valid.then(|| droppen_http::bridge::PluginCaller(value.to_string()))
+    });
     request.headers_mut().remove(droppen_http::bridge::CREDENTIAL_HEADER);
     request.headers_mut().remove(droppen_http::bridge::DEVICE_HEADER);
+    request.headers_mut().remove(droppen_http::bridge::PLUGIN_HEADER);
 
     let is_exempt = exempt(&method, &path);
     // Resolved wherever it could matter, which is two overlapping sets. Every
@@ -617,6 +623,9 @@ pub async fn guard(auth: Arc<Auth>, mut request: Request, next: Next) -> Respons
     };
 
     if let Some(found) = identity.clone() {
+        request.extensions_mut().insert(found);
+    }
+    if let Some(found) = plugin_caller {
         request.extensions_mut().insert(found);
     }
     if let Some(found) = caller.clone() {

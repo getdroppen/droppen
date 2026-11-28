@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use droppen_plugin_sdk::{valid_doc_name, Doc, DocMeta, DocVersion, DocWrite, PluginId, StoreExport, EXPORT_FORMAT};
+use droppen_plugin_sdk::{valid_doc_name, Doc, DocMeta, DocWrite, PluginId, StoreExport, EXPORT_FORMAT};
 use rusqlite::{OptionalExtension, Transaction};
 use serde_json::Value;
 
@@ -66,11 +66,6 @@ pub const MAX_STORE_BYTES: u64 = 256 * 1024 * 1024;
 pub const HISTORY_KEPT: usize = 50;
 /// One document's kept versions together, at most (four of the largest).
 pub const MAX_HISTORY_BYTES_PER_DOC: u64 = 16 * 1024 * 1024;
-/// Versions one history page holds when the caller does not say.
-pub const HISTORY_PAGE: usize = 10;
-/// One history page's values together, at most — past its first version,
-/// which is always included however large.
-pub const MAX_HISTORY_PAGE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Why a store call did not do what it was asked.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -322,15 +317,6 @@ fn over_store_limit(total: u64, limit: u64) -> StoreError {
     }
 }
 
-/// One page of a document's past versions.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HistoryPage {
-    /// Newest first.
-    pub versions: Vec<DocVersion>,
-    /// Older versions remain past this page.
-    pub more: bool,
-}
-
 /// One plugin's store on one instance.
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -512,46 +498,6 @@ impl Store {
             Ok(docs)
         })?;
         Ok(docs)
-    }
-
-    /// The versions `name` has been replaced from, newest first: `limit`
-    /// (default [`HISTORY_PAGE`], at most [`HISTORY_KEPT`]) of them after
-    /// skipping `offset`, cut short once their values pass
-    /// [`MAX_HISTORY_PAGE_BYTES`]. The current version is [`Store::get`]'s.
-    pub fn history(&self, name: &str, offset: usize, limit: Option<usize>) -> Result<HistoryPage, StoreError> {
-        check_name(name)?;
-        let limit = limit.unwrap_or(HISTORY_PAGE).clamp(1, HISTORY_KEPT);
-        let rows = self.db.read(|conn| {
-            let mut statement = conn
-                .prepare("SELECT revision, value, updated_at, updated_by FROM doc_history WHERE name = ?1 ORDER BY rowid DESC LIMIT ?2 OFFSET ?3")?;
-            // One more than asked, to say whether there is more.
-            let rows = statement.query_map((name, limit as i64 + 1, offset as i64), |row| {
-                Ok(Row {
-                    revision: row.get::<_, i64>(0)?.max(0) as u64,
-                    value: row.get(1)?,
-                    updated_at: row.get(2)?,
-                    updated_by: row.get(3)?,
-                })
-            })?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()
-        })?;
-        let mut more = rows.len() > limit;
-        let mut versions = Vec::new();
-        let mut bytes = 0u64;
-        for row in rows.into_iter().take(limit) {
-            bytes += row.value.len() as u64;
-            if !versions.is_empty() && bytes > MAX_HISTORY_PAGE_BYTES {
-                more = true;
-                break;
-            }
-            versions.push(DocVersion {
-                revision: row.revision,
-                updated_at: row.updated_at,
-                updated_by: row.updated_by,
-                value: parse(name, &row.value)?,
-            });
-        }
-        Ok(HistoryPage { versions, more })
     }
 
     /// Make the store hold exactly `docs`, in one transaction: the export
@@ -769,6 +715,27 @@ mod tests {
         assert!(names("nope").is_empty());
     }
 
+    /// Read kept `doc_history` rows newest first directly from SQLite (the write-side
+    /// safety net has no HTTP read API).
+    fn history_rows(store: &Store, name: &str) -> Vec<(u64, Value, Option<String>)> {
+        store
+            .db
+            .read(|conn| {
+                let mut stmt = conn.prepare("SELECT revision, value, updated_by FROM doc_history WHERE name = ?1 ORDER BY rowid DESC")?;
+                let rows = stmt.query_map((name,), |row| {
+                    let rev = row.get::<_, i64>(0)?.max(0) as u64;
+                    let raw: String = row.get(1)?;
+                    let by: Option<String> = row.get(2)?;
+                    Ok((rev, raw, by))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|(rev, raw, by)| (rev, serde_json::from_str(&raw).unwrap(), by))
+            .collect()
+    }
+
     #[test]
     fn history_keeps_the_replaced_values_newest_first_and_only_fifty() {
         let (_dir, store) = store();
@@ -776,13 +743,13 @@ mod tests {
         for n in 1..=60u64 {
             store.put("state", Some(n), json!(n), Some("bob")).unwrap();
         }
-        let history = store.history("state", 0, Some(HISTORY_KEPT)).unwrap().versions;
+        let history = history_rows(&store, "state");
         assert_eq!(history.len(), HISTORY_KEPT);
-        assert_eq!(history[0].revision, 60, "newest first: the value revision 61 replaced");
-        assert_eq!(history[0].value, json!(59));
-        assert_eq!(history[0].updated_by.as_deref(), Some("bob"));
-        assert_eq!(history.last().unwrap().revision, 11);
-        assert!(store.history("other", 0, None).unwrap().versions.is_empty());
+        assert_eq!(history[0].0, 60, "newest first: the value revision 61 replaced");
+        assert_eq!(history[0].1, json!(59));
+        assert_eq!(history[0].2.as_deref(), Some("bob"));
+        assert_eq!(history.last().unwrap().0, 11);
+        assert!(history_rows(&store, "other").is_empty());
     }
 
     #[test]
@@ -811,7 +778,7 @@ mod tests {
         assert!(matches!(store.put("part/2", None, json!(chunk), None), Err(StoreError::TooLarge { .. })));
         assert_eq!(store.bytes().unwrap(), 96, "names count too: two of 6 + 42 bytes");
         assert!(
-            store.history("part/0", 0, None).unwrap().versions.is_empty(),
+            history_rows(&store, "part/0").is_empty(),
             "the replaced version did not fit beside them and gave way"
         );
     }
@@ -829,8 +796,8 @@ mod tests {
         }
         let total = |store: &Store| -> u64 { store.db.read(|conn| Ok(conn.live_bytes()? + conn.history_bytes()?)).unwrap() };
         assert!(total(&store) <= 200, "history is held to the store's limit: {}", total(&store));
-        let kept = store.history("a", 0, Some(HISTORY_KEPT)).unwrap().versions;
-        assert_eq!(kept[0].value, value(9), "the newest past version is the one kept");
+        let kept = history_rows(&store, "a");
+        assert_eq!(kept[0].1, value(9), "the newest past version is the one kept");
         assert_eq!(kept.len(), 6, "(200 - 2 × 23 live) / 23 per version");
         // The live documents alone are what may refuse a write.
         assert!(matches!(
@@ -840,32 +807,18 @@ mod tests {
     }
 
     #[test]
-    fn a_documents_history_is_held_to_its_own_byte_cap_and_answered_in_pages() {
+    fn a_documents_history_is_held_to_its_own_byte_cap() {
         let (_dir, store) = store();
         let big = |n: usize| json!(format!("{n}{}", "z".repeat(3 * 1024 * 1024)));
         store.put("big", None, big(0), None).unwrap();
         for n in 1..=8 {
             store.put("big", Some(n as u64), big(n), None).unwrap();
         }
-        let page = store.history("big", 0, Some(HISTORY_KEPT)).unwrap();
         // 16 MiB of 3 MiB versions: five fit.
-        assert_eq!(page.versions.len(), 2, "a page stops once it passes 8 MiB");
-        assert!(page.more);
-        let next = store.history("big", 2, Some(HISTORY_KEPT)).unwrap();
-        assert_eq!(next.versions[0].value, big(5));
-        let all: usize = (0..5).map(|offset| store.history("big", offset, Some(1)).unwrap().versions.len()).sum();
-        assert_eq!(all, 5, "the per-document cap keeps the newest five");
-        assert!(!store.history("big", 4, Some(1)).unwrap().more);
-
-        let (_dir, small) = self::store();
-        small.put("s", None, json!(0), None).unwrap();
-        for n in 1..=12u64 {
-            small.put("s", Some(n), json!(n), None).unwrap();
-        }
-        let page = small.history("s", 0, None).unwrap();
-        assert_eq!((page.versions.len(), page.more), (HISTORY_PAGE, true), "ten unless asked");
-        let rest = small.history("s", HISTORY_PAGE, None).unwrap();
-        assert_eq!((rest.versions.len(), rest.more), (2, false));
+        let kept = history_rows(&store, "big");
+        assert_eq!(kept.len(), 5, "the per-document cap keeps the newest five");
+        assert_eq!(kept[0].1, big(7));
+        assert_eq!(kept[2].1, big(5));
     }
 
     #[test]
@@ -908,12 +861,8 @@ mod tests {
             [("fresh", 5), ("state", 3)]
         );
         assert_eq!(store.get("gone").unwrap(), None, "a document the import does not have is dropped");
-        assert_eq!(
-            store.history("gone", 0, None).unwrap().versions[0].value,
-            json!("bye"),
-            "into its history"
-        );
-        assert_eq!(store.history("state", 0, None).unwrap().versions[0].value, json!("older?"));
+        assert_eq!(history_rows(&store, "gone")[0].1, json!("bye"), "into its history");
+        assert_eq!(history_rows(&store, "state")[0].1, json!("older?"));
 
         let export = store.export(&PluginId::new("demo").unwrap()).unwrap();
         assert_eq!(export.format, EXPORT_FORMAT);

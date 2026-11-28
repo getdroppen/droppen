@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Plugin, ResolvedConfig } from "vite";
+import { PLUGIN_FRAME_CSP } from "./plugin-frame";
 import { CANONICAL_HUB, inlineScriptSources } from "./service-worker";
 
 /**
@@ -170,7 +171,7 @@ export function contentSecurityPolicy(html: string, config: CloudConfig): string
     ["connect-src 'self'", httpOf(config.hubOrigin), ...(app ? [config.hubOrigin, ...config.relays] : [])].join(" "),
     "worker-src 'self' blob:",
     "manifest-src 'self'",
-    `frame-src ${app ? config.turnstileOrigin : "'none'"}`,
+    `frame-src ${app ? `'self' ${config.turnstileOrigin}` : "'none'"}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -196,6 +197,11 @@ export function headersFile(html: string, config: CloudConfig): string {
     `  Permissions-Policy: ${permissions}`,
     "  Referrer-Policy: no-referrer",
     "  Strict-Transport-Security: max-age=31536000; includeSubDomains",
+    "",
+    "# The sandboxed plugin frame runs in an opaque origin with no network access.",
+    "/plugin-frame.html",
+    `  Content-Security-Policy: ${PLUGIN_FRAME_CSP}`,
+    "  Referrer-Policy: no-referrer",
     "",
     "# The hosts document is JSON: a static host has no extension to guess it from.",
     "/.well-known/droppen-hub",

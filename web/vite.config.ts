@@ -6,6 +6,7 @@ import { defineConfig, type Plugin, type Rollup } from "vite";
 import { cloudBuild, cloudConfig } from "./build/cloud-mode";
 import { devTools } from "./build/dev-tools";
 import { hubPagesSet, localBoot } from "./build/local-boot";
+import { pluginFrame } from "./build/plugin-frame";
 import { pluginShared } from "./build/plugin-shared";
 import { fillServiceWorker, type LanguageFiles } from "./build/service-worker";
 import { BUILD_TARGET } from "./build/target";
@@ -224,6 +225,9 @@ export default defineConfig({
     // The host's React and plugin SDK as facade chunks, named by the shell's
     // import map: runtime plugins share this build's instances of them (§3).
     pluginShared({ webRoot: fileURLToPath(new URL(".", import.meta.url)) }),
+    // The sandboxed cloud plugin iframe (`/plugin-frame.html`) and its
+    // self-contained runtime bundle (`assets/plugin-frame-runtime-<hash>.js`).
+    pluginFrame({ webRoot: fileURLToPath(new URL(".", import.meta.url)) }),
     react(),
     tailwindcss(),
     katexWoff2Only(),

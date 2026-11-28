@@ -184,23 +184,9 @@ is `enabled`, and a bridged request can neither read nor change it (§5).
 After an install, an uninstall or a switch, open (non-cloud) clients get a
 `plugins` frame, as after a switch today.
 
-## 5. Not to the cloud
+## 5. On droppen.app
 
-A request that came in over the end-to-end bridge (identity `cloud:<device>`)
-gets none of it:
-
-- **the bridge's allowlist** (`crates/droppen-agent/src/bridge.rs`) drops every
-  `/api/plugins…` route, so droppen.app can neither list, switch, install nor
-  read or write a document;
-- **the handlers** refuse a `cloud:` identity as well (`404 plugin_not_found`),
-  so a route the allowlist ever lets through by mistake still answers nothing;
-- **the feed**: a `cloud:` subscriber's `settings` frame carries
-  `plugins: []`, and it is sent no `plugins` and no `plugin-doc` frames;
-- **the hub copy** (what the machine mirrors to the hub for offline reading)
-  carries no plugin status and no plugin document;
-- **the page**: with `isCloud()` the registry reads no status, imports
-  nothing, and the shell shows no plugin nav entry, page, pane, alias or
-  Settings › Plugins section.
+On `droppen.app`, plugin code never executes in the parent origin. Only plugins explicitly opted in on the machine via `PUT /api/plugins/{id}/cloud` (`PluginStatus.cloud = true`, off by default) are exposed to `cloud:` callers, and the cloud page runs each of them inside a sandboxed `/plugin-frame.html` iframe (`connect-src 'none'`, opaque origin) that forwards requests back to the plugin's machine over the end-to-end encrypted relay. The offline hub copy (`cloud:agent-sync`) still carries no plugin status or documents. See [cloud.md](cloud.md) for the full design.
 
 ## 6. In the page
 
@@ -249,5 +235,4 @@ machine's terminal:
   says this and asks before an install; `plugin install` is already run from
   one.
 
-droppen.app loads no plugin code at all (§5), so a plugin never runs on a
-page the hosted service serves.
+On `droppen.app`, plugins never run in the host origin: only plugins opted in with `cloud: true` run inside an isolated `/plugin-frame.html` sandbox bound to their own machine ([cloud.md](cloud.md)).

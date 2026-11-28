@@ -80,10 +80,12 @@ async fn a_cloud_subscriber_hears_nothing_of_the_plugins() {
     assert_eq!(local_settings["plugins"][0]["id"], "tasks", "a local page still sees the list");
 
     // Both are attached now; what the plugins publish reaches every
-    // subscriber through the same broadcast.
+    // subscriber through the same broadcast. `tasks` has `cloud: false`, so
+    // the cloud socket gets an empty filtered `plugins` list and no
+    // `plugin-doc` frame for it.
     state
         .global
-        .publish(serde_json::json!({"type":"plugins","plugins":[{"id":"tasks"}]}).to_string());
+        .publish(serde_json::json!({"type":"plugins","plugins":[{"id":"tasks","enabled":true,"cloud":false,"entry":"/plugins/k/tasks/b/index.js"}]}).to_string());
     state
         .global
         .publish(serde_json::json!({"type":"plugin-doc","plugin":"tasks","name":"state","revision":1}).to_string());
@@ -91,35 +93,58 @@ async fn a_cloud_subscriber_hears_nothing_of_the_plugins() {
         .global
         .publish(serde_json::json!({"type":"screens:changed","listRevision":1}).to_string());
 
-    /// The types of the frames up to `marker` — what `socket` heard, in
-    /// order, so a test can say what it did not.
-    async fn types_until_marker(
+    /// The frames up to `marker` — what `socket` heard, in order.
+    async fn frames_until_marker(
         socket: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
         marker: &str,
-    ) -> Vec<String> {
-        let mut types = Vec::new();
+    ) -> Vec<serde_json::Value> {
+        let mut frames = Vec::new();
         for _ in 0..16 {
             let frame = next_frame(socket).await;
-            let kind = frame["type"].as_str().unwrap_or_default().to_string();
-            let done = kind == marker;
-            types.push(kind);
+            let done = frame["type"].as_str() == Some(marker);
+            frames.push(frame);
             if done {
                 break;
             }
         }
-        assert_eq!(types.last().map(String::as_str), Some(marker), "no {marker} in {types:?}");
-        types
+        assert_eq!(frames.last().and_then(|f| f["type"].as_str()), Some(marker), "no {marker} in {frames:?}");
+        frames
     }
 
-    let cloud_heard = types_until_marker(&mut cloud, "screens:changed").await;
+    let cloud_frames = frames_until_marker(&mut cloud, "screens:changed").await;
     assert!(
-        !cloud_heard.iter().any(|kind| kind == "plugins" || kind == "plugin-doc"),
-        "a cloud subscriber heard {cloud_heard:?}"
+        !cloud_frames.iter().any(|f| f["type"] == "plugin-doc"),
+        "a cloud subscriber does not hear plugin-doc for a non-cloud plugin: {cloud_frames:?}"
     );
-    let local_heard = types_until_marker(&mut local, "screens:changed").await;
+    let cloud_plugins = cloud_frames.iter().find(|f| f["type"] == "plugins").expect("filtered plugins frame");
+    assert_eq!(cloud_plugins["plugins"], serde_json::json!([]));
+
+    let local_frames = frames_until_marker(&mut local, "screens:changed").await;
     for kind in ["plugins", "plugin-doc"] {
-        assert!(local_heard.iter().any(|heard| heard == kind), "a local page heard {local_heard:?}");
+        assert!(local_frames.iter().any(|f| f["type"] == kind), "a local page heard {local_frames:?}");
     }
+
+    // Once `tasks` is switched on for droppen.app, cloud receives it (with
+    // `entry: null`) and hears its `plugin-doc` frames.
+    state
+        .plugins
+        .set_cloud("tasks", true, None, droppen_plugins::DecisionReason::Settings)
+        .unwrap();
+    state
+        .global
+        .publish(serde_json::json!({"type":"plugins","plugins":[{"id":"tasks","enabled":true,"cloud":true,"entry":"/plugins/k/tasks/b/index.js"}]}).to_string());
+    state
+        .global
+        .publish(serde_json::json!({"type":"plugin-doc","plugin":"tasks","name":"state","revision":2}).to_string());
+    state
+        .global
+        .publish(serde_json::json!({"type":"screens:changed","listRevision":2}).to_string());
+    let cloud_frames = frames_until_marker(&mut cloud, "screens:changed").await;
+    let cloud_plugins = cloud_frames.iter().find(|f| f["type"] == "plugins").expect("cloud plugins frame");
+    assert_eq!(cloud_plugins["plugins"].as_array().unwrap().len(), 1);
+    assert_eq!(cloud_plugins["plugins"][0]["id"], "tasks");
+    assert!(cloud_plugins["plugins"][0]["entry"].is_null());
+    assert!(cloud_frames.iter().any(|f| f["type"] == "plugin-doc" && f["plugin"] == "tasks"));
 }
 
 /// Review of S1-7, round 3: a feed socket opened by a login is closed

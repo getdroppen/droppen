@@ -1,41 +1,39 @@
 /**
  * Which plugins this page runs, and what they contribute.
  *
- * The instance decides which plugins exist and which are on (`PluginStatus`,
- * from the feed's `settings` and `plugins` frames, else `GET /api/plugins`);
- * the page loads every status that has an `entry` — the URL the instance
- * serves that exact build on (`docs/plugins/runtime.md` §2) — with a dynamic
- * `import()`, checks the module's `manifest.id` against the status's, and
- * activates it once per (machine, plugin, build) inside a try/catch
- * (`activation.ts`). A plugin that throws is skipped and named in
- * Settings › Plugins; the shell carries on.
+ * Locally, the instance decides which plugins exist and which are on
+ * (`PluginStatus`, from the feed's `settings` and `plugins` frames, else
+ * `GET /api/plugins`); the page loads every status that has an `entry`
+ * (`docs/plugins/runtime.md` §2) with a dynamic `import()`, checks the
+ * module's `manifest.id` against the status's, and activates it once per
+ * (machine, plugin, build) inside a try/catch (`activation.ts`).
  *
- * A plugin installed, upgraded or uninstalled elsewhere cannot be applied to
- * a page that already loaded it — a module cannot be unloaded — so the page
- * keeps running the builds it started with and asks for a reload
- * (`statuses.ts`). Settings › Plugins reloads the page after its own install
- * and uninstall.
- *
- * On droppen.app (`isCloud()`) none of this exists: the provider below is
- * not mounted, so there is no list to read, no module to import, no alias to
- * redirect and no nav entry or page to show.
+ * On droppen.app (`isCloud()`), no plugin code ever runs in the parent origin.
+ * Instead, `useMachinePlugins(machine)` tracks each online machine's
+ * cloud-enabled plugins (`enabled && compatible && cloud`) and activates them
+ * inside hidden sandboxed `/plugin-frame.html` iframes (`cloud-frame.tsx`) to
+ * discover their nav, route, pane, and settings contributions.
  */
 import type { PluginContributions, PluginDefinition, PluginHost } from "@droppen/plugin-sdk";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useFeedSettings } from "@/app/global-feed";
+import { useFeedSettings, useMachineFeedSelector, type GlobalFeedState } from "@/app/global-feed";
 import { isCloud } from "@/lib/hub/config";
-import { useApi, useMachine } from "@/lib/machines/context";
+import { useApi, useInfoOf, useMachine } from "@/lib/machines/context";
+import type { MachineKey } from "@/lib/machines/key";
 import { mq } from "@/lib/machines/query";
+import { apiFor, isOpen } from "@/lib/machines/registry";
 import { activatePlugin, activationKey, type Activation, type PluginSource } from "./activation";
 import { pluginAlias } from "./aliases";
+import { activateCloudPlugin, type CloudActivation } from "./cloud-frame";
 import { ConfirmHost } from "./confirm";
 import { pluginEventsFor } from "./events";
-import { baselineOf, changedUnderPage, runningStatuses, type PluginBaseline } from "./statuses";
+import type { SerializedContributions } from "./frame/protocol";
+import { baselineOf, changedUnderPage, cloudRunningStatuses, runningStatuses, type PluginBaseline } from "./statuses";
 import type { PluginStatus } from "./types";
 
-/** A plugin that is running on this page. */
+/** A plugin that is running on a local page. */
 export interface ActivePlugin {
   id: string;
   /** The status whose build the page loaded (the baseline's, after an upgrade elsewhere). */
@@ -43,6 +41,13 @@ export interface ActivePlugin {
   definition: PluginDefinition;
   host: PluginHost;
   contributions: PluginContributions;
+}
+
+/** A cloud-enabled plugin activated inside a sandboxed frame for a machine. */
+export interface CloudActivePlugin {
+  id: string;
+  status: PluginStatus;
+  contributions: SerializedContributions;
 }
 
 export interface PluginRegistry {
@@ -60,19 +65,32 @@ export interface PluginRegistry {
   adopt(status: PluginStatus): void;
 }
 
+export interface CloudPluginRegistry {
+  statuses: PluginStatus[] | null;
+  active: CloudActivePlugin[];
+  loading: string[];
+  errors: Record<string, string>;
+}
+
 const EMPTY: PluginRegistry = { statuses: [], active: [], loading: [], errors: {}, reloadNeeded: false, adopt: () => {} };
 const RegistryContext = createContext<PluginRegistry>(EMPTY);
 
 export const usePluginRegistry = () => useContext(RegistryContext);
 
 /**
- * The registry, or — on a page a hub serves — nothing at all. The cloud
- * branch renders no provider state to read and starts no effect, so no
- * status list is fetched, no `plugins` frame is listened for and no entry is
- * imported (§5).
+ * The local plugin registry, or — on a page a hub serves — the shared
+ * `<ConfirmHost />` so sandboxed cloud plugin frames can open confirmation
+ * dialogs through the parent shell.
  */
 export function PluginRegistryProvider({ children }: { children: ReactNode }) {
-  if (isCloud()) return <RegistryContext.Provider value={EMPTY}>{children}</RegistryContext.Provider>;
+  if (isCloud()) {
+    return (
+      <RegistryContext.Provider value={EMPTY}>
+        {children}
+        <ConfirmHost />
+      </RegistryContext.Provider>
+    );
+  }
   return <InstalledPluginRegistry>{children}</InstalledPluginRegistry>;
 }
 
@@ -169,4 +187,100 @@ function InstalledPluginRegistry({ children }: { children: ReactNode }) {
       <ConfirmHost />
     </RegistryContext.Provider>
   );
+}
+
+const selectFeedSettings = (state: GlobalFeedState) => state.settings;
+
+/**
+ * Cloud-enabled plugins on `machine`, for `droppen.app` (`docs/plugins/cloud.md` §6).
+ *
+ * Subscribes to `machine`'s feed (`settings.plugins` + `plugins` frames), falls
+ * back to `GET /api/plugins` while the machine is online, and activates every
+ * cloud-enabled plugin once per `(machine, id, build)` inside a hidden
+ * sandboxed iframe. In local mode returns an empty snapshot (use
+ * {@link usePluginRegistry} there).
+ */
+export function useMachinePlugins(machine: MachineKey): CloudPluginRegistry {
+  const cloud = isCloud();
+  const info = useInfoOf(machine);
+  const live = cloud && isOpen(machine) && info.state === "online" && info.live === "live";
+  const feedSettings = useMachineFeedSelector(machine, selectFeedSettings);
+  const feedPlugins =
+    cloud && feedSettings && !feedSettings.fromCopy && Array.isArray(feedSettings.plugins)
+      ? feedSettings.plugins
+      : null;
+  const [statuses, setStatuses] = useState<PluginStatus[] | null>(feedPlugins);
+  const [results, setResults] = useState<Record<string, CloudActivation>>({});
+
+  // Reset per-machine local state when switching the watched machine key.
+  useEffect(() => {
+    setStatuses(feedPlugins);
+    setResults({});
+    // Only reset on machine switch; live updates are handled by the effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machine]);
+
+  // Primary source: live `settings` frame (ignore offline copy frames).
+  useEffect(() => {
+    if (feedPlugins !== null) {
+      setStatuses(feedPlugins);
+    }
+  }, [feedPlugins]);
+
+  // Live `plugins` frames from this machine's feed.
+  useEffect(() => {
+    if (!cloud || !isOpen(machine)) return;
+    return pluginEventsFor(machine).onStatuses((next) => setStatuses(next));
+  }, [cloud, machine]);
+
+  // Fallback `GET /api/plugins` once the live channel is up and the feed hasn't delivered plugins yet.
+  const fallback = useQuery({
+    queryKey: mq(machine, "cloud-plugins"),
+    enabled: live && statuses === null,
+    queryFn: async () => {
+      const res = await apiFor(machine).GET("/api/plugins");
+      if (res.error || !res.data) {
+        throw new Error("failed to load plugins");
+      }
+      return res.data.plugins ?? [];
+    },
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (cloud && fallback.data && statuses === null) setStatuses(fallback.data);
+  }, [cloud, fallback.data, statuses]);
+
+  const running = useMemo(
+    () => (live ? cloudRunningStatuses(statuses) : []),
+    [live, statuses],
+  );
+
+  useEffect(() => {
+    if (!live) return;
+    let mounted = true;
+    for (const status of running) {
+      void activateCloudPlugin(machine, status).then((result) => {
+        if (!mounted) return;
+        const key = activationKey(status);
+        setResults((old) => (old[key] === result ? old : { ...old, [key]: result }));
+      });
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [live, running, machine]);
+
+  return useMemo<CloudPluginRegistry>(() => {
+    if (!cloud) return { statuses: [], active: [], loading: [], errors: {} };
+    const active: CloudActivePlugin[] = [];
+    const loading: string[] = [];
+    const errors: Record<string, string> = {};
+    for (const status of running) {
+      const result = results[activationKey(status)];
+      if (!result) loading.push(status.id);
+      else if (result.ok) active.push({ id: status.id, status, contributions: result.contributions });
+      else errors[status.id] = result.error;
+    }
+    return { statuses, active, loading, errors };
+  }, [cloud, running, statuses, results]);
 }

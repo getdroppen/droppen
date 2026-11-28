@@ -263,6 +263,7 @@ impl RemoteHandApp {
                 // browser sends no credentials on a preflight, and a `401` there
                 // would break every cross-origin request before the real one was
                 // made.
+                let router = router.layer(droppen_plugins::routes::cloud_plugin_layer(context.state.plugins.clone()));
                 let router = router.layer(droppen_auth::layer(context.state.drive.auth.clone()));
                 // Outside even that: a request addressed to a name this server
                 // does not answer to (`droppen_http::origin`, "Which names the
@@ -785,6 +786,15 @@ pub(crate) struct PluginHost(pub(crate) Arc<droppen_plugins::Plugins>);
 impl droppen_drive::feed::global::PluginStatuses for PluginHost {
     fn status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
         Box::pin(self.0.status_async())
+    }
+
+    fn cloud_status(&self) -> futures_util::future::BoxFuture<'_, Vec<droppen_plugin_sdk::PluginStatus>> {
+        Box::pin(self.0.cloud_status_async())
+    }
+
+    fn is_cloud_enabled<'a>(&'a self, id: &'a str) -> futures_util::future::BoxFuture<'a, bool> {
+        let id = id.to_string();
+        Box::pin(self.0.is_cloud_enabled_async(id))
     }
 }
 

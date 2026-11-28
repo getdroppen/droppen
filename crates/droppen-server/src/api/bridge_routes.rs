@@ -3,7 +3,6 @@
 //! its source, which only the server has.
 
 use droppen_agent::bridge::{classify, refusal, Refusal, RouteClass, Standing, View, LOCAL_PREFIX, ROUTES};
-use droppen_agent::testing::plugin_route;
 
 const ADMIN: Standing = Standing {
     admin: true,
@@ -129,7 +128,7 @@ async fn every_route_the_server_registers_is_classified() {
     assert_eq!(classified.len(), ROUTES.len(), "a route classified twice");
     let unclassified: Vec<_> = registered
         .union(&documented)
-        .filter(|r| !classified.contains(*r) && !plugin_route(&r.1))
+        .filter(|r| !classified.contains(*r))
         .collect();
     assert!(unclassified.is_empty(), "classify these in bridge::ROUTES: {unclassified:?}");
     let stale: Vec<_> = classified
@@ -144,7 +143,7 @@ async fn every_route_the_server_registers_is_classified() {
         let sent = sent.join("/");
         let judged = refusal(method, &sent, ADMIN);
         assert_ne!(judged, Some(Refusal::Unlisted), "{method} {sent}");
-        let expected = if plugin_route(&sent) || classify(method, &sent) == Some(RouteClass::Never) {
+        let expected = if classify(method, &sent) == Some(RouteClass::Never) {
             Some(Refusal::NotFromCloud)
         } else {
             None

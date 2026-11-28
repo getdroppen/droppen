@@ -14,3 +14,13 @@
 pub const CREDENTIAL_HEADER: &str = "x-rh-agent";
 /// The header naming the device a bridged request is from.
 pub const DEVICE_HEADER: &str = "x-rh-agent-device";
+/// The header marking a bridged request initiated on behalf of a plugin running
+/// inside a cloud page's sandboxed frame.
+pub const PLUGIN_HEADER: &str = "x-rh-plugin";
+
+/// Request extension inserted by the auth guard when a bridged request carries
+/// `X-Rh-Plugin: <id>`. Present only for authenticated cloud requests whose
+/// bridge forwarded the header; stripped from the HTTP headers on every request
+/// so handlers inspect this extension rather than raw headers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginCaller(pub String);

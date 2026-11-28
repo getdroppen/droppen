@@ -1040,4 +1040,13 @@ export const ja: Record<string, string> = {
   "ACP agents": "ACP エージェント",
   "{{name}} cannot start: {{why}} (checked {{ago}})": "{{name}} を起動できません：{{why}}（{{ago}}に確認）",
   "delete": "削除",
+  "Show on droppen.app": "droppen.app で表示",
+  "show {{name}} on droppen.app?": "{{name}} を droppen.app で表示しますか？",
+  "Turning this on lets {{name}} run inside a sandboxed frame on droppen.app and make requests to this device over the encrypted relay. Turn this on only for plugins you trust.": "オンにすると、{{name}} は droppen.app のサンドボックスフレーム内で動作し、暗号化リレー経由でこのデバイスへリクエストを送信できます。信頼できるプラグインのみオンにしてください。",
+  "running on {{device}}": "{{device}} で実行中",
+  "{{device}} is offline": "{{device}} はオフラインです",
+  "Plugins run live on their device and are not available while it is offline.": "プラグインは所属デバイス上でライブ実行されるため、オフライン時は利用できません。",
+  "{{device}} is offline — plugins run live on their device": "{{device}} はオフラインです — プラグインは所属デバイス上で実行されます",
+  "the {{name}} plugin is not available on droppen.app": "{{name}} プラグインは droppen.app で利用できません",
+  "Turn on \"Show on droppen.app\" in Settings › Plugins on the device itself.": "このデバイスの「設定 › プラグイン」で「droppen.app で表示」をオンにしてください。",
 };

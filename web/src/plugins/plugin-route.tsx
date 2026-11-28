@@ -1,13 +1,9 @@
 /**
- * `/p/$plugin/$` — every plugin page, routed by the longest matching
- * `RouteContribution.path` prefix of the rest of the path.
+ * `/p/$plugin/$` (and `/m/$machine/p/$plugin/$`) — every plugin page.
  *
- * Which plugins exist is the instance's (`registry.statuses`, from its
- * statuses); the page keeps running the build it started with, so an upgrade
- * elsewhere shows its "Reload to finish" notice here until the page reloads.
- * A plugin this host cannot run says so, with the reason, whether or not it
- * is switched on (`docs/plugins/runtime.md` §6). A page a hub serves never
- * gets this far (`app/router.tsx` sends `/p/…` to the session list).
+ * Locally, routed directly into the host's matched `RouteContribution`
+ * (`docs/plugins/runtime.md` §6). On `droppen.app`, rendered inside a sandboxed
+ * `/plugin-frame.html` iframe bound to the target machine (`docs/plugins/cloud.md` §2–§6).
  */
 import { localize } from "@droppen/plugin-sdk";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
@@ -16,10 +12,13 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/cn";
+import { isCloud } from "@/lib/hub/config";
+import { useHoldMachine, useInfoOf, useMachine } from "@/lib/machines/context";
 import { PluginBoundary } from "./boundary";
+import { CloudPluginFrame } from "./cloud-frame";
 import { hostLocale } from "./host";
 import { ReloadNotice } from "./reload-notice";
-import { usePluginRegistry } from "./registry";
+import { useMachinePlugins, usePluginRegistry } from "./registry";
 import type { PluginStatus } from "./types";
 import { matchRoute } from "./routing";
 
@@ -28,7 +27,19 @@ import { matchRoute } from "./routing";
  * it; `warn` marks a problem the user did not choose (a plugin they switched
  * on that this host cannot run), not a plugin that is merely off.
  */
-export function PluginUnavailable({ message, detail, hint, warn }: { message: string; detail?: string; hint?: string; warn?: boolean }) {
+export function PluginUnavailable({
+  message,
+  detail,
+  hint,
+  warn,
+  hideSettingsLink = false,
+}: {
+  message: string;
+  detail?: string;
+  hint?: string;
+  warn?: boolean;
+  hideSettingsLink?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <div
@@ -40,13 +51,15 @@ export function PluginUnavailable({ message, detail, hint, warn }: { message: st
       <span className="text-xs text-fg">{message}</span>
       {detail && <span className="max-w-md font-mono text-2xs break-words text-faint">{detail}</span>}
       {hint && <span className="max-w-md text-2xs text-muted">{hint}</span>}
-      <Link
-        to="/settings"
-        search={{ section: "plugins" }}
-        className="font-mono text-2xs text-muted underline-offset-2 hover:text-fg hover:underline"
-      >
-        {t("Settings")} › {t("plugins")}
-      </Link>
+      {!hideSettingsLink && !isCloud() && (
+        <Link
+          to="/settings"
+          search={{ section: "plugins" }}
+          className="font-mono text-2xs text-muted underline-offset-2 hover:text-fg hover:underline"
+        >
+          {t("Settings")} › {t("plugins")}
+        </Link>
+      )}
     </div>
   );
 }
@@ -72,6 +85,11 @@ export function PluginNotices({ status }: { status: PluginStatus }) {
 }
 
 export function PluginRoute() {
+  if (isCloud()) return <CloudPluginRoute />;
+  return <LocalPluginRoute />;
+}
+
+function LocalPluginRoute() {
   const { t } = useTranslation();
   const params = useParams({ strict: false }) as { plugin?: string; _splat?: string };
   const id = params.plugin ?? "";
@@ -112,6 +130,73 @@ export function PluginRoute() {
           <Page subpath={subpath} search={search} />
         </PluginBoundary>
       </div>
+    </div>
+  );
+}
+
+function CloudPluginRoute() {
+  const { t } = useTranslation();
+  const machine = useMachine();
+  useHoldMachine(machine);
+  const info = useInfoOf(machine);
+  const params = useParams({ strict: false }) as { plugin?: string; _splat?: string };
+  const id = params.plugin ?? "";
+  const subpath = params._splat ?? "";
+  const searchStr = useRouterState({ select: (s) => s.location.searchStr });
+  const registry = useMachinePlugins(machine);
+
+  const connecting =
+    info.state === "unknown" || info.live === "connecting" || (info.state === "online" && info.live === "copy");
+  if (connecting) return <Spinner className="flex-1" />;
+  if (info.state !== "online" || info.live !== "live") {
+    return (
+      <PluginUnavailable
+        message={t("{{device}} is offline", { device: info.name || machine })}
+        detail={t("Plugins run live on their device and are not available while it is offline.")}
+        hideSettingsLink
+      />
+    );
+  }
+  if (registry.statuses === null) return <Spinner className="flex-1" />;
+  const status = registry.statuses.find((s) => s.id === id);
+  if (!status || !status.enabled || !status.cloud) {
+    return (
+      <PluginUnavailable
+        message={t("the {{name}} plugin is not available on droppen.app", { name: status ? localize(status.name, hostLocale()) : id })}
+        hint={t("Turn on \"Show on droppen.app\" in Settings › Plugins on the device itself.")}
+        hideSettingsLink
+      />
+    );
+  }
+  const name = localize(status.name, hostLocale());
+  if (!status.compatible) {
+    return (
+      <PluginUnavailable
+        message={t("{{name}} does not work with this version of Droppen", { name })}
+        detail={status.reason ?? undefined}
+        warn
+        hideSettingsLink
+      />
+    );
+  }
+  if (registry.errors[id]) {
+    return (
+      <PluginUnavailable
+        message={t("the {{name}} plugin could not start", { name })}
+        detail={registry.errors[id]}
+        hideSettingsLink
+      />
+    );
+  }
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-plugin={id}>
+      <PluginNotices status={status} />
+      <CloudPluginFrame
+        machine={machine}
+        status={status}
+        mode="route"
+        route={{ subpath, search: searchStr }}
+      />
     </div>
   );
 }

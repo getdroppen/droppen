@@ -379,48 +379,95 @@ pub struct PluginTooLarge {
     pub limit: u64,
 }
 
-/// One past version of a document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
+/// One file inside a [`PluginPackage`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
 #[serde(rename_all = "camelCase")]
-pub struct PluginDocVersion {
-    /// The revision this value had.
-    pub revision: u64,
-    /// When it was written, ISO-8601.
-    pub updated_at: String,
-    /// Who wrote it, when the host knows.
-    pub updated_by: Nullable<String>,
-    /// The value at that revision.
-    pub value: Value,
+pub struct PluginPackageFile {
+    /// Relative `/`-separated path inside the package directory.
+    pub path: String,
+    /// Media type by extension.
+    pub content_type: String,
+    /// `"utf8"` for text files, `"base64"` for binary files.
+    pub encoding: String,
+    /// UTF-8 text or base64-encoded bytes.
+    pub data: String,
 }
 
-impl From<sdk::DocVersion> for PluginDocVersion {
-    fn from(version: sdk::DocVersion) -> Self {
+/// `GET /api/plugins/{id}/package`: all files of an installed plugin at its
+/// current build, for a sandboxed cloud frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPackage {
+    /// Plugin id.
+    pub id: String,
+    /// Current build id (`<version>-<12 hex>`).
+    pub build: String,
+    /// Entry module path relative to the package root.
+    pub entry: String,
+    /// All regular files inside the package.
+    pub files: Vec<PluginPackageFile>,
+}
+
+impl From<super::PackageBundle> for PluginPackage {
+    fn from(bundle: super::PackageBundle) -> Self {
         Self {
-            revision: version.revision,
-            updated_at: version.updated_at,
-            updated_by: version.updated_by.into(),
-            value: version.value,
+            id: bundle.id,
+            build: bundle.build,
+            entry: bundle.entry,
+            files: bundle
+                .files
+                .into_iter()
+                .map(|file| PluginPackageFile {
+                    path: file.path,
+                    content_type: file.content_type.to_string(),
+                    encoding: file.encoding.as_str().to_string(),
+                    data: file.data,
+                })
+                .collect(),
         }
     }
 }
 
-/// `GET /api/plugins/{id}/docs/{name}/history`: one page.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
-pub struct PluginDocHistory {
-    /// Newest first: `limit` of them (ten unless asked, at most fifty), fewer
-    /// when their values pass 8 MiB together (the first is always there).
-    pub versions: Vec<PluginDocVersion>,
-    /// Older versions remain; ask again with `offset` moved past these.
-    pub more: bool,
+/// One HTTP header name/value pair for `POST /api/plugins/{id}/fetch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+pub struct PluginFetchHeader {
+    /// Header name.
+    pub name: String,
+    /// Header value.
+    pub value: String,
 }
 
-/// Query for `GET /api/plugins/{id}/docs/{name}/history`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Schematic)]
-pub struct PluginHistoryQuery {
-    /// How many of the newest versions to skip.
-    pub offset: Option<u32>,
-    /// How many to answer with: 1 to 50, ten when absent.
-    pub limit: Option<u32>,
+/// The body of `POST /api/plugins/{id}/fetch`: an outbound HTTP request
+/// executed by this machine on behalf of a plugin running in a cloud frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFetchRequest {
+    /// Target `http://` or `https://` URL.
+    pub url: String,
+    /// HTTP method (defaults to `"GET"`).
+    pub method: Option<String>,
+    /// Request headers (hop-by-hop and internal headers are stripped).
+    pub headers: Option<Vec<PluginFetchHeader>>,
+    /// Optional request body, base64-encoded.
+    pub body_base64: Option<String>,
+    /// Optional timeout in milliseconds (clamped to 1..=120000; default 30000).
+    pub timeout_ms: Option<u64>,
+}
+
+/// The answer to `POST /api/plugins/{id}/fetch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFetchResponse {
+    /// HTTP status code.
+    pub status: u16,
+    /// HTTP reason phrase.
+    pub status_text: String,
+    /// Final URL after any redirects.
+    pub url: String,
+    /// Response headers (hop-by-hop headers are stripped).
+    pub headers: Vec<PluginFetchHeader>,
+    /// Response body, base64-encoded.
+    pub body_base64: String,
 }
 
 #[cfg(test)]
@@ -481,15 +528,6 @@ mod tests {
             updated_at: doc.updated_at.clone(),
         };
         same(&meta, &PluginDocMeta::from(meta.clone()));
-        for updated_by in [None, Some("ada".to_string())] {
-            let version = sdk::DocVersion {
-                revision: 3,
-                updated_at: doc.updated_at.clone(),
-                updated_by,
-                value: json!(null),
-            };
-            same(&version, &PluginDocVersion::from(version.clone()));
-        }
         for current in [None, Some(doc.clone())] {
             let conflict = sdk::Conflict {
                 error: sdk::codes::CONFLICT.into(),

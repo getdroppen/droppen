@@ -48,6 +48,17 @@ export function runningStatuses(
 }
 
 /**
+ * The statuses a cloud page (`droppen.app`) runs inside sandboxed frames:
+ * enabled, compatible, and explicitly opted in to cloud (`status.cloud`).
+ * Unlike local plugins they have no `entry` URL — their package arrives over
+ * the machine's encrypted channel (`GET /api/plugins/{id}/package`).
+ */
+export function cloudRunningStatuses(statuses: readonly PluginStatus[] | null): PluginStatus[] {
+  if (!statuses) return [];
+  return statuses.filter((status) => status.enabled && status.compatible && status.cloud);
+}
+
+/**
  * The plugins the user has switched on that this host cannot run — typically
  * left behind by a host update (`docs/plugins/runtime.md` §3). They are not
  * loaded, but the page names them (a rail entry, their page, their pane)

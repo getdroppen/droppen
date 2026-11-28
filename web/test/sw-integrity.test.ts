@@ -511,7 +511,7 @@ test("the offline shell is served with the worker's own headers, never the cache
   assert.equal(
     res.headers.get("content-security-policy"),
     "default-src 'self'; script-src 'self' 'sha256-boot'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; " +
-      "connect-src 'self' wss://droppen.test https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-src 'none'; frame-ancestors 'none'; " +
+      "connect-src 'self' wss://droppen.test https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-src 'self'; frame-ancestors 'none'; " +
       "base-uri 'self'; form-action 'self'; object-src 'none'",
   );
   // A local server's shell (no marker): the same policy on its own origin, framed by itself as that server allows.

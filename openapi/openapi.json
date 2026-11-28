@@ -3627,27 +3627,6 @@
         ],
         "type": "object"
       },
-      "PluginDocHistory": {
-        "description": "`GET /api/plugins/{id}/docs/{name}/history`: one page.",
-        "properties": {
-          "more": {
-            "description": "Older versions remain; ask again with `offset` moved past these.",
-            "type": "boolean"
-          },
-          "versions": {
-            "description": "Newest first: `limit` of them (ten unless asked, at most fifty), fewer\nwhen their values pass 8 MiB together (the first is always there).",
-            "items": {
-              "$ref": "#/components/schemas/PluginDocVersion"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "versions",
-          "more"
-        ],
-        "type": "object"
-      },
       "PluginDocList": {
         "description": "`GET /api/plugins/{id}/docs`.",
         "properties": {
@@ -3687,34 +3666,6 @@
         ],
         "type": "object"
       },
-      "PluginDocVersion": {
-        "description": "One past version of a document.",
-        "properties": {
-          "revision": {
-            "description": "The revision this value had.",
-            "type": "integer"
-          },
-          "updatedAt": {
-            "description": "When it was written, ISO-8601.",
-            "type": "string"
-          },
-          "updatedBy": {
-            "description": "Who wrote it, when the host knows.",
-            "nullable": true,
-            "type": "string"
-          },
-          "value": {
-            "description": "The value at that revision."
-          }
-        },
-        "required": [
-          "revision",
-          "updatedAt",
-          "updatedBy",
-          "value"
-        ],
-        "type": "object"
-      },
       "PluginDocWrite": {
         "description": "One write of a batch.",
         "properties": {
@@ -3735,6 +3686,120 @@
           "name",
           "expectedRevision",
           "value"
+        ],
+        "type": "object"
+      },
+      "PluginFetchHeader": {
+        "description": "One HTTP header name/value pair for `POST /api/plugins/{id}/fetch`.",
+        "properties": {
+          "name": {
+            "description": "Header name.",
+            "type": "string"
+          },
+          "value": {
+            "description": "Header value.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "type": "object"
+      },
+      "PluginFetchRequest": {
+        "description": "The body of `POST /api/plugins/{id}/fetch`: an outbound HTTP request\nexecuted by this machine on behalf of a plugin running in a cloud frame.",
+        "properties": {
+          "bodyBase64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional request body, base64-encoded."
+          },
+          "headers": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PluginFetchHeader"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Request headers (hop-by-hop and internal headers are stripped)."
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "HTTP method (defaults to `\"GET\"`)."
+          },
+          "timeoutMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional timeout in milliseconds (clamped to 1..=120000; default 30000)."
+          },
+          "url": {
+            "description": "Target `http://` or `https://` URL.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "PluginFetchResponse": {
+        "description": "The answer to `POST /api/plugins/{id}/fetch`.",
+        "properties": {
+          "bodyBase64": {
+            "description": "Response body, base64-encoded.",
+            "type": "string"
+          },
+          "headers": {
+            "description": "Response headers (hop-by-hop headers are stripped).",
+            "items": {
+              "$ref": "#/components/schemas/PluginFetchHeader"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "HTTP status code.",
+            "type": "integer"
+          },
+          "statusText": {
+            "description": "HTTP reason phrase.",
+            "type": "string"
+          },
+          "url": {
+            "description": "Final URL after any redirects.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "statusText",
+          "url",
+          "headers",
+          "bodyBase64"
         ],
         "type": "object"
       },
@@ -3802,6 +3867,65 @@
           "text",
           "at",
           "dismissible"
+        ],
+        "type": "object"
+      },
+      "PluginPackage": {
+        "description": "`GET /api/plugins/{id}/package`: all files of an installed plugin at its\ncurrent build, for a sandboxed cloud frame.",
+        "properties": {
+          "build": {
+            "description": "Current build id (`<version>-<12 hex>`).",
+            "type": "string"
+          },
+          "entry": {
+            "description": "Entry module path relative to the package root.",
+            "type": "string"
+          },
+          "files": {
+            "description": "All regular files inside the package.",
+            "items": {
+              "$ref": "#/components/schemas/PluginPackageFile"
+            },
+            "type": "array"
+          },
+          "id": {
+            "description": "Plugin id.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "build",
+          "entry",
+          "files"
+        ],
+        "type": "object"
+      },
+      "PluginPackageFile": {
+        "description": "One file inside a [`PluginPackage`].",
+        "properties": {
+          "contentType": {
+            "description": "Media type by extension.",
+            "type": "string"
+          },
+          "data": {
+            "description": "UTF-8 text or base64-encoded bytes.",
+            "type": "string"
+          },
+          "encoding": {
+            "description": "`\"utf8\"` for text files, `\"base64\"` for binary files.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Relative `/`-separated path inside the package directory.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "contentType",
+          "encoding",
+          "data"
         ],
         "type": "object"
       },
@@ -10500,7 +10624,7 @@
     "/api/plugins": {
       "get": {
         "deprecated": false,
-        "description": "Every plugin installed in this instance, as this instance sees it.",
+        "description": "Every plugin installed in this instance, as this caller sees it:\nlocal callers see all installed plugins with their entry URLs; bridged\n(`cloud:`) callers see only plugins enabled and switched on for droppen.app\nwith `entry: null`; `cloud:agent-sync` sees an empty list.",
         "operationId": "list_plugins",
         "parameters": [],
         "responses": {
@@ -10512,7 +10636,7 @@
                 }
               }
             },
-            "description": "Every plugin installed in this instance, as this instance sees it"
+            "description": "Every plugin visible to this caller"
           }
         },
         "summary": "List plugins",
@@ -10961,101 +11085,6 @@
         ]
       }
     },
-    "/api/plugins/{id}/docs/{name}/history": {
-      "get": {
-        "deprecated": false,
-        "description": "The versions a document was replaced from, newest first.",
-        "operationId": "plugin_doc_history",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "How many of the newest versions to skip.",
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How many of the newest versions to skip."
-            }
-          },
-          {
-            "description": "How many to answer with: 1 to 50, ten when absent.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How many to answer with: 1 to 50, ten when absent."
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PluginDocHistory"
-                }
-              }
-            },
-            "description": "Replaced versions, newest first, at most fifty"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "`invalid`: not a document name"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
-          }
-        },
-        "summary": "A plugin document's history",
-        "tags": [
-          "plugins"
-        ]
-      }
-    },
     "/api/plugins/{id}/enabled": {
       "put": {
         "deprecated": false,
@@ -11115,6 +11144,143 @@
           }
         },
         "summary": "Switch a plugin",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/{id}/fetch": {
+      "post": {
+        "deprecated": false,
+        "description": "Execute an outbound HTTP request from this machine on behalf of a plugin\nrunning in a cloud sandbox frame (`docs/plugins/cloud.md` §4).",
+        "operationId": "plugin_fetch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginFetchRequest"
+              }
+            }
+          },
+          "description": "The body of `POST /api/plugins/{id}/fetch`: an outbound HTTP request\nexecuted by this machine on behalf of a plugin running in a cloud frame.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginFetchResponse"
+                }
+              }
+            },
+            "description": "The remote response's status, headers and base64-encoded body"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`invalid`: bad URL, scheme, method, header or base64 body"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`plugin_disabled` or `plugin_not_found`"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginTooLarge"
+                }
+              }
+            },
+            "description": "`too_large`: the request or response body is over 32 MiB"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`fetch_failed`: the outbound request failed or timed out"
+          }
+        },
+        "summary": "Proxy an outbound HTTP request for a plugin",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/{id}/package": {
+      "get": {
+        "deprecated": false,
+        "description": "Every file of an installed plugin's current build, for a sandboxed cloud\nframe (`docs/plugins/cloud.md` §3).",
+        "operationId": "get_plugin_package",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackage"
+                }
+              }
+            },
+            "description": "The plugin package's files at its current build"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "`plugin_disabled` or `plugin_not_found`"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginTooLarge"
+                }
+              }
+            },
+            "description": "`too_large`: the package exceeds the bundle limit"
+          }
+        },
+        "summary": "Download a plugin package bundle",
         "tags": [
           "plugins"
         ]
