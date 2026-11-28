@@ -358,3 +358,79 @@ test("the feed hub runs unchanged over a tunnel socket: subscribe, hello, frames
   again.text({ type: "hello" });
   assert.equal(reopened.readyState, 1);
 });
+
+test("tunnelFetch applies upload drain backpressure and pull-based download ack", async () => {
+  const acked: number[] = [];
+  let releaseDrain: (() => void) | null = null;
+  let drainCalls = 0;
+  const sent: PipeMessage[] = [];
+  let onmsg: ((m: PipeMessage) => void) | null = null;
+  let oncls: ((code: number) => void) | null = null;
+
+  const transport = tunnelTransport({
+    open() {
+      return {
+        get onmessage() {
+          return onmsg;
+        },
+        set onmessage(fn) {
+          onmsg = fn;
+        },
+        get onclose() {
+          return oncls;
+        },
+        set onclose(fn) {
+          oncls = fn;
+        },
+        send(m) {
+          sent.push(m);
+        },
+        drain() {
+          drainCalls += 1;
+          if (drainCalls === 1) {
+            return new Promise<void>((resolve) => {
+              releaseDrain = resolve;
+            });
+          }
+          return Promise.resolve();
+        },
+        ack(n) {
+          acked.push(n);
+        },
+        close() {},
+      };
+    },
+  });
+
+  // Upload a 150 KiB buffer: sliced at 64 KiB and paused after the first slice while drain() is pending.
+  const upload = new Uint8Array(150 * 1024).fill(7);
+  const reqPromise = transport.fetch(new Request("http://machine.test/api/uploads", { method: "POST", body: upload }), { class: "blob" });
+  await flush();
+  assert.equal(sent.length, 1, "upload paused after first slice waiting on drain()");
+  assert.equal(sent[0]?.kind, "binary");
+  releaseDrain!();
+  await flush();
+  await flush();
+  assert.equal(sent.at(-1)?.kind, "end", "remaining slices and end went once drain resolved");
+
+  // Download: ReadableStream pulls at most its 1-chunk highWaterMark upfront; subsequent chunks stay queued and un-acked until read().
+  onmsg!({ kind: "head", status: 200, headers: [] });
+  const res = await reqPromise;
+  onmsg!({ kind: "binary", data: bytes("chunk-1") });
+  onmsg!({ kind: "binary", data: bytes("chunk-2") });
+  onmsg!({ kind: "binary", data: bytes("chunk-3") });
+  oncls!(0);
+  assert.deepEqual(acked, [7], "at most one chunk is acked before the reader pulls");
+
+  const reader = res.body!.getReader();
+  const first = await reader.read();
+  assert.equal(new TextDecoder().decode(first.value), "chunk-1");
+  assert.deepEqual(acked, [7, 7], "credit granted for next chunk as reader advances");
+  const second = await reader.read();
+  assert.equal(new TextDecoder().decode(second.value), "chunk-2");
+  assert.deepEqual(acked, [7, 7, 7], "credit granted for third chunk once pulled");
+  const third = await reader.read();
+  assert.equal(new TextDecoder().decode(third.value), "chunk-3");
+  const end = await reader.read();
+  assert.equal(end.done, true);
+});

@@ -132,3 +132,86 @@ test("a channel the hub closes, or one that stops decrypting, ends every stream 
   second.deviceDriver.receive({ type: "data", ch: 7, payload: new Uint8Array(40) });
   assert.equal(await b.closed, 4400, "a forged message kills the channel");
 });
+
+test("ChannelStream.drain waits for queued send bytes to drop and manualCredit defers receive credit", async () => {
+  const { deviceDriver, agentDriver } = await wire();
+  const accepted = new Promise<ChannelStream>((resolve) => {
+    agentDriver.onincoming = resolve;
+  });
+  const stream = deviceDriver.open("blob", utf8("POST /api/uploads"));
+  const theirs = await accepted;
+  theirs.manualCredit = true;
+  const received: Uint8Array[] = [];
+  theirs.ondata = (chunk) => received.push(chunk);
+
+  // Queue 600 KiB — larger than the 256 KiB stream window so draining must wait for receiver credit.
+  const payload = new Uint8Array(600 * 1024).fill(42);
+  stream.send(payload);
+  let drained = false;
+  const waiting = stream.drain(128 * 1024).then(() => {
+    drained = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(drained, false, "drain stays pending while receiver has not acknowledged its window");
+  const firstBatch = received.reduce((sum, c) => sum + c.length, 0);
+  assert.ok(firstBatch > 0 && firstBatch <= 256 * 1024, `sender stopped at the receive window (${firstBatch} bytes)`);
+
+  // Consume chunks incrementally until all 600 KiB arrive and drain resolves.
+  let totalGot = 0;
+  while (totalGot < payload.length) {
+    const chunk = received.shift();
+    if (chunk) {
+      totalGot += chunk.length;
+      theirs.consumed(chunk.length);
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  await waiting;
+  assert.equal(drained, true, "drain resolved once queued bytes dropped below budget");
+});
+
+test("a throwing DirectLink.bufferedAmount detaches the direct path without closing the channel", async () => {
+  const device = await pair();
+  const agent = await pair();
+  const i = await Initiator.create(device, agent.publicKey, binding);
+  const r = await Responder.create(agent, binding);
+  await r.readHello(await i.writeHello(1, utf8("")));
+  const { message, transport: rt } = await r.writeReply(utf8(""), DEFAULT_REKEY, 1);
+  const { transport: it } = await i.readReply(message, DEFAULT_REKEY, 1);
+
+  const di = await Initiator.create(device, agent.publicKey, binding);
+  const dr = await Responder.create(agent, binding);
+  await dr.readHello(await di.writeHello(2, utf8("")));
+  const { message: dmsg } = await dr.writeReply(utf8(""), DEFAULT_REKEY, 2);
+  const { transport: directTransport } = await di.readReply(dmsg, DEFAULT_REKEY, 2);
+
+  let agentDriver: ChannelDriver;
+  let deviceDriver: ChannelDriver;
+  deviceDriver = new ChannelDriver(7, it, "initiator", (f) => setTimeout(() => agentDriver.receive(f), 0), Date.now, {
+    paths: { probeRelay: false },
+  });
+  agentDriver = new ChannelDriver(7, rt, "responder", (f) => setTimeout(() => deviceDriver.receive(f), 0), Date.now, {
+    paths: { probeRelay: false },
+  });
+
+  let released = false;
+  let shouldThrow = false;
+  deviceDriver.attachDirect(directTransport, {
+    send: () => undefined,
+    bufferedAmount: () => {
+      if (shouldThrow) throw new Error("DataChannel closed");
+      return 0;
+    },
+    released: () => {
+      released = true;
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  shouldThrow = true;
+  const stream = deviceDriver.open("rpc", utf8("GET /api/health"));
+  stream.send(utf8("ping"));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(released, true, "direct path was detached cleanly");
+  assert.equal(deviceDriver.isClosed, false, "channel stayed alive on the carrier path");
+});

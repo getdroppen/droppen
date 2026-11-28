@@ -347,12 +347,13 @@ export class Responder {
   }
 }
 
-/** An established channel. Calls are serialised: a nonce is a counter, and two in flight would race for it. */
+/** An established channel. Send and receive are serialised independently: each direction has its own CipherState and nonce counter. */
 export class Transport {
   private sent = 0;
   private received = 0;
   private poisoned = false;
-  private queue: Promise<unknown> = Promise.resolve();
+  private sendQueue: Promise<unknown> = Promise.resolve();
+  private recvQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly send: CipherState,
@@ -367,14 +368,20 @@ export class Transport {
     return this.poisoned;
   }
 
-  private serial<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work, work);
-    this.queue = next.catch(() => undefined);
+  private serialSend<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.sendQueue.then(work, work);
+    this.sendQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  private serialRecv<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.recvQueue.then(work, work);
+    this.recvQueue = next.catch(() => undefined);
     return next;
   }
 
   seal(nowMs: number, data: Uint8Array): Promise<Bytes> {
-    return this.serial(async () => {
+    return this.serialSend(async () => {
       if (this.poisoned) throw new ChannelError("poisoned", "the channel already failed");
       if (data.length > MAX_TRANSPORT_DATA) throw new ChannelError("tooLarge", `${data.length} bytes is more than one message can carry`);
       const rekey = this.sent + 1 >= this.policy.maxMessages || nowMs - this.lastRekeyMs >= this.policy.maxAgeMs;
@@ -397,7 +404,7 @@ export class Transport {
   }
 
   open(message: Uint8Array): Promise<Bytes> {
-    return this.serial(async () => {
+    return this.serialRecv(async () => {
       if (this.poisoned) throw new ChannelError("poisoned", "the channel already failed");
       try {
         return await this.openInner(message);

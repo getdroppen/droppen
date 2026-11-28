@@ -142,6 +142,7 @@ interface Stream {
   recvWindow: number;
   recvUnacked: number;
   pending: Bytes[];
+  pendingBytes: number;
   pendingClose: number | null;
   localClosed: boolean;
 }
@@ -171,12 +172,13 @@ export class Mux {
   /** Bytes the streams have queued and not sent yet, and how many streams are open (diagnostics: the connection log's samples). */
   pending(): { bytes: number; streams: number } {
     let bytes = 0;
-    for (const s of this.streams.values()) for (const chunk of s.pending) bytes += chunk.length;
+    for (const s of this.streams.values()) bytes += s.pendingBytes;
     return { bytes, streams: this.streams.size };
   }
 
-  private sorted(): [number, Stream][] {
-    return [...this.streams.entries()].sort((a, b) => a[0] - b[0]);
+  /** Bytes queued on `sid` and not popped into frames yet (0 when closed or unknown). */
+  pendingBytes(sid: number): number {
+    return this.streams.get(sid)?.pendingBytes ?? 0;
   }
 
   open(cls: StreamClass, meta: Uint8Array = new Uint8Array(0)): number {
@@ -190,6 +192,7 @@ export class Mux {
       recvWindow: this.window,
       recvUnacked: 0,
       pending: [],
+      pendingBytes: 0,
       pendingClose: null,
       localClosed: false,
     });
@@ -202,6 +205,7 @@ export class Mux {
     if (!s || s.pendingClose !== null || s.localClosed) throw new MuxError("unknownStream", `no such stream ${sid}`);
     const size = chunkSize(s.cls);
     for (let at = 0; at < data.length; at += size) s.pending.push(copy(data.subarray(at, at + size)));
+    s.pendingBytes += data.length;
   }
 
   close(sid: number, code: number): void {
@@ -254,17 +258,25 @@ export class Mux {
     if (ctl) return ctl;
     for (const p of [1, 2, 3]) {
       const room = p === 3 ? budget.bulk : budget.interactive;
-      const fits = (s: Stream) => {
+      const last = this.lastServed[p]!;
+      let nextAbove = Number.POSITIVE_INFINITY;
+      let smallest = Number.POSITIVE_INFINITY;
+      for (const [sid, s] of this.streams) {
+        if (priority(s.cls) !== p) continue;
         const front = s.pending[0];
-        if (!front) return false;
-        const n = Math.min(front.length, s.sendCredit);
-        return n > 0 && (n <= room || room >= MIN_CUT);
-      };
-      const ready = this.sorted()
-        .filter(([, s]) => priority(s.cls) === p && (fits(s) || (s.pending.length === 0 && s.pendingClose !== null)))
-        .map(([sid]) => sid);
-      if (ready.length === 0) continue;
-      const sid = ready.find((x) => x > this.lastServed[p]!) ?? ready[0]!;
+        let ready = false;
+        if (front) {
+          const n = Math.min(front.length, s.sendCredit);
+          ready = n > 0 && (n <= room || room >= MIN_CUT);
+        } else {
+          ready = s.pendingClose !== null;
+        }
+        if (!ready) continue;
+        if (sid > last && sid < nextAbove) nextAbove = sid;
+        if (sid < smallest) smallest = sid;
+      }
+      const sid = nextAbove !== Number.POSITIVE_INFINITY ? nextAbove : smallest;
+      if (sid === Number.POSITIVE_INFINITY) continue;
       this.lastServed[p] = sid;
       const s = this.streams.get(sid)!;
       const front = s.pending[0];
@@ -278,6 +290,7 @@ export class Mux {
           s.pending[0] = copy(front.subarray(n));
         }
         s.sendCredit -= n;
+        s.pendingBytes -= n;
         return { type: "data", sid, data };
       }
       const code = s.pendingClose!;
@@ -301,6 +314,7 @@ export class Mux {
           recvWindow: INITIAL_WINDOW,
           recvUnacked: 0,
           pending: [],
+          pendingBytes: 0,
           pendingClose: null,
           localClosed: false,
         });
