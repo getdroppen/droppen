@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{hex, unhex, TrustProxy};
 use crate::limit::{address_key, Keyed, FORGET_AFTER};
 use crate::server::Server;
+use crate::PeerAddr;
 
 /// The per-address limits on what anyone may ask before signing in.
 pub struct UnauthLimits {
@@ -122,7 +123,7 @@ fn too_many(wait: Duration) -> Response {
     r
 }
 
-async fn ping(State(server): State<Arc<Server>>, ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
+async fn ping(State(server): State<Arc<Server>>, ConnectInfo(PeerAddr(peer)): ConnectInfo<PeerAddr>, headers: HeaderMap) -> Response {
     let ip = address_key(client_ip(server.config.trust_proxy, &headers, Some(peer)));
     if let Err(wait) = server.unauth.ping.allow(&ip, Instant::now()) {
         return too_many(wait);
@@ -144,7 +145,7 @@ struct NonceQuery {
 /// its signature over its origin and the Hub's nonce.
 async fn relay_id(
     State(server): State<Arc<Server>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(PeerAddr(peer)): ConnectInfo<PeerAddr>,
     headers: HeaderMap,
     Query(q): Query<NonceQuery>,
 ) -> Response {
@@ -173,7 +174,7 @@ async fn relay_id(
 
 async fn connect(
     State(server): State<Arc<Server>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(PeerAddr(peer)): ConnectInfo<PeerAddr>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -181,11 +182,17 @@ async fn connect(
     if let Err(wait) = server.unauth.upgrades.allow(&ip, Instant::now()) {
         return too_many(wait);
     }
+    let Some(permit) = server.try_acquire_ws() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "relay connection capacity reached").into_response();
+    };
     ws.max_message_size(droppen_proto::frame::MAX_FRAME_LEN)
         .max_frame_size(droppen_proto::frame::MAX_FRAME_LEN)
         .on_upgrade(move |socket| {
             let tasks = server.tasks.clone();
-            tasks.track_future(crate::client::connection(server, socket))
+            tasks.track_future(async move {
+                let _permit = permit;
+                crate::client::connection(server, socket).await;
+            })
         })
 }
 

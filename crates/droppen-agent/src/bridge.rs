@@ -641,16 +641,12 @@ pub async fn serve(incoming: Incoming, device: String, loopback: Arc<Loopback>, 
         return stream.close(CLOSE_FORBIDDEN);
     }
     // The admin-only routes, judged on this agent's own chain now (a device
-    // demoted since the channel opened is held to what it is now).
+    // demoted since the channel opened is held to what it is now). Answer
+    // immediately without buffering up to `MAX_BODY` (64 MiB) of discarded
+    // payload.
     if let Some(refused) = refusal(&head.method, &head.path, local.standing(&device)) {
         let route = head.path.split(['?', '#']).next().unwrap_or_default().to_string();
         tracing::warn!(%device, method = %head.method, %route, ?refused, "refused a request over a channel");
-        let mut stream = stream;
-        // A request's body first (up to `End`), as any answer does: the
-        // device reads the answer once it has sent the whole request.
-        if matches!(class, StreamClass::Rpc | StreamClass::Blob) && request_body(&mut stream, MAX_BODY).await.is_none() {
-            return;
-        }
         return answer(stream, refused.answer()).await;
     }
     match class {
