@@ -12,7 +12,7 @@ import {
   TreeViewIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMediaQuery } from "usehooks-ts";
 import type { components } from "@/api/schema";
 import {
@@ -36,7 +36,7 @@ import { AppFrames } from "@/features/apps/app-frames";
 import { appLaunchErrorText, CodeServerMissingDialog, isCodeServerMissing } from "@/features/apps/code-server-missing";
 import { ScreenFrames } from "@/features/screens/screen-frames";
 import { ScreensRail } from "@/features/screens/screens-rail";
-import { applyLanguage } from "@/i18n";
+import { applyLanguage, storedLanguagePref } from "@/i18n";
 import { useDeviceSessions } from "@/features/machines/device-sessions";
 import { type DeviceSessions, unreadAcross } from "@/features/machines/needs-you";
 import { UnreadSignals } from "@/features/machines/unread-signals";
@@ -269,14 +269,24 @@ function SideBySideTipBar() {
 function PrefsSync() {
   const api = useApi();
   const machine = useMachine();
+  const prevServerLang = useRef<string | null>(null);
   const { data: prefs } = useQuery({
     queryKey: mq(machine, "prefs"),
     queryFn: async () => (await api.GET("/api/prefs")).data,
     staleTime: 30_000,
   });
   useEffect(() => {
-    if (prefs) {
-      applyFontSize(prefs.fontSize);
+    if (!prefs) return;
+    applyFontSize(prefs.fontSize);
+    // Preserve an explicit language picked on public/auth/devices screens when a
+    // host's own pref is still the default `auto`; still honor switching back to
+    // `auto` from Settings during this session.
+    const switchedToAuto =
+      prefs.language === "auto" &&
+      prevServerLang.current !== null &&
+      prevServerLang.current !== "auto";
+    prevServerLang.current = prefs.language;
+    if (prefs.language !== "auto" || switchedToAuto || storedLanguagePref() === "auto") {
       void applyLanguage(prefs.language);
     }
   }, [prefs]);

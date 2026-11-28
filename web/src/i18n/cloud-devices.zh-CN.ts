@@ -797,4 +797,7 @@ export const cloudDevicesZhCN: Record<string, string> = {
   "the page before a reload": "刷新前的页面",
   "What this browser's connections to your devices did, kept in this tab for the last 30 minutes. Device ids are hashed, and text that is not Droppen's own is withheld: no tokens, keys, messages, names, paths or addresses are kept. Copy the newest (up to 60,000 characters) or download all of it to send for analysis.": "这个浏览器与你的设备之间的连接做了什么，在本标签页里保留最近 30 分钟。设备 ID 已做哈希处理，不是 Droppen 自己说的文字一律不记：不保留令牌、密钥、消息内容、名称、路径或地址。可复制最新的部分（最多 60,000 个字符），或下载全部，发出去分析。",
   "What this browser's connections to your devices did, for troubleshooting: copy it or download it to send.": "这个浏览器与你的设备之间的连接情况，用于排查问题：可复制或下载后发送。",
+  "confirm your recovery words": "确认你的恢复词",
+  "copy recovery words": "复制恢复词",
+  "does not match word {{n}}": "与第 {{n}} 个词不一致",
 };

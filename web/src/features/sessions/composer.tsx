@@ -16,6 +16,7 @@ import {
   storedAttachments,
   useComposerAttachments,
   useSendHint,
+  withSendHint,
   type ComposerAttachment,
 } from "@/features/sessions/composer-box";
 import { claimSessionDraft, readSessionDraftSnapshot, sessionDraftKey, subscribeSessionDraft, writeSessionDraft } from "@/features/sessions/session-draft";
@@ -35,7 +36,7 @@ import { RotationNotice } from "@/features/sessions/rotation-notice";
 import { AnswerNotice } from "@/features/sessions/question-card";
 import { PendingPermissions } from "@/features/sessions/permission-card";
 import { pendingPermissionsOf } from "@/features/sessions/session-permissions";
-import { composerAnswersQuestion, sentOutcome } from "@/features/sessions/session-questions";
+import { composerAnswersQuestion, hasMountedPendingQuestion, sentOutcome } from "@/features/sessions/session-questions";
 import { DeliveryPreviews, useDeliveryPreviews } from "@/features/sessions/delivery-preview-view";
 import { nextDeliveryId } from "@/features/sessions/delivery-preview";
 import { OutboxList } from "@/features/sessions/outbox-list";
@@ -57,7 +58,7 @@ import { useOutboxResolution } from "@/features/sessions/use-outbox-resolution";
 import { externalSendBlock } from "@/features/sessions/send-block";
 import { ContinueOnAccountButton, looksLikeLoginFailure, type OpenSession } from "@/features/sessions/continue-on-account";
 import { activeRests } from "@/features/accounts/account-rest";
-import { localLoginOf, localLoginSignedOut, useAccounts } from "@/features/accounts/use-accounts";
+import { accountsForProvider, localLoginOf, localLoginSignedOut, useAccounts } from "@/features/accounts/use-accounts";
 import type { DraftStore } from "@/features/sessions/stream-draft";
 import { useInfoOf, useMachine, useMachineRuntime, useSessionRef } from "@/lib/machines/context";
 import { sessionKey, type SessionRef } from "@/lib/machines/key";
@@ -423,6 +424,7 @@ export function Composer({
   // resting (or the failure says it was the credential): the session cannot go
   // on as it is, so the failure line offers to carry it onto an account.
   const { data: accountList } = useAccounts();
+  const claudeAccounts = accountsForProvider(accountList?.accounts ?? [], "claude");
   const localLogin = localLoginOf(accountList, "claude");
   const continueOffered =
     failed &&
@@ -430,7 +432,10 @@ export function Composer({
     source === "claude" &&
     detail.claudeRoot === "local" &&
     detail.summary.scope === "owned" &&
-    (localLoginSignedOut(localLogin) || activeRests(localLogin ?? undefined).length > 0 || looksLikeLoginFailure(detail.injection?.error));
+    claudeAccounts.length > 0 &&
+    (looksLikeLoginFailure(detail.injection?.error) ||
+      activeRests(localLogin ?? undefined).length > 0 ||
+      (localLoginSignedOut(localLogin) && !detail.injection?.error?.includes("error_during_execution")));
   // An actual failure pauses the queue so it can be reviewed. A user interrupt
   // does not: abandoning the current turn is often done specifically so the
   // correction already queued behind it can run. A POST refusal still pauses,
@@ -472,7 +477,7 @@ export function Composer({
     permissions: detail.permissions,
     row: detail.summary,
   });
-  const questionPending = detail.questions?.some((question) => question.state === "pending") === true;
+  const questionPending = hasMountedPendingQuestion(detail.questions, detail.items);
   const sendsAnswer = answering && canSend && queue.length === 0;
   const willQueue =
     !sendsAnswer &&
@@ -744,7 +749,7 @@ export function Composer({
                 : questionPending
                   ? t("answer the question above first")
                   : canSend
-                    ? `${sendsAnswer ? t("type your answer…") : t("send a message to this session…")} (${sendHint})`
+                    ? withSendHint(sendsAnswer ? t("type your answer…") : t("send a message to this session…"), sendHint)
                     : `${detail.sendBlockReason ?? t("session is busy")} — ${t("messages are queued")}`
           }
           chips={<>

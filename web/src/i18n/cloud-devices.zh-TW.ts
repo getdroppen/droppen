@@ -797,4 +797,7 @@ export const cloudDevicesZhTW: Record<string, string> = {
   "the page before a reload": "重新整理前的頁面",
   "What this browser's connections to your devices did, kept in this tab for the last 30 minutes. Device ids are hashed, and text that is not Droppen's own is withheld: no tokens, keys, messages, names, paths or addresses are kept. Copy the newest (up to 60,000 characters) or download all of it to send for analysis.": "這個瀏覽器與你的裝置之間的連線做了什麼，在本分頁裡保留最近 30 分鐘。裝置 ID 已做雜湊處理，不是 Droppen 自己說的文字一律不記：不保留權杖、金鑰、訊息內容、名稱、路徑或位址。可複製最新的部分（最多 60,000 個字元），或下載全部，傳出去分析。",
   "What this browser's connections to your devices did, for troubleshooting: copy it or download it to send.": "這個瀏覽器與你的裝置之間的連線情況，用於排查問題：可複製或下載後傳送。",
+  "confirm your recovery words": "確認你的恢復詞",
+  "copy recovery words": "複製恢復詞",
+  "does not match word {{n}}": "與第 {{n}} 個詞不一致",
 };

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CircleNotchIcon } from "@phosphor-icons/react";
+import { CheckIcon, CircleNotchIcon, CopyIcon } from "@phosphor-icons/react";
+import { useCopy } from "@/lib/clipboard";
 import { mnemonicCompletions } from "@/lib/e2e";
 import { formatExactTime } from "@/lib/format";
 import { AccountError, type CloudAccount } from "@/lib/hub/account";
 import { challengeAnswers, checkPhrase, type PhraseCheck, pickChallenge } from "@/lib/hub/recovery-words";
 import { cn } from "@/lib/cn";
-import { Centered, ErrorLine, errorText, field, Panel, primary, quiet } from "./ui";
+import { Centered, ErrorLine, errorText, field, Panel, primary, quiet, secondary } from "./ui";
 
 /*
  * The recovery words, as a person meets them (`lib/hub/recovery-words.ts`):
@@ -24,6 +25,8 @@ import { Centered, ErrorLine, errorText, field, Panel, primary, quiet } from "./
 export function RecoveryWords({ words, title: titled, onDone }: { words: string[]; title?: string; onDone: () => void }) {
   const { t } = useTranslation();
   const title = titled ?? t("your recovery words");
+  const confirmTitle = titled ?? t("confirm your recovery words");
+  const { copied, copy } = useCopy();
   const [step, setStep] = useState<"show" | "check">("show");
   const positions = useMemo(() => pickChallenge(words.length), [words]);
   const [answers, setAnswers] = useState<string[]>(() => positions.map(() => ""));
@@ -46,9 +49,15 @@ export function RecoveryWords({ words, title: titled, onDone }: { words: string[
               </li>
             ))}
           </ol>
-          <button type="button" data-variant="primary" className={primary} onClick={() => setStep("check")}>
-            {t("I have written them down")}
-          </button>
+          <div className="flex flex-col gap-2">
+            <button type="button" data-variant="primary" className={primary} onClick={() => setStep("check")}>
+              {t("I have written them down")}
+            </button>
+            <button type="button" className={secondary} onClick={() => copy(words.join(" "))}>
+              {copied ? <CheckIcon className="size-3.5 text-ok" /> : <CopyIcon className="size-3.5" />}
+              {copied ? t("copied") : t("copy recovery words")}
+            </button>
+          </div>
         </Panel>
       </Centered>
     );
@@ -62,23 +71,33 @@ export function RecoveryWords({ words, title: titled, onDone }: { words: string[
           if (passed) onDone();
         }}
       >
-        <Panel title={title}>
+        <Panel title={confirmTitle}>
           <p className="text-xs leading-5 text-muted">{t("To check you have them, type these words from your list:")}</p>
-          {positions.map((p, i) => (
-            <label key={p} className="flex items-center gap-2">
-              <span className="w-16 shrink-0 font-mono text-2xs text-faint">{t("word {{n}}", { n: p + 1 })}</span>
-              <input
-                value={answers[i]}
-                onChange={(e) => setAnswers((a) => a.map((x, j) => (j === i ? e.target.value : x)))}
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                autoFocus={i === 0}
-                aria-invalid={answers[i]!.trim() !== "" && !right[i]}
-                className={cn(field, answers[i]!.trim() !== "" && !right[i] && "border-danger")}
-              />
-            </label>
-          ))}
+          {positions.map((p, i) => {
+            const wrong = answers[i]!.trim() !== "" && !right[i];
+            return (
+              <div key={p} className="flex flex-col gap-1">
+                <label className="flex items-center gap-2">
+                  <span className="w-16 shrink-0 font-mono text-2xs text-faint">{t("word {{n}}", { n: p + 1 })}</span>
+                  <input
+                    value={answers[i]}
+                    onChange={(e) => setAnswers((a) => a.map((x, j) => (j === i ? e.target.value : x)))}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoFocus={i === 0}
+                    aria-invalid={wrong}
+                    className={cn(field, wrong && "border-danger")}
+                  />
+                </label>
+                {wrong && (
+                  <p data-signal="failed" className="pl-[4.5rem] font-mono text-2xs text-danger">
+                    {t("does not match word {{n}}", { n: p + 1 })}
+                  </p>
+                )}
+              </div>
+            );
+          })}
           <button type="submit" disabled={!passed} data-variant="primary" className={primary}>
             {t("continue")}
           </button>
