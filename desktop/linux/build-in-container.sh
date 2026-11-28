@@ -103,7 +103,8 @@ fetch_dsc_from_pool() { # source, version, destination
       while read -r sha size name; do
         case "$name" in */*) ok=0; break ;; esac
         pool_get -o "$tmp/$name" "$base/pool/main/$area/$src/$name" 2>/dev/null || { ok=0; break; }
-        [ "$(wc -c <"$tmp/$name")" = "$size" ] || { ok=0; break; }
+        # `wc -c <` pads its number on BSD: read the digits only.
+        [ "$(wc -c <"$tmp/$name" | tr -d ' ')" = "$size" ] || { ok=0; break; }
         [ "$(sha256sum "$tmp/$name" | cut -d' ' -f1)" = "$sha" ] || { ok=0; break; }
       done < <(awk '/^Checksums-Sha256:/ { f = 1; next } /^[^ ]/ { f = 0 } f && NF == 3 { print $1, $2, $3 }' "$tmp/$dsc")
       if [ "$ok" = 1 ]; then

@@ -356,6 +356,7 @@ jobs:
       - run: bash .github/scripts/fetch-release-tool.test.sh
       - run: bash .github/scripts/unpack-artifact.test.sh
       - run: bash .github/scripts/release-linux.test.sh
+      - run: bash desktop/linux/build-in-container.test.sh
       - run: bash .github/scripts/release-rc-commit.test.sh
       - run: bash scripts/cut-rc.test.sh
 
