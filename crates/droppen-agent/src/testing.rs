@@ -1,8 +1,8 @@
 //! What the server's tests reach of the agent beyond what the server itself
 //! calls: where the agent keeps its files, a staged seed, the streams store's
-//! key-value rows, a running link's identity and renewal flag, and the bridge's
-//! plugin routes. Only with `test-support`, which only the server's
-//! `[dev-dependencies]` turn on; none of it is in a normal or release build.
+//! key-value rows, and a running link's identity and renewal flag. Only with
+//! `test-support`, which only the server's `[dev-dependencies]` turn on; none
+//! of it is in a normal or release build.
 //!
 //! Each method is the agent's own, under the same name where it has one.
 
@@ -145,10 +145,4 @@ impl RunningTesting for Running {
         self.shared.state.lock().expect("agent state").rotation.push_renew = true;
         self.shared.save();
     }
-}
-
-/// Whether `route` is one of the plugin routes, which the bridge refuses to
-/// every device rather than classifying.
-pub fn plugin_route(route: &str) -> bool {
-    crate::bridge::plugin_route(route)
 }

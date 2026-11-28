@@ -278,10 +278,13 @@ pub async fn settings(State(state): State<AppState>, #[api(skip)] who: droppen_a
     let bindings = state.drive.accounts.session_account_map().await;
     let (claude_sessions, codex_sessions) = tokio::join!(claude::list_claude_sessions(paths, &bindings), codex::list_codex_sessions(paths));
     // The agent's own status mirror reads this route as `cloud:agent-sync`, so
-    // the hub's offline copy gets the same empty list (`docs/plugins/
-    // runtime.md` §5).
-    let plugins: Vec<droppen_plugins::wire::PluginStatus> = if who.is_cloud() {
+    // the hub's offline copy keeps an empty plugin list (`docs/plugins/
+    // cloud.md` §6). A real bridged device sees only cloud-enabled plugins
+    // with `entry: null`.
+    let plugins: Vec<droppen_plugins::wire::PluginStatus> = if who.is_agent_sync() {
         Vec::new()
+    } else if who.is_cloud() {
+        state.plugins.cloud_status_async().await.into_iter().map(Into::into).collect()
     } else {
         state.plugins.status_async().await.into_iter().map(Into::into).collect()
     };
@@ -512,7 +515,9 @@ pub(crate) mod test_support {
         let config = app.config().await.expect("config");
         let state = app.state(&config).await.expect("state");
         let auth = state.drive.auth.clone();
-        let router = documented_router(&state, &config).layer(droppen_auth::layer(auth));
+        let router = documented_router(&state, &config)
+            .layer(droppen_plugins::routes::cloud_plugin_layer(state.plugins.clone()))
+            .layer(droppen_auth::layer(auth));
         (state, router)
     }
 
@@ -540,7 +545,9 @@ pub(crate) mod test_support {
         let mut state = app.state(&config).await.expect("state");
         adjust(&mut state);
         let auth = state.drive.auth.clone();
-        let router = documented_router(&state, &config).layer(droppen_auth::layer(auth));
+        let router = documented_router(&state, &config)
+            .layer(droppen_plugins::routes::cloud_plugin_layer(state.plugins.clone()))
+            .layer(droppen_auth::layer(auth));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let _ = state.listen_port.set(addr.port());

@@ -20,11 +20,13 @@
 //! ([`super::serve`]) does the same.
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use base64::Engine as _;
 use gotcha::axum::body::Bytes;
 use gotcha::axum::extract::{FromRef, FromRequest, Request};
 use gotcha::axum::http::StatusCode;
-use gotcha::axum::middleware::Next;
+use gotcha::axum::middleware::{FromFnLayer, Next};
 use gotcha::axum::response::{IntoResponse, Response};
 use gotcha::oas::{Parameter, RequestBody};
 use gotcha::{api, Either, GotchaRouter, Json, ParameterProvider, State, WithStatus};
@@ -33,12 +35,13 @@ use serde::de::DeserializeOwned;
 use super::install::{InstallError, MAX_TARBALL_BYTES};
 use super::store::{StoreError, MAX_REQUEST_BYTES};
 use super::wire::{
-    PluginBatch, PluginBatchResult, PluginCurrentDoc, PluginDoc, PluginDocConflict, PluginDocHistory, PluginDocList, PluginDocQuery,
-    PluginCloudSwitch, PluginHistoryQuery, PluginInvalidPackage, PluginList, PluginPutDoc, PluginStatus, PluginSwitch, PluginTarballBody,
-    PluginTooLarge,
+    PluginBatch, PluginBatchResult, PluginCloudSwitch, PluginCurrentDoc, PluginDoc, PluginDocConflict, PluginDocList, PluginDocQuery,
+    PluginFetchHeader, PluginFetchRequest, PluginFetchResponse, PluginInvalidPackage, PluginList, PluginPackage, PluginPutDoc, PluginStatus,
+    PluginSwitch, PluginTarballBody, PluginTooLarge,
 };
 use super::{CloudIdentityExt, DecisionReason, PluginError, Plugins};
 use droppen_auth::MaybeIdentity;
+use droppen_http::bridge::PluginCaller;
 use droppen_http::error::{ApiError, Coded};
 use droppen_http::extract::{ApiJson, ApiPath, ApiQuery};
 use droppen_plugin_sdk::codes;
@@ -48,10 +51,49 @@ pub const LIST: &str = "/api/plugins";
 const PLUGIN: &str = "/api/plugins/{id}";
 const ENABLED: &str = "/api/plugins/{id}/enabled";
 const CLOUD: &str = "/api/plugins/{id}/cloud";
+const PACKAGE: &str = "/api/plugins/{id}/package";
+const FETCH: &str = "/api/plugins/{id}/fetch";
 const DOCS: &str = "/api/plugins/{id}/docs";
 const DOC: &str = "/api/plugins/{id}/docs/{name}";
-const HISTORY: &str = "/api/plugins/{id}/docs/{name}/history";
 const BATCH: &str = "/api/plugins/{id}/batch";
+
+/// Maximum request body size for `POST /api/plugins/{id}/fetch` (covers a
+/// base64-encoded 32 MiB payload plus JSON envelope).
+const MAX_FETCH_JSON_BYTES: usize = 48 * 1024 * 1024;
+/// Maximum decoded request or response body size for `POST /api/plugins/{id}/fetch`.
+const MAX_FETCH_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// Default outbound fetch timeout (ms).
+const DEFAULT_FETCH_TIMEOUT_MS: u64 = 30_000;
+/// Maximum outbound fetch timeout (ms).
+const MAX_FETCH_TIMEOUT_MS: u64 = 120_000;
+
+/// Request headers stripped before forwarding an outbound plugin fetch.
+const STRIPPED_FETCH_REQUEST_HEADERS: &[&str] = &[
+    "host",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "keep-alive",
+    "upgrade",
+    "proxy-connection",
+    "proxy-authenticate",
+    "te",
+    "trailer",
+    "x-rh-agent",
+    "x-rh-agent-device",
+    "x-rh-plugin",
+];
+
+/// Response headers stripped from an outbound plugin fetch.
+const STRIPPED_FETCH_RESPONSE_HEADERS: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "transfer-encoding",
+    "upgrade",
+    "proxy-authenticate",
+    "proxy-connection",
+    "content-length",
+];
 
 fn coded(status: StatusCode, code: &str, message: impl Into<String>) -> ApiError {
     let message = message.into();
@@ -218,27 +260,114 @@ impl PluginCallerExt for MaybeIdentity {
     }
 }
 
-/// [`PluginCallerExt::refuse_cloud`], before the request's body is parsed.
+/// Refusal returned to a cloud caller for any plugin that is not installed,
+/// enabled and switched on for droppen.app (`404 plugin_not_found`, identical
+/// to an unknown plugin id).
+fn cloud_not_found() -> ApiError {
+    coded(
+        StatusCode::NOT_FOUND,
+        codes::PLUGIN_NOT_FOUND,
+        "no plugin is available to a bridged request",
+    )
+}
+
+/// Extract the plugin id segment from `/api/plugins/<id>/…`, if present.
+fn plugin_id_in_path(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api/plugins/")?;
+    let id = rest.split('/').next()?;
+    (!id.is_empty()).then_some(id)
+}
+
+/// Boxed future type for [`cloud_plugin_layer`].
+type CloudPluginFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>;
+/// Function pointer type for [`cloud_plugin_layer`].
+type CloudPluginFn = fn(State<Arc<Plugins>>, Request, Next) -> CloudPluginFuture;
+
+/// Router-wide middleware mounted right inside `droppen_auth::layer`
+/// (`docs/plugins/cloud.md` §4 & §6):
 ///
-/// A handler's arguments — including a JSON body — are extracted before its
-/// first line runs, so a malformed body from a device would otherwise be
-/// answered `400` before the handler could refuse it. This layer sits inside
-/// the authentication guard (which has put the identity in the request
-/// extensions by now) and outside every extractor, so a device gets the same
-/// `404 plugin_not_found` whatever it sent. The handler-level check stays as
-/// the second lock on the same door.
+/// 1. Any bridged request marked with [`PluginCaller`] (`X-Rh-Plugin: <id>`)
+///    is refused with `404 plugin_not_found` unless `<id>` is installed,
+///    enabled and switched on for droppen.app — regardless of which `/api/…`
+///    route it targets, so switching `cloud` off stops an already-open frame
+///    immediately.
+/// 2. If a request marked with `PluginCaller(caller)` targets
+///    `/api/plugins/<target>/…`, `caller` must equal `target` (a plugin frame
+///    cannot reach another plugin's documents, package or fetch proxy).
+/// 3. Any bridged (`cloud:`) request targeting `/api/plugins/<id>/…` is
+///    checked before body extraction: `cloud:agent-sync` is always refused,
+///    and any plugin that is not installed, enabled and `cloud` gets
+///    `404 plugin_not_found` before a JSON extractor can answer `400`.
+pub fn cloud_plugin_layer(plugins: Arc<Plugins>) -> FromFnLayer<CloudPluginFn, Arc<Plugins>, (State<Arc<Plugins>>, Request)> {
+    fn boxed(State(plugins): State<Arc<Plugins>>, request: Request, next: Next) -> CloudPluginFuture {
+        Box::pin(enforce_cloud_plugin(plugins, request, next))
+    }
+    gotcha::axum::middleware::from_fn_with_state(plugins, boxed as CloudPluginFn)
+}
+
+async fn enforce_cloud_plugin(plugins: Arc<Plugins>, request: Request, next: Next) -> Response {
+    let identity = request.extensions().get::<droppen_http::identity::AuthIdentity>();
+    let is_cloud = identity.is_some_and(|id| id.username.starts_with("cloud:"));
+    let is_agent_sync = identity.is_some_and(|id| id.username == "cloud:agent-sync");
+    let path = request.uri().path();
+    let target_plugin = plugin_id_in_path(path);
+
+    if let Some(caller) = request.extensions().get::<PluginCaller>().cloned() {
+        if is_agent_sync || !droppen_plugin_sdk::valid_id(&caller.0) {
+            return cloud_not_found().into_response();
+        }
+        if let Some(target) = target_plugin {
+            if target != caller.0 {
+                return cloud_not_found().into_response();
+            }
+        }
+        if !plugins.is_cloud_enabled_async(caller.0).await {
+            return cloud_not_found().into_response();
+        }
+    } else if is_cloud {
+        if let Some(target) = target_plugin {
+            if is_agent_sync || !droppen_plugin_sdk::valid_id(target) {
+                return cloud_not_found().into_response();
+            }
+            if !plugins.is_cloud_enabled_async(target.to_string()).await {
+                return cloud_not_found().into_response();
+            }
+        }
+    }
+
+    next.run(request).await
+}
+
+/// Check that a cloud caller (if any) is allowed to act on plugin `id`.
+async fn check_cloud_access(
+    plugins: &Arc<Plugins>,
+    who: &MaybeIdentity,
+    caller: Option<&PluginCaller>,
+    id: &str,
+) -> Result<(), ApiError> {
+    if who.is_agent_sync() {
+        return Err(cloud_not_found());
+    }
+    if let Some(caller) = caller {
+        if caller.0 != id {
+            return Err(cloud_not_found());
+        }
+    }
+    if who.is_cloud() && !plugins.is_cloud_enabled_async(id.to_string()).await {
+        return Err(cloud_not_found());
+    }
+    Ok(())
+}
+
+/// Refuse any bridged (`cloud:`) request on local-only plugin management and
+/// asset routes before extractors run.
 async fn refuse_cloud_requests(request: Request, next: Next) -> Response {
     if request
         .extensions()
         .get::<droppen_http::identity::AuthIdentity>()
         .is_some_and(|identity| identity.username.starts_with("cloud:"))
     {
-        return coded(
-            StatusCode::NOT_FOUND,
-            codes::PLUGIN_NOT_FOUND,
-            "no plugin is available to a bridged request",
-        )
-        .into_response();
+        return cloud_not_found().into_response();
     }
     next.run(request).await
 }
@@ -253,18 +382,28 @@ pub struct PluginsState {
 }
 droppen_http::substate!(PluginsState);
 
-/// Every plugin installed in this instance, as this instance sees it.
+/// Every plugin installed in this instance, as this caller sees it:
+/// local callers see all installed plugins with their entry URLs; bridged
+/// (`cloud:`) callers see only plugins enabled and switched on for droppen.app
+/// with `entry: null`; `cloud:agent-sync` sees an empty list.
 #[api(
     id = "list_plugins",
     group = "plugins",
     summary = "List plugins",
-    responses(200 = "Every plugin installed in this instance, as this instance sees it"),
+    responses(200 = "Every plugin visible to this caller"),
     drop_default
 )]
 pub async fn list_plugins(State(state): State<PluginsState>, #[api(skip)] who: MaybeIdentity) -> Result<Json<PluginList>, ApiError> {
-    who.refuse_cloud()?;
+    if who.is_agent_sync() {
+        return Ok(Json(PluginList { plugins: Vec::new() }));
+    }
+    let list = if who.is_cloud() {
+        state.plugins.cloud_status_async().await
+    } else {
+        state.plugins.status_async().await
+    };
     Ok(Json(PluginList {
-        plugins: state.plugins.status_async().await.into_iter().map(PluginStatus::from).collect(),
+        plugins: list.into_iter().map(PluginStatus::from).collect(),
     }))
 }
 
@@ -372,6 +511,176 @@ pub async fn set_plugin_cloud(
     .map(|status| Json(status.into()))
 }
 
+/// Every file of an installed plugin's current build, for a sandboxed cloud
+/// frame (`docs/plugins/cloud.md` §3).
+#[api(
+    id = "get_plugin_package",
+    group = "plugins",
+    summary = "Download a plugin package bundle",
+    responses(
+        200 = "The plugin package's files at its current build",
+        response(status = 413, body = "PluginTooLarge", description = "`too_large`: the package exceeds the bundle limit")
+    ),
+    errors(404 = "`plugin_disabled` or `plugin_not_found`")
+)]
+pub async fn get_plugin_package(
+    State(state): State<PluginsState>,
+    ApiPath(id): ApiPath<String>,
+    #[api(skip)] who: MaybeIdentity,
+    #[api(skip)] caller: Option<gotcha::axum::Extension<PluginCaller>>,
+) -> Result<Json<PluginPackage>, ApiError> {
+    check_cloud_access(&state.plugins, &who, caller.as_ref().map(|c| &c.0), &id).await?;
+    let require_cloud = who.is_cloud();
+    state
+        .plugins
+        .blocking(move |plugins| plugins.package_bundle(&id, require_cloud))
+        .await
+        .map(|bundle| Json(bundle.into()))
+}
+
+/// Execute an outbound HTTP request from this machine on behalf of a plugin
+/// running in a cloud sandbox frame (`docs/plugins/cloud.md` §4).
+#[api(
+    id = "plugin_fetch",
+    group = "plugins",
+    summary = "Proxy an outbound HTTP request for a plugin",
+    responses(
+        200 = "The remote response's status, headers and base64-encoded body",
+        response(status = 413, body = "PluginTooLarge", description = "`too_large`: the request or response body is over 32 MiB")
+    ),
+    errors(
+        400 = "`invalid`: bad URL, scheme, method, header or base64 body",
+        404 = "`plugin_disabled` or `plugin_not_found`",
+        502 = "`fetch_failed`: the outbound request failed or timed out"
+    )
+)]
+pub async fn plugin_fetch(
+    State(state): State<PluginsState>,
+    ApiPath(id): ApiPath<String>,
+    #[api(skip)] who: MaybeIdentity,
+    #[api(skip)] caller: Option<gotcha::axum::Extension<PluginCaller>>,
+    ApiJson(body): ApiJson<PluginFetchRequest>,
+) -> Result<Json<PluginFetchResponse>, ApiError> {
+    check_cloud_access(&state.plugins, &who, caller.as_ref().map(|c| &c.0), &id).await?;
+    let require_cloud = who.is_cloud();
+    let check_id = id.clone();
+    state
+        .plugins
+        .blocking(move |plugins| {
+            if require_cloud {
+                plugins.require_cloud_enabled(&check_id).map(|_| ())
+            } else {
+                plugins.require_enabled(&check_id).map(|_| ())
+            }
+        })
+        .await?;
+
+    let parsed = reqwest::Url::parse(&body.url)
+        .map_err(|error| coded(StatusCode::BAD_REQUEST, codes::INVALID, format!("invalid URL: {error}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(coded(
+            StatusCode::BAD_REQUEST,
+            codes::INVALID,
+            "only http:// and https:// URLs are supported",
+        ));
+    }
+    let method_str = body.method.as_deref().unwrap_or("GET");
+    let method = reqwest::Method::from_bytes(method_str.as_bytes())
+        .map_err(|_| coded(StatusCode::BAD_REQUEST, codes::INVALID, format!("invalid HTTP method {method_str:?}")))?;
+    let request_bytes = match body.body_base64.as_deref() {
+        Some(encoded) if !encoded.is_empty() => {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|error| coded(StatusCode::BAD_REQUEST, codes::INVALID, format!("invalid base64 body: {error}")))?;
+            if decoded.len() > MAX_FETCH_BODY_BYTES {
+                return Err(too_large(
+                    format!("request body exceeds {MAX_FETCH_BODY_BYTES} bytes"),
+                    MAX_FETCH_BODY_BYTES as u64,
+                ));
+            }
+            Some(decoded)
+        }
+        _ => None,
+    };
+    let timeout_ms = body
+        .timeout_ms
+        .unwrap_or(DEFAULT_FETCH_TIMEOUT_MS)
+        .clamp(1, MAX_FETCH_TIMEOUT_MS);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|error| coded(StatusCode::BAD_GATEWAY, "fetch_failed", error.to_string()))?;
+    let mut req = client.request(method, parsed);
+    if let Some(headers) = body.headers {
+        for header in headers {
+            let lower = header.name.to_ascii_lowercase();
+            if STRIPPED_FETCH_REQUEST_HEADERS.contains(&lower.as_str()) {
+                continue;
+            }
+            let name = reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| {
+                coded(
+                    StatusCode::BAD_REQUEST,
+                    codes::INVALID,
+                    format!("invalid header name {:?}", header.name),
+                )
+            })?;
+            let value = reqwest::header::HeaderValue::from_str(&header.value).map_err(|_| {
+                coded(
+                    StatusCode::BAD_REQUEST,
+                    codes::INVALID,
+                    format!("invalid header value for {:?}", header.name),
+                )
+            })?;
+            req = req.header(name, value);
+        }
+    }
+    if let Some(bytes) = request_bytes {
+        req = req.body(bytes);
+    }
+
+    let mut response = req
+        .send()
+        .await
+        .map_err(|error| coded(StatusCode::BAD_GATEWAY, "fetch_failed", error.to_string()))?;
+    let status = response.status();
+    let final_url = response.url().to_string();
+    let resp_headers: Vec<PluginFetchHeader> = response
+        .headers()
+        .iter()
+        .filter(|(name, _)| !STRIPPED_FETCH_RESPONSE_HEADERS.contains(&name.as_str()))
+        .filter_map(|(name, value)| {
+            Some(PluginFetchHeader {
+                name: name.as_str().to_string(),
+                value: value.to_str().ok()?.to_string(),
+            })
+        })
+        .collect();
+
+    let mut resp_bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| coded(StatusCode::BAD_GATEWAY, "fetch_failed", error.to_string()))?
+    {
+        if resp_bytes.len().saturating_add(chunk.len()) > MAX_FETCH_BODY_BYTES {
+            return Err(too_large(
+                format!("response body exceeds {MAX_FETCH_BODY_BYTES} bytes"),
+                MAX_FETCH_BODY_BYTES as u64,
+            ));
+        }
+        resp_bytes.extend_from_slice(&chunk);
+    }
+
+    Ok(Json(PluginFetchResponse {
+        status: status.as_u16(),
+        status_text: status.canonical_reason().unwrap_or("").to_string(),
+        url: final_url,
+        headers: resp_headers,
+        body_base64: base64::engine::general_purpose::STANDARD.encode(&resp_bytes),
+    }))
+}
+
 /// A plugin's documents, without values, by name.
 #[api(
     id = "list_plugin_docs",
@@ -385,10 +694,11 @@ pub async fn list_plugin_docs(
     ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<PluginDocQuery>,
     #[api(skip)] who: MaybeIdentity,
+    #[api(skip)] caller: Option<gotcha::axum::Extension<PluginCaller>>,
 ) -> Result<Json<PluginDocList>, ApiError> {
-    who.refuse_cloud()?;
+    check_cloud_access(&state.plugins, &who, caller.as_ref().map(|c| &c.0), &id).await?;
     let prefix = query.prefix.unwrap_or_default();
-    state.plugins.blocking( move |plugins| plugins.list(&id, &prefix)).await.map(|docs| {
+    state.plugins.blocking(move |plugins| plugins.list(&id, &prefix)).await.map(|docs| {
         Json(PluginDocList {
             docs: docs.into_iter().map(Into::into).collect(),
         })
@@ -407,9 +717,10 @@ pub async fn get_plugin_doc(
     State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
     #[api(skip)] who: MaybeIdentity,
+    #[api(skip)] caller: Option<gotcha::axum::Extension<PluginCaller>>,
 ) -> Result<Json<PluginDoc>, ApiError> {
-    who.refuse_cloud()?;
-    state.plugins.blocking( move |plugins| plugins.get(&id, &name))
+    check_cloud_access(&state.plugins, &who, caller.as_ref().map(|c| &c.0), &id).await?;
+    state.plugins.blocking(move |plugins| plugins.get(&id, &name))
         .await
         .map(|doc| Json(doc.into()))
 }
@@ -437,11 +748,12 @@ pub async fn put_plugin_doc(
     State(state): State<PluginsState>,
     ApiPath((id, name)): ApiPath<(String, String)>,
     #[api(skip)] who: MaybeIdentity,
+    #[api(skip)] caller: Option<gotcha::axum::Extension<PluginCaller>>,
     PluginJson(body): PluginJson<PluginPutDoc>,
 ) -> Result<Json<PluginDoc>, ApiError> {
-    who.refuse_cloud()?;
+    check_cloud_access(&state.plugins, &who, caller.as_ref().map(|c| &c.0), &id).await?;
     let by = who.caller();
-    state.plugins.blocking( move |plugins| plugins.put(&id, &name, body.into(), by.as_deref()))
+    state.plugins.blocking(move |plugins| plugins.put(&id, &name, body.into(), by.as_deref()))
         .await
         .map(|doc| Json(doc.into()))
 }
@@ -473,12 +785,13 @@ pub async fn plugin_batch(
     State(state): State<PluginsState>,
     ApiPath(id): ApiPath<String>,
     #[api(skip)] who: MaybeIdentity,
+    #[api(skip)] caller: Option<gotcha::axum::Extension<PluginCaller>>,
     PluginJson(body): PluginJson<PluginBatch>,
 ) -> Result<Json<PluginBatchResult>, ApiError> {
-    who.refuse_cloud()?;
+    check_cloud_access(&state.plugins, &who, caller.as_ref().map(|c| &c.0), &id).await?;
     let by = who.caller();
     let writes = body.writes.into_iter().map(Into::into).collect();
-    state.plugins.blocking( move |plugins| plugins.batch(&id, writes, by.as_deref()))
+    state.plugins.blocking(move |plugins| plugins.batch(&id, writes, by.as_deref()))
         .await
         .map(|docs| {
             Json(PluginBatchResult {
@@ -487,72 +800,41 @@ pub async fn plugin_batch(
         })
 }
 
-/// The versions a document was replaced from, newest first.
-#[api(
-    id = "plugin_doc_history",
-    group = "plugins",
-    summary = "A plugin document's history",
-    responses(200 = "Replaced versions, newest first, at most fifty"),
-    errors(
-        400 = "`invalid`: not a document name",
-        404 = "`plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed"
-    )
-)]
-pub async fn plugin_doc_history(
-    State(state): State<PluginsState>,
-    ApiPath((id, name)): ApiPath<(String, String)>,
-    ApiQuery(query): ApiQuery<PluginHistoryQuery>,
-    #[api(skip)] who: MaybeIdentity,
-) -> Result<Json<PluginDocHistory>, ApiError> {
-    who.refuse_cloud()?;
-    let offset = query.offset.unwrap_or(0) as usize;
-    let limit = query.limit.map(|limit| limit as usize);
-    state.plugins.blocking( move |plugins| plugins.history(&id, &name, offset, limit))
-        .await
-        .map(|page| {
-            Json(PluginDocHistory {
-                versions: page.versions.into_iter().map(Into::into).collect(),
-                more: page.more,
-            })
-        })
-}
-
 impl PluginsState {
     /// Register the routes.
     ///
-    /// A body limit belongs to the route that needs it, layered onto its method
-    /// router (as `droppen_files` does it), so every other route keeps axum's
-    /// 2 MiB default. The two document methods share a path and one limit; the
-    /// read has no body for the limit to matter to. The install route has its
-    /// own, larger, limit.
-    ///
-    /// The asset route (`/plugins/…`) is registered here too, so the router claims
-    /// it before the SPA fallback can hand a page its shell instead of a module.
-    ///
-    /// The whole plugin surface is one sub-router with [`refuse_cloud_requests`]
-    /// over it, so a bridged request is turned away before any body is parsed;
-    /// the routers are then merged into the API's.
+    /// Local-only management and asset routes (`POST /api/plugins`,
+    /// `DELETE /api/plugins/{id}`, `PUT …/enabled`, `PUT …/cloud`, and
+    /// `/plugins/…`) sit behind [`refuse_cloud_requests`] so a bridged device
+    /// is turned away before any extractor runs. Cloud-capable routes
+    /// (`GET /api/plugins`, `GET …/package`, `POST …/fetch`, docs and batch)
+    /// are gated per-plugin by [`cloud_plugin_layer`] and inside each handler.
     pub fn routes<S>(router: GotchaRouter<S>) -> GotchaRouter<S>
     where
         S: Clone + Send + Sync + 'static,
         PluginsState: FromRef<S>,
     {
         let request_limit = gotcha::axum::extract::DefaultBodyLimit::max(MAX_REQUEST_BYTES as usize);
-        let plugins = GotchaRouter::<S>::default()
-            .get(LIST, list_plugins)
+        let local_only = GotchaRouter::<S>::default()
             .delete(PLUGIN, uninstall_plugin)
             .put(ENABLED, set_plugin_enabled)
             .put(CLOUD, set_plugin_cloud)
-            .get(DOCS, list_plugin_docs)
-            .get(HISTORY, plugin_doc_history)
             .route(LIST, gotcha::post(install_plugin).layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_TARBALL_BYTES)))
-            .route(DOC, gotcha::get(get_plugin_doc).layer(request_limit))
-            .route(DOC, gotcha::put(put_plugin_doc).layer(request_limit))
-            .route(BATCH, gotcha::post(plugin_batch).layer(request_limit))
             .get(super::serve::ASSET_PATH, super::serve::serve_asset)
             .head(super::serve::ASSET_PATH, super::serve::serve_asset)
             .layer(gotcha::axum::middleware::from_fn(refuse_cloud_requests));
-        router.merge(plugins)
+        let cloud_capable = GotchaRouter::<S>::default()
+            .get(LIST, list_plugins)
+            .get(PACKAGE, get_plugin_package)
+            .route(
+                FETCH,
+                gotcha::post(plugin_fetch).layer(gotcha::axum::extract::DefaultBodyLimit::max(MAX_FETCH_JSON_BYTES)),
+            )
+            .get(DOCS, list_plugin_docs)
+            .route(DOC, gotcha::get(get_plugin_doc).layer(request_limit))
+            .route(DOC, gotcha::put(put_plugin_doc).layer(request_limit))
+            .route(BATCH, gotcha::post(plugin_batch).layer(request_limit));
+        router.merge(local_only).merge(cloud_capable)
     }
 }
 
@@ -589,15 +871,10 @@ mod tests {
     async fn a_percent_encoded_name_is_one_segment_and_arrives_decoded() {
         use gotcha::axum::routing::get;
         let echo = |ApiPath((id, name)): ApiPath<(String, String)>| async move { format!("{id}|{name}") };
-        let history = |ApiPath((id, name)): ApiPath<(String, String)>| async move { format!("history {id}|{name}") };
-        let mut router = gotcha::axum::Router::new().route(DOC, get(echo)).route(HISTORY, get(history));
+        let mut router = gotcha::axum::Router::new().route(DOC, get(echo));
         assert_eq!(
             call(&mut router, "/api/plugins/tasks/docs/events%2F2026-10").await,
             (StatusCode::OK, "tasks|events/2026-10".to_string())
-        );
-        assert_eq!(
-            call(&mut router, "/api/plugins/tasks/docs/events%2f2026-10%2Fa.b_c-d/history").await,
-            (StatusCode::OK, "history tasks|events/2026-10/a.b_c-d".to_string())
         );
         assert_eq!(
             call(&mut router, "/api/plugins/tasks/docs/state").await,

@@ -510,7 +510,7 @@ function RootLayoutInner() {
                 <Icon className="size-4" />
               </RailHint>
             ))}
-            <PluginNav className={NAV_ITEM_CLASS} />
+            <PluginNav className={NAV_ITEM_CLASS} machine={sectionMachine} />
             <RailHint
               label={t("Settings")}
               render={

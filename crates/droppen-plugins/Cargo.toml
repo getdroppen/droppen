@@ -11,6 +11,7 @@ description = "The Droppen server's plugin host: installed packages, their switc
 # guard's identity. It names none of the server's other subsystems; the feed
 # reads its status through a port the entry fills.
 [dependencies]
+base64 = "0.22"
 chrono = "0.4"
 # The `plugin` command line, which the server mounts. The features are the
 # server's, so they parse alike.
@@ -26,6 +27,7 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 gotcha = { workspace = true }
 libc = "0.2"
 rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2", "charset", "json"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { workspace = true }

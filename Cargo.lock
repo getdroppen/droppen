@@ -1476,6 +1476,7 @@ dependencies = [
 name = "droppen-plugins"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "clap",
  "droppen-auth",
@@ -1487,6 +1488,7 @@ dependencies = [
  "gotcha",
  "libc",
  "rand 0.8.7",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

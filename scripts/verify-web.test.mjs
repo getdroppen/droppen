@@ -17,7 +17,7 @@ import { digestOf, filesOf, FORMAT, workerProblems as manifestWorkerProblems } f
 
 const script = process.env.VERIFY_WEB_SCRIPT ?? fileURLToPath(new URL("./verify-web.mjs", import.meta.url));
 const manifestScript = fileURLToPath(new URL("./web-manifest.mjs", import.meta.url));
-const { CANONICAL_HUB, checkedRedirect, indexToRoot, markerProblem, pagePolicy, RETIRING_WORKER, scriptPolicy, siteApiOrigin, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
+const { CANONICAL_HUB, checkedRedirect, indexToRoot, markerProblem, pagePolicy, pluginFramePolicy, RETIRING_WORKER, scriptPolicy, siteApiOrigin, siteHubOrigin, unmark, workerProblems, workerTable } = await import(pathToFileURL(script).href);
 
 /** `text` as a regular expression that matches it literally: every special escaped. */
 const escapeRegExp = (text) => text.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
@@ -191,6 +191,23 @@ describe("the page policy", () => {
     const r = pagePolicy(`script-src 'self' 'unsafe-inline'`, hashes);
     assert.equal(r.ok, false);
     assert.match(r.note, /script-src lets script elements come from 'unsafe-inline'.*no frame-ancestors limits framing/);
+  });
+});
+
+describe("the sandboxed plugin frame policy", () => {
+  const FRAME_CSP =
+    "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline' blob:; img-src blob: data:; font-src blob: data:; connect-src 'none'; frame-ancestors 'self'";
+
+  test("the plugin frame's strict sandbox CSP passes", () => {
+    assert.equal(pluginFramePolicy(FRAME_CSP).ok, true);
+  });
+
+  test("allow-same-origin, missing sandbox, network access, or loose framing fail", () => {
+    assert.equal(pluginFramePolicy(null).ok, false);
+    assert.equal(pluginFramePolicy(FRAME_CSP.replace("sandbox allow-scripts", "sandbox allow-scripts allow-same-origin")).ok, false);
+    assert.equal(pluginFramePolicy(FRAME_CSP.replace("sandbox allow-scripts; ", "")).ok, false);
+    assert.equal(pluginFramePolicy(FRAME_CSP.replace("connect-src 'none'", "connect-src 'self'")).ok, false);
+    assert.equal(pluginFramePolicy(FRAME_CSP.replace("frame-ancestors 'self'", "frame-ancestors *")).ok, false);
   });
 });
 

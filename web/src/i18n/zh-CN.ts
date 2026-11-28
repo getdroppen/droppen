@@ -1039,4 +1039,13 @@ export const zhCN: Record<string, string> = {
   "ACP agents": "ACP 智能体",
   "{{name}} cannot start: {{why}} (checked {{ago}})": "{{name}} 启动不了：{{why}}（{{ago}}检查）",
   "delete": "删除",
+  "Show on droppen.app": "在 droppen.app 上显示",
+  "show {{name}} on droppen.app?": "在 droppen.app 上显示 {{name}}？",
+  "Turning this on lets {{name}} run inside a sandboxed frame on droppen.app and make requests to this device over the encrypted relay. Turn this on only for plugins you trust.": "开启后，{{name}} 可在 droppen.app 的沙盒框架中运行，并通过加密中继向这台设备发起请求。请仅对信任的插件开启。",
+  "running on {{device}}": "运行于 {{device}}",
+  "{{device}} is offline": "{{device}} 已离线",
+  "Plugins run live on their device and are not available while it is offline.": "插件直接在其所属设备上实时运行，设备离线时不可用。",
+  "{{device}} is offline — plugins run live on their device": "{{device}} 已离线 — 插件在其所属设备上实时运行",
+  "the {{name}} plugin is not available on droppen.app": "插件 {{name}} 未在 droppen.app 上开放",
+  "Turn on \"Show on droppen.app\" in Settings › Plugins on the device itself.": "请在该设备本地的「设置 › 插件」中开启「在 droppen.app 上显示」。",
 };

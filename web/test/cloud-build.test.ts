@@ -85,7 +85,7 @@ test("the CSP is the hub's policy with the cross-origin API and relays, and the 
   const csp = contentSecurityPolicy(SHELL, config!);
   assert.ok(csp.startsWith(`default-src 'self'; script-src 'self' ${HASH}; `));
   assert.ok(csp.includes("connect-src 'self' https://api.droppen.app wss://api.droppen.app https://*.relay.droppen.app wss://*.relay.droppen.app https://*.relay.xinsoftware.top wss://*.relay.xinsoftware.top;"));
-  assert.ok(csp.includes("frame-src https://verify.droppen.app;"));
+  assert.ok(csp.includes("frame-src 'self' https://verify.droppen.app;"));
   assert.ok(csp.includes("frame-ancestors 'none';"));
   assert.ok(csp.includes("object-src 'none'"));
   assert.ok(!csp.includes("droppen-hub") && !csp.includes("rh-hub"), "the marker is not script");
@@ -97,6 +97,7 @@ test("`_headers` carries CSP, Permissions-Policy, Referrer-Policy and HSTS for e
   assert.ok(headers.includes("  Permissions-Policy: publickey-credentials-get=(self), publickey-credentials-create=(self)\n"));
   assert.ok(headers.includes("  Referrer-Policy: no-referrer\n"));
   assert.ok(headers.includes("  Strict-Transport-Security: max-age=31536000; includeSubDomains\n"));
+  assert.ok(headers.includes("/plugin-frame.html\n  Content-Security-Policy: sandbox allow-scripts;"));
   assert.ok(headers.includes("/.well-known/droppen-hub\n  Content-Type: application/json"));
 });
 

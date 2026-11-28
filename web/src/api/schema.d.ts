@@ -1279,7 +1279,10 @@ export interface paths {
         };
         /**
          * List plugins
-         * @description Every plugin installed in this instance, as this instance sees it.
+         * @description Every plugin installed in this instance, as this caller sees it:
+         *     local callers see all installed plugins with their entry URLs; bridged
+         *     (`cloud:`) callers see only plugins enabled and switched on for droppen.app
+         *     with `entry: null`; `cloud:agent-sync` sees an empty list.
          */
         get: operations["list_plugins"];
         put?: never;
@@ -1406,26 +1409,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/plugins/{id}/docs/{name}/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * A plugin document's history
-         * @description The versions a document was replaced from, newest first.
-         */
-        get: operations["plugin_doc_history"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/plugins/{id}/enabled": {
         parameters: {
             query?: never;
@@ -1439,6 +1422,48 @@ export interface paths {
          * @description Turn a plugin on or off for this instance. Any signed-in user may.
          */
         put: operations["set_plugin_enabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plugins/{id}/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Proxy an outbound HTTP request for a plugin
+         * @description Execute an outbound HTTP request from this machine on behalf of a plugin
+         *     running in a cloud sandbox frame (`docs/plugins/cloud.md` §4).
+         */
+        post: operations["plugin_fetch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/plugins/{id}/package": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a plugin package bundle
+         * @description Every file of an installed plugin's current build, for a sandboxed cloud
+         *     frame (`docs/plugins/cloud.md` §3).
+         */
+        get: operations["get_plugin_package"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -4575,16 +4600,6 @@ export interface components {
             /** @description Human-readable. */
             message: string;
         };
-        /** @description `GET /api/plugins/{id}/docs/{name}/history`: one page. */
-        PluginDocHistory: {
-            /** @description Older versions remain; ask again with `offset` moved past these. */
-            more: boolean;
-            /**
-             * @description Newest first: `limit` of them (ten unless asked, at most fifty), fewer
-             *     when their values pass 8 MiB together (the first is always there).
-             */
-            versions: components["schemas"]["PluginDocVersion"][];
-        };
         /** @description `GET /api/plugins/{id}/docs`. */
         PluginDocList: {
             /** @description By name. */
@@ -4599,17 +4614,6 @@ export interface components {
             /** @description ISO-8601. */
             updatedAt: string;
         };
-        /** @description One past version of a document. */
-        PluginDocVersion: {
-            /** @description The revision this value had. */
-            revision: number;
-            /** @description When it was written, ISO-8601. */
-            updatedAt: string;
-            /** @description Who wrote it, when the host knows. */
-            updatedBy: string | null;
-            /** @description The value at that revision. */
-            value: unknown;
-        };
         /** @description One write of a batch. */
         PluginDocWrite: {
             /**
@@ -4621,6 +4625,42 @@ export interface components {
             name: string;
             /** @description The new value. */
             value: unknown;
+        };
+        /** @description One HTTP header name/value pair for `POST /api/plugins/{id}/fetch`. */
+        PluginFetchHeader: {
+            /** @description Header name. */
+            name: string;
+            /** @description Header value. */
+            value: string;
+        };
+        /**
+         * @description The body of `POST /api/plugins/{id}/fetch`: an outbound HTTP request
+         *     executed by this machine on behalf of a plugin running in a cloud frame.
+         */
+        PluginFetchRequest: {
+            /** @description Optional request body, base64-encoded. */
+            bodyBase64?: string | null;
+            /** @description Request headers (hop-by-hop and internal headers are stripped). */
+            headers?: components["schemas"]["PluginFetchHeader"][] | null;
+            /** @description HTTP method (defaults to `"GET"`). */
+            method?: string | null;
+            /** @description Optional timeout in milliseconds (clamped to 1..=120000; default 30000). */
+            timeoutMs?: number | null;
+            /** @description Target `http://` or `https://` URL. */
+            url: string;
+        };
+        /** @description The answer to `POST /api/plugins/{id}/fetch`. */
+        PluginFetchResponse: {
+            /** @description Response body, base64-encoded. */
+            bodyBase64: string;
+            /** @description Response headers (hop-by-hop headers are stripped). */
+            headers: components["schemas"]["PluginFetchHeader"][];
+            /** @description HTTP status code. */
+            status: number;
+            /** @description HTTP reason phrase. */
+            statusText: string;
+            /** @description Final URL after any redirects. */
+            url: string;
         };
         /** @description The `400` of `POST /api/plugins`: the package was refused, and why. */
         PluginInvalidPackage: {
@@ -4649,6 +4689,31 @@ export interface components {
             kind: string;
             /** @description For people. */
             text: string;
+        };
+        /**
+         * @description `GET /api/plugins/{id}/package`: all files of an installed plugin at its
+         *     current build, for a sandboxed cloud frame.
+         */
+        PluginPackage: {
+            /** @description Current build id (`<version>-<12 hex>`). */
+            build: string;
+            /** @description Entry module path relative to the package root. */
+            entry: string;
+            /** @description All regular files inside the package. */
+            files: components["schemas"]["PluginPackageFile"][];
+            /** @description Plugin id. */
+            id: string;
+        };
+        /** @description One file inside a [`PluginPackage`]. */
+        PluginPackageFile: {
+            /** @description Media type by extension. */
+            contentType: string;
+            /** @description UTF-8 text or base64-encoded bytes. */
+            data: string;
+            /** @description `"utf8"` for text files, `"base64"` for binary files. */
+            encoding: string;
+            /** @description Relative `/`-separated path inside the package directory. */
+            path: string;
         };
         /** @description The body of `PUT /api/plugins/{id}/docs/{name}`. */
         PluginPutDoc: {
@@ -9063,7 +9128,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Every plugin installed in this instance, as this instance sees it */
+            /** @description Every plugin visible to this caller */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9384,52 +9449,6 @@ export interface operations {
             };
         };
     };
-    plugin_doc_history: {
-        parameters: {
-            query?: {
-                /** @description How many of the newest versions to skip. */
-                offset?: number | null;
-                /** @description How many to answer with: 1 to 50, ten when absent. */
-                limit?: number | null;
-            };
-            header?: never;
-            path: {
-                id: string;
-                name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Replaced versions, newest first, at most fifty */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginDocHistory"];
-                };
-            };
-            /** @description `invalid`: not a document name */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-            /** @description `plugin_disabled`: installed but not on here (or incompatible); `plugin_not_found`: not installed */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
-        };
-    };
     set_plugin_enabled: {
         parameters: {
             query?: never;
@@ -9471,6 +9490,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    plugin_fetch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * @description The body of `POST /api/plugins/{id}/fetch`: an outbound HTTP request
+         *     executed by this machine on behalf of a plugin running in a cloud frame.
+         */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginFetchRequest"];
+            };
+        };
+        responses: {
+            /** @description The remote response's status, headers and base64-encoded body */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginFetchResponse"];
+                };
+            };
+            /** @description `invalid`: bad URL, scheme, method, header or base64 body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `plugin_disabled` or `plugin_not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `too_large`: the request or response body is over 32 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginTooLarge"];
+                };
+            };
+            /** @description `fetch_failed`: the outbound request failed or timed out */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    get_plugin_package: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plugin package's files at its current build */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginPackage"];
+                };
+            };
+            /** @description `plugin_disabled` or `plugin_not_found` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `too_large`: the package exceeds the bundle limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginTooLarge"];
                 };
             };
         };

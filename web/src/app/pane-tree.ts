@@ -21,7 +21,7 @@ export type PaneContent =
   /** Saved before plugins existed; read as the tasks plugin's checklist (`plugins/pane-content.ts`). */
   | { kind: "tasks" }
   /** A plugin's pane; `state` is the plugin's, flat and ≤ 2 KB. */
-  | { kind: "plugin"; plugin: string; pane: string; state?: Record<string, string | number | boolean | null> }
+  | { kind: "plugin"; plugin: string; pane: string; state?: Record<string, string | number | boolean | null>; machine?: MachineKey }
   | { kind: "files"; path?: string; file?: string; machine?: MachineKey }
   | { kind: "session"; source: "claude" | "codex" | "acp"; id: string; machine?: MachineKey }
   /** A session about to be started: the empty session view, which becomes the session once its first message is sent. */
@@ -30,11 +30,12 @@ export type PaneContent =
   | { kind: "terminal"; id: string; machine?: MachineKey };
 
 /** The kinds of content that are on a machine of their own (a picker: the machine it picks from). */
-export type MachineContent = Extract<PaneContent, { kind: "files" | "session" | "new-session" | "chat" | "terminal" | "picker" }>;
+export type MachineContent = Extract<PaneContent, { kind: "plugin" | "files" | "session" | "new-session" | "chat" | "terminal" | "picker" }>;
 
-/** Whether `content` is on a machine of its own (a session, a chat, a terminal, a folder, or a picker choosing from one). */
+/** Whether `content` is on a machine of its own (a plugin, session, chat, terminal, folder, or picker choosing from one). */
 export function onMachine(content: PaneContent): content is MachineContent {
   return (
+    content.kind === "plugin" ||
     content.kind === "files" ||
     content.kind === "session" ||
     content.kind === "new-session" ||

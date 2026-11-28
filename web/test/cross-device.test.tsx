@@ -110,8 +110,10 @@ test("pane content names its device only off the home, and content from before r
   assert.equal(paneMachine({ kind: "terminal", id: "t1", machine: "d-c" }, home), "d-c");
   assert.equal(paneMachine({ kind: "files", path: "/x", machine: "" }, home), home, "an empty name is no name");
   const plugin: PaneContent = { kind: "plugin", plugin: "tasks", pane: "checklist" };
-  assert.equal(withMachine(plugin, "d-b", home), plugin, "a plugin's pane is the home's wherever it is");
+  assert.deepEqual(withMachine(plugin, "d-b", home), { ...plugin, machine: "d-b" }, "a plugin's pane names its device off the home");
+  assert.deepEqual(withMachine({ ...plugin, machine: "d-b" }, home, home), plugin, "moved to the home, the name goes");
   assert.equal(paneMachine(plugin, home), home);
+  assert.equal(paneMachine({ ...plugin, machine: "d-b" }, home), "d-b");
   assert.equal(usesMachine({ kind: "picker", machine: "d-b" }), false, "a picker uses nothing yet");
   assert.equal(usesMachine({ kind: "terminal", id: "t" }), true);
 

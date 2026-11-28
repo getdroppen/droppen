@@ -31,7 +31,6 @@ import type { TerminalsSearch } from "@/features/terminals/terminals-view";
 import { firstRunRedirect } from "@/features/setup/auto-open";
 import { validateWelcomeSearch } from "@/features/setup/model";
 import { authRedirect, authStatus, clearToken, isDesktopApp, LOGIN_PATH, primeDownloadTicket } from "@/lib/auth";
-import { isCloud } from "@/lib/hub/config";
 import { PluginRoute } from "@/plugins/plugin-route";
 
 /**
@@ -241,17 +240,13 @@ const settingsRoute = createRoute({
 });
 
 /**
- * Every plugin page: `/p/<plugin id>/<the plugin's own path>`. Which plugins
- * exist is the instance's (`web/src/plugins/registry.tsx`), which are on is
- * its too; the route itself is the same everywhere. A page a hub serves has no
- * plugin pages at all (`docs/plugins/runtime.md` §5).
+ * Every plugin page: `/p/<plugin id>/<the plugin's own path>`. Locally rendered
+ * in the host; on `droppen.app`, rendered inside a sandboxed `/plugin-frame.html`
+ * iframe bound to the home machine (`docs/plugins/cloud.md`).
  */
 const pluginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "p/$plugin/$",
-  beforeLoad: () => {
-    if (isCloud()) throw redirect({ to: "/sessions", replace: true });
-  },
   component: PluginRoute,
 });
 
@@ -394,6 +389,12 @@ const machineStatsRoute = createRoute({
   component: lazyRouteComponent(() => import("@/features/stats/stats-view"), "StatsView"),
 });
 
+const machinePluginRoute = createRoute({
+  getParentRoute: () => machineRoute,
+  path: "p/$plugin/$",
+  component: PluginRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -417,6 +418,7 @@ const routeTree = rootRoute.addChildren([
     machineFilesRoute,
     machineSettingsRoute,
     machineStatsRoute,
+    machinePluginRoute,
   ]),
 ]);
 

@@ -343,20 +343,6 @@ pub struct Conflict<T = serde_json::Value> {
     pub current: Option<Doc<T>>,
 }
 
-/// One past version of a document, from its history.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocVersion<T = serde_json::Value> {
-    /// The revision this value had.
-    pub revision: u64,
-    /// When it was written, ISO-8601.
-    pub updated_at: String,
-    /// Who wrote it, when the host knows.
-    pub updated_by: Option<String>,
-    /// The value at that revision.
-    pub value: T,
-}
-
 /// A plugin as one instance sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

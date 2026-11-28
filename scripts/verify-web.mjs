@@ -571,6 +571,53 @@ export function pagePolicy(header, allowedHashes) {
 }
 
 /**
+ * Verdict on `/plugin-frame.html`'s CSP (`docs/plugins/cloud.md` §2):
+ * must force an opaque sandboxed origin (`sandbox allow-scripts`, never
+ * `allow-same-origin`), forbid direct network access (`connect-src 'none'`),
+ * forbid plugin objects (`object-src`/`default-src 'none'`), and restrict
+ * framing to `'self'` or `'none'`.
+ */
+export function pluginFramePolicy(header) {
+  if (!header) return { ok: false, note: "no Content-Security-Policy header on /plugin-frame.html" };
+  const policies = policiesOf(header);
+  const problems = [];
+
+  const sandboxed = policies.some((d) => {
+    const vals = d.get("sandbox");
+    if (!vals) return false;
+    const tokens = vals.map((v) => v.toLowerCase());
+    return !tokens.includes("allow-same-origin");
+  });
+  if (!sandboxed) problems.push("sandbox without allow-same-origin is required");
+
+  const noConnect = policies.some((d) => {
+    const name = ["connect-src", "default-src"].find((n) => d.has(n));
+    if (!name) return false;
+    const vals = d.get(name).map((v) => v.toLowerCase());
+    return vals.length === 1 && vals[0] === "'none'";
+  });
+  if (!noConnect) problems.push("connect-src 'none' is required");
+
+  const noObject = policies.some((d) => {
+    const name = ["object-src", "default-src"].find((n) => d.has(n));
+    if (!name) return false;
+    const vals = d.get(name).map((v) => v.toLowerCase());
+    return vals.length === 1 && vals[0] === "'none'";
+  });
+  if (!noObject) problems.push("object-src 'none' (or default-src 'none') is required");
+
+  const framedOnlyBySelf = policies.some((d) => {
+    const vals = d.get("frame-ancestors");
+    if (!vals || !vals.length) return false;
+    return vals.every((v) => ["'self'", "'none'"].includes(v.toLowerCase()));
+  });
+  if (!framedOnlyBySelf) problems.push("frame-ancestors must be 'self' or 'none'");
+
+  if (problems.length) return { ok: false, note: problems.join("; ") };
+  return { ok: true, note: "sandboxed opaque origin with connect-src 'none' and frame-ancestors 'self'" };
+}
+
+/**
  * The service worker's integrity table in `sw.js` (web/build/service-worker.ts
  * writes it): `{assets: {"/assets/…": sha256}, shell, scripts}` — `scripts`,
  * the CSP sources of the shell's inline scripts its offline shell is served
@@ -843,7 +890,7 @@ async function checkSite(opts, site, memo) {
     }
     const hash = sha256(body);
     const same = hash === c.want.sha256;
-    if (same && page) attestedPages.push(body);
+    if (same && page && c.url !== "/plugin-frame.html") attestedPages.push(body);
     if (same && c.want.path === "sw.js") {
       worker = body;
       workers.add("the app's");
@@ -903,7 +950,12 @@ async function checkSite(opts, site, memo) {
   // (unknown when no page matched, and then the pages have failed already).
   if (attestedPages.length) {
     const hashes = [...new Set(attestedPages.flatMap(inlineHashes))];
-    const verdicts = policies.sort((a, b) => a.url.localeCompare(b.url)).map((p) => ({ ...p, ...pagePolicy(p.header, hashes) }));
+    const verdicts = policies
+      .sort((a, b) => a.url.localeCompare(b.url))
+      .map((p) => ({
+        ...p,
+        ...(p.url === "/plugin-frame.html" ? pluginFramePolicy(p.header) : pagePolicy(p.header, hashes)),
+      }));
     for (const v of verdicts.filter((v) => !v.ok)) failures.push(`${v.url}: Content-Security-Policy: ${v.note}`);
     const good = verdicts.filter((v) => v.ok);
     console.log(`  policy:      ${good.length} of ${verdicts.length} pages${good.length ? `: ${[...new Set(good.map((v) => v.note))].join("; ")}` : ""}`);

@@ -54,7 +54,32 @@ function PluginRow({ status }: { status: PluginStatus }) {
     },
     onSuccess: (next) => registry.adopt(next),
   });
+  const toggleCloud = useMutation({
+    mutationFn: async (cloud: boolean) => {
+      const res = await api.PUT("/api/plugins/{id}/cloud", { params: { path: { id: status.id } }, body: { cloud } });
+      if (!res.data) {
+        const body = res.error as { error?: string; message?: string } | undefined;
+        throw new Error(body?.message ?? body?.error ?? `HTTP ${res.response.status}`);
+      }
+      return res.data;
+    },
+    onSuccess: (next) => registry.adopt(next),
+  });
   const uninstall = useMutation({ mutationFn: () => uninstallPlugin(api, status.id), onSuccess: reloadPage });
+
+  const askCloudToggle = async (next: boolean) => {
+    if (next) {
+      const yes = await requestConfirm(
+        t(
+          "Turning this on lets {{name}} run inside a sandboxed frame on droppen.app and make requests to this device over the encrypted relay. Turn this on only for plugins you trust.",
+          { name },
+        ),
+        { title: t("show {{name}} on droppen.app?", { name }), confirmLabel: t("enable") },
+      );
+      if (!yes) return;
+    }
+    toggleCloud.mutate(next);
+  };
 
   const askUninstall = async () => {
     const yes = await requestConfirm(
@@ -65,7 +90,13 @@ function PluginRow({ status }: { status: PluginStatus }) {
   };
 
   const failure = registry.errors[status.id];
-  const problem = uninstall.isError ? uninstall.error.message : toggle.isError ? toggle.error.message : null;
+  const problem = uninstall.isError
+    ? uninstall.error.message
+    : toggle.isError
+      ? toggle.error.message
+      : toggleCloud.isError
+        ? toggleCloud.error.message
+        : null;
   // Switched on and cannot run: not the user's choice, so it is a warning.
   const stranded = status.switchedOn && !status.compatible;
   const notes = [
@@ -102,6 +133,16 @@ function PluginRow({ status }: { status: PluginStatus }) {
             {t("set by the server configuration")}
           </SettingsNote>
         )}
+        <label className="mt-1.5 inline-flex cursor-pointer items-center gap-1.5 font-mono text-2xs text-muted select-none">
+          <input
+            type="checkbox"
+            checked={Boolean(status.cloud)}
+            disabled={!status.compatible || toggleCloud.isPending || uninstall.isPending}
+            onChange={(e) => void askCloudToggle(e.target.checked)}
+            className="size-3 accent-fg"
+          />
+          <span>{t("Show on droppen.app")}</span>
+        </label>
       </div>
       <div className="flex max-w-full shrink-0 items-center gap-2">
         <Tabs

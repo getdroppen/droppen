@@ -195,7 +195,7 @@ function shellResponse(shell) {
     shell.marked ? `connect-src 'self' ${hub} https: wss:` : `connect-src 'self' ${hub}`,
     "worker-src 'self' blob:",
     "manifest-src 'self'",
-    shell.marked ? "frame-src 'none'" : "frame-src 'self'",
+    "frame-src 'self'",
     shell.marked ? "frame-ancestors 'none'" : "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'",

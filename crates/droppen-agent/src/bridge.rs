@@ -29,7 +29,7 @@ use super::answers::{AnswerBody, Refused, RefusedWithReason};
 const MAX_BODY: usize = 64 * 1024 * 1024;
 
 /// Request headers a device may set; everything else is dropped.
-const FORWARDED: [&str; 9] = [
+const FORWARDED: [&str; 10] = [
     "content-type",
     "accept",
     "accept-language",
@@ -39,6 +39,7 @@ const FORWARDED: [&str; 9] = [
     "if-unmodified-since",
     "range",
     "cache-control",
+    "x-rh-plugin",
 ];
 
 /// Response headers never passed back (hop-by-hop, or re-framed by the bridge).
@@ -344,9 +345,23 @@ pub const ROUTES: &[(&str, &str, RouteClass)] = {
         ("PATCH", "/api/screens/{id}", Use),
         ("DELETE", "/api/screens/{id}", Use),
         ("POST", "/api/server/self-upgrade", Posture),
-        // Runtime-installed plugins are this computer's own (`docs/plugins/
-        // runtime.md` §5): no `/api/plugins…` route is listed here, and
-        // [`plugin_route`] refuses every one of them to every device.
+        // Runtime-installed plugins (`docs/plugins/cloud.md` §6): installing,
+        // uninstalling and changing the enabled/cloud switches stay local-only
+        // (`Never`); reading the cloud-enabled list, fetching a package,
+        // proxying outbound fetches and reading/writing documents are `Use`
+        // (and gated server-side on `enabled && cloud` plus the `x-rh-plugin`
+        // mark).
+        ("GET", "/api/plugins", Use),
+        ("POST", "/api/plugins", Never),
+        ("DELETE", "/api/plugins/{id}", Never),
+        ("PUT", "/api/plugins/{id}/enabled", Never),
+        ("PUT", "/api/plugins/{id}/cloud", Never),
+        ("GET", "/api/plugins/{id}/package", Use),
+        ("POST", "/api/plugins/{id}/fetch", Use),
+        ("GET", "/api/plugins/{id}/docs", Use),
+        ("GET", "/api/plugins/{id}/docs/{name}", Use),
+        ("PUT", "/api/plugins/{id}/docs/{name}", Use),
+        ("POST", "/api/plugins/{id}/batch", Use),
         ("GET", "/api/terminals", Use),
         ("POST", "/api/terminals", Use),
         ("PATCH", "/api/terminals/{id}", Use),
@@ -436,14 +451,32 @@ pub fn never_from_cloud(route: &str) -> bool {
     under("/api/cloud") || under("/api/agg")
 }
 
-/// Whether `route` belongs to runtime-installed plugins — listing, switching,
-/// installing, and every document route. They exist only on this computer and
-/// the pages it serves itself (`docs/plugins/runtime.md` §5): deliberately not
-/// in [`ROUTES`] at all, so no device reaches one, and refused before any
-/// class is asked for.
-pub(crate) fn plugin_route(route: &str) -> bool {
-    let under = |prefix: &str| route == prefix || route.starts_with(&format!("{prefix}/"));
-    under("/api/plugins")
+/// Whether `route` is `/api/plugins/{id}/docs/{name}` whose `{id}` is a valid
+/// plugin id and whose percent-decoded `{name}` is a valid document name (which
+/// may contain `/` segments encoded as `%2F`, e.g. `events%2F2026-10`).
+fn encoded_plugin_doc_route(route: &str) -> bool {
+    let Some(rest) = route.strip_prefix("/api/plugins/") else {
+        return false;
+    };
+    let mut parts = rest.split('/');
+    let (Some(id), Some("docs"), Some(encoded_name), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    let valid_id = (2..=32).contains(&id.len())
+        && id.as_bytes()[0].is_ascii_lowercase()
+        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    if !valid_id {
+        return false;
+    }
+    let decoded_name = percent_decoded(encoded_name);
+    !decoded_name.is_empty()
+        && decoded_name.len() <= 200
+        && decoded_name.split('/').all(|seg| {
+            !seg.is_empty()
+                && seg != "."
+                && seg != ".."
+                && seg.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        })
 }
 
 /// What becomes of `method path` from a device standing as `standing`:
@@ -456,7 +489,7 @@ pub fn refusal(method: &str, path: &str, standing: Standing) -> Option<Refusal> 
     }
     let route = path.split(['?', '#']).next().unwrap_or_default();
     let decoded = percent_decoded(route);
-    if [route, decoded.as_str()].iter().any(|r| never_from_cloud(r) || plugin_route(r)) {
+    if [route, decoded.as_str()].iter().any(|r| never_from_cloud(r)) {
         return Some(Refusal::NotFromCloud);
     }
     let classes = [classify(method, route), classify(method, &decoded_by_segment(route))];
@@ -571,11 +604,13 @@ pub fn allowed(class: StreamClass, path: &str) -> bool {
     // Judge the route as the server will see it once percent-decoded too:
     // `%2e%2e` would otherwise walk past the dot-segment check.
     let decoded = percent_decoded(route);
+    let slashes_ok =
+        decoded.matches('/').count() == route.matches('/').count() || (class == StreamClass::Rpc && encoded_plugin_doc_route(route));
     let clean = (route.starts_with("/api/") || (class == StreamClass::Rpc && route.starts_with(LOCAL_PREFIX)))
         && [route, decoded.as_str()]
             .iter()
             .all(|r| !r.split('/').any(|seg| seg == ".." || seg == ".") && !r.contains("//") && !r.contains('\\'))
-        && decoded.matches('/').count() == route.matches('/').count()
+        && slashes_ok
         && path.bytes().all(|b| b.is_ascii_graphic());
     if !clean {
         return false;
@@ -991,31 +1026,40 @@ mod tests {
             assert_eq!(refusal("POST", path, ADMIN), Some(Refusal::NotFromCloud), "{path}");
             assert_eq!(refusal("POST", path, PLAIN), Some(Refusal::NotFromCloud), "{path}");
         }
-        // Runtime-installed plugins are local-only (`docs/plugins/runtime.md`
-        // §5): no device — admin or plain, whatever the method, however the
-        // path is written — reaches one. The whole surface, including the
-        // routes of installing and uninstalling and the notices, which this
-        // build does not register yet: the rule is the prefix, not a list.
+        // Cloud-enabled plugin routes are allowed (`Use`); management routes
+        // (install, uninstall, enabled/cloud switches) stay `NotFromCloud`.
         for (method, path) in [
             ("GET", "/api/plugins"),
-            ("GET", "/api/plugins/tasks/enabled"),
-            ("PUT", "/api/plugins/tasks/enabled"),
-            ("PUT", "/api/plugins/tasks/cloud"),
+            ("GET", "/api/plugins/tasks/package"),
+            ("POST", "/api/plugins/tasks/fetch"),
             ("GET", "/api/plugins/tasks/docs"),
             ("GET", "/api/plugins/tasks/docs/state"),
             ("PUT", "/api/plugins/tasks/docs/state"),
             ("GET", "/api/plugins/tasks/docs/events%2F2026-10"),
             ("PUT", "/api/plugins/tasks/docs/events%2f2026-10"),
-            ("GET", "/api/plugins/tasks/docs/events%2F2026-10/history"),
             ("POST", "/api/plugins/tasks/batch"),
-            ("GET", "/api/plugins/tasks/notices"),
+        ] {
+            assert_eq!(refusal(method, path, ADMIN), None, "{method} {path}");
+            assert_eq!(refusal(method, path, PLAIN), None, "{method} {path}");
+        }
+        for (method, path) in [
             ("POST", "/api/plugins"),
             ("DELETE", "/api/plugins/tasks"),
-            ("GET", "/api/plugins%2Ftasks/docs/state"),
-            ("GET", "/api/%70lugins"),
+            ("PUT", "/api/plugins/tasks/enabled"),
+            ("PUT", "/api/plugins/tasks/cloud"),
         ] {
             assert_eq!(refusal(method, path, ADMIN), Some(Refusal::NotFromCloud), "{method} {path}");
             assert_eq!(refusal(method, path, PLAIN), Some(Refusal::NotFromCloud), "{method} {path}");
+        }
+        for (method, path) in [
+            ("GET", "/api/plugins/tasks/enabled"),
+            ("GET", "/api/plugins/tasks/docs/events%2F2026-10/history"),
+            ("GET", "/api/plugins/tasks/notices"),
+            ("GET", "/api/plugins%2Ftasks/docs/state"),
+            ("GET", "/api/%70lugins"),
+        ] {
+            assert_eq!(refusal(method, path, ADMIN), Some(Refusal::Unlisted), "{method} {path}");
+            assert_eq!(refusal(method, path, PLAIN), Some(Refusal::Unlisted), "{method} {path}");
         }
         assert_eq!(Refusal::NotFromCloud.answer().0, 403);
         assert_eq!(Refusal::NotFromCloud.answer().1["error"], "not_from_cloud");
@@ -1162,11 +1206,10 @@ mod tests {
             "the query is not the route"
         );
         assert!(allowed(StreamClass::Rpc, "/api/sessions/claude/a%20b"));
-        // A plugin document's encoded slash gets no exception, and the
-        // plugin routes themselves are refused by [`refusal`], not here
-        // (`docs/plugins/runtime.md` §5).
+        // A plugin document's encoded slash is allowed only on
+        // `/api/plugins/{valid_id}/docs/{valid_doc_name}`.
+        assert!(allowed(StreamClass::Rpc, "/api/plugins/tasks/docs/events%2F2026-10"));
         for path in [
-            "/api/plugins/tasks/docs/events%2F2026-10",
             "/api/plugins/tasks/docs/events%2f2026-10/history",
             "/api/plugins/tasks/docs%2Fstate",
             "/api/plugins/tasks/batch%2Fx",
