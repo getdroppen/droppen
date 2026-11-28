@@ -750,6 +750,9 @@ impl CodexRuns {
                     .tx
                     .send(Cmd::Archive(reply))
                     .map_err(|_| ArchiveError("Codex App Server disconnected".into()))?;
+                // The live driver owns the session now; release the global
+                // SpawnGate before waiting up to RPC_TIMEOUT on the reply.
+                drop(permit);
                 return rx
                     .await
                     .map_err(|_| ArchiveError("Codex App Server disconnected before confirming archive".into()))?
@@ -760,23 +763,60 @@ impl CodexRuns {
         permit
             .claim(Source::Codex, id)
             .map_err(|error| ArchiveError(claim_refusal(error).to_string()))?;
+        // Reserve the session slot while the gate is still held so concurrent
+        // `codex_deliver` calls see `archive_request` immediately rather than
+        // starting a new handle after we release the global gate.
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        let placeholder = Handle {
+            tx,
+            shared: Arc::new(Mutex::new(State {
+                archive_request: Some("offline-archive".into()),
+                ..Default::default()
+            })),
+            account: None,
+            starting: Default::default(),
+        };
+        let previous = self.codex_servers.lock().unwrap().insert(id.into(), placeholder.clone());
+        struct ArchiveGuard<'a> {
+            runs: &'a CodexRuns,
+            id: String,
+            previous: Option<Handle>,
+            committed: bool,
+        }
+        impl Drop for ArchiveGuard<'_> {
+            fn drop(&mut self) {
+                if !self.committed {
+                    let mut servers = self.runs.codex_servers.lock().unwrap();
+                    match self.previous.take() {
+                        Some(prev) => {
+                            servers.insert(self.id.clone(), prev);
+                        }
+                        None => {
+                            servers.remove(&self.id);
+                        }
+                    }
+                }
+            }
+        }
+        let mut guard = ArchiveGuard {
+            runs: self,
+            id: id.into(),
+            previous,
+            committed: false,
+        };
+        // Release the global SpawnGate while keeping the per-session claim for
+        // the `codex archive` subprocess.
+        permit.ungate();
         #[cfg(test)]
         self.host.step("codex archive", Source::Codex, Some(id));
         archive_codex_session(&permit, &self.host.paths, id).await?;
-        let (tx, rx) = mpsc::unbounded_channel();
-        drop(rx);
-        self.codex_servers.lock().unwrap().insert(
-            id.into(),
-            Handle {
-                tx,
-                shared: Arc::new(Mutex::new(State {
-                    archived: true,
-                    ..Default::default()
-                })),
-                account: None,
-                starting: Default::default(),
-            },
-        );
+        {
+            let mut state = placeholder.shared.lock().unwrap();
+            state.archive_request = None;
+            state.archived = true;
+        }
+        guard.committed = true;
         for record in self
             .host.journal
             .read()

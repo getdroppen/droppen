@@ -148,7 +148,10 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
             }
         }
         if !wait.is_zero() {
-            tokio::time::sleep(wait).await;
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                () = server.shutdown.cancelled() => break,
+            }
         }
         let keep = match message {
             Message::Text(text) => {
@@ -178,7 +181,10 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
         server.unregister(id);
     }
     drop(out);
-    let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
+    let mut writer = writer;
+    if tokio::time::timeout(Duration::from_secs(2), &mut writer).await.is_err() {
+        writer.abort();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

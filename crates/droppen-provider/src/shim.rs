@@ -979,15 +979,24 @@ impl Link {
         Some(output)
     }
 
+    /// Maximum time a single stdin write to the shim socket may block before
+    /// the link is treated as wedged.
+    const LINK_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
     /// Send one line to claude's stdin. An error means the link must be rebuilt.
     ///
     /// The newline is added here if the caller did not bring one: a stream-json
     /// request that arrives without its terminator leaves claude waiting for the
     /// rest of a line that will never come.
     pub async fn send_line(&mut self, line: &str) -> std::io::Result<()> {
-        self.writer.write_all(line.trim_end_matches('\n').as_bytes()).await?;
-        self.writer.write_all(b"\n").await?;
-        self.writer.flush().await
+        let trimmed = line.trim_end_matches('\n').as_bytes();
+        tokio::time::timeout(Self::LINK_WRITE_TIMEOUT, async {
+            self.writer.write_all(trimmed).await?;
+            self.writer.write_all(b"\n").await?;
+            self.writer.flush().await
+        })
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out writing line to session shim"))?
     }
 
     /// Ask the shim to close claude's stdin.
@@ -997,9 +1006,13 @@ impl Link {
     /// dropped the handle cannot get another one — so this is the last thing a
     /// caller says over a link.
     pub async fn close_stdin(&mut self) -> std::io::Result<()> {
-        self.writer.write_all(CLOSE_STDIN.as_bytes()).await?;
-        self.writer.write_all(b"\n").await?;
-        self.writer.flush().await
+        tokio::time::timeout(Self::LINK_WRITE_TIMEOUT, async {
+            self.writer.write_all(CLOSE_STDIN.as_bytes()).await?;
+            self.writer.write_all(b"\n").await?;
+            self.writer.flush().await
+        })
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out closing session shim stdin"))?
     }
 
     /// Signal claude's whole process group.
@@ -1250,15 +1263,39 @@ async fn connect(socket: &Path, patience: Duration) -> Result<Link, LinkError> {
         // hides — still advances the position by what it really occupied. This
         // has to agree with the shim's own offsets exactly: it is what tells a
         // reattached client where the replay stops.
+        const MAX_SHIM_LINE_BYTES: usize = 32 * 1024 * 1024;
         let mut at = 0u64;
-        let mut line = String::new();
+        let mut raw = Vec::new();
         loop {
-            line.clear();
-            let read = match reader.read_line(&mut line).await {
+            raw.clear();
+            let mut limited = (&mut reader).take((MAX_SHIM_LINE_BYTES + 1) as u64);
+            let read = match limited.read_until(b'\n', &mut raw).await {
                 Ok(0) | Err(_) => return,
                 Ok(read) => read as u64,
             };
-            let text = line.trim_end_matches('\n').trim_end_matches('\r');
+            // If a single line exceeded the safety cap, drain the rest of the
+            // oversized line so we advance `at` accurately without OOMing.
+            if raw.len() > MAX_SHIM_LINE_BYTES && !raw.ends_with(b"\n") {
+                let mut total_oversized = read;
+                let mut discard = Vec::new();
+                loop {
+                    discard.clear();
+                    match (&mut reader).take(64 * 1024).read_until(b'\n', &mut discard).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => {
+                            total_oversized += n as u64;
+                            if discard.ends_with(b"\n") {
+                                break;
+                            }
+                        }
+                    }
+                }
+                at += total_oversized;
+                tracing::warn!(bytes = total_oversized, "session shim skipped oversized stdout line");
+                continue;
+            }
+            let decoded = String::from_utf8_lossy(&raw);
+            let text = decoded.trim_end_matches('\n').trim_end_matches('\r');
             let output = classify(text);
             // A gap line is the shim's own, not claude's: it occupies no space
             // in the stream it describes, and the offset it carries is where
@@ -1783,6 +1820,16 @@ mod tests {
         assert!(sidecars.tombstoned());
         sidecars.prepare().expect("prepare again");
         assert!(!sidecars.tombstoned(), "yesterday's exit must not condemn today's claude");
+    }
+
+    #[tokio::test]
+    async fn non_utf8_bytes_on_stdout_do_not_sever_the_link() {
+        let harness = Harness::start(r#"printf 'before\n\377\376bad\nafter\n'; sleep 5"#, DEFAULT_BUFFER_BYTES).await;
+        let mut link = harness.link().await;
+        assert_eq!(next(&mut link).await, Output::Line("before".into()));
+        let lossy = next(&mut link).await;
+        assert!(matches!(lossy, Output::Line(ref s) if s.contains("bad")), "{lossy:?}");
+        assert_eq!(next(&mut link).await, Output::Line("after".into()));
     }
 
     // ------------------------------------------------------------- the client

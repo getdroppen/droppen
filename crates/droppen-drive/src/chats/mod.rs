@@ -125,6 +125,7 @@ impl Chats {
             paths,
             http: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(15))
+                .read_timeout(std::time::Duration::from_secs(120))
                 .build()
                 .expect("build the chat HTTP client"),
             lock: tokio::sync::Mutex::new(()),

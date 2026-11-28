@@ -229,6 +229,7 @@ impl Chats {
 
     /// Delete a chat. `false` means there was nothing to delete.
     pub async fn delete_api_chat(&self, id: &str) -> bool {
+        let _guard = self.lock.lock().await;
         if read_api_chat(&self.paths, id).await.is_none() {
             return false;
         }
@@ -244,40 +245,46 @@ impl Chats {
     /// text that was actually stored.
     pub async fn run_api_chat_turn(&self, id: &str, text: &str, model: Option<&str>, sink: &(impl DeltaSink + Sync)) -> Result<String, ChatError> {
         let provider = self.require_provider().await?;
-        let mut chat = read_api_chat(&self.paths, id).await.ok_or_else(|| ChatError::message("chat not found"))?;
+        let snapshot = {
+            let _guard = self.lock.lock().await;
+            let mut chat = read_api_chat(&self.paths, id).await.ok_or_else(|| ChatError::message("chat not found"))?;
+            let stamp = now();
+            chat.messages.push(ApiChatMessage {
+                role: ChatRole::User,
+                content: text.to_string(),
+                at: stamp.clone(),
+            });
+            if chat.title == UNTITLED {
+                chat.title = text.chars().take(TITLE_CAP).collect();
+            }
+            if let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) {
+                chat.model = model.to_string();
+            }
+            chat.updated_at = stamp;
+            write_api_chat(&self.paths, &chat)
+                .await
+                .map_err(|error| ChatError::other(format!("cannot write the chat: {error}")))?;
+            chat
+        };
 
-        let stamp = now();
-        chat.messages.push(ApiChatMessage {
-            role: ChatRole::User,
-            content: text.to_string(),
-            at: stamp.clone(),
-        });
-        if chat.title == UNTITLED {
-            chat.title = text.chars().take(TITLE_CAP).collect();
+        let content = self.stream_completion(&provider, &snapshot, sink).await?;
+
+        {
+            let _guard = self.lock.lock().await;
+            // Re-read under the lock so concurrent turns do not clobber each
+            // other and a chat deleted mid-stream is never resurrected.
+            let mut chat = read_api_chat(&self.paths, id).await.ok_or_else(|| ChatError::message("chat not found"))?;
+            chat.messages.push(ApiChatMessage {
+                role: ChatRole::Assistant,
+                content: content.clone(),
+                at: now(),
+            });
+            chat.updated_at = now();
+            write_api_chat(&self.paths, &chat)
+                .await
+                .map_err(|error| ChatError::other(format!("cannot write the chat: {error}")))?;
         }
-        if let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) {
-            chat.model = model.to_string();
-        }
-        chat.updated_at = stamp;
-        self.persist(&chat).await?;
-
-        let content = self.stream_completion(&provider, &chat, sink).await?;
-
-        chat.messages.push(ApiChatMessage {
-            role: ChatRole::Assistant,
-            content: content.clone(),
-            at: now(),
-        });
-        chat.updated_at = now();
-        self.persist(&chat).await?;
         Ok(content)
-    }
-
-    async fn persist(&self, chat: &ApiChat) -> Result<(), ChatError> {
-        let _guard = self.lock.lock().await;
-        write_api_chat(&self.paths, chat)
-            .await
-            .map_err(|error| ChatError::other(format!("cannot write the chat: {error}")))
     }
 
     /// POST the conversation and reassemble the provider's `data:` frames.
@@ -299,7 +306,7 @@ impl Chats {
                 })
                 .collect(),
         };
-        let response = self
+        let mut response = self
             .http
             .post(format!("{}/chat/completions", provider.base_url))
             .header("content-type", "application/json")
@@ -312,11 +319,24 @@ impl Chats {
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let detail: String = response.text().await.unwrap_or_default().chars().take(DETAIL_CAP).collect();
+            const MAX_ERROR_BYTES: usize = 4096;
+            let mut raw = Vec::new();
+            while raw.len() < MAX_ERROR_BYTES {
+                match response.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let take = (MAX_ERROR_BYTES - raw.len()).min(chunk.len());
+                        raw.extend_from_slice(&chunk[..take]);
+                    }
+                    _ => break,
+                }
+            }
+            let detail: String = String::from_utf8_lossy(&raw).chars().take(DETAIL_CAP).collect();
             let suffix = if detail.is_empty() { String::new() } else { format!(" — {detail}") };
             return Err(ChatError::message(format!("provider request failed: HTTP {status}{suffix}")));
         }
 
+        const MAX_SSE_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+        const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
         let mut stream = response.bytes_stream();
         // Bytes rather than a `String`, because a chunk boundary can fall in the
         // middle of a multi-byte character. Only the part up to the last newline
@@ -326,6 +346,9 @@ impl Chats {
         let mut full = String::new();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|error| ChatError::other(format!("provider stream failed: {error}")))?;
+            if buffer.len().saturating_add(chunk.len()) > MAX_SSE_BUFFER_BYTES {
+                return Err(ChatError::other("provider stream line exceeded size limit"));
+            }
             buffer.extend_from_slice(&chunk);
             let split = match buffer.iter().rposition(|&byte| byte == b'\n') {
                 Some(index) => index + 1,
@@ -335,6 +358,9 @@ impl Chats {
             buffer.drain(..split);
             for line in lines {
                 let Some(delta) = content_delta(&line) else { continue };
+                if full.len().saturating_add(delta.len()) > MAX_REPLY_BYTES {
+                    return Err(ChatError::other("provider reply exceeded size limit"));
+                }
                 full.push_str(&delta);
                 if !sink.delta(delta).await {
                     return Err(ChatError::other("the client stopped reading the stream"));
@@ -543,5 +569,61 @@ mod tests {
             assert!(sink.delta(chunk.to_string()).await);
         }
         assert_eq!(*seen.lock().expect("sink"), vec!["a".to_string(), "b".into(), "c".into()]);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_chat_mid_turn_does_not_resurrect_it() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (_home, paths) = paths();
+        let chats = Chats::new(Arc::new(paths.clone()));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (delete_now_tx, delete_now_rx) = tokio::sync::oneshot::channel::<()>();
+        let (deleted_tx, deleted_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut req = [0u8; 4096];
+            let _ = socket.read(&mut req).await;
+            let body = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).await.expect("write head");
+            let _ = delete_now_tx.send(());
+            let _ = deleted_rx.await;
+            socket.write_all(body.as_bytes()).await.expect("write body");
+            let _ = socket.shutdown().await;
+        });
+
+        chats
+            .update_provider(&super::super::ChatProviderUpdate {
+                base_url: droppen_http::openapi_ext::Optional(Some(format!("http://{addr}"))),
+                api_key: droppen_http::openapi_ext::Optional(Some("sk-test".into())),
+                model: droppen_http::openapi_ext::Optional(Some("gpt-test".into())),
+            })
+            .await
+            .expect("provider");
+        let created = chats.create_api_chat(None).await.expect("create");
+        let chats_for_delete = chats.clone();
+        let id_for_delete = created.id.clone();
+        let deleter = tokio::spawn(async move {
+            let _ = delete_now_rx.await;
+            assert!(chats_for_delete.delete_api_chat(&id_for_delete).await);
+            let _ = deleted_tx.send(());
+        });
+
+        let sink = Collected(Arc::new(Mutex::new(vec![])));
+        let err = chats
+            .run_api_chat_turn(&created.id, "hello", None, &sink)
+            .await
+            .expect_err("deleted chat must not be resurrected");
+        assert_eq!(err.to_string(), "chat not found");
+        deleter.await.expect("deleter");
+        server.await.expect("server");
+        assert!(read_api_chat(&paths, &created.id).await.is_none(), "deleted chat stays deleted");
     }
 }

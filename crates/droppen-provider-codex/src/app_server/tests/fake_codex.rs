@@ -45,8 +45,8 @@ fn step(what: &'static str, gate: bool, claim: Option<bool>) -> droppen_provider
 /// claimed once the app server has named it. A thread this server has no process for is
 /// reserved under the gate, then claimed and started outside it. A process
 /// retired for another account is retired outside the gate too, and lets
-/// its claim go before it answers. An unloaded session is archived with
-/// `codex archive` under the gate and its claim, and the claim goes first.
+/// its claim go before it answers. An unloaded session is claimed under the
+/// gate and archived with `codex archive` outside it, and the claim goes first.
 /// A resume the app server answers with another thread lets its claim go
 /// before the app server's stdin closes.
 #[tokio::test]
@@ -117,7 +117,7 @@ async fn codex_reserves_under_the_gate_and_starts_and_retires_outside_it() {
     );
 
     codex(&providers).archive_codex(gate, UNLOADED).await.expect("archived");
-    assert_eq!(registry.host.steps()[12..], [step("codex archive", true, Some(true))]);
+    assert_eq!(registry.host.steps()[12..], [step("codex archive", false, Some(true))]);
     assert!(!registry.host.gate_held());
     assert!(!registry.host.claim_held(Source::Codex, UNLOADED), "the claim went with the archive");
 

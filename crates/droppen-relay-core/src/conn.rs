@@ -13,8 +13,9 @@
 //! log line says about a frame is its type, `ch` and length. `Frame`'s `Debug`
 //! prints payload bytes, so frames are never logged with `?`.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::stream::SplitSink;
@@ -37,6 +38,7 @@ pub enum Out {
 pub struct Outbound {
     tx: mpsc::UnboundedSender<Out>,
     queued: Arc<AtomicUsize>,
+    closed: Arc<AtomicBool>,
     limit: usize,
 }
 
@@ -48,6 +50,7 @@ impl Outbound {
             Self {
                 tx,
                 queued: queued.clone(),
+                closed: Arc::new(AtomicBool::new(false)),
                 limit,
             },
             rx,
@@ -56,12 +59,27 @@ impl Outbound {
     }
 
     fn push(&self, out: Out, len: usize) -> bool {
-        if self.queued.load(Ordering::Relaxed) + len > self.limit {
-            let _ = self.tx.send(Out::Close(1013, "not reading fast enough".into()));
+        if self.closed.load(Ordering::Acquire) {
             return false;
         }
-        self.queued.fetch_add(len, Ordering::Relaxed);
-        self.tx.send(out).is_ok()
+        let reserved = self
+            .queued
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+                cur.checked_add(len).filter(|&next| next <= self.limit)
+            });
+        if reserved.is_err() {
+            if !self.closed.swap(true, Ordering::AcqRel) {
+                let _ = self.tx.send(Out::Close(1013, "not reading fast enough".into()));
+            }
+            return false;
+        }
+        if self.tx.send(out).is_err() {
+            let _ = self
+                .queued
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |cur| Some(cur.saturating_sub(len)));
+            return false;
+        }
+        true
     }
 
     pub fn frame(&self, frame: &Frame) -> bool {
@@ -85,11 +103,13 @@ impl Outbound {
     }
 
     pub fn close(&self, code: u16, reason: &str) {
-        let _ = self.tx.send(Out::Close(code, reason.into()));
+        if !self.closed.swap(true, Ordering::AcqRel) {
+            let _ = self.tx.send(Out::Close(code, reason.into()));
+        }
     }
 
     pub fn is_closed(&self) -> bool {
-        self.tx.is_closed()
+        self.closed.load(Ordering::Acquire) || self.tx.is_closed()
     }
 
     /// Bytes queued and not yet written to the socket.
@@ -132,13 +152,30 @@ pub fn spawn_writer(
                 }
                 Out::Close(code, reason) => (Message::Close(Some(CloseFrame { code, reason: reason.into() })), 0, true),
             };
-            let sent = sink.send(message).await;
-            queued.fetch_sub(len.min(queued.load(Ordering::Relaxed)), Ordering::Relaxed);
+            const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+            let sent = tokio::select! {
+                res = tokio::time::timeout(WRITE_TIMEOUT, sink.send(message)) => match res {
+                    Ok(inner) => inner,
+                    Err(_) => break,
+                },
+                () = shutdown.cancelled(), if !last => {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(2),
+                        sink.send(Message::Close(Some(CloseFrame {
+                            code: shutdown_close.0,
+                            reason: shutdown_close.1.into(),
+                        }))),
+                    )
+                    .await;
+                    break;
+                }
+            };
+            let _ = queued.try_update(Ordering::AcqRel, Ordering::Acquire, |cur| Some(cur.saturating_sub(len)));
             if sent.is_err() || last {
                 break;
             }
         }
-        let _ = sink.close().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), sink.close()).await;
     })
 }
 
@@ -155,8 +192,14 @@ mod tests {
             ch: 1,
             payload: vec![0; 200]
         }));
+        // Repeated sends after overflow must not flood the unbounded queue with close frames.
+        assert!(!out.frame(&Frame::Ping { nonce: 2 }));
+        assert!(!out.frame(&Frame::Ping { nonce: 3 }));
+        out.close(1000, "later");
+        assert!(out.is_closed());
         assert!(matches!(rx.try_recv(), Ok(Out::Binary(_))));
         assert!(matches!(rx.try_recv(), Ok(Out::Close(1013, _))));
+        assert!(rx.try_recv().is_err(), "close frame must be sent at most once");
     }
 
     #[test]
