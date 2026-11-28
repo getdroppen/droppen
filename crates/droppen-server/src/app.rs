@@ -891,6 +891,15 @@ impl droppen_provider::SpawnDecoration for NotifyDecoration {
                 .collect()
         })
     }
+
+    fn pending_mcp_servers<'a>(&'a self, _source: Source) -> futures_util::future::BoxFuture<'a, Vec<droppen_provider::StdioMcpServer>> {
+        Box::pin(async move {
+            droppen_drive::agents::pending_mcp_server_for(&self.paths, &self.instance)
+                .await
+                .into_iter()
+                .collect()
+        })
+    }
 }
 
 /// The link's streams read the account bindings, the drivers and the drafts

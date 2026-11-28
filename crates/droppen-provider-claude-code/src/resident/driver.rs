@@ -818,6 +818,7 @@ impl Driver {
         self.runs.host.step("resident ended", Source::Claude, Some(&self.id));
         let _ = std::fs::remove_file(self.sidecars.exit());
         let _ = std::fs::remove_file(self.sidecars.stderr());
+        self.runs.remove_mcp_config(Some(self.sidecars.id()));
     }
 
     // --------------------------------------------------------- bookkeeping

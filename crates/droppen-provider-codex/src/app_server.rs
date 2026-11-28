@@ -466,6 +466,14 @@ impl ProviderRuns for CodexRuns {
             file.written_at().await
         })
     }
+
+    fn mcp_config_names(&self, record: &runs::RunRecord) -> Vec<String> {
+        record
+            .shim
+            .as_deref()
+            .map(|shim| vec![format!("codex-{shim}.json")])
+            .unwrap_or_default()
+    }
 }
 
 /// A Codex row put in a journal as Codex reads and writes it, for the
@@ -880,6 +888,7 @@ impl CodexRuns {
             .into_iter()
             .filter(|r| r.source == Source::Codex && r.session_id == id)
         {
+            self.remove_mcp_config(record.shim.as_deref());
             self.host.journal.remove(&record.run_id);
         }
         Ok(())
@@ -1015,28 +1024,34 @@ impl CodexRuns {
         let mcp_config_path = if options.chat {
             None
         } else {
-            let probe = self
-                .decoration
-                .mcp_servers(Source::Codex, id.unwrap_or("__pending__"))
-                .await;
+            let probe = match id {
+                Some(id) => self.decoration.mcp_servers(Source::Codex, id).await,
+                None => self.decoration.pending_mcp_servers(Source::Codex).await,
+            };
             if let Some(server) = probe.into_iter().next() {
                 let config_path = self.mcp_configs_dir.join(format!("codex-{}.json", sidecars.id()));
-                let ready = if id.is_some() {
-                    match write_codex_mcp_config(&config_path, &server) {
-                        Ok(()) => true,
-                        Err(error) => {
-                            tracing::warn!(%error, "cannot write Codex MCP config; skipping droppen-agents");
-                            false
-                        }
-                    }
-                } else {
-                    true
-                };
-                if ready {
-                    args.extend(codex_mcp_args(&server, &config_path));
-                    Some(config_path)
-                } else {
+                let mcp_args = codex_mcp_args(&server, &config_path);
+                if mcp_args.is_empty() {
+                    tracing::warn!(name = %server.name, "ignoring Codex MCP server with invalid key");
                     None
+                } else {
+                    let ready = if id.is_some() {
+                        match write_codex_mcp_config(&config_path, &server) {
+                            Ok(()) => true,
+                            Err(error) => {
+                                tracing::warn!(%error, "cannot write Codex MCP config; skipping droppen-agents");
+                                false
+                            }
+                        }
+                    } else {
+                        true
+                    };
+                    if ready {
+                        args.extend(mcp_args);
+                        Some(config_path)
+                    } else {
+                        None
+                    }
                 }
             } else {
                 None
@@ -1352,18 +1367,37 @@ pub(crate) fn codex_permission_flags(permission: &str) -> Result<Vec<&'static st
 }
 
 fn toml_string(value: &str) -> String {
-    serde_json::to_string(value).expect("string JSON encoding is valid TOML basic string")
+    let encoded = serde_json::to_string(value).expect("string JSON encoding is infallible");
+    // TOML 1.0 basic strings forbid unescaped DEL (U+007F), whereas JSON allows it.
+    if encoded.contains('\x7f') {
+        encoded.replace('\x7f', "\\u007f")
+    } else {
+        encoded
+    }
+}
+
+fn sanitize_codex_mcp_key(name: &str) -> Option<String> {
+    let key: String = name
+        .trim()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' { ch } else { '_' })
+        .collect();
+    if key.is_empty() || key.chars().all(|ch| ch == '_') {
+        return None;
+    }
+    Some(key)
 }
 
 /// Build `-c` TOML config overrides for `codex app-server` registering one
 /// injected stdio MCP server (`droppen_agents`) that reads its `0600` loopback
 /// credentials from `config_path`.
+///
+/// Returns an empty `Vec` if `server.name` cannot form a valid non-empty TOML
+/// table key.
 pub(crate) fn codex_mcp_args(server: &StdioMcpServer, config_path: &Path) -> Vec<String> {
-    let key: String = server
-        .name
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' { ch } else { '_' })
-        .collect();
+    let Some(key) = sanitize_codex_mcp_key(&server.name) else {
+        return Vec::new();
+    };
     let encoded_args = server
         .args
         .iter()
@@ -1396,6 +1430,10 @@ fn write_codex_mcp_config(path: &Path, server: &StdioMcpServer) -> Result<(), St
         .find(|(k, _)| k == AGENTS_TOKEN_ENV)
         .map(|(_, v)| v.as_str())
         .ok_or_else(|| format!("missing {AGENTS_TOKEN_ENV}"))?;
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        droppen_base::fsutil::ensure_private_dir(parent)
+            .map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
     let payload = serde_json::to_vec(&serde_json::json!({ "url": url, "token": token }))
         .map_err(|error| error.to_string())?;
     droppen_base::fsutil::write_private_reporting_path(path, &payload)
@@ -1435,5 +1473,51 @@ mod mcp_tests {
         let body: serde_json::Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
         assert_eq!(body["url"], "http://127.0.0.1:9999");
         assert_eq!(body["token"], "rha1.secret-token");
+    }
+
+    #[test]
+    fn toml_string_escapes_del_quotes_and_backslashes() {
+        assert_eq!(toml_string("plain"), "\"plain\"");
+        assert_eq!(toml_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+        assert_eq!(toml_string("bad\x7fdel"), "\"bad\\u007fdel\"");
+        assert!(!toml_string("x\x7fy").contains('\x7f'));
+    }
+
+    #[test]
+    fn codex_mcp_args_handles_special_paths_and_rejects_empty_names() {
+        let cfg = PathBuf::from(r#"/tmp/my "quoted"\path with spaces/codex-1.json"#);
+        let server = StdioMcpServer {
+            name: "droppen-agents".to_string(),
+            command: PathBuf::from(r#"/Applications/My App/bin/droppen"quoted""#),
+            args: vec!["mcp-agents".to_string(), "arg with \"space\"\\slash".to_string()],
+            env: Vec::new(),
+        };
+        let args = codex_mcp_args(&server, &cfg);
+        assert_eq!(args.len(), 6);
+        assert_eq!(
+            args[1],
+            r#"mcp_servers.droppen_agents.command="/Applications/My App/bin/droppen\"quoted\"""#
+        );
+        assert_eq!(
+            args[3],
+            r#"mcp_servers.droppen_agents.args=["mcp-agents","arg with \"space\"\\slash"]"#
+        );
+        assert_eq!(
+            args[5],
+            format!(
+                r#"mcp_servers.droppen_agents.env={{{AGENTS_CONFIG_ENV}="/tmp/my \"quoted\"\\path with spaces/codex-1.json"}}"#
+            )
+        );
+
+        for invalid_name in ["", "   ", "---", "___"] {
+            let bad = StdioMcpServer {
+                name: invalid_name.to_string(),
+                ..server.clone()
+            };
+            assert!(
+                codex_mcp_args(&bad, &cfg).is_empty(),
+                "invalid server name {invalid_name:?} must emit no TOML overrides"
+            );
+        }
     }
 }

@@ -164,6 +164,27 @@ pub async fn mcp_server_for(paths: &Paths, instance: &InstanceDirs, source: Sour
     })
 }
 
+/// Build the `droppen-agents` stdio MCP server descriptor (command and args)
+/// without minting a capability token yet.
+///
+/// Used when a provider (such as Codex `thread/start`) must register the MCP
+/// server command line before the canonical session id is known, avoiding a
+/// throwaway token mint.
+pub async fn pending_mcp_server_for(paths: &Paths, instance: &InstanceDirs) -> Option<StdioMcpServer> {
+    let _port: u16 = tokio::fs::read_to_string(instance.port_file()).await.ok()?.trim().parse().ok()?;
+    if let Err(error) = droppen_notify::notify::store::secret(paths).await {
+        tracing::warn!(%error, "agents: no usable token secret; skipping droppen-agents MCP server");
+        return None;
+    }
+    let binary = std::env::current_exe().ok()?;
+    Some(StdioMcpServer {
+        name: MCP_SERVER_NAME.to_string(),
+        command: binary,
+        args: vec!["mcp-agents".to_string()],
+        env: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -196,6 +196,7 @@ impl InstanceDirs {
         for dir in [self.root.clone(), self.pty_shims(), self.session_shims(), self.session_logs()] {
             std::fs::create_dir_all(&dir).map_err(|source| InstanceError::io(&dir, source))?;
         }
+        self.ensure_mcp_configs()?;
         Ok(())
     }
 
@@ -240,9 +241,17 @@ impl InstanceDirs {
     }
 
     /// Private (`0700`) per-session MCP configuration files holding loopback
-    /// `droppen-agents` capability credentials (`0600`), created on demand.
+    /// `droppen-agents` capability credentials (`0600`).
     pub fn mcp_configs(&self) -> PathBuf {
         self.root.join("mcp-configs")
+    }
+
+    /// Ensure [`InstanceDirs::mcp_configs`] exists with mode `0700` on Unix,
+    /// tightening permissions even if the directory pre-existed with a looser mode.
+    pub fn ensure_mcp_configs(&self) -> Result<PathBuf, InstanceError> {
+        let dir = self.mcp_configs();
+        droppen_base::fsutil::ensure_private_dir(&dir).map_err(|source| InstanceError::io(&dir, source))?;
+        Ok(dir)
     }
 
     /// The port this instance's listener bound, written after the bind so a
@@ -632,5 +641,23 @@ mod tests {
         dirs.create().expect("create");
         dirs.write_port(8700);
         assert_eq!(std::fs::read_to_string(dirs.port_file()).expect("port file").trim(), "8700");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_configs_dir_is_enforced_to_0700_even_if_preexisting_looser() {
+        use std::os::unix::fs::PermissionsExt;
+        let data = tempfile::tempdir().expect("tempdir");
+        let dirs = InstanceDirs::new(data.path(), "private-mcp").expect("valid name");
+        let mcp_dir = dirs.mcp_configs();
+        std::fs::create_dir_all(&mcp_dir).expect("precreate dir");
+        std::fs::set_permissions(&mcp_dir, std::fs::Permissions::from_mode(0o755)).expect("chmod 755");
+
+        dirs.create().expect("create instance dirs");
+        assert_eq!(std::fs::metadata(&mcp_dir).unwrap().permissions().mode() & 0o777, 0o700);
+
+        std::fs::set_permissions(&mcp_dir, std::fs::Permissions::from_mode(0o750)).expect("chmod 750");
+        dirs.ensure_mcp_configs().expect("ensure private");
+        assert_eq!(std::fs::metadata(&mcp_dir).unwrap().permissions().mode() & 0o777, 0o700);
     }
 }

@@ -898,4 +898,379 @@ async fn a_thread_started_under_an_account_is_bound_to_it() {
     };
     let id = codex.run().start(providers.gate(), at).await.expect("a new thread");
     assert_eq!(registry.host.accounts.session_account_id(&id).await, Some(account.id));
+    retire_all(codex.runs(), &[&id]).await;
+}
+
+/// Recording decoration for Codex MCP lifecycle tests: tracks `mcp_servers` vs
+/// `pending_mcp_servers` calls to verify `thread/start` never mints a
+/// throwaway token before the thread id is known.
+struct RecordingMcpDecoration {
+    minted_ids: Mutex<Vec<String>>,
+    pending_calls: Mutex<usize>,
+}
+
+impl RecordingMcpDecoration {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            minted_ids: Mutex::new(Vec::new()),
+            pending_calls: Mutex::new(0),
+        })
+    }
+}
+
+impl droppen_provider::SpawnDecoration for RecordingMcpDecoration {
+    fn decorate<'a>(
+        &'a self,
+        _source: Source,
+        _id: &'a str,
+        _env: &'a mut droppen_base::process_env::Env,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn mcp_servers<'a>(&'a self, _source: Source, id: &'a str) -> BoxFuture<'a, Vec<StdioMcpServer>> {
+        let id = id.to_string();
+        self.minted_ids.lock().unwrap().push(id.clone());
+        Box::pin(async move {
+            vec![StdioMcpServer {
+                name: "droppen-agents".to_string(),
+                command: PathBuf::from("/usr/local/bin/droppen"),
+                args: vec!["mcp-agents".to_string()],
+                env: vec![
+                    (AGENTS_URL_ENV.to_string(), "http://127.0.0.1:4321".to_string()),
+                    (AGENTS_TOKEN_ENV.to_string(), format!("rha1.codex-{id}")),
+                ],
+            }]
+        })
+    }
+
+    fn pending_mcp_servers<'a>(&'a self, _source: Source) -> BoxFuture<'a, Vec<StdioMcpServer>> {
+        *self.pending_calls.lock().unwrap() += 1;
+        Box::pin(async {
+            vec![StdioMcpServer {
+                name: "droppen-agents".to_string(),
+                command: PathBuf::from("/usr/local/bin/droppen"),
+                args: vec!["mcp-agents".to_string()],
+                env: Vec::new(),
+            }]
+        })
+    }
+}
+
+fn fake_codex_registry_with_decoration(
+    home: &std::path::Path,
+    instance: &str,
+    decoration: Arc<dyn droppen_provider::SpawnDecoration>,
+) -> (droppen_base::process_env::ChildPathGuard, Arc<InjectionRegistry>) {
+    let guard = droppen_base::process_env::ChildPathGuard::take();
+    std::fs::write(home.join(".rh-test-root"), b"").expect("test root");
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin");
+    let codex = bin.join("codex");
+    let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/fake_codex.py");
+    std::fs::write(&codex, format!("#!/bin/sh\nexec python3 {fake} \"$@\"\n")).expect("codex");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let path = format!("{}:{}", bin.display(), droppen_base::process_env::child_path());
+    droppen_base::process_env::set_child_path(Some(path));
+    let paths = Arc::new(Paths::new(home.into()));
+    let dirs = InstanceDirs::new(&paths.data_dir(), instance).unwrap();
+    dirs.create().unwrap();
+    let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins()));
+    let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins()));
+    (guard, InjectionRegistry::new(paths, &dirs, accounts, quota, decoration))
+}
+
+fn list_dir_names(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
+async fn extract_codex_cfg_path(work: &Path) -> PathBuf {
+    let argv_file = work.join("codex-argv.bin");
+    for _ in 0..500 {
+        if let Ok(raw) = std::fs::read(&argv_file) {
+            if !raw.is_empty() {
+                let argv: Vec<String> = raw
+                    .split(|&b| b == 0)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| String::from_utf8_lossy(s).into_owned())
+                    .collect();
+                let env_arg = argv
+                    .iter()
+                    .find(|a| a.starts_with("mcp_servers.droppen_agents.env={DROPPEN_AGENTS_CONFIG="))
+                    .unwrap_or_else(|| panic!("missing DROPPEN_AGENTS_CONFIG in {argv:?}"));
+                let quoted = env_arg
+                    .strip_prefix("mcp_servers.droppen_agents.env={DROPPEN_AGENTS_CONFIG=")
+                    .and_then(|s| s.strip_suffix('}'))
+                    .expect("quoted path");
+                let unquoted: String = serde_json::from_str(quoted).expect("valid quoted path");
+                return PathBuf::from(unquoted);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for {}", argv_file.display());
+}
+
+/// `thread/start` probes via `pending_mcp_servers` (no throwaway token) and
+/// writes the `0600` config file only after `thread/start` returns the thread
+/// id; `thread/resume` writes it immediately before spawn. Cleanup removes the
+/// file on retire, process death (`codex_dead`), setup failure, offline
+/// archive, and startup orphan sweep (preserving live adopted files).
+#[tokio::test]
+async fn codex_mcp_config_timing_cleanup_and_orphan_sweep() {
+    const RESUMED: &str = "0199c1a1-aaaa-4aaa-8aaa-000000000001";
+    const MISMATCHED: &str = "0199c1a1-bbbb-4bbb-8bbb-000000000002";
+    const OTHER: &str = "0199c1a1-cccc-4ccc-8ccc-000000000003";
+    const OFFLINE: &str = "0199c1a1-dddd-4ddd-8ddd-000000000004";
+
+    let home = tempfile::tempdir().expect("tempdir");
+    let decoration = RecordingMcpDecoration::new();
+    let (_path, registry) = fake_codex_registry_with_decoration(home.path(), "codex-mcp-lifecycle", decoration.clone());
+    let providers = codex_only(&registry);
+    let gate = providers.gate();
+    let mcp_dir = registry.instance.mcp_configs();
+    let plain = SendOptions::default();
+
+    // 1. `thread/start`: hold at `initialize`; config file must NOT exist until after `thread/start`.
+    let start_work = home.path().join("start-work");
+    std::fs::create_dir_all(&start_work).expect("start_work");
+    std::fs::write(start_work.join("init-hold"), b"").expect("init-hold");
+    let runs_for_start = codex(&providers).clone();
+    let providers_for_start = providers.clone();
+    let start_work_str = start_work.to_string_lossy().into_owned();
+    let start_task = tokio::spawn(async move {
+        runs_for_start
+            .codex_deliver(providers_for_start.gate(), None, Some(&start_work_str), "hello", &SendOptions::default(), None)
+            .await
+    });
+    wait_for_step(&registry, "codex started", 1).await;
+    assert_eq!(*decoration.pending_calls.lock().unwrap(), 1, "thread/start uses pending_mcp_servers");
+    assert!(
+        decoration.minted_ids.lock().unwrap().is_empty(),
+        "must not mint a throwaway token before thread/start"
+    );
+    let start_cfg = extract_codex_cfg_path(&start_work).await;
+    assert!(!start_cfg.exists(), "config file must not be written before thread/start returns");
+
+    std::fs::remove_file(start_work.join("init-hold")).expect("release init");
+    let (started_id, _) = start_task.await.expect("join").expect("thread/start ok");
+    assert!(start_cfg.exists(), "config file must exist once thread/start returns");
+    assert_eq!(decoration.minted_ids.lock().unwrap().as_slice(), &[started_id.clone()]);
+    let start_body: Value = serde_json::from_slice(&std::fs::read(&start_cfg).expect("read cfg")).expect("json");
+    assert_eq!(start_body["token"], format!("rha1.codex-{started_id}"));
+
+    // Retire deletes the config file.
+    retire_all(codex(&providers), &[&started_id]).await;
+    assert!(!start_cfg.exists(), "retire must remove codex MCP config");
+
+    // 2. `thread/resume`: hold at `initialize`; config file MUST exist immediately before spawn.
+    let resume_work = home.path().join("resume-work");
+    std::fs::create_dir_all(&resume_work).expect("resume_work");
+    std::fs::write(resume_work.join("init-hold"), b"").expect("init-hold");
+    let runs_for_resume = codex(&providers).clone();
+    let providers_for_resume = providers.clone();
+    let resume_work_str = resume_work.to_string_lossy().into_owned();
+    let resume_task = tokio::spawn(async move {
+        runs_for_resume
+            .codex_deliver(
+                providers_for_resume.gate(),
+                Some(RESUMED),
+                Some(&resume_work_str),
+                "resume",
+                &SendOptions::default(),
+                None,
+            )
+            .await
+    });
+    wait_for_step(&registry, "codex started", 2).await;
+    let resume_cfg = extract_codex_cfg_path(&resume_work).await;
+    assert!(resume_cfg.exists(), "thread/resume must write config file before spawning codex");
+    std::fs::remove_file(resume_work.join("init-hold")).expect("release resume init");
+    resume_task.await.expect("join").expect("thread/resume ok");
+
+    // Killing the app-server triggers `codex_dead`, which deletes its config file.
+    let resume_pid = registry
+        .host
+        .journal
+        .read()
+        .into_iter()
+        .find(|r| r.session_id == RESUMED)
+        .expect("resume record")
+        .cli_pid;
+    droppen_provider::testing::signal(resume_pid, libc::SIGKILL);
+    for _ in 0..500 {
+        if !resume_cfg.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!resume_cfg.exists(), "process death (codex_dead) must remove MCP config");
+
+    // 3. Setup failure (mismatched thread id) removes the pre-written config file.
+    let fail_work = home.path().join("fail-work");
+    std::fs::create_dir_all(&fail_work).expect("fail_work");
+    std::fs::write(fail_work.join("resume-thread.txt"), OTHER).expect("mismatch");
+    let err = codex(&providers)
+        .codex_deliver(gate, Some(MISMATCHED), Some(&fail_work.to_string_lossy()), "hi", &plain, None)
+        .await
+        .expect_err("mismatch must fail");
+    assert_eq!(err.to_string(), "Codex resumed a different thread");
+    assert!(
+        list_dir_names(&mcp_dir).is_empty(),
+        "setup failure must remove MCP config: {:?}",
+        list_dir_names(&mcp_dir)
+    );
+
+    // 4. Offline archive removes any leftover `codex-<shim>.json` referenced by the journal.
+    let offline_cfg = mcp_dir.join("codex-offline-shim.json");
+    droppen_base::fsutil::write_private(&offline_cfg, b"{}").expect("write offline cfg");
+    registry.host.journal.add(runs::RunRecord {
+        run_id: "offline-run".into(),
+        source: Source::Codex,
+        session_id: OFFLINE.into(),
+        cwd: None,
+        cli_pid: 999_999,
+        started_at: iso8601(SystemTime::now()),
+        pid_token: Some("stale".into()),
+        resident: false,
+        shim: Some("offline-shim".into()),
+        payload: CodexRun {
+            codex: Some(State::default()),
+            ..CodexRun::default()
+        },
+    });
+    codex(&providers).archive_codex(gate, OFFLINE).await.expect("offline archive");
+    assert!(!offline_cfg.exists(), "offline archive must delete leftover codex MCP config");
+
+    // 5. Startup orphan sweep (`adopt_all`) deletes orphaned files while keeping a live adopted run's file.
+    let live_work = home.path().join("live-work");
+    std::fs::create_dir_all(&live_work).expect("live_work");
+    let (live_id, _) = codex(&providers)
+        .codex_deliver(gate, None, Some(&live_work.to_string_lossy()), "stay alive", &plain, None)
+        .await
+        .expect("live thread");
+    let live_cfg = extract_codex_cfg_path(&live_work).await;
+    let live_cfg_name = live_cfg.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(live_cfg.exists());
+
+    // Drop the first server's in-memory driver/lease without killing the detached
+    // shim+codex process, simulating a restart where the second server adopts it.
+    let orphan_codex = mcp_dir.join("codex-orphan.json");
+    let orphan_claude = mcp_dir.join("claude-orphan.json");
+    let orphan_tmp = mcp_dir.join(".codex-orphan.json.dead.tmp");
+    for path in [&orphan_codex, &orphan_claude, &orphan_tmp] {
+        droppen_base::fsutil::write_private(path, b"{}").expect("write orphan");
+    }
+
+    // Build a fresh registry over the same instance directory and run `adopt_all`.
+    // Release the first driver cleanly? Wait: we keep the live process alive by
+    // taking a fresh registry with a separate claim check: first retire nothing,
+    // instead verify with a fresh instance where the journal points at the live
+    // process's shim (no conflicting claim held because we drop the first driver's
+    // lease by only registering the journal row on a fresh gate).
+    let live_record = registry
+        .host
+        .journal
+        .read()
+        .into_iter()
+        .find(|r| r.session_id == live_id)
+        .expect("live journal record");
+    let restart_dirs = InstanceDirs::new(&registry.host.paths.data_dir(), "codex-mcp-lifecycle").unwrap();
+    let accounts = Arc::new(droppen_accounts::store::AccountsStore::new(registry.host.paths.clone(), logins()));
+    let quota = Arc::new(droppen_accounts::quota::QuotaCache::new(registry.host.paths.clone(), logins()));
+    let restart_registry = InjectionRegistry::new(
+        registry.host.paths.clone(),
+        &restart_dirs,
+        accounts,
+        quota,
+        decoration.clone(),
+    );
+    let restart_providers = codex_only(&restart_registry);
+    // The first server still holds the session lock on `live_id`, so `adopt_all`
+    // sees `live_record` as deferred (still alive!) and MUST NOT sweep `live_cfg`.
+    let adopted = restart_providers.adopt_all().await;
+    assert_eq!(adopted.deferred, 1, "live run is owned by first server so deferred");
+    assert!(live_cfg.exists(), "orphan sweep must NOT delete live run's config ({live_cfg_name})");
+    assert!(!orphan_codex.exists(), "orphan codex config must be swept");
+    assert!(!orphan_claude.exists(), "orphan claude config must be swept");
+    assert!(!orphan_tmp.exists(), "orphan temp config must be swept");
+    let _ = live_record;
+
+    retire_all(codex(&providers), &[&live_id]).await;
+    assert!(!live_cfg.exists(), "retiring the live run cleans up its config");
+
+    // 6. Startup orphan sweep also preserves an actually re-attached (`Reattached::Driving`)
+    //    live run after restart (not just deferred runs), and sweeps unrelated orphans.
+    const ADOPTED_ID: &str = "0199c1a1-eeee-4eee-8eee-000000000005";
+    let adopt_work = home.path().join("adopt-work");
+    std::fs::create_dir_all(&adopt_work).expect("adopt_work");
+    let adopt_dirs = InstanceDirs::new(&registry.host.paths.data_dir(), "codex-mcp-adopt").unwrap();
+    adopt_dirs.create().unwrap();
+    let adopt_mcp_dir = adopt_dirs.mcp_configs();
+    let adopt_accounts = Arc::new(droppen_accounts::store::AccountsStore::new(registry.host.paths.clone(), logins()));
+    let adopt_quota = Arc::new(droppen_accounts::quota::QuotaCache::new(registry.host.paths.clone(), logins()));
+    let adopt_registry = InjectionRegistry::new(
+        registry.host.paths.clone(),
+        &adopt_dirs,
+        adopt_accounts,
+        adopt_quota,
+        decoration.clone(),
+    );
+    let adopt_providers = codex_only(&adopt_registry);
+    let sidecars = shim::Sidecars::new(adopt_registry.host.shim_dir.clone(), "adopted-shim");
+    let adopted_cfg = adopt_mcp_dir.join("codex-adopted-shim.json");
+    droppen_base::fsutil::write_private(&adopted_cfg, br#"{"url":"http://127.0.0.1:4321","token":"rha1.adopted"}"#)
+        .expect("write adopted cfg");
+    let stale_cfg = adopt_mcp_dir.join("codex-stale-shim.json");
+    droppen_base::fsutil::write_private(&stale_cfg, b"{}").expect("write stale cfg");
+    let cli_pid = {
+        let permit = adopt_providers.gate().permit().await;
+        droppen_provider::testing::shims_run_as(tests::SHIMS);
+        let link = shim::spawn_via_shim(shim::Spawn {
+            permit: &permit,
+            sidecars: &sidecars,
+            program: "codex",
+            args: &["app-server".to_string()],
+            workdir: Some(&adopt_work),
+            env: &clean_env_bare(),
+            buffer_bytes: None,
+        })
+        .await
+        .expect("spawn detached codex");
+        link.claude_pid()
+        // `link` and `permit` drop here, simulating a server that exited while
+        // the shim+codex process stayed alive.
+    };
+    adopt_registry.host.journal.add(runs::RunRecord {
+        run_id: "adopted-run".into(),
+        source: Source::Codex,
+        session_id: ADOPTED_ID.into(),
+        cwd: Some(adopt_work.to_string_lossy().into()),
+        cli_pid,
+        started_at: iso8601(SystemTime::now()),
+        pid_token: procs::start_token(cli_pid),
+        resident: false,
+        shim: Some("adopted-shim".into()),
+        payload: CodexRun {
+            codex: Some(State::default()),
+            ..CodexRun::default()
+        },
+    });
+    let report = adopt_providers.adopt_all().await;
+    assert_eq!(report.recovered, 1, "detached codex app-server must be re-attached");
+    assert!(adopted_cfg.exists(), "orphan sweep must preserve re-attached live run's config");
+    assert!(!stale_cfg.exists(), "orphan sweep must delete unreferenced config");
+    retire_all(codex(&adopt_providers), &[ADOPTED_ID]).await;
+    assert!(!adopted_cfg.exists(), "retiring the adopted run deletes its config");
 }

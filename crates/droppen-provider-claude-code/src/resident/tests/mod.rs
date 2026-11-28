@@ -10,6 +10,7 @@ use super::test_harness::*;
 use background_and_recovery::{a_settings_change, die_when_released, history_with_an_orphan_task, long_ago};
 use std::path::Path;
 
+use droppen_base::process_env::Env;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 
@@ -1208,4 +1209,213 @@ done
     let error = harness.injection().expect("a run").error.0.expect("a reason");
     assert_eq!(error, "API Error: 400 maximum context length is 1048576 tokens");
     assert!(!error.contains("with success"), "{error}");
+}
+
+// ------------------------------------------------------ MCP config lifecycle
+
+struct FakeMcpDecoration;
+
+impl droppen_provider::SpawnDecoration for FakeMcpDecoration {
+    fn decorate<'a>(
+        &'a self,
+        _source: Source,
+        _id: &'a str,
+        _env: &'a mut droppen_base::process_env::Env,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
+    fn mcp_servers<'a>(
+        &'a self,
+        _source: Source,
+        id: &'a str,
+    ) -> BoxFuture<'a, Vec<droppen_provider::StdioMcpServer>> {
+        let id = id.to_string();
+        Box::pin(async move {
+            vec![droppen_provider::StdioMcpServer {
+                name: "droppen-agents".to_string(),
+                command: PathBuf::from("/usr/local/bin/droppen"),
+                args: vec!["mcp-agents".to_string()],
+                env: vec![
+                    (droppen_base::process_env::AGENTS_URL_ENV.to_string(), "http://127.0.0.1:4321".to_string()),
+                    (droppen_base::process_env::AGENTS_TOKEN_ENV.to_string(), format!("rha1.claude-{id}")),
+                ],
+            }]
+        })
+    }
+}
+
+fn mcp_config_files(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Claude's per-resident `0600` `--mcp-config` file is keyed by shim id and
+/// cleaned up across every exit path: settings respawn (`relink` removes the
+/// old shim's file while keeping the new one), resident exit (`Driver::finish`),
+/// spawn error (`deliver` failure), and session archive.
+#[tokio::test]
+async fn claude_mcp_config_is_cleaned_up_on_respawn_exit_spawn_error_and_archive() {
+    use droppen_instance::instance::InstanceDirs;
+    use droppen_instance::paths::Paths;
+
+    const SESS: &str = "88888888-8888-4888-8888-888888888888";
+    const FAIL_SESS: &str = "99999999-9999-4999-8999-999999999999";
+    const ARCHIVE_SESS: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+    let home = tempfile::tempdir().expect("tempdir");
+    let paths = Arc::new(Paths::new(home.path().to_path_buf()));
+    let dirs = InstanceDirs::new(&paths.data_dir(), droppen_instance::instance::DEFAULT_INSTANCE).expect("instance");
+    dirs.create().expect("dirs");
+    let mcp_dir = dirs.mcp_configs();
+    let decoration: Arc<dyn droppen_provider::SpawnDecoration> = Arc::new(FakeMcpDecoration);
+    let host = droppen_provider::testing::host(
+        paths.clone(),
+        &dirs,
+        Arc::new(droppen_accounts::store::AccountsStore::new(paths.clone(), logins())),
+        Arc::new(droppen_accounts::quota::QuotaCache::new(paths.clone(), logins())),
+        Duration::from_secs(600),
+        Duration::from_millis(120),
+        Duration::from_secs(60),
+    );
+    let claude_runs = ClaudeCodeRuns::new(host.clone(), &dirs, decoration.clone());
+    let injections = droppen_provider::testing::injection_registry_on(host, dirs, decoration);
+    let providers = droppen_provider::ProviderRegistry::new(injections.clone(), |providers, injections| {
+        providers.register(Arc::new(ClaudeCode::on(claude_runs.clone(), injections)));
+    });
+    let gate = providers.gate();
+
+    let bin = home.path().join("bin");
+    let spawns = home.path().join("spawns.txt");
+    let after = home.path().join("after.log");
+    std::fs::create_dir_all(&bin).expect("bin");
+    write_claude(&bin, &replacement_claude(SESS, FORKED));
+
+    // 1. Spawn error (no `claude` on PATH): config file is removed immediately.
+    let mut bad_recipe = recipe(&bin, &spawns, &after, Fingerprint::default());
+    bad_recipe.env.insert("PATH".into(), home.path().join("empty-bin").to_string_lossy().into_owned());
+    let err = claude_runs
+        .deliver(gate, FAIL_SESS, "hello", Vec::new(), Vec::new(), bad_recipe, None)
+        .await;
+    assert!(err.is_err(), "missing claude binary must fail deliver");
+    assert!(
+        mcp_config_files(&mcp_dir).is_empty(),
+        "failed spawn must leave no orphaned MCP config: {:?}",
+        mcp_config_files(&mcp_dir)
+    );
+
+    // 2. Live spawn creates `claude-<shim>.json` (0600) and passes it on argv.
+    claude_runs
+        .deliver(gate, SESS, "first", Vec::new(), Vec::new(), recipe(&bin, &spawns, &after, Fingerprint::default()), None)
+        .await
+        .expect("start resident");
+    until("first resident idle", || {
+        claude_runs
+            .residents
+            .lock()
+            .unwrap()
+            .get(SESS)
+            .is_some_and(|h| h.state().phase == Phase::Idle)
+    })
+    .await;
+    let first_files = mcp_config_files(&mcp_dir);
+    assert_eq!(first_files.len(), 1, "expected 1 config file: {first_files:?}");
+    let first_file = first_files[0].clone();
+    assert!(first_file.starts_with("claude-") && first_file.ends_with(".json"), "{first_file}");
+    assert_ne!(first_file, format!("claude-{SESS}.json"), "must be keyed by shim id, not session id");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(mcp_dir.join(&first_file)).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    // 3. Settings respawn (`relink`) removes the old shim's file and writes a new one.
+    let other_model = Fingerprint {
+        model: Some("another-model".into()),
+        ..Fingerprint::default()
+    };
+    claude_runs
+        .deliver(gate, SESS, "second", Vec::new(), Vec::new(), recipe(&bin, &spawns, &after, other_model), None)
+        .await
+        .expect("respawn resident");
+    until("second message delivered and idle", || {
+        std::fs::read_to_string(&after).unwrap_or_default().contains("second")
+            && claude_runs
+                .residents
+                .lock()
+                .unwrap()
+                .get(SESS)
+                .is_some_and(|h| h.state().phase == Phase::Idle)
+    })
+    .await;
+    let second_files = mcp_config_files(&mcp_dir);
+    assert_eq!(second_files.len(), 1, "old config must be cleaned up on relink: {second_files:?}");
+    assert_ne!(second_files[0], first_file, "replacement resident must use its own shim-keyed config");
+
+    // 4. Killing the idle resident triggers `Driver::finish`, which deletes its config file.
+    let pid = claude_runs
+        .host
+        .journal
+        .read()
+        .into_iter()
+        .find(|r| r.session_id == SESS)
+        .expect("record")
+        .cli_pid;
+    droppen_provider::testing::signal(pid, libc::SIGKILL);
+    until("driver finished and removed MCP config", || {
+        !claude_runs.residents.lock().unwrap().contains_key(SESS) && mcp_config_files(&mcp_dir).is_empty()
+    })
+    .await;
+
+    // 5. Archiving an idle resident cleans up both its shim-keyed config and any legacy session-id config.
+    write_claude(&bin, &replacement_claude(ARCHIVE_SESS, FORKED));
+    claude_runs
+        .deliver(
+            gate,
+            ARCHIVE_SESS,
+            "before archive",
+            Vec::new(),
+            Vec::new(),
+            recipe(&bin, &spawns, &after, Fingerprint::default()),
+            None,
+        )
+        .await
+        .expect("start resident to archive");
+    until("archive resident idle", || {
+        claude_runs
+            .residents
+            .lock()
+            .unwrap()
+            .get(ARCHIVE_SESS)
+            .is_some_and(|h| h.state().phase == Phase::Idle)
+    })
+    .await;
+    let legacy = mcp_dir.join(format!("claude-{ARCHIVE_SESS}.json"));
+    droppen_base::fsutil::write_private(&legacy, b"{}").expect("legacy file");
+    assert_eq!(mcp_config_files(&mcp_dir).len(), 2);
+
+    providers
+        .provider::<ClaudeCode>()
+        .expect("ClaudeCode")
+        .run()
+        .archive(gate, ARCHIVE_SESS)
+        .await
+        .expect("archive");
+    assert!(
+        mcp_config_files(&mcp_dir).is_empty(),
+        "archive must remove both shim-keyed and legacy MCP configs: {:?}",
+        mcp_config_files(&mcp_dir)
+    );
+
+    // Clean up the still-idle archived resident process before tempdir drops.
+    for record in claude_runs.host.journal.read() {
+        unsafe { libc::kill(-(record.cli_pid as libc::pid_t), libc::SIGKILL) };
+    }
 }

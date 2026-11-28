@@ -9,6 +9,7 @@
 use super::*;
 use std::collections::HashMap;
 use std::path::Path;
+use droppen_base::process_env::Env;
 use droppen_instance::instance::InstanceDirs;
 use droppen_instance::paths::Paths;
 

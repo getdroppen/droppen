@@ -22,6 +22,6 @@ pub use routes::{
     AGENTS_TRANSCRIPT_PATH,
 };
 pub use token::{
-    caller, is_agents_request, mcp_server_for, mint_token_with_secret, verify_token_with_secret,
-    AgentsCaller, MCP_SERVER_NAME,
+    caller, is_agents_request, mcp_server_for, mint_token_with_secret, pending_mcp_server_for,
+    verify_token_with_secret, AgentsCaller, MCP_SERVER_NAME,
 };
