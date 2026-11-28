@@ -67,6 +67,7 @@ startBadgeSync();
 // stays as blank as it is before any script runs; when it does not come, the
 // page reloads once, then says so (`app/page-load.tsx`).
 const hubPages = () => import("./hub-pages");
+const siteApp = () => import("./features/landing/site-app");
 const returning = !isCloud() && isReturnPath(location.pathname);
 if (!isCloud() && !returning) {
   // A page opened signed in from the device itself trades its token before
@@ -123,7 +124,7 @@ if (returning) {
       // Not one of the public pages: the app's, on the app host.
       if (!frontPage(location.pathname)) return location.replace(appUrl(here));
       notInstallable();
-      return loadPage(root, hubPages, ({ SiteApp }) =>
+      return loadPage(root, siteApp, ({ SiteApp }) =>
         root.render(
           <StrictMode>
             <AppErrorBoundary>

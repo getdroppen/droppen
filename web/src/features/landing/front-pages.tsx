@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
-import { SIGNUP_CONFIG, type HubApi } from "@/lib/hub/api";
+import { SIGNUP_CONFIG } from "@/lib/hub/api-views";
+import type { WaitlistApi } from "@/lib/hub/waitlist";
 import type { FrontPage } from "./route";
 
 const LandingPage = lazy(() => import("@/features/landing/landing"));
@@ -9,7 +10,7 @@ const PrivacyPage = lazy(() => import("@/features/landing/privacy"));
 const SecurityPage = lazy(() => import("@/features/landing/security/security"));
 const TermsPage = lazy(() => import("@/features/landing/terms/terms"));
 
-export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boolean; api: HubApi }) {
+export function FrontPageView({ page, signedIn, api }: { page: FrontPage; signedIn: boolean; api: WaitlistApi }) {
   return (
     <Suspense fallback={<div className="h-full w-full bg-bg" />}>
       {page === "download" ? (

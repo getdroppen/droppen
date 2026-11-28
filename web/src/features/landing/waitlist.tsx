@@ -4,7 +4,8 @@ import { CheckIcon, CircleNotchIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { CapsLabel } from "@/components/ui/caps-label";
 import { Input } from "@/components/ui/input";
-import { type HubApi, HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
+import { HubApiError, type SignupMode, type WaitlistPlan } from "@/lib/hub/api-views";
+import type { WaitlistApi } from "@/lib/hub/waitlist";
 import { cn } from "@/lib/cn";
 import { PRIVACY_EMAIL, SUBHEAD } from "./page-kit";
 import { SIGNUP_COPY } from "./signup-copy";
@@ -34,7 +35,7 @@ export function waitlistProblem(error: unknown): { reason: WaitlistProblem; retr
 }
 
 export async function submitWaitlist(
-  api: Pick<HubApi, "joinWaitlist">,
+  api: WaitlistApi,
   input: { email: string; plan: WaitlistPlan; locale?: string },
 ): Promise<WaitlistState> {
   if (!looksLikeEmail(input.email)) return { kind: "error", reason: "email" };
@@ -123,7 +124,7 @@ export function WaitlistForm({
   initialState,
   signup = "open",
 }: {
-  api: Pick<HubApi, "joinWaitlist">;
+  api: WaitlistApi;
   plan: WaitlistPlan;
   onPlan?: (plan: WaitlistPlan) => void;
   initialState?: WaitlistState;

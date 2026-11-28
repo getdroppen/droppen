@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { CheckIcon } from "@phosphor-icons/react";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { type HubApi, type SignupMode, type WaitlistPlan } from "@/lib/hub/api";
+import { type SignupMode, type WaitlistPlan } from "@/lib/hub/api-views";
+import type { WaitlistApi } from "@/lib/hub/waitlist";
 import { cn } from "@/lib/cn";
 import "./copy";
 import { DocumentHead, FaqAccordion, PublicLayout, RecommendedBadge, Section, SectionHead, SUBHEAD, usePageMeta } from "./page-kit";
@@ -159,7 +160,7 @@ function Waitlist({
   state,
   signup,
 }: {
-  api: Pick<HubApi, "joinWaitlist">;
+  api: WaitlistApi;
   plan: WaitlistPlan;
   onPlan?: (plan: WaitlistPlan) => void;
   state?: WaitlistState;
@@ -248,7 +249,7 @@ export default function PricingPage({
   signup = "open",
 }: {
   signedIn?: boolean;
-  api: Pick<HubApi, "joinWaitlist">;
+  api: WaitlistApi;
   waitlist?: WaitlistState;
   signup?: SignupMode;
 }) {

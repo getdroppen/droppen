@@ -2,7 +2,7 @@
 // static import that pulls it back in fails the build, and a shell a hub
 // serves starts fetching the cloud app's chunks as it loads.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -186,5 +186,17 @@ test("a module only cloud mode loads that the guard does not name fails the buil
     }),
     (error: Error) => /1 module\(s\) only a page a hub serves loads are not named in CLOUD_CODE \(build\/local-boot\.ts\): src\/features\/elsewhere\/thing\.ts\./.test(error.message),
   );
+});
+
+test("local settings and the public site stay decoupled from cloud device and E2E code", () => {
+  const webRoot = realpathSync(new URL("..", import.meta.url));
+  const acpTab = readFileSync(join(webRoot, "src/features/settings/agents/acp-tab.tsx"), "utf8");
+  assert.doesNotMatch(acpTab, /from\s+["']@\/features\/cloud\//, "local settings must not pull features/cloud into settings-view");
+
+  const siteApp = readFileSync(join(webRoot, "src/features/landing/site-app.tsx"), "utf8");
+  assert.doesNotMatch(siteApp, /from\s+["']@\/lib\/hub\/api["']/, "SiteApp must not pull the full HubApi / E2E stack");
+
+  const apiViews = readFileSync(join(webRoot, "src/lib/hub/api-views.ts"), "utf8");
+  assert.doesNotMatch(apiViews, /from\s+["']@\/lib\/e2e["']/, "api-views should import bytes directly, not the full E2E barrel");
 });
 

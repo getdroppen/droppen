@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { RowMenu, type RowMenuItem } from "@/features/cloud/device-row";
+import { RowMenu, type RowMenuItem } from "@/components/ui/row-menu";
 import { acpAgentsKey, splitArgs, useAcpAgents, useAcpCheck, type AcpAgentInfo } from "@/features/sessions/acp-agent";
 import { ACP_GLYPH, acpAgentGlyph } from "@/features/sessions/acp-agent-icons";
 import { applyPreset, CUSTOM_PRESET, newAgentId, type AcpAgentDraft, type AcpAgentPreset } from "@/features/sessions/acp-agent-presets";
