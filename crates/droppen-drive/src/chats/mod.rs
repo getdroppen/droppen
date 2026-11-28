@@ -429,6 +429,10 @@ pub async fn new_chat(State(state): State<ChatsState>, ApiJson(body): ApiJson<Ch
     let id = state.drive.providers.start_new_session(source, &cwd.to_string_lossy(), text, &options)
         .await
         .map_err(|error| ApiError::bad_request(error.client_message("cannot create chat")))?;
+    let sent_uploads: Vec<String> = options.images.iter().chain(options.files.iter()).cloned().collect();
+    if !sent_uploads.is_empty() {
+        droppen_files::FileRoots::of(&state.paths).mark_uploads_sent(&sent_uploads).await;
+    }
     // The chat list has to show the new session before its first transcript
     // line lands.
     state.global.request_refresh(None);

@@ -217,6 +217,10 @@ async fn start_session(state: DriveState, body: NewSession, qid: Option<String>)
     let id = drive.providers.start_new_session(body.source, &resolved.to_string_lossy(), &body.text, &options)
         .await
         .map_err(|error| spawn_refusal(error, "cannot start session"))?;
+    let sent_uploads: Vec<String> = options.images.iter().chain(options.files.iter()).cloned().collect();
+    if !sent_uploads.is_empty() {
+        droppen_files::FileRoots::of(&drive.paths).mark_uploads_sent(&sent_uploads).await;
+    }
     // The mode this session started under is its own from now on. A pick in
     // another session moves only the source default, which an existing session
     // never reads; recording it here keeps that true even for a client that
@@ -398,6 +402,10 @@ async fn deliver_message(
                 .answer_question(source, &id, &request_id, Reply::Answer(answer), by.clone())
                 .await
             {
+                let sent_uploads: Vec<String> = images.iter().chain(attachments.iter()).cloned().collect();
+                if !sent_uploads.is_empty() {
+                    droppen_files::FileRoots::of(&drive.paths).mark_uploads_sent(&sent_uploads).await;
+                }
                 if let Some(qid) = &qid {
                     drive.injections.host.note_receipt(source, &id, qid, ReceiptStatus::Sent);
                 }
@@ -429,6 +437,10 @@ async fn deliver_message(
     let sent = drive.providers.send_to_session(source, &id, summary.cwd.as_ref().map(String::as_str), &body.text, &options)
         .await
         .map_err(|error| spawn_refusal(error, "failed to start the CLI"))?;
+    let sent_uploads: Vec<String> = options.images.iter().chain(options.files.iter()).cloned().collect();
+    if !sent_uploads.is_empty() {
+        droppen_files::FileRoots::of(&drive.paths).mark_uploads_sent(&sent_uploads).await;
+    }
     // A session that had no mode of its own gets the one this message ran
     // with — unless that mode is dangerous, which a message may carry from a
     // stale cache or an older build and must never turn into the session's

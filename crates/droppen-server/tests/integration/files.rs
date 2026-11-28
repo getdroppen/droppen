@@ -362,10 +362,26 @@ async fn the_sweep_drops_stale_upload_directories_and_keeps_fresh_ones() {
         .set_times(std::fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago))
         .expect("age the directory");
 
-    droppen_files::FileRoots::of(&server.paths).sweep_uploads().await;
+    // A third upload that was marked sent survives even when aged past the TTL.
+    let (status, body) = post_file(&server, "/api/uploads", "sent.txt", b"sent").await;
+    assert_eq!(status, 200, "{body}");
+    let sent_path = serde_json::from_str::<Value>(&body).expect("json")["path"]
+        .as_str()
+        .expect("path")
+        .to_string();
+    let sent_dir = Path::new(&sent_path).parent().expect("uuid directory").to_path_buf();
+    let roots = droppen_files::FileRoots::of(&server.paths);
+    roots.mark_uploads_sent(&[sent_path]).await;
+    std::fs::File::open(&sent_dir)
+        .expect("open sent directory")
+        .set_times(std::fs::FileTimes::new().set_accessed(long_ago).set_modified(long_ago))
+        .expect("age sent directory");
 
-    assert!(!stale.exists(), "an upload older than the TTL should have been swept");
+    roots.sweep_uploads().await;
+
+    assert!(!stale.exists(), "an unsent upload older than the TTL should have been swept");
     assert!(fresh.exists(), "a recent upload must survive the sweep");
+    assert!(sent_dir.exists(), "a sent upload must survive the sweep even when old");
 
     server.stop().await;
 }

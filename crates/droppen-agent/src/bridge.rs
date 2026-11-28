@@ -596,7 +596,7 @@ fn decoded_by_segment(route: &str) -> String {
 }
 
 /// The routes a `blob` stream (low priority, for files and pictures) may reach.
-const BLOB_ROUTES: [&str; 3] = ["/api/fs/download", "/api/fs/upload", "/api/media/github"];
+const BLOB_ROUTES: [&str; 4] = ["/api/fs/download", "/api/fs/upload", "/api/media/github", "/api/uploads"];
 
 /// Whether `path` may be reached by a stream of `class`.
 pub fn allowed(class: StreamClass, path: &str) -> bool {
@@ -1182,6 +1182,7 @@ mod tests {
         assert!(allowed(StreamClass::Blob, "/api/fs/download?path=%2Ftmp%2Fa.png&inline=true"));
         assert!(allowed(StreamClass::Blob, "/api/media/github?url=x"));
         assert!(allowed(StreamClass::Blob, "/api/fs/upload"));
+        assert!(allowed(StreamClass::Blob, "/api/uploads"));
         assert!(!allowed(StreamClass::Blob, "/api/sessions"));
         assert!(allowed(StreamClass::Rpc, "/rh/machine-key"));
         assert!(!allowed(StreamClass::Blob, "/rh/machine-key"));

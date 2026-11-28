@@ -105,8 +105,13 @@ export function useComposerAttachments(initial: () => ComposerAttachment[] = () 
       const form = new FormData();
       form.append("file", entry.file);
       // Multipart: outside the typed client, so the bearer token and the 401
-      // handling its middleware does are both repeated here by hand.
-      const res = await runtime.transport.fetch(new Request("/api/uploads", { method: "POST", headers: authHeader(), body: form }));
+      // handling its middleware does are both repeated here by hand. Sent on
+      // the low-priority `blob` stream class so large uploads do not starve
+      // RPC or terminal traffic over bridged channels.
+      const res = await runtime.transport.fetch(
+        new Request("/api/uploads", { method: "POST", headers: authHeader(), body: form }),
+        { class: "blob" },
+      );
       if (res.status === 401) noteUnauthorized("/api/uploads");
       const body = (await res.json()) as { path?: string; name?: string; isImage?: boolean; error?: string };
       if (!res.ok || !body.path) throw new Error(body.error ?? "upload failed");

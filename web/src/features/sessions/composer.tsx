@@ -9,7 +9,15 @@ import { useTranslation } from "react-i18next";
 import { ApiError, errorText, EXTERNAL_SESSION } from "@/api/errors";
 import { useMachineStateIn, useShowingCopy } from "@/features/machines/copy-mode";
 import { ChecklistChip, ComposerChoiceChips, ComposerQuota, ContextRing, useComposerChoice } from "@/features/sessions/composer-controls";
-import { attachmentPaths, ComposerBox, useComposerAttachments, useSendHint } from "@/features/sessions/composer-box";
+import {
+  attachmentPaths,
+  ComposerBox,
+  restoredAttachments,
+  storedAttachments,
+  useComposerAttachments,
+  useSendHint,
+  type ComposerAttachment,
+} from "@/features/sessions/composer-box";
 import { claimSessionDraft, readSessionDraftSnapshot, sessionDraftKey, subscribeSessionDraft, writeSessionDraft } from "@/features/sessions/session-draft";
 import type { FeedState } from "@/features/sessions/session-feed-pool";
 import {
@@ -61,9 +69,14 @@ interface SendRequest {
   message: OutgoingMessage;
   /**
    * Typed into the composer and sent at once, rather than taken off the queue:
-   * a refusal puts the text back where it was typed, when that is still free.
+   * a refusal puts the text and attachments back where they were typed, when
+   * the composer is still free.
    */
   typed?: boolean;
+  /** The exact raw text the user typed before placeholder substitution. */
+  typedText?: string;
+  /** Attachments taken from the composer for this immediate send, held alive until settled. */
+  attachments?: ComposerAttachment[];
 }
 
 /**
@@ -160,6 +173,16 @@ export function Composer({
     }
   });
   const [text, setTextState] = useState(initialDraft.text);
+  const textRef = useRef(text);
+  textRef.current = text;
+  // Both CLIs' instant chats can read what a message attaches. Restore any
+  // ready attachments that survived a reload alongside the draft text.
+  const attachmentState = useComposerAttachments(() => restoredAttachments(initialDraft.attachments ?? []));
+  const attachments = attachmentState.attachments;
+  const readyAttachments = useMemo(() => storedAttachments(attachments), [attachments]);
+  const readyAttachmentsKey = JSON.stringify(readyAttachments);
+  const readyAttachmentsRef = useRef(readyAttachments);
+  readyAttachmentsRef.current = readyAttachments;
   // The machine's offline copy is read-only: nothing is queued for later
   // (architecture doc §4: no offline queue), so the composer is shut, not deferred.
   const readOnlyCopy = useShowingCopy();
@@ -172,13 +195,27 @@ export function Composer({
   const otherDevice = useInfoOf(useMachine()).readOnly === true;
   useEffect(() => {
     return subscribeSessionDraft(draftKey, (snapshot) => {
+      textRef.current = snapshot.text;
       setTextState(snapshot.text);
     });
   }, [draftKey]);
+  const mountedDraftRef = useRef(false);
+  useEffect(() => {
+    if (!mountedDraftRef.current) {
+      mountedDraftRef.current = true;
+      return;
+    }
+    try {
+      writeSessionDraft(localStorage, draftKey, textRef.current, readyAttachmentsRef.current);
+    } catch {
+      // Accessing localStorage itself can be blocked; the in-memory draft still works.
+    }
+  }, [draftKey, readyAttachmentsKey]);
   const setText = (value: string) => {
+    textRef.current = value;
     setTextState(value);
     try {
-      writeSessionDraft(localStorage, draftKey, value);
+      writeSessionDraft(localStorage, draftKey, value, readyAttachmentsRef.current);
     } catch {
       // Accessing localStorage itself can be blocked; the in-memory draft still works.
     }
@@ -209,11 +246,6 @@ export function Composer({
   );
 
   const [queue, setQueue, queueRef] = usePersistedQueue(session);
-  // Both CLIs' instant chats can read what a message attaches: claude runs
-  // its chats with Read as the only tool, and codex takes images as input and
-  // files by path. There is no chat left to hide the attach controls from.
-  const attachmentState = useComposerAttachments();
-  const attachments = attachmentState.attachments;
   // Enter pressed while an upload is still in flight: send as soon as it lands.
   const [sendQueued, setSendQueued] = useState(false);
 
@@ -289,30 +321,41 @@ export function Composer({
       // now rather than at the next frame, so the card settles, the notice goes,
       // and the message shows in the queue it actually joined.
       if (outcome === "queued instead") onQueueChanged();
+      request.attachments?.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
       setQueue(afterSend(queueRef.current, request.message.clientMessageId, "accepted"));
       // Transcript and injection state arrive over the session websocket.
     },
     onError: (error, request, receiptId) => {
       if (receiptId) delivery.change({ type: "failed", id: receiptId });
       const outcome = error instanceof SendUnknown ? "unknown" : "refused";
-      // Refused means nothing was enqueued, so a typed message goes back where
-      // it was typed. Unknown means it may have been, so it stays in the outbox
-      // — never in the composer, where sending it again would be a new message.
-      const restored = outcome === "refused" && request.typed === true && restoreTyped(request.message);
+      // Refused means nothing was enqueued, so a typed message (text and
+      // attachments) goes back where it was typed. Unknown means it may have
+      // been, so it stays in the outbox — never in the composer, where sending
+      // it again would be a new message.
+      const restored = outcome === "refused" && request.typed === true && restoreTyped(request);
+      if (!restored) {
+        request.attachments?.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
+      }
       setQueue(afterSend(queueRef.current, request.message.clientMessageId, outcome, restored));
     },
   });
 
-  // A refused typed message, back into a composer nobody has typed into since.
-  // Text only: attachments live in the outbox entry, which then stays.
-  const restoreTyped = (message: OutgoingMessage): boolean => {
-    if (message.images?.length || message.files?.length) return false;
+  // A refused typed message (including any attachments), back into a composer
+  // nobody has typed or attached into since.
+  const restoreTyped = (request: SendRequest): boolean => {
     try {
-      if (readSessionDraftSnapshot(localStorage, draftKey).text !== "") return false;
+      const currentDraft = readSessionDraftSnapshot(localStorage, draftKey);
+      if (currentDraft.text !== "" || (currentDraft.attachments?.length ?? 0) > 0) return false;
     } catch {
       return false;
     }
-    setText(message.text);
+    if (attachments.length > 0) return false;
+    const toRestore = request.attachments ?? [];
+    if (toRestore.length > 0) {
+      attachmentState.putBack(toRestore);
+      readyAttachmentsRef.current = storedAttachments(toRestore);
+    }
+    setText(request.typedText ?? request.message.text);
     return true;
   };
 
@@ -528,8 +571,17 @@ export function Composer({
     }
     setSendQueued(false);
 
-    const { images, files } = attachmentPaths(attachments);
-    attachmentState.clear();
+    const submittedAttachments = [...attachments];
+    const { images, files } = attachmentPaths(submittedAttachments);
+    const immediate = canSend && queue.length === 0;
+    if (immediate) {
+      // Keep preview object URLs alive while the request is in flight so a
+      // refusal can put the attachments straight back into the composer.
+      attachmentState.take(submittedAttachments.map((a) => a.key));
+    } else {
+      attachmentState.clear();
+    }
+    readyAttachmentsRef.current = [];
     // Named here, once: every retry of this message is the same message.
     const out: OutgoingMessage = {
       clientMessageId: newClientMessageId(),
@@ -541,12 +593,12 @@ export function Composer({
     // must find it in one place, not in the outbox *and* the composer.
     setText("");
     // Busy, or already queued messages waiting: preserve order by appending.
-    if (!canSend || queue.length > 0) {
+    if (!immediate) {
       setQueue([...queueRef.current, out]);
       return;
     }
     setQueue([...queueRef.current, { ...out, state: "sending" }]);
-    send.mutate({ message: out, typed: true });
+    send.mutate({ message: out, typed: true, typedText: submittedText, attachments: submittedAttachments });
   };
 
   useEffect(() => {
@@ -672,9 +724,9 @@ export function Composer({
         </div>
       )}
       <div className="px-3 pt-0 pb-3 max-md:px-2 max-md:pb-2">
-        {chat && source === "claude" && (
+        {chat && (source === "claude" || source === "codex") && (
           <p data-attachment-hint="" className="mb-1 px-2.5 font-mono text-2xs text-faint">
-            {t("claude chats take PNG/JPEG/GIF/WebP images up to 5 MB and UTF-8 text files up to 100 KB — other files are refused")}
+            {t("instant chats take PNG/JPEG/GIF/WebP images up to 5 MB and UTF-8 text files up to 100 KB — other files are refused")}
           </p>
         )}
         <ComposerBox
