@@ -94,8 +94,12 @@ use crate::selfupdate;
 use crate::selfupdate::store::{BinStore, Fallback};
 use gotcha::GotchaError;
 
-/// The first wait after a failure.
-const MIN_BACKOFF: Duration = Duration::from_secs(2);
+/// The default first wait after a failure, when [`BACKOFF_ENV`] is unset.
+const MIN_BACKOFF: Duration = Duration::from_secs(1);
+
+/// Optional override for the supervisor's initial crash-restart backoff, in
+/// milliseconds (clamped to [`MAX_BACKOFF`]).
+const BACKOFF_ENV: &str = "DROPPEN_SUPERVISOR_BACKOFF_MS";
 
 /// The longest wait between restarts, however badly things are going.
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
@@ -160,7 +164,7 @@ pub fn run(child_args: Vec<String>) -> Result<i32, String> {
         .ok()
         .map(|dirs| dirs.lock_file());
 
-    let mut ladder = Ladder::new();
+    let mut ladder = Ladder::with_min_backoff(initial_backoff());
 
     loop {
         let exe = store.resolve(&baked);
@@ -255,6 +259,19 @@ enum Next {
     Retry { wait: Duration, fast_failures: u32, step_down: bool },
 }
 
+/// Read the initial crash-restart backoff from [`BACKOFF_ENV`], falling back to
+/// [`MIN_BACKOFF`] when unset, empty, zero, or unparseable.
+fn initial_backoff() -> Duration {
+    parse_backoff(std::env::var(BACKOFF_ENV).ok().as_deref())
+}
+
+fn parse_backoff(raw: Option<&str>) -> Duration {
+    raw.and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|&ms| ms > 0)
+        .map(|ms| Duration::from_millis(ms).min(MAX_BACKOFF))
+        .unwrap_or(MIN_BACKOFF)
+}
+
 /// The rollback ladder's memory between runs: how long the next wait is, and
 /// how many fast failures in a row the current binary has had.
 ///
@@ -263,14 +280,22 @@ enum Next {
 /// tested as one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Ladder {
+    min_backoff: Duration,
     backoff: Duration,
     fast_failures: u32,
 }
 
 impl Ladder {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::with_min_backoff(MIN_BACKOFF)
+    }
+
+    fn with_min_backoff(min_backoff: Duration) -> Self {
+        let min_backoff = min_backoff.clamp(Duration::from_millis(1), MAX_BACKOFF);
         Self {
-            backoff: MIN_BACKOFF,
+            min_backoff,
+            backoff: min_backoff,
             fast_failures: 0,
         }
     }
@@ -284,7 +309,7 @@ impl Ladder {
             Outcome::NotStarted => return self.failed(true),
         };
         if ran >= HEALTHY_AFTER {
-            self.backoff = MIN_BACKOFF;
+            self.backoff = self.min_backoff;
             self.fast_failures = 0;
         }
         if code == 0 {
@@ -617,7 +642,7 @@ mod tests {
             }
             assert_eq!(ladder.fast_failures, 0, "attempt {attempt}: nothing counted against the binary");
         }
-        assert_eq!(&waits[..5], &[2, 4, 8, 16, 30].map(Duration::from_secs));
+        assert_eq!(&waits[..6], &[1, 2, 4, 8, 16, 30].map(Duration::from_secs));
         assert!(waits.iter().all(|wait| *wait <= MAX_BACKOFF), "{waits:?}");
 
         // And when the holder finally exits, the next run takes over and is
@@ -633,7 +658,7 @@ mod tests {
         assert_eq!(
             fail(&mut ladder),
             Next::Retry {
-                wait: Duration::from_secs(2),
+                wait: Duration::from_secs(1),
                 fast_failures: 1,
                 step_down: false
             }
@@ -641,7 +666,7 @@ mod tests {
         assert_eq!(
             fail(&mut ladder),
             Next::Retry {
-                wait: Duration::from_secs(4),
+                wait: Duration::from_secs(2),
                 fast_failures: 2,
                 step_down: false
             }
@@ -649,7 +674,7 @@ mod tests {
         assert_eq!(
             fail(&mut ladder),
             Next::Retry {
-                wait: Duration::from_secs(8),
+                wait: Duration::from_secs(4),
                 fast_failures: 3,
                 step_down: true
             }
@@ -659,7 +684,7 @@ mod tests {
         assert_eq!(
             fail(&mut ladder),
             Next::Retry {
-                wait: Duration::from_secs(16),
+                wait: Duration::from_secs(8),
                 fast_failures: 1,
                 step_down: false
             }
@@ -703,7 +728,7 @@ mod tests {
         ladder.after(exited(1, QUICK));
         assert_eq!(ladder.after(exited(0, QUICK)), Next::Restart, "a self-upgrade restarts at once");
         assert_eq!(ladder.fast_failures, 0);
-        assert_eq!(ladder.backoff, Duration::from_secs(8), "but a quick clean exit does not shorten the wait");
+        assert_eq!(ladder.backoff, Duration::from_secs(4), "but a quick clean exit does not shorten the wait");
 
         // A crash after a healthy run is not a fast one, and starts the wait over.
         assert_eq!(
@@ -719,6 +744,42 @@ mod tests {
             ladder.after(exited(128 + libc::SIGKILL, QUICK)),
             Next::Retry { fast_failures: 1, .. }
         ));
+    }
+
+    #[test]
+    fn initial_backoff_honors_env_override_and_resets_to_it() {
+        assert_eq!(parse_backoff(None), MIN_BACKOFF);
+        assert_eq!(parse_backoff(Some("")), MIN_BACKOFF);
+        assert_eq!(parse_backoff(Some("0")), MIN_BACKOFF);
+        assert_eq!(parse_backoff(Some("not-a-number")), MIN_BACKOFF);
+        assert_eq!(parse_backoff(Some("200")), Duration::from_millis(200));
+        assert_eq!(parse_backoff(Some("999999")), MAX_BACKOFF);
+
+        let mut ladder = Ladder::with_min_backoff(Duration::from_millis(200));
+        assert_eq!(
+            ladder.after(exited(1, QUICK)),
+            Next::Retry {
+                wait: Duration::from_millis(200),
+                fast_failures: 1,
+                step_down: false
+            }
+        );
+        assert_eq!(
+            ladder.after(exited(1, QUICK)),
+            Next::Retry {
+                wait: Duration::from_millis(400),
+                fast_failures: 2,
+                step_down: false
+            }
+        );
+        assert_eq!(
+            ladder.after(exited(1, HEALTHY_AFTER)),
+            Next::Retry {
+                wait: Duration::from_millis(200),
+                fast_failures: 0,
+                step_down: false
+            }
+        );
     }
 
     #[test]

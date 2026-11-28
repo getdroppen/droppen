@@ -261,6 +261,9 @@ impl Supervisor {
             .env("APP_AUTH__ENABLED", "false")
             .env("APP_SERVER__PORT", "0")
             .env("APP_SERVER__HOST", "127.0.0.1")
+            // Keep crash-recovery restarts snappy in tests; the default ladder
+            // is unit-tested in `droppen-supervisor`.
+            .env("DROPPEN_SUPERVISOR_BACKOFF_MS", "200")
             // The server and every `droppen_*` crate it is made of: a
             // directive's target matches by prefix.
             .env("RUST_LOG", "droppen_server=debug,droppen=debug")
