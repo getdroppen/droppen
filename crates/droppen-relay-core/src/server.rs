@@ -127,6 +127,8 @@ pub struct Server {
     uplink: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
     /// The Hub replayed its revocations since this process started.
     synced: tokio::sync::watch::Sender<bool>,
+    /// Global cap on concurrent WebSocket connections (active + pre-auth).
+    ws_permits: Arc<tokio::sync::Semaphore>,
 }
 
 impl Server {
@@ -134,6 +136,10 @@ impl Server {
         let keys = config.pinned_keys.clone().unwrap_or_default();
         let keep = (config.timing.usage_keep.as_secs_f64() / config.timing.usage_every.as_secs_f64().max(0.001)).ceil() as usize;
         let shutdown = CancellationToken::new();
+        // Allow small pre-auth headroom above `max_conns` so legitimate clients
+        // hitting the authenticated limit still receive a clean `4429` Login
+        // refusal while pre-auth floods stay strictly bounded.
+        let ws_cap = config.max_conns.saturating_add((config.max_conns / 4).clamp(16, 1024));
         Arc::new(Self {
             keys: RwLock::new(keys),
             inner: Mutex::new(Inner::default()),
@@ -148,8 +154,15 @@ impl Server {
             unauth: crate::http::UnauthLimits::default(),
             uplink: Mutex::new(None),
             synced: tokio::sync::watch::channel(false).0,
+            ws_permits: Arc::new(tokio::sync::Semaphore::new(ws_cap)),
             config,
         })
+    }
+
+    /// Acquire a global WebSocket connection slot (covering pre-auth and signed-in
+    /// sockets) before upgrading. Returns `None` when the relay is at capacity.
+    pub fn try_acquire_ws(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.ws_permits.clone().try_acquire_owned().ok()
     }
 
     /// The Hub replayed what this process may have missed (`replayed`).

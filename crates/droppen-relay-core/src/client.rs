@@ -44,6 +44,9 @@ const FRAMES_PER_SEC: u64 = 1000;
 const CONTROL_COST: u64 = 10;
 /// The longest control message (a ticket is well under this).
 const MAX_TEXT: usize = 16 * 1024;
+/// Maximum time a reader may sleep for rate-limit backpressure before cutting
+/// the connection off (prevents multi-minute/hour bucket debt stalls).
+const MAX_RATE_WAIT: Duration = Duration::from_secs(30);
 /// A connection relaying more than this, on average over a window, is logged.
 const SUSTAINED_BYTES_PER_SEC: u64 = 2 * 1024 * 1024;
 const SUSTAINED_WINDOW: Duration = Duration::from_secs(600);
@@ -127,6 +130,13 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
         };
         let Some(Ok(message)) = message else { break };
         last_inbound = Instant::now();
+        // Reject oversized control messages before charging buckets or sleeping.
+        if let Message::Text(ref text) = message {
+            if text.len() > MAX_TEXT {
+                out.close(1009, "control message too large");
+                break;
+            }
+        }
         if let Some((_, _, current)) = &signed {
             let now_rate = current.rate.load(Ordering::Relaxed);
             if now_rate != rate {
@@ -147,21 +157,52 @@ pub async fn connection(server: Arc<Server>, socket: WebSocket) {
                 wait = wait.max(server.charge_account(account, rate, len, now));
             }
         }
+        if wait > MAX_RATE_WAIT {
+            out.close(crate::server::CLOSE_LIMIT, "rate limit exceeded");
+            break;
+        }
         if !wait.is_zero() {
-            tokio::select! {
-                () = tokio::time::sleep(wait) => {}
-                () = server.shutdown.cancelled() => break,
+            let sleep = tokio::time::sleep(wait);
+            tokio::pin!(sleep);
+            let mut keep_waiting = true;
+            while keep_waiting {
+                tokio::select! {
+                    () = &mut sleep => break,
+                    _ = tick.tick() => {
+                        if last_inbound.elapsed() > timing.silence {
+                            out.close(4002, "no heartbeat");
+                            keep_waiting = false;
+                        } else if signed.is_none() && opened.elapsed() > timing.login_timeout {
+                            out.close(crate::server::CLOSE_DENIED, "sign in first");
+                            keep_waiting = false;
+                        } else if signed.is_some() {
+                            if let Err((code, reason)) = server.still_valid(id) {
+                                out.text(&RelayToPeer::Error {
+                                    code: "expired".into(),
+                                    message: reason.into(),
+                                    retry_ms: None,
+                                });
+                                out.close(code, reason);
+                                keep_waiting = false;
+                            } else if out.is_closed() {
+                                keep_waiting = false;
+                            }
+                        } else if out.is_closed() {
+                            keep_waiting = false;
+                        }
+                    }
+                    () = server.shutdown.cancelled() => {
+                        out.close(CLOSE_RESTART, "the relay is restarting");
+                        keep_waiting = false;
+                    }
+                }
+            }
+            if !keep_waiting {
+                break;
             }
         }
         let keep = match message {
-            Message::Text(text) => {
-                if text.len() > MAX_TEXT {
-                    out.close(1009, "control message too large");
-                    false
-                } else {
-                    on_text(&server, id, &out, &nonce, &mut signed, &mut rate, &mut limiter, text.as_str())
-                }
-            }
+            Message::Text(text) => on_text(&server, id, &out, &nonce, &mut signed, &mut rate, &mut limiter, text.as_str()),
             Message::Binary(bytes) => match &signed {
                 Some((role, _, _)) => on_binary(&server, id, &out, *role, &bytes),
                 None => {

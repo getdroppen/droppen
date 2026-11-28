@@ -531,9 +531,9 @@ mod tests {
         let mut stream = channel.open(StreamClass::Rpc, &head.encode().unwrap()).await.ok()?;
         tokio::time::sleep(hold).await;
         if !body.is_empty() {
-            stream.send(&message(Kind::Binary, body)).await.ok()?;
+            let _ = stream.send(&message(Kind::Binary, body)).await;
         }
-        stream.send(&message(Kind::End, &[])).await.ok()?;
+        let _ = stream.send(&message(Kind::End, &[])).await;
         let mut reader = MessageReader::new();
         let (mut status, mut out) = (None, Vec::new());
         loop {
