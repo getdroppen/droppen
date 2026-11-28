@@ -741,6 +741,25 @@ export function ModelSelect({
  * One row for both composers: a session's, which saves the picks to that
  * session, and the new session's, which saves them as the CLI's default.
  */
+const EFFORT_LABELS: Record<string, string> = {
+  low: "Low effort",
+  medium: "Medium effort",
+  high: "High effort",
+  xhigh: "Extra high",
+  max: "Max effort",
+};
+
+const PERMISSION_LABELS: Record<string, string> = {
+  acceptEdits: "Accept edits",
+  auto: "Auto",
+  plan: "Plan only",
+  dontAsk: "Don't ask",
+  bypassPermissions: "Bypass all",
+  "read-only": "Read only",
+  "full-access": "Full access",
+  "bypass-all": "Bypass all",
+};
+
 export function ComposerChoiceChips({
   source,
   choice,
@@ -761,6 +780,16 @@ export function ComposerChoiceChips({
     // Every model left out still says why there is no picker.
     return choice.modelsHidden > 0 ? <ModelSourceHint fallback={false} hidden={choice.modelsHidden} /> : null;
   }
+  const effortOptions = choice.effortOptions.map((v) => ({
+    value: v,
+    label: EFFORT_LABELS[v] ? t(EFFORT_LABELS[v]) : v,
+  }));
+  const permissionOptions = !acp
+    ? PERMISSION_OPTIONS[source].map((v) => ({
+        value: v,
+        label: PERMISSION_LABELS[v] ? t(PERMISSION_LABELS[v]) : v,
+      }))
+    : [];
   return (
     <>
       <ModelSelect
@@ -775,7 +804,7 @@ export function ComposerChoiceChips({
       {/* Absent, not disabled, for a model that takes no effort: an empty
           control in a toolbar reads as something that failed to load. */}
       {choice.activeEffort !== null && (
-        <ComposerSelect ghost label={t("effort")} value={choice.activeEffort} options={choice.effortOptions} onChange={choice.setEffort} />
+        <ComposerSelect ghost label={t("effort")} value={choice.activeEffort} options={effortOptions} onChange={choice.setEffort} />
       )}
       {account}
       {permission && !acp && (
@@ -783,7 +812,7 @@ export function ComposerChoiceChips({
           ghost
           label={t("permission")}
           value={choice.activePermission}
-          options={PERMISSION_OPTIONS[source]}
+          options={permissionOptions}
           onChange={choice.setPermission}
           danger={DANGER_PERMISSIONS.has(choice.activePermission)}
         />

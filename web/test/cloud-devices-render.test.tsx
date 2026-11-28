@@ -407,7 +407,7 @@ test("a full and a limited device say what they may do in the details too — a 
   assert.match(full, /data-testid="full-d-1"[^>]*title="A full device holds/);
   const limited = list(<DeviceRow view={row({ id: "d-2", limited: { block: null } })} viewerAdmin upgraded writable />);
   assert.match(limited, /data-testid="role-d-2"[^>]*>It can control the devices that let it/);
-  assert.ok(list(<DeviceRow view={row({ full: true })} viewerAdmin upgraded writable />, "zh-CN").includes("完整设备持有账户的钥匙"));
+  assert.ok(list(<DeviceRow view={row({ full: true })} viewerAdmin upgraded writable />, "zh-CN").includes("完整设备持有账号的密钥"));
   assert.doesNotMatch(list(<DeviceRow view={row({ id: "m-1", kind: "computer", host: true })} viewerAdmin upgraded writable />), /data-testid="role-/);
   // Waiting for approval: the id, whatever name the view carries.
   const pending = list(<DeviceRow view={row({ id: "d-ipad", status: "pending", name: "iPhone · Safari" })} viewerAdmin upgraded writable />);
@@ -419,7 +419,7 @@ test("badges say what a device is: this device, can run AI, the main device, a f
   const self = list(<DeviceRow view={row({ self: true, full: true, name: "Mac · Safari", kind: "browser", presence: "online" })} viewerAdmin upgraded writable />);
   assert.ok(self.includes(">this device<") && self.includes(">full device<") && self.includes(">Mac · Safari<"), self);
   const zh = list(<DeviceRow view={row({ self: true, full: true, name: "Mac · Safari", kind: "browser", presence: "online" })} viewerAdmin upgraded writable />, "zh-CN");
-  assert.ok(zh.includes(">本设备<") && zh.includes(">完整设备<"), zh);
+  assert.ok(zh.includes(">这台设备<") && zh.includes(">完整设备<"), zh);
   const main = list(<DeviceRow view={row({ id: "m-1", kind: "computer", host: true, main: true, presence: "online" })} viewerAdmin upgraded writable />);
   assert.ok(main.includes(">main device<") && main.includes(">can run AI<"));
   assert.ok(!main.includes(">full device<"), "a device that runs AI is never a full device (review D1)");
@@ -494,7 +494,7 @@ test("the devices page for a limited device, and while the hub takes no v3 entry
   // On chain v2 another device has to upgrade the account first: said so.
   const v2 = draw(<LimitedDeviceNote missing={[]} upgraded={false} />);
   assert.ok(v2.includes("upgrade the account to chain v3 from another of your devices, then make this browser a full device there"), v2);
-  assert.ok(draw(<LimitedDeviceNote missing={[]} upgraded={false} />, "zh-CN").includes("先在你的另一台设备上把账户升级到链 v3"));
+  assert.ok(draw(<LimitedDeviceNote missing={[]} upgraded={false} />, "zh-CN").includes("先在你的另一台设备上把账号升级到链 v3"));
   const v3 = draw(<V3Note waiting={["m-old", "m-older"]} />);
   assert.ok(v3.includes("update Droppen on m-old, m-older first"), v3);
   assert.ok(draw(<V3Note waiting={[]} />).includes("once it is updated on every device of the account that runs AI"));
@@ -561,7 +561,7 @@ test("a device made a full device whose keys were not mailed says so under its r
   assert.match(html, /role="alert"[^>]*data-testid="keys-not-sent-d-2"/);
   assert.ok(html.includes("d-2 is a full device now, but its keys were not sent"), html);
   assert.ok(html.includes(">re-send keys<"));
-  assert.ok(draw(<KeysNotSent device="d-2" why="x" resend={null} onClose={() => undefined} />, "zh-CN").includes("d-2 已是完整设备，但它的钥匙没有发出去"));
+  assert.ok(draw(<KeysNotSent device="d-2" why="x" resend={null} onClose={() => undefined} />, "zh-CN").includes("d-2 已是完整设备，但它的密钥没有发出去"));
 });
 
 test("who can control this device: three choices, a picker, and the warning about other computers that run AI", () => {

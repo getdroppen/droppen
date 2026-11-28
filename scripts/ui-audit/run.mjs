@@ -1454,7 +1454,7 @@ async function auditSessionOpening(theme, view, context) {
 /** The reason a session with no copy here gives, by state, in every language the app ships (`offlineMessages`). */
 const NO_COPY_WORDS = {
   en: { offline: "the device is offline, and there is no copy of this session here yet", "no-copy": "there is no copy of this session on this device yet" },
-  "zh-CN": { offline: "设备离线，本设备上还没有这个会话的副本", "no-copy": "这台设备上还没有这个会话的副本" },
+  "zh-CN": { offline: "设备离线，这台设备上还没有这个会话的副本", "no-copy": "这台设备上还没有这个会话的副本" },
   "zh-TW": { offline: "裝置離線，本裝置上還沒有這個工作階段的副本", "no-copy": "這台裝置上還沒有這個工作階段的副本" },
   ja: { offline: "デバイスはオフラインで、ここにはまだこのセッションのコピーがありません", "no-copy": "このデバイスにはまだこのセッションのコピーがありません" },
 };

@@ -72,7 +72,7 @@ const SAID: Record<PairingCause, { en: [string, string, string]; zh: [string, st
   },
   tooMany: {
     en: ["too many codes are open", "This account has as many codes open as it may.", "start again"],
-    zh: ["同时打开的数字码太多", "这个账户同时打开的数字码已达上限，每个数字码 10 分钟后失效", "重新开始"],
+    zh: ["同时打开的数字码太多", "这个账号同时打开的数字码已达上限，每个数字码 10 分钟后失效", "重新开始"],
   },
   expired: { en: ["the code expired", "Nobody entered it within 10 minutes.", "start again"], zh: ["数字码已过期", "10 分钟内没有人输入它。", "重新开始"] },
   full: { en: ["this code was tried too often", "It can no longer be used.", "start again"], zh: ["这个数字码尝试次数过多", "它已不能再使用。", "重新开始"] },
@@ -82,7 +82,7 @@ const SAID: Record<PairingCause, { en: [string, string, string]; zh: [string, st
   },
   badDelivery: {
     en: ["the keys that arrived do not check out: not using them", "check that the other device shows the same fingerprint", "start again"],
-    zh: ["收到的钥匙校验未通过，不会使用", "请重新开始，并核对另一台设备上显示的指纹与这里一致。", "重新开始"],
+    zh: ["收到的密钥校验未通过，不会使用", "请重新开始，并核对另一台设备上显示的指纹与这里一致。", "重新开始"],
   },
   rate: { en: ["pairing stopped", "too many attempts: try again in 3 s", "start again"], zh: ["配对已中止", "操作太频繁", "重新开始"] },
   offline: { en: ["pairing stopped", "Droppen could not be reached. Check the connection, then start again.", "start again"], zh: ["配对已中止", "连不上 Droppen。请检查网络连接，然后重新开始。", "重新开始"] },

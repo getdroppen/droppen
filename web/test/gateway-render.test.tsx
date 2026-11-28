@@ -195,7 +195,7 @@ test("with the gateway's devices: the bar says each device and how current an of
   assert.deepEqual(choices, ["needs", "all", LOCAL, "m-studio", "m-laptop"]);
   assert.match(bar.textContent, /需要你/);
   assert.match(bar.textContent, /全部/);
-  assert.match(bar.textContent, /本设备/);
+  assert.match(bar.textContent, /这台设备/);
   assert.match(bar.textContent, /studio/);
   // How current the offline device's copy is, in the app's language: today, the time; in full, the day too.
   assert.match(bar.textContent, /laptop截至 (\d{1,2}月\d{1,2}日 )?\d{2}:\d{2}/, "the offline device: how current its copy is");
@@ -324,7 +324,7 @@ test("who sees the other devices here: switches for the owner, a sentence for an
   // No owner (it joined from the command line): nobody sees them; whoever manages the link may say it added it.
   const ownerless = draw(status({ owner: null, canClaim: true, seesOtherDevices: false }));
   assert.match(ownerless, /data-testid="droppen-claim"[^>]*>这是我加入的</);
-  assert.match(ownerless, /目前谁也不能在这里看到你的其它设备/);
+  assert.match(ownerless, /目前谁也不能在这里看到你的其他设备/);
   assert.doesNotMatch(ownerless, /droppen-remote-bob/, "no switches until it is claimed");
   const nobody = draw(status({ owner: null, canManage: false, seesOtherDevices: false, accounts: [] }));
   assert.match(nobody, /在加入这台设备的人在这里确认之前/);

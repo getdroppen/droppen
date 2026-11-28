@@ -382,7 +382,7 @@ function RowDetailsBody({
   const f = view.facts;
   if (f?.hostname) facts.push({ key: "hostname", label: t("hostname"), value: f.hostname });
   if (f?.os) facts.push({ key: "os", label: t("system"), value: f.os });
-  if (f?.agent) facts.push({ key: "agent", label: "agent", value: f.agent, title: f.agentFull ?? undefined });
+  if (f?.agent) facts.push({ key: "agent", label: t("agent version"), value: f.agent, title: f.agentFull ?? undefined });
   if (f?.keyEpoch != null) facts.push({ key: "key", label: t("content key"), value: t("generation {{n}}", { n: f.keyEpoch }) });
   if (view.path && view.presence === "online") facts.push({ key: "path", label: t("path"), value: `${view.path.relay}${view.path.rttMs !== null ? ` · ${Math.round(view.path.rttMs)} ms` : ""}` });
   // The list as set (its base), and apart from it what a renewal pause holds now: a widened list cannot hide behind a pause.

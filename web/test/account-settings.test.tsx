@@ -410,7 +410,7 @@ test("a passkey named as its provider: the provider said once; no PRF in the wor
 
 test("the page in Chinese", () => {
   const html = page({ password: false, max: 10, passkeys: [passkey()] }, {}, "zh-CN");
-  for (const s of ["账户", "登录方式", "通行密钥", "设置密码", "新设备可用它加入", "恢复词", "退出登录"]) assert.ok(html.includes(s), s);
+  for (const s of ["账号", "登录方式", "通行密钥", "设置密码", "新设备可用它加入", "恢复词", "退出登录"]) assert.ok(html.includes(s), s);
 });
 
 test("/account is the shell's other page with no device in view; the bar and 「我的设备」 lead to it", () => {

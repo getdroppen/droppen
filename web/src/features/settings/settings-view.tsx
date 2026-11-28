@@ -668,13 +668,13 @@ function GeneralSettings() {
 
   const rows: [string, string][] = data
     ? [
-        ["hostname", data.hostname],
-        ["platform", data.platform],
-        ["node", data.nodeVersion],
-        ["version", data.serverVersion ?? "—"],
-        ["home", data.homeDir],
-        ["claude dir", data.claudeDir],
-        ["codex dir", data.codexDir],
+        [t("hostname"), data.hostname],
+        [t("platform"), data.platform],
+        [t("runtime"), data.nodeVersion],
+        [t("version"), data.serverVersion ?? "—"],
+        [t("home directory"), data.homeDir],
+        [t("claude directory"), data.claudeDir],
+        [t("codex directory"), data.codexDir],
         [t("claude sessions"), String(claudeCount)],
         [t("codex sessions"), String(codexCount)],
         [t("server started"), formatTime(data.serverStartedAt)],

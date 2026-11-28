@@ -435,7 +435,7 @@ test("with two devices, the side-by-side tip once: a line of its own (never over
     const html = draw(<SideBySideTip onScreen={() => undefined} />, "zh-CN");
     assert.match(html, /data-testid="side-by-side-tip" role="note"/);
     assert.doesNotMatch(html, /class="[^"]*\b(fixed|absolute)\b/, "in the layout, not over it");
-    assert.ok(text(html).includes("每个格子都可以放不同设备的内容"));
+    assert.ok(text(html).includes("每个窗格都可以放不同设备的内容"));
     assert.match(html, /data-testid="side-by-side-tip-screen"/);
     dismissHint("side-by-side", "a-1");
     assert.equal(draw(<SideBySideTip onScreen={() => undefined} />), "");
@@ -470,7 +470,7 @@ test("the onboarding table translates every key into zh-TW and ja too, and says 
   assert.equal(onboardingZhCN["Now you can put the two devices on one screen."], "现在可以把两台设备放进同一个屏幕");
   assert.equal(onboardingZhCN["put them on one screen"], "放进同一个屏幕");
   assert.equal(onboardingZhCN["Add another device to see both on one screen."], "再加一台设备，就能在一个屏里同时看");
-  assert.equal(onboardingZhCN["Each pane can show a different device's content."], "每个格子都可以放不同设备的内容");
+  assert.equal(onboardingZhCN["Each pane can show a different device's content."], "每个窗格都可以放不同设备的内容");
 });
 
 test("the local first-run card: only for a device never signed in to Droppen, with 「登录 Droppen」 and why, and gone once put away", () => {
@@ -503,7 +503,7 @@ test("the local first-run card: only for a device never signed in to Droppen, wi
   storage.values.clear();
   const html = card("none");
   assert.match(html, /data-testid="droppen-first-run"/);
-  assert.ok(text(html).includes("登录 Droppen，就能在这里看到你的其它设备，也能在手机上用这一台。"));
+  assert.ok(text(html).includes("登录 Droppen，就能在这里看到你的其他设备，也能在手机上用这一台。"));
   assert.match(html, /data-variant="primary" data-testid="droppen-first-run-sign-in"[^>]*>登录 Droppen</);
   for (const state of ["linked", "enrolling", "not_hosting", "removed", "broken"]) assert.equal(card(state), "", state);
   // Put away ("以后再说"): remembered for this device on this browser.

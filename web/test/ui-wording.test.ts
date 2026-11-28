@@ -104,7 +104,7 @@ test("no interface source puts 「机器」 / machine / 「电脑」 / computer 
 // full. (The chain's own rule texts, matched against the verifiers, stay in
 // the code; the one that can reach a person is translated without it.)
 const MANAGES_EN = /\bmanag(?:e|es|ing) (?:the|this) account\b|\bcan manage\b/i;
-const MANAGES_CJK = /管理账号|管理账户|管理帳號|管理帳戶|アカウントを管理|アカウント管理|アカウントの管理/;
+const MANAGES_CJK = /管理账号|管理账号|管理帳號|管理帳戶|アカウントを管理|アカウント管理|アカウントの管理/;
 
 test("no interface text and no translation speaks of managing the account", () => {
   for (const [lang, { table }] of Object.entries(TABLES)) {
@@ -184,9 +184,15 @@ test("errors a device's channel, a relay or an enrollment can end in read in the
     assert.match(source("lib/hub/machine.ts"), /new ChannelRefused\("hub", first\.reason \|\| null\)/);
     const named = new AccountError("notInChain", "{{host}} is not a device of the account that runs AI", undefined, undefined, { host: "m-1" });
     assert.equal(named.message, "m-1 is not a device of the account that runs AI", "the English, filled in, for the logs");
-    assert.equal(errorText(named), "m-1 不是这个账户里可运行 AI 的设备");
+    assert.equal(errorText(named), "m-1 不是这个账号里可运行 AI 的设备");
   } finally {
     await i18n.changeLanguage("en");
   }
   assert.equal(errorText(new Error("the device did not answer")), "the device did not answer");
+});
+
+test("zh-CN app tables keep consistent terminology (no 本设备, 其它, 账户, 钥匙, 裸钥环)", () => {
+  const drift = /本设备|其它|账户|钥匙(?!串)|(?<!密)钥环/;
+  const said = Object.entries(TABLES["zh-CN"].table).filter(([, value]) => drift.test(words(value)));
+  assert.deepEqual(said, [], "zh-CN terminology drift");
 });

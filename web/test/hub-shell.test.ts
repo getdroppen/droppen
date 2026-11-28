@@ -1275,5 +1275,5 @@ test("a session with no copy here says the device is offline only when the hub s
   await i18next.changeLanguage("zh-CN");
   assert.equal(await reason(), "这台设备上还没有这个会话的副本");
   link.presence.set("m-1", { state: "offline" });
-  assert.equal(await reason(), "设备离线，本设备上还没有这个会话的副本");
+  assert.equal(await reason(), "设备离线，这台设备上还没有这个会话的副本");
 });

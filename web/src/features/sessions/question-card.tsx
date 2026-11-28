@@ -193,7 +193,7 @@ export function QuestionCardView({
         {open && question.state === "pending" ? (
           <span data-signal="warn" className="inline-flex h-4 items-center bg-warn px-1 font-semibold text-on-signal">{t("waiting for your answer")}</span>
         ) : null}
-        <span data-label="" className="label-caps font-semibold text-fg">? QUESTION</span>
+        <span data-label="" className="label-caps font-semibold text-fg">? {t("QUESTION")}</span>
         {item.meta && <span className="text-faint">{item.meta}</span>}
         {open && question.state !== "pending" && <span data-signal="warn" className="text-warn-fg">{t("expired")}</span>}
         {item.timestamp && (

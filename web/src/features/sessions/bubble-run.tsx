@@ -1,6 +1,7 @@
 /*
  * A turn drawn as a bubble: its role header, and the run of rows under it.
  */
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/cn";
 import { formatTime } from "@/lib/format";
 import { BubbleModelContext, InBubbleContext } from "@/features/sessions/transcript-context";
@@ -33,9 +34,10 @@ export function MessageHead({
   model: string | null;
   timestamp: string | null;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono text-[10px] leading-[14px]">
-      <span data-label="" className={cn("label-caps shrink-0 font-semibold", role.className)}>{role.label}</span>
+      <span data-label="" className={cn("label-caps shrink-0 font-semibold", role.className)}>{t(role.label)}</span>
       {model && (
         <span className="min-w-0 break-words text-muted" title={model}>
           {model}
