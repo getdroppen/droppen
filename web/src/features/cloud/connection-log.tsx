@@ -82,7 +82,7 @@ export function connectionNow(): Record<string, ConnValue> | null {
 export function agentVersionNow(): string | null {
   const shell = hubShell();
   const version = shell?.machine(shell.focus.get())?.info.get().agentVersion ?? null;
-  return version && /^[\w.+-]{1,40}$/.test(version) ? version : null;
+  return version && /^v?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]{1,24})?$/.test(version) ? version : null;
 }
 
 /** The export's header as things stand now: every field of it held to the log's rules (`ConnectionLog.clean`). */
@@ -91,12 +91,19 @@ export function headerNow(
   filter: ConnFilter,
   connection: () => Record<string, ConnValue> | null = connectionNow,
   agentVersion: () => string | null = agentVersionNow,
+  build: () => string = buildId,
+  userAgent: () => string = () => (typeof navigator === "undefined" ? "" : navigator.userAgent),
 ): LogHeader {
   const now = connection();
-  return {
-    build: buildId(),
+  const head = log.clean({
+    build: build(),
     agentVersion: agentVersion(),
-    userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+    userAgent: userAgent(),
+  });
+  return {
+    build: typeof head.build === "string" ? head.build : "?",
+    agentVersion: typeof head.agentVersion === "string" && head.agentVersion !== "<withheld>" ? head.agentVersion : null,
+    userAgent: typeof head.userAgent === "string" ? head.userAgent : "",
     loadedAt: log.loadedAt,
     exportedAt: Date.now(),
     network: log.clean(networkFields()),

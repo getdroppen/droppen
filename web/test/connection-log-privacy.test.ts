@@ -38,6 +38,8 @@ import { FakeStreamLink, makeMachine, StreamWriter } from "./stream-fixtures.js"
 const KEY = ["s3cr3t", "key"].join("-");
 const JWT = [`ey${"Q".repeat(18)}`, `ey${"R".repeat(18)}`, "S".repeat(12)].join(".");
 const SHORT_TOKEN = ["tok", "3", "nAb9"].join("");
+const LETTER_TOKEN = ["sec", "ret", "Let", "ter", "Tok", "en"].join("");
+const MIXED_LETTER_TOKEN = ["aB", "cD", "eF", "gH", "jK"].join("");
 const TICKET = ["ticket", "never", "logged"].join("-");
 
 /** Every kind of thing an export must not hold, each with the fragments that would give it away. */
@@ -45,6 +47,8 @@ const HOSTILE = {
   url: [`https://ada.example.com/private?key=${KEY}`, "ada.example.com", KEY],
   token: [JWT, JWT.slice(0, 12)],
   shortToken: [SHORT_TOKEN, SHORT_TOKEN],
+  letterToken: [LETTER_TOKEN, LETTER_TOKEN],
+  mixedLetterToken: [MIXED_LETTER_TOKEN, MIXED_LETTER_TOKEN],
   email: ["ada.lovelace@example.com", "lovelace"],
   spacedPath: ["/Users/ada/My Secret Project/notes final.txt", "My Secret Project", "notes final", "/Users/ada"],
   windowsPath: ["C:\\Users\\ada\\secret.docx", "secret.docx", "C:\\Users"],
@@ -53,10 +57,11 @@ const HOSTILE = {
   file: ["budget 2026.xlsx", "budget 2026"],
   ipv4: ["192.168.1.23", "192.168.1.23"],
   ipv6: ["fe80::1c2b:3a4d:5e6f:7a8b", "fe80::1c2b"],
+  ipv6Prefix: ["2001:db8:85a3::8a2e:370:7334", "2001:db8", "85a3", "8a2e"],
   candidate: ["candidate:842163049 1 udp 1677729535 203.0.113.7 52123 typ srflx raddr 10.0.0.5 rport 52123", "203.0.113.7", "10.0.0.5"],
   sdp: ["c=IN IP4 198.51.100.9", "198.51.100.9"],
   local: ["adas-macbook.local", "adas-macbook"],
-  tailnet: ["studio.tail1234.ts.net", "tail1234"],
+  tailnet: ["studio.tail1234.ts.net", "studio", "tail1234"],
   deviceName: ["Ada's MacBook Pro", "Ada's MacBook", "MacBook Pro"],
   uuid: ["0f9a3c2e-5d1b-4a8e-9c77-12ab34cd56ef", "0f9a3c2e-5d1b"],
 } as const;
@@ -137,6 +142,52 @@ test("the second net: IP addresses, candidates, SDP, host and file names, every 
   const log = new ConnectionLog();
   for (const value of VALUES) if (value !== HOSTILE.deviceName[0]) log.emit("sample", { "hub.note": `before ${value} after` });
   assertClean(log, 0, "safeText");
+
+  // Single-token hostile values in CODE_FIELDS, relays, build, and agentVersion never slip through as codes/shapes.
+  const singleTokens = [
+    HOSTILE.ipv4[0],
+    HOSTILE.ipv6[0],
+    HOSTILE.ipv6Prefix[0],
+    HOSTILE.local[0],
+    HOSTILE.tailnet[0],
+    HOSTILE.shortToken[0],
+    HOSTILE.letterToken[0],
+    HOSTILE.mixedLetterToken[0],
+    HOSTILE.uuid[0],
+  ];
+  const since = lastSeq(log);
+  for (const token of singleTokens) {
+    const codeFields: Record<string, string> = {};
+    for (const key of CODE_FIELDS) codeFields[key] = token;
+    log.emit("relay.list", { ...codeFields, relays: token, build: token, agentVersion: token });
+  }
+  assertClean(log, since, "single-token code/shaped fields");
+  for (const event of log.events().filter((e) => e.seq > since)) {
+    for (const key of CODE_FIELDS) assert.equal(event.fields[key], "<withheld>", `${key} must withhold hostile single tokens`);
+    assert.equal(event.fields.agentVersion, "<withheld>");
+  }
+
+  // Legitimate codes, relay lists, builds, and versions still pass unchanged.
+  const clean = log.clean({
+    relay: "nrt-1",
+    timer: "RELAY_SILENT_MS",
+    errName: "TypeError",
+    errCode: "ERR_CONNECTION_REFUSED",
+    relays: "nrt-1(draining) sin-1=80",
+    build: "index-B3x9aQ",
+    agentVersion: "0.2.143",
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  });
+  assert.deepEqual(clean, {
+    relay: "nrt-1",
+    timer: "RELAY_SILENT_MS",
+    errName: "TypeError",
+    errCode: "ERR_CONNECTION_REFUSED",
+    relays: "nrt-1(draining) sin-1=80",
+    build: "index-B3x9aQ",
+    agentVersion: "0.2.143",
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  });
 });
 
 test("a query keeps the keys the API names, with numbers only for positions and counts; a bare part or another key is not kept", () => {

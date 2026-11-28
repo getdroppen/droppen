@@ -416,27 +416,37 @@ export function ownWords(text: string): string | null {
  * The second net, under the allowlist: what could identify or unlock
  * anything, replaced wherever it turns up in a field that is not free text
  * (and in what of free text the allowlist kept). In order: URLs; emails;
- * ICE candidates and SDP lines; IP addresses, v4 and v6; UUIDs; paths (from
+ * ICE candidates and SDP lines; IP addresses, v6 (whole address, before v4
+ * so IPv4-mapped addresses collapse to one token) and v4; UUIDs; paths (from
  * a `/`, `~`, a drive or a share to the end of the quote or line, spaces and
- * all), percent-encoded ones; file names with an extension; host names
- * (`.local` and `.ts.net` too); JWTs, long hex, and token-shaped runs of
- * eight characters and more that mix letters and digits.
+ * all), percent-encoded ones; JWTs; host names with explicit local/tailnet
+ * suffixes or multiple dots (before file names so `host.tail1234.ts.net` is
+ * never split on `.ts`); file names with an extension; remaining host names;
+ * long hex; mixed alphanumeric tokens (8+ chars); mixed-case letter tokens;
+ * and long letter-only or token-alphabet runs.
  */
 const SAFE_RULES: [RegExp, string][] = [
   [/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)]*/gi, "<url>"],
   [/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, "<email>"],
   [/\b(?:a=)?candidate:[^\r\n"]*/gi, "<candidate>"],
   [/\b(?:c=IN IP[46]|a=[a-z-]+:|o=\S+ \d|m=(?:application|audio|video))[^\r\n"]*/g, "<sdp>"],
-  [/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/g, "<ip>"],
-  [/(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}(?:%[\w.]+)?|[0-9a-f]{0,4}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?(?:%[\w.]+)?/gi, "<ip>"],
+  [
+    /(?:\[(?:(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:)*[0-9a-f]{0,4}::(?:(?:[0-9a-f]{1,4}:)*(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9a-f]{1,4}))?)(?:%[\w.-]+)?\](?::\d{1,5})?|\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}(?:%[\w.-]+)?\b|(?<![A-Za-z0-9_])(?:(?:[0-9a-f]{1,4}:)+[0-9a-f]{1,4}|[0-9a-f]{1,4})?::(?:(?:[0-9a-f]{1,4}:)*(?:(?:\d{1,3}\.){3}\d{1,3}|[0-9a-f]{1,4}))?(?:%[\w.-]+)?(?![A-Za-z0-9_]))/gi,
+    "<ip>",
+  ],
+  [/(?<![A-Za-z]\/)\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/g, "<ip>"],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<uuid>"],
   [/(?:^|(?<=[\s"'(=:,;[]))(?:~[\\/]|[A-Za-z]:\\|\\\\|\/)[^"'\r\n]*/g, "<path>"],
   [/\S*%[0-9A-Fa-f]{2}\S*/g, "<path>"],
   [/\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]{4,})*/g, "<redacted>"],
-  [/[\w()-]+(?: [\w()-]+)*\.(?:txt|md|markdown|json|jsonl|toml|ya?ml|ini|cfg|conf|env|log|csv|tsv|ts|tsx|js|jsx|mjs|cjs|py|rb|rs|go|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|zsh|bash|sql|html?|css|scss|svg|png|jpe?g|gif|webp|heic|pdf|zip|tar|gz|tgz|7z|docx?|xlsx?|pptx?|key|pem|crt|p12|sqlite|db)\b/gi, "<file>"],
-  [/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:local|lan|home|internal|localdomain|ts\.net|[a-z]{2,24})\b/gi, "<host>"],
+  [/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:local|lan|home|internal|localdomain|ts\.net)\b/gi, "<host>"],
+  [/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){2,}[a-z]{2,24}\b/gi, "<host>"],
+  [/[\w()-]+(?: [\w()-]+)*\.(?:txt|md|markdown|json|jsonl|toml|ya?ml|ini|cfg|conf|env|log|csv|tsv|ts|tsx|js|jsx|mjs|cjs|py|rb|rs|go|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|zsh|bash|sql|html?|css|scss|svg|png|jpe?g|gif|webp|heic|pdf|zip|tar|gz|tgz|7z|docx?|xlsx?|pptx?|key|pem|crt|p12|sqlite|db)\b(?!\.[a-z0-9-])/gi, "<file>"],
+  [/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b/gi, "<host>"],
   [/\b[0-9a-f]{12,}\b/gi, "<hex>"],
   [/(?=[A-Za-z0-9_+/=-]*\d)(?=[A-Za-z0-9_+/=-]*[A-Za-z])[A-Za-z0-9_+/=-]{8,}/g, "<redacted>"],
+  [/(?=[A-Za-z]*[a-z][A-Z][A-Za-z]*[a-z][A-Z][A-Za-z]*[a-z][A-Z])\b[A-Za-z]{8,}\b/g, "<redacted>"],
+  [/\b[A-Za-z]{16,}\b/g, "<redacted>"],
   [/[A-Za-z0-9_+/=-]{32,}/g, "<redacted>"],
 ];
 
@@ -457,14 +467,15 @@ export function safeText(s: string, max = 160): string {
  * else could pass for; checked against {@link safeText} otherwise.
  */
 const SHAPED: Readonly<Record<string, RegExp>> = {
-  on: /^(?:hub|live|relay:[\w.-]{1,40}|ch:[\w.-]{1,40}\/\d{1,9}(?:\.direct)?|direct:(?:\d{1,6}|signal))$/,
-  via: /^(?:hub|relay:[\w.-]{1,40})$/,
-  from: /^(?:hub|carrier|relay:[\w.-]{1,40}|#[0-9a-f]{6}|[a-z]{1,16})$/,
-  to: /^(?:hub|carrier|direct|live|copy|relay:[\w.-]{1,40})$/,
-  candidates: /^(?:[\w.-]{1,40}=[\d-]{1,6}\/[\d-]{1,6}(?:\([a-z+]{1,40}\))? ?){1,40}$/,
-  rtts: /^(?:[\w.-]{1,40}=[\d-]{1,6} ?){1,40}$/,
-  build: /^[\w-]{1,80}$/,
-  relays: /^(?:[\w.-]{1,40}(?:\([a-z]{1,16}\))?(?:=[\d-]{1,6})? ?){1,40}$/,
+  on: /^(?:hub|live|relay:[a-z][a-z0-9-]{0,15}|ch:[a-z][a-z0-9-]{0,15}\/\d{1,9}(?:\.direct)?|direct:(?:\d{1,6}|signal))$/,
+  via: /^(?:hub|relay:[a-z][a-z0-9-]{0,15})$/,
+  from: /^(?:hub|carrier|relay:[a-z][a-z0-9-]{0,15}|#[0-9a-f]{6}|[a-z]{1,16})$/,
+  to: /^(?:hub|carrier|direct|live|copy|relay:[a-z][a-z0-9-]{0,15})$/,
+  candidates: /^(?:[a-z][a-z0-9-]{0,15}=[\d-]{1,6}\/[\d-]{1,6}(?:\([a-z+]{1,40}\))? ?){1,40}$/,
+  rtts: /^(?:[a-z][a-z0-9-]{0,15}=[\d-]{1,6} ?){1,40}$/,
+  build: /^(?:\?|(?:index|connection-log)(?:-[A-Za-z0-9_-]{1,16})?)$/,
+  agentVersion: /^v?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]{1,24})?$/,
+  relays: /^(?:[a-z][a-z0-9-]{0,15}(?:\([a-z]{1,16}\))?(?:=[\d-]{1,6})? ?){1,40}$/,
 };
 
 /**
@@ -615,6 +626,38 @@ export interface ConnectionLogOptions {
   quietSampleMs?: number;
 }
 
+/** Every relay id in a shaped `relays` list must itself pass `safeText` untouched (blocks token-shaped single words). */
+function safeRelayList(value: string): boolean {
+  if (value.length > 400 || !SHAPED.relays!.test(value)) return false;
+  for (const part of value.split(" ")) {
+    const id = part.split(/[(=]/, 1)[0] ?? "";
+    if (!id || safeText(id) !== id) return false;
+  }
+  return true;
+}
+
+/**
+ * Scrub a browser `userAgent` with {@link safeText} while keeping benign
+ * `Product/Version` pairs (such as `Mozilla/5.0`, `Chrome/131.0.0.0`,
+ * `AppleWebKit/537.36`) whose `/` and four-part version would otherwise trip
+ * the base64-token and IPv4 rules.
+ */
+function cleanUserAgent(value: string): string {
+  const saved: string[] = [];
+  const placeholder = (i: number) => `\u0000ua${i}\u0000`;
+  // First strip control NULs and URLs so a `scheme://host` path never looks like a Product/Version pair.
+  const withoutUrls = value.replace(/\u0000/g, "").replace(SAFE_RULES[0]![0], SAFE_RULES[0]![1]);
+  const staged = withoutUrls.replace(/(?<![A-Za-z0-9_./:-])([A-Za-z][A-Za-z-]{1,15})\/(\d{1,4}(?:\.\d{1,4}){0,3})(?![A-Za-z0-9_./:-])/g, (match, name: string) => {
+    if (safeText(name) !== name) return match;
+    const idx = saved.length;
+    saved.push(match);
+    return placeholder(idx);
+  });
+  let out = safeText(staged, 240);
+  for (let i = 0; i < saved.length; i++) out = out.replace(placeholder(i), saved[i]!);
+  return out.length > 240 ? `${out.slice(0, 239)}…` : out;
+}
+
 /**
  * A field as the log keeps it, into `out`: free text ({@link FREE_TEXT})
  * only when it is Droppen's own words, else `<withheld>` and its length
@@ -643,12 +686,22 @@ function keep(out: Record<string, ConnValue>, key: string, value: ConnValue | un
     return;
   }
   if (CODE_FIELDS.has(key)) {
-    if (/^[A-Za-z0-9_.:+-]{1,48}$/.test(value)) out[key] = value;
+    if (/^[A-Za-z0-9_.:+-]{1,48}$/.test(value) && safeText(value) === value) out[key] = value;
     else withhold();
     return;
   }
+  if (key === "agentVersion") {
+    if (SHAPED.agentVersion!.test(value) && safeText(value) === value) out[key] = value;
+    else withhold();
+    return;
+  }
+  if (key === "userAgent") {
+    out[key] = cleanUserAgent(value);
+    return;
+  }
   if (key === "route" && value.length <= 240 && routeTemplate(value) === value) out[key] = value;
-  else if (SHAPED[key]?.test(value) && value.length <= 400) out[key] = value;
+  else if (key === "relays" && safeRelayList(value)) out[key] = value;
+  else if (key !== "relays" && SHAPED[key]?.test(value) && value.length <= 400) out[key] = value;
   else out[key] = safeText(value);
 }
 
