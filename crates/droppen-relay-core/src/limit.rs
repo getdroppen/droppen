@@ -108,6 +108,14 @@ impl Bucket {
             Duration::from_secs_f64(-self.tokens / self.rate)
         }
     }
+
+    /// Update rate and burst in place without granting a fresh burst of tokens.
+    pub fn set_rate(&mut self, rate_per_sec: u64, burst: u64, now: Instant) {
+        self.refill(now);
+        self.rate = rate_per_sec.max(1) as f64;
+        self.burst = burst.max(1) as f64;
+        self.tokens = self.tokens.min(self.burst);
+    }
 }
 
 /// A connection's two buckets.
@@ -124,6 +132,12 @@ impl ConnLimiter {
             bytes: Bucket::new(bytes_per_sec, bytes_per_sec.saturating_mul(2), now),
             frames: Bucket::new(frames_per_sec, frames_per_sec.saturating_mul(2), now),
         }
+    }
+
+    /// Update byte and frame rates in place without resetting accumulated credit or debt.
+    pub fn set_rates(&mut self, bytes_per_sec: u64, frames_per_sec: u64, now: Instant) {
+        self.bytes.set_rate(bytes_per_sec, bytes_per_sec.saturating_mul(2), now);
+        self.frames.set_rate(frames_per_sec, frames_per_sec.saturating_mul(2), now);
     }
 
     /// Charge one inbound message of `len` bytes; the wait before handling it.
@@ -418,5 +432,17 @@ mod tests {
             assert_eq!(c.charge(1, 1, t0), Duration::ZERO);
         }
         assert!(c.charge(1, 1, t0) > Duration::ZERO, "out of frames long before bytes");
+    }
+
+    #[test]
+    fn set_rates_updates_limits_without_granting_a_fresh_burst() {
+        let t0 = Instant::now();
+        let mut c = ConnLimiter::new(1000, 100, t0);
+        // Spend the full byte burst and go into debt.
+        assert_eq!(c.charge(2000, 1, t0), Duration::ZERO);
+        assert!(c.charge(500, 1, t0) > Duration::ZERO);
+        // Tightening the rate must keep the connection in debt instead of resetting tokens to full burst.
+        c.set_rates(500, 50, t0);
+        assert!(c.charge(1, 1, t0) > Duration::ZERO, "debt preserved across rate update");
     }
 }

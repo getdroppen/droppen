@@ -81,6 +81,11 @@ pub type Sink = SplitSink<Ws, Message>;
 pub type Source = SplitStream<Ws>;
 
 const STEP: Duration = Duration::from_secs(20);
+/// How often the relay sends a WebSocket ping to detect a half-open Hub link.
+const HEARTBEAT: Duration = Duration::from_secs(20);
+/// How long the Hub may stay silent before the control link reconnects and
+/// enters the outage grace window (`Server::in_outage`).
+const SILENCE: Duration = Duration::from_secs(60);
 /// What this relay takes from the Hub beyond the first control link,
 /// named in its `login` and `register` (`features`): `revoke-role/1`, a
 /// `revoke` scoped to one ticket role (`role: "device" | "agent"`). A Hub
@@ -328,15 +333,31 @@ async fn session(server: &Arc<Server>) -> Ended {
     let timing = server.config.timing;
     let mut health = tokio::time::interval(timing.health_every);
     let mut usage = tokio::time::interval(timing.usage_every);
+    let mut heartbeat = tokio::time::interval(HEARTBEAT);
+    heartbeat.tick().await;
+    let mut last_heard = Instant::now();
     let mut last_total = server.meter.total();
     let mut last_at = Instant::now();
     loop {
         tokio::select! {
             m = source.next() => {
                 let text = match m {
-                    Some(Ok(Message::Text(t))) => t,
+                    Some(Ok(Message::Text(t))) => {
+                        last_heard = Instant::now();
+                        t
+                    }
                     Some(Ok(Message::Close(frame))) => return Ended::Retry(format!("closed: {}", frame.map(|f| f.reason.to_string()).unwrap_or_default())),
-                    Some(Ok(_)) => continue,
+                    Some(Ok(Message::Ping(payload))) => {
+                        last_heard = Instant::now();
+                        if tokio::time::timeout(STEP, sink.send(Message::Pong(payload))).await.is_err() {
+                            return Ended::Retry("the Hub did not take a pong in time".into());
+                        }
+                        continue;
+                    }
+                    Some(Ok(_)) => {
+                        last_heard = Instant::now();
+                        continue;
+                    }
                     Some(Err(e)) => return Ended::Retry(e.to_string()),
                     None => return Ended::Retry("closed".into()),
                 };
@@ -348,6 +369,16 @@ async fn session(server: &Arc<Server>) -> Ended {
             Some(text) = rx.recv() => {
                 if let Err(end) = sink.send_text(text).await {
                     return end;
+                }
+            }
+            _ = heartbeat.tick() => {
+                if last_heard.elapsed() > SILENCE {
+                    return Ended::Retry("the Hub went silent".into());
+                }
+                match tokio::time::timeout(STEP, sink.send(Message::Ping(Vec::new().into()))).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => return Ended::Retry(e.to_string()),
+                    Err(_) => return Ended::Retry("the Hub did not take a ping in time".into()),
                 }
             }
             _ = health.tick() => {
