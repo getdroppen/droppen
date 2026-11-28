@@ -1141,11 +1141,23 @@ pub async fn find_codex_session(paths: &Paths, id: &str) -> Option<SessionSummar
     summaries.pop()
 }
 
+/// Per-file cache for [`read_codex_cli_choice`], keyed on the on-disk path,
+/// mtime and size. Every open session view polls its model every 2 s; without
+/// this, five or more open views on compressed rollouts thrash the 4-entry
+/// decoded-tail LRU in `droppen_sessions::compressed` and re-decode in full
+/// on every poll.
+static CHOICE_CACHE: LazyLock<FileCache<Option<CliChoice>>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
+
 /// The model/effort/permission a Codex session last ran with.
 ///
 /// Port of `codexChoice` in the former TypeScript server's `session-choice.ts`.
 pub async fn read_codex_cli_choice(file_path: &Path) -> Option<CliChoice> {
-    CliChoice::read_tail(
+    let (found, metadata) = compressed::locate(file_path).await.ok()?;
+    let (mtime, len) = (mtime_ms(&metadata), metadata.len());
+    if let Some(cached) = CHOICE_CACHE.get(&found, mtime, len) {
+        return cached;
+    }
+    let choice = CliChoice::read_tail(
         file_path,
         CHOICE_TAIL_BYTES,
         |entry| {
@@ -1159,7 +1171,9 @@ pub async fn read_codex_cli_choice(file_path: &Path) -> Option<CliChoice> {
             Some(permission_of_turn(payload))
         },
     )
-    .await
+    .await;
+    CHOICE_CACHE.put(&found, mtime, len, choice.clone());
+    choice
 }
 
 /// A `turn_context`'s payload, which is where one codex turn says how it ran.
@@ -1397,6 +1411,10 @@ fn push_reasoning(items: &mut ItemLog, payload: &serde_json::Map<String, Value>,
     items.push(by_model(make_item(Role::Assistant, ItemKind::Thinking, text, timestamp), model));
 }
 
+/// Per-file cache for [`read_codex_context`], keyed on the on-disk path, mtime
+/// and size; sibling of [`CHOICE_CACHE`].
+static CONTEXT_CACHE: LazyLock<FileCache<Option<ContextUsage>>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
+
 /// Codex's occupancy: the newest `token_count` event's `last_token_usage`.
 ///
 /// Deliberately *not* `total_token_usage`, which is cumulative over the session —
@@ -1405,6 +1423,17 @@ fn push_reasoning(items: &mut ItemLog, payload: &serde_json::Map<String, Value>,
 /// already includes whatever was replayed out of the cache, matching what the
 /// Claude arm sums by hand.
 async fn read_codex_context(file_path: &Path) -> Option<ContextUsage> {
+    let (found, metadata) = compressed::locate(file_path).await.ok()?;
+    let (mtime, len) = (mtime_ms(&metadata), metadata.len());
+    if let Some(cached) = CONTEXT_CACHE.get(&found, mtime, len) {
+        return cached;
+    }
+    let usage = read_codex_context_uncached(file_path).await;
+    CONTEXT_CACHE.put(&found, mtime, len, usage.clone());
+    usage
+}
+
+async fn read_codex_context_uncached(file_path: &Path) -> Option<ContextUsage> {
     let lines = read_tail_lines(file_path, droppen_sessions::context::TAIL_BYTES).await.ok()?;
     for line in lines.iter().rev() {
         let Some(entry) = try_parse(line) else { continue };
@@ -2024,6 +2053,75 @@ mod tests {
                 set_mtime(&zst, metadata.modified().expect("mtime"));
             }
             assert_eq!(tree(&paths).await, expected, "not read again");
+        }
+
+        /// Five or more open views on different compressed rollouts exceed the
+        /// 4-entry decoded-tail LRU in `compressed.rs`; caching the derived
+        /// model choice and context usage per `(path, mtime, len)` keeps every
+        /// subsequent 2 s poll from re-decoding any of them.
+        #[tokio::test]
+        async fn five_or_more_compressed_threads_do_not_redecode_on_poll() {
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::new(home.path().to_path_buf());
+            let files: Vec<(String, PathBuf)> = (1..=6)
+                .map(|n| {
+                    let id = format!("cccccccc-000{n}-4000-8000-00000000000{n}");
+                    let plain = rollout_in(&paths, &id);
+                    let body = format!(
+                        concat!(
+                            r#"{{"type":"session_meta","payload":{{"id":"{id}","cwd":"/tmp"}}}}"#, "\n",
+                            r#"{{"type":"turn_context","payload":{{"model":"gpt-5.{n}","effort":"high","approval_policy":"never","sandbox_policy":{{"type":"workspace-write"}}}}}}"#, "\n",
+                            r#"{{"type":"event_msg","payload":{{"type":"token_count","info":{{"model_context_window":200000,"last_token_usage":{{"input_tokens":{tokens}}}}}}}}}"#, "\n",
+                        ),
+                        id = id,
+                        n = n,
+                        tokens = n * 1000,
+                    );
+                    std::fs::write(&plain, body).expect("rollout");
+                    compress_as_codex(&plain);
+                    (format!("gpt-5.{n}"), plain)
+                })
+                .collect();
+
+            for (idx, (model, plain)) in files.iter().enumerate() {
+                let choice = read_codex_cli_choice(plain).await.expect("choice");
+                assert_eq!(choice.model.0.as_deref(), Some(model.as_str()));
+                let usage = read_codex_context(plain).await.expect("context");
+                assert_eq!(usage.tokens, (idx as u64 + 1) * 1000);
+            }
+
+            // Overwrite every `.jsonl.zst` with unreadable bytes of the exact
+            // same length and mtime: any cache miss would fail to decode.
+            for (_, plain) in &files {
+                let zst = compressed::compressed_path(plain);
+                let metadata = std::fs::metadata(&zst).expect("stat");
+                std::fs::write(&zst, vec![0u8; metadata.len() as usize]).expect("corrupt");
+                set_mtime(&zst, metadata.modified().expect("mtime"));
+            }
+
+            for _ in 0..2 {
+                for (idx, (model, plain)) in files.iter().enumerate() {
+                    let choice = read_codex_cli_choice(plain).await.expect("cached choice");
+                    assert_eq!(choice.model.0.as_deref(), Some(model.as_str()));
+                    let usage = read_codex_context(plain).await.expect("cached context");
+                    assert_eq!(usage.tokens, (idx as u64 + 1) * 1000);
+                }
+            }
+
+            // Restoring a plain rollout invalidates the cache immediately.
+            let (_, first) = &files[0];
+            std::fs::write(
+                first,
+                concat!(
+                    r#"{"type":"turn_context","payload":{"model":"gpt-5.9","effort":"medium","approval_policy":"never","sandbox_policy":{"type":"read-only"}}}"#,
+                    "\n",
+                    r#"{"type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":200000,"last_token_usage":{"input_tokens":9999}}}}"#,
+                    "\n",
+                ),
+            )
+            .expect("restored plain");
+            assert_eq!(read_codex_cli_choice(first).await.and_then(|c| c.model.0).as_deref(), Some("gpt-5.9"));
+            assert_eq!(read_codex_context(first).await.map(|u| u.tokens), Some(9999));
         }
 
         /// Without the database the rollouts are walked: a compressed one is a
