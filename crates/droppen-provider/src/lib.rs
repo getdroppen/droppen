@@ -1166,6 +1166,11 @@ impl InjectionRegistry {
             tracing::warn!("adoption runs once per server; not adopting again");
             return report;
         };
+        // Snapshot candidate filenames in `<instance>/mcp-configs/` *before*
+        // spawning or re-attaching any drivers, so files created concurrently
+        // during adoption (for example by an account-rotation respawn) are
+        // never swept as orphans.
+        let pre_adoption_mcp_files = self.snapshot_mcp_config_candidates();
         // Per-run MCP config filenames that belong to live/adopted/deferred
         // runs and must survive the startup orphan sweep below.
         let mut live_mcp_files = std::collections::HashSet::<String>::new();
@@ -1268,21 +1273,21 @@ impl InjectionRegistry {
                 "permission prompts whose process did not survive the restart were cancelled"
             );
         }
-        let swept = self.sweep_orphan_mcp_configs(&live_mcp_files);
+        let swept = self.sweep_orphan_mcp_configs(&pre_adoption_mcp_files, &live_mcp_files);
         if swept > 0 {
             tracing::info!(removed = swept, "swept orphaned MCP config files on startup");
         }
         report
     }
 
-    /// Delete any leftover `.json` or crash-left `.tmp` files in
-    /// `<instance>/mcp-configs/` that do not belong to a live/adopted run.
-    fn sweep_orphan_mcp_configs(&self, live: &std::collections::HashSet<String>) -> usize {
+    /// Snapshot managed `.json` and crash-left `.tmp` filenames currently in
+    /// `<instance>/mcp-configs/` before adoption starts.
+    fn snapshot_mcp_config_candidates(&self) -> Vec<String> {
         let dir = self.instance.mcp_configs();
         let Ok(entries) = std::fs::read_dir(&dir) else {
-            return 0;
+            return Vec::new();
         };
-        let mut removed = 0;
+        let mut candidates = Vec::new();
         for entry in entries.flatten() {
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_dir() {
@@ -1292,7 +1297,20 @@ impl InjectionRegistry {
             let Some(name) = name.to_str() else { continue };
             let is_managed_json = name.ends_with(".json");
             let is_managed_tmp = name.starts_with('.') && name.ends_with(".tmp");
-            if (is_managed_json || is_managed_tmp) && !live.contains(name) && std::fs::remove_file(entry.path()).is_ok() {
+            if is_managed_json || is_managed_tmp {
+                candidates.push(name.to_string());
+            }
+        }
+        candidates
+    }
+
+    /// Delete any leftover `.json` or crash-left `.tmp` files from the
+    /// pre-adoption snapshot that do not belong to a live/adopted run.
+    fn sweep_orphan_mcp_configs(&self, candidates: &[String], live: &std::collections::HashSet<String>) -> usize {
+        let dir = self.instance.mcp_configs();
+        let mut removed = 0;
+        for name in candidates {
+            if !live.contains(name.as_str()) && std::fs::remove_file(dir.join(name)).is_ok() {
                 removed += 1;
             }
         }
@@ -1725,5 +1743,39 @@ mod tests {
         assert!(host.run_injection(Source::Claude, "second").is_some(), "though it is still in the map");
         host.withdraw_run(Source::Claude, "second");
         assert!(host.run_injection(Source::Claude, "second").is_none());
+    }
+
+    #[test]
+    fn startup_mcp_sweep_preserves_live_and_post_snapshot_files() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let registry = testing::injection_registry(home.path());
+        let dir = registry.instance.ensure_mcp_configs().expect("mcp_configs dir");
+
+        let orphan_json = dir.join("codex-orphan.json");
+        let orphan_tmp = dir.join(".claude-crashed.json.tmp");
+        let live_json = dir.join("claude-adopted.json");
+        let unmanaged = dir.join("README.txt");
+        for path in [&orphan_json, &orphan_tmp, &live_json, &unmanaged] {
+            std::fs::write(path, b"{}").expect("write");
+        }
+
+        let candidates = registry.snapshot_mcp_config_candidates();
+
+        // Simulate a concurrent respawn writing a brand-new config and temp file
+        // while `adopt_all` is running after the pre-adoption snapshot.
+        let respawned_json = dir.join("claude-respawned.json");
+        let respawned_tmp = dir.join(".claude-respawned.json.1234.tmp");
+        std::fs::write(&respawned_json, b"{}").expect("write respawned");
+        std::fs::write(&respawned_tmp, b"{}").expect("write respawned tmp");
+
+        let live = std::collections::HashSet::from(["claude-adopted.json".to_string()]);
+        let removed = registry.sweep_orphan_mcp_configs(&candidates, &live);
+        assert_eq!(removed, 2);
+        assert!(!orphan_json.exists(), "pre-boot orphan json should be swept");
+        assert!(!orphan_tmp.exists(), "pre-boot orphan tmp should be swept");
+        assert!(live_json.exists(), "adopted live config must survive");
+        assert!(unmanaged.exists(), "unmanaged files must survive");
+        assert!(respawned_json.exists(), "file created after snapshot must survive");
+        assert!(respawned_tmp.exists(), "in-flight tmp created after snapshot must survive");
     }
 }
