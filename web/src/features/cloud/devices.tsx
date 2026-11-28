@@ -369,6 +369,14 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   const joinedInfo: MachineInfo | null = joined
     ? (machines.find((m) => m.key === joined) ?? { key: joined, name: shownName(joined, statuses.get(joined) ?? null) ?? joined, state: "unknown", since: 0, canManage: true, live: "copy" })
     : null;
+  // When an active AI host exists and no card/rotation/add-flow holds the page's primary CTA,
+  // opening the main (or first) AI host is the primary action on /devices.
+  const firstRun = cardNow;
+  const justJoined = joinedInfo !== null && section.kind === "list";
+  const primaryHostId =
+    !adding && !account.rotationDue && !firstRun && !justJoined
+      ? (current.find((d) => d.host && d.status.type === "active" && d.info.id === home)?.info.id ?? hostIds[0] ?? null)
+      : null;
   const selfRecord = devices.find((d) => d.info.id === account.deviceId);
   const selfName = selfRecord ? view(selfRecord).name : ownLabel();
 
@@ -404,6 +412,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
         onAddComputer={() => setSection({ kind: "addComputer" })}
         onEndPause={(op) => setSection({ kind: "endPause", device: id, op })}
         onOpen={v.host ? () => open(id) : undefined}
+        primaryOpen={v.host && id === primaryHostId}
         onOpenSession={v.host ? (s) => openAt(id, sessionPath(s.source, s.id)) : undefined}
         notes={v.host ? <HostNotes account={account} link={link} id={id} status={statuses.get(id) ?? null} /> : null}
         keys={<ResendLine state={resend.states.get(id)} />}
@@ -532,14 +541,11 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
     );
   };
 
-  // Just signed up: the card that says what comes next, until the first device that runs AI joins (or another way to add one is open).
-  const firstRun = cardNow;
-  // The word that it joined, in the card's place, until put away.
-  const justJoined = joinedInfo !== null && section.kind === "list";
   const pairWith = (done: () => void) => <AddDevice account={account} link={link} onDone={done} />;
   // This device's own settings and the keys': folded under 「更多设置」 while there is no device that runs AI to use them with.
   const thisDevice = (
     <ThisDeviceSection
+      index="03"
       name={selfName}
       relays={
         shell?.relays ? (
@@ -553,6 +559,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
   );
   const rotateKeys = viewerAdmin && !account.rotationDue && section.kind === "list" ? <RotateKeys account={account} link={link} due={false} /> : null;
   const alwaysConfirm = section.kind === "list" && viewerAdmin && upgraded && renewals?.view?.enabled ? <AlwaysConfirmSetting runner={renewals} account={account} /> : null;
+  const addIsPrimary = !account.rotationDue && !firstRun && !justJoined && primaryHostId === null;
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4 px-6 pt-8 pb-2 max-md:px-4 max-md:pt-6">
@@ -566,12 +573,13 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
           </p>
         </div>
         {viewerAdmin && !adding && (
-          // One primary action a view: while a rotation is due, that is it; while the first-run card shows, the card's.
+          // One primary action a view: while a rotation is due, that is it; while the first-run card shows, the card's;
+          // once an AI host exists, opening it is primary and adding another device is secondary.
           <button
             type="button"
-            data-variant={account.rotationDue || firstRun || justJoined ? "secondary" : "primary"}
+            data-variant={addIsPrimary ? "primary" : "secondary"}
             data-testid="add-device"
-            className={cn(account.rotationDue || firstRun || justJoined ? secondary : primary, "max-md:w-full")}
+            className={cn(addIsPrimary ? primary : secondary, "max-md:w-full")}
             onClick={() => setSection(firstHost ? { kind: "addComputer" } : { kind: "add" })}
           >
             <PlusIcon className="size-3.5" />
@@ -591,7 +599,7 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
       )}
       {section.kind === "addComputer" && (
         <section data-testid="add-computer-section">
-          <AddHead title={t("add a device that runs AI")} onBack={() => setSection({ kind: "add" })} />
+          <AddHead title={t("add a device that runs AI")} onBack={() => setSection(firstHost ? { kind: "list" } : { kind: "add" })} />
           {/* Two ways to add (§3.7): the device's own local settings first, a one-time code second. */}
           <AddComputer
             account={account}
@@ -610,10 +618,9 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
         </section>
       )}
       <UsageSummary account={account} link={link} />
-      {!noHostYet && thisDevice}
       <section data-testid="devices-section" className="@container/devices">
         <div className="px-6 max-md:px-4">
-          <SectionHead index="03" title={t("devices")}>
+          <SectionHead index="02" title={t("devices")}>
             <span className="font-mono text-xs text-faint tabular-nums">{current.length}</span>
           </SectionHead>
         </div>
@@ -636,7 +643,6 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
           </div>
         )}
       </section>
-      {!noHostYet && alwaysConfirm}
       {section.kind === "list" && done && (
         <div data-testid="change-report" data-signal="ok" className="mx-6 my-4 flex flex-col gap-1 border border-border p-3 shadow-[inset_2px_0_0_var(--color-ok)] max-md:mx-4">
           <span className="font-mono text-xs text-ok">{done.title}</span>
@@ -657,8 +663,8 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
           onOpen={(entry) => openAt(entry.ref.machine, sessionPath(entry.ref.source, entry.ref.id))}
         />
       )}
+      {!noHostYet && thisDevice}
       <div className="flex max-w-xl flex-col gap-3 px-6 max-md:px-4">
-        {!noHostYet && rotateKeys}
         {viewerAdmin && chain && !chain.currentRecoveryKey && section.kind === "list" && (
           <Note tone="warn">
             <span data-signal="warn" className="flex items-center gap-1.5 font-mono text-xs text-warn-fg">
@@ -676,6 +682,17 @@ export function DevicesPanel({ account, link }: DevicesPanelProps) {
         )}
         <ErrorLine message={error} />
       </div>
+      {!noHostYet && (alwaysConfirm || rotateKeys) && (
+        <details data-testid="security-settings" className="group/sec">
+          <summary className="flex h-10 cursor-pointer list-none items-center gap-2 px-6 text-muted select-none hover:text-fg max-md:px-4 [&::-webkit-details-marker]:hidden">
+            <CaretRightIcon aria-hidden="true" className="size-3 transition-transform group-open/sec:rotate-90" />
+            <span className="text-[13px] leading-5 font-medium">{t("security & keys")}</span>
+            <span className="min-w-0 truncate text-xs">{t("identity key renewal and rotation")}</span>
+          </summary>
+          {alwaysConfirm}
+          {rotateKeys && <div className="flex max-w-xl flex-col gap-3 px-6 pt-3 pb-4 max-md:px-4">{rotateKeys}</div>}
+        </details>
+      )}
       {noHostYet && (
         <MoreSettings>
           {thisDevice}

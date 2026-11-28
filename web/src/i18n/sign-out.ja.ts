@@ -6,6 +6,7 @@ export const signOutJa: Record<string, string> = {
   "On a device of your own: this browser stays one of your account's devices, and signing in again opens it as before.":
     "自分のデバイス向け：このブラウザはアカウントのデバイスのままで、再度ログインすれば元どおり使えます。",
   "sign out and remove this browser": "ログアウトしてこのブラウザを削除",
+  "sign out and delete local keys": "ログアウトしてこのブラウザの鍵を削除",
   "signing out…": "ログアウトしています…",
   "removing this browser…": "このブラウザを削除しています…",
   "On a shared or borrowed device: this browser leaves your account's devices and its keys are deleted here. To use it again, add it as a new device.":

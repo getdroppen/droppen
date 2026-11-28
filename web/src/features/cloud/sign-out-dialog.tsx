@@ -80,12 +80,21 @@ export function SignOutDialog({ account, held, onOpenChange }: { account?: Cloud
               aria-expanded={why === "lastAdmin" ? confirming : undefined}
               onClick={() => (why === "lastAdmin" ? setConfirming(true) : go(true))}
             >
-              {busy === "remove" ? t("removing this browser…") : t("sign out and remove this browser")}
+              {busy === "remove"
+                ? t("removing this browser…")
+                : why === "removable"
+                  ? t("sign out and remove this browser")
+                  : t("sign out and delete local keys")}
             </button>
             <p data-testid="sign-out-remove-why" data-why={why} className="text-2xs leading-4 text-muted">
               {removeBrowserText(why, t, recoveryWords)}
             </p>
           </div>
+          {!confirming && (
+            <button type="button" data-testid="sign-out-cancel" className={quiet} disabled={busy !== null} onClick={() => onOpenChange(false)}>
+              {t("cancel")}
+            </button>
+          )}
           {confirming && (
             <div role="alertdialog" aria-label={t("sign out and remove this browser")} data-testid="sign-out-remove-confirm">
               <Note tone="danger">

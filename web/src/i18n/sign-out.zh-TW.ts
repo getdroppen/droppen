@@ -6,6 +6,7 @@ export const signOutZhTW: Record<string, string> = {
   "On a device of your own: this browser stays one of your account's devices, and signing in again opens it as before.":
     "適合你自己的裝置：這個瀏覽器仍是你帳戶裡的裝置，再次登入即可照舊使用。",
   "sign out and remove this browser": "登出並移除這個瀏覽器",
+  "sign out and delete local keys": "登出並清除本地金鑰",
   "signing out…": "正在登出…",
   "removing this browser…": "正在移除這個瀏覽器…",
   "On a shared or borrowed device: this browser leaves your account's devices and its keys are deleted here. To use it again, add it as a new device.":

@@ -23,7 +23,7 @@ import { openConnectionLog } from "./connection-log";
  * connect straight to a device (faster; its IP address is seen), and which
  * relay carries it when it does not. A place for more of its own settings.
  */
-export function ThisDeviceSection({ name, relays }: { name: string | null; relays?: ReactNode }) {
+export function ThisDeviceSection({ name, relays, index = "03" }: { name: string | null; relays?: ReactNode; index?: string }) {
   const { t } = useTranslation();
   const asked = useStore(askedPlace);
   // The relay picker, folded until asked for (“change relay…” opens the page on it).
@@ -34,7 +34,7 @@ export function ThisDeviceSection({ name, relays }: { name: string | null; relay
   return (
     <section data-testid="this-device">
       <div className="px-6 max-md:px-4">
-        <SectionHead index="02" title={t("This device")}>
+        <SectionHead index={index} title={t("This device")}>
           {name && <span className="min-w-0 truncate font-mono text-xs text-muted">{name}</span>}
         </SectionHead>
       </div>

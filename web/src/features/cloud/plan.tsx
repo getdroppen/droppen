@@ -358,18 +358,12 @@ export function UsagePanel({
   const count = (used: number, max: number | null | undefined) => ({ used: String(used), limit: max == null ? t("no limit") : String(max), meter: max != null && max > 0 ? used / max : null, level: countLevel(used, max) });
   const devices = count(plan.usage.devices, devicesMax);
   const hosts = count(hostsUsed, hostsMax);
-  const summary = t("{{plan}} · {{devices}} of {{deviceMax}} devices · {{hosts}} of {{hostMax}} can run AI", {
-    plan: planLabel(plan.id, t),
-    devices: plan.usage.devices,
-    deviceMax: devicesMax ?? "∞",
-    hosts: hostsUsed,
-    hostMax: hostsMax ?? "∞",
-  });
+  const summary = planLabel(plan.id, t);
   return (
     <section data-testid="usage-summary" data-plan={plan.id} className="@container/usage">
       <div className="flex flex-col gap-4 px-6 pt-1 pb-2 max-md:px-4">
         <UsageHead title={t("plan and usage")} />
-        {/* One sentence first, then five numbers — not five framed boxes. */}
+        {/* Plan & retention summary above the five metric tiles. */}
         <p data-testid="usage-summary-line" className="text-[13px] leading-5 text-muted">
           {summary}
           <span className="text-faint"> · </span>
@@ -411,7 +405,7 @@ export function UsagePanel({
             level={storage.level}
             className={CELL}
           >
-            {(storage.machines.length > 0 || storage.otherBytes > 0) && (
+            {storage.machines.length > 0 && (
               <button
                 type="button"
                 data-testid="storage-by-device"
