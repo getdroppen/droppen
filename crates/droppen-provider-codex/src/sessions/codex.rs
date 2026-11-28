@@ -462,7 +462,9 @@ async fn spawned_threads(paths: &Paths) -> Vec<SpawnedThread> {
 /// Whether each subagent rollout's last turn failed, by the file and its
 /// mtime and size: the list asks of every subagent thread on every pass, and a
 /// rollout Codex compressed would otherwise be decoded whole each time to
-/// answer what a file that does not change says.
+/// answer what a file that does not change says. Backed by
+/// [`droppen_sessions::index`] so the first relist after a boot does not have
+/// to decode every compressed subagent rollout again either.
 static FAILED: LazyLock<FileCache<bool>> = LazyLock::new(|| FileCache::new(CACHE_MAX));
 
 /// How a subagent thread is doing: whether it is still working, and whether
@@ -472,11 +474,25 @@ async fn spawned_thread_state(thread: &SpawnedThread) -> (bool, bool) {
     let failed = match compressed::locate(path).await {
         Ok((found, metadata)) => {
             let (mtime, len) = (mtime_ms(&metadata), metadata.len());
-            match FAILED.get(&found, mtime, len) {
-                Some(failed) => failed,
-                None => {
+            if let Some(failed) = FAILED.get(&found, mtime, len) {
+                failed
+            } else {
+                let index = droppen_sessions::index::current();
+                let key = format!("subagent-failed:{}", thread.id);
+                let mark = droppen_sessions::index::Watermark {
+                    path: &found,
+                    size_bytes: len,
+                    mtime_ms: mtime,
+                };
+                if let Some(failed) = index.as_ref().and_then(|idx| idx.summary::<bool>(Source::Codex, &key, mark)) {
+                    FAILED.put(&found, mtime, len, failed);
+                    failed
+                } else {
                     let failed = last_turn_failed(path).await;
                     FAILED.put(&found, mtime, len, failed);
+                    if let Some(idx) = &index {
+                        idx.remember_summary(Source::Codex, &key, mark, &failed);
+                    }
                     failed
                 }
             }
@@ -1002,6 +1018,7 @@ impl droppen_sessions::Transcripts for CodexSessions {
     // read once for all of them.
     fn children<'a>(&'a self, paths: &'a Paths, sessions: Vec<&'a mut SessionSummary>, marks: &'a BTreeMap<String, String>) -> BoxFuture<'a, ()> {
         Box::pin(async move {
+            droppen_sessions::index::install(paths);
             let codex_threads = spawned_threads(paths).await;
             let mut threads_by_parent: HashMap<&str, Vec<&SpawnedThread>> = HashMap::new();
             for thread in &codex_threads {
@@ -2122,6 +2139,75 @@ mod tests {
             .expect("restored plain");
             assert_eq!(read_codex_cli_choice(first).await.and_then(|c| c.model.0).as_deref(), Some("gpt-5.9"));
             assert_eq!(read_codex_context(first).await.map(|u| u.tokens), Some(9999));
+        }
+
+        /// After a restart (empty in-memory `FAILED` cache), the first relist
+        /// reads each compressed subagent's `failed` flag from `index.db`
+        /// instead of decoding every compressed subagent rollout again, and
+        /// invalidates the durable entry once the rollout changes on disk.
+        #[tokio::test]
+        async fn compressed_subagent_failed_flag_survives_restart_via_index() {
+            let _guard = droppen_sessions::index::exclusive().await;
+            let home = tempfile::tempdir().expect("tempdir");
+            let paths = Paths::new(home.path().to_path_buf());
+            std::fs::write(rollout_in(&paths, ID), text()).expect("parent");
+            compress_as_codex(&rollout_in(&paths, ID));
+
+            let failed_id = "dddddddd-0001-4000-8000-000000000001";
+            let ok_id = "dddddddd-0002-4000-8000-000000000002";
+            let failed_line = r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#;
+            let ok_line = r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#;
+            let spawned = format!(r#"{{"subagent":{{"thread_spawn":{{"parent_thread_id":"{ID}","depth":1}}}}}}"#);
+
+            std::fs::write(rollout_in(&paths, failed_id), format!("{}{failed_line}\n", text())).expect("failed child");
+            compress_as_codex(&rollout_in(&paths, failed_id));
+            std::fs::write(rollout_in(&paths, ok_id), format!("{}{ok_line}\n", text())).expect("ok child");
+            compress_as_codex(&rollout_in(&paths, ok_id));
+            state_db(
+                &paths,
+                &[
+                    (ID, "cli", None, None),
+                    (failed_id, spawned.as_str(), Some("Ada"), Some(ID)),
+                    (ok_id, spawned.as_str(), Some("Grace"), Some(ID)),
+                ],
+            );
+
+            async fn tree(paths: &Paths) -> Vec<(String, SessionChildStatus)> {
+                let mut parent = listed(paths, ID).await.expect("the parent");
+                droppen_sessions::Transcripts::children(&CodexSessions, paths, vec![&mut parent], &BTreeMap::new()).await;
+                let mut tree: Vec<_> = parent.children.into_iter().map(|child| (child.id, child.status)).collect();
+                tree.sort_by(|a, b| a.0.cmp(&b.0));
+                tree
+            }
+
+            let expected = vec![
+                (failed_id.to_string(), SessionChildStatus::Failed),
+                (ok_id.to_string(), SessionChildStatus::Done),
+            ];
+            assert_eq!(tree(&paths).await, expected, "initial list records durable flags");
+
+            // Simulate a process restart: wipe the in-memory near tier and make
+            // both compressed files unreadable at the same length & mtime.
+            FAILED.clear();
+            for child in [failed_id, ok_id] {
+                let zst = compressed::compressed_path(&rollout_in(&paths, child));
+                let metadata = std::fs::metadata(&zst).expect("stat");
+                std::fs::write(&zst, vec![0u8; metadata.len() as usize]).expect("unreadable");
+                set_mtime(&zst, metadata.modified().expect("mtime"));
+            }
+
+            assert_eq!(tree(&paths).await, expected, "first relist after restart hits index.db without decoding");
+
+            // Restoring a plain rollout with a completed turn invalidates the
+            // cached failure immediately.
+            std::fs::write(rollout_in(&paths, failed_id), format!("{}{ok_line}\n", text())).expect("recovered");
+            assert_eq!(
+                tree(&paths).await,
+                vec![
+                    (failed_id.to_string(), SessionChildStatus::Done),
+                    (ok_id.to_string(), SessionChildStatus::Done),
+                ]
+            );
         }
 
         /// Without the database the rollouts are walked: a compressed one is a
