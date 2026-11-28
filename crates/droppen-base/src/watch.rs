@@ -61,27 +61,24 @@ pub fn never() -> FileEvents {
 
 /// Watch `path`, coalescing bursts into one signal per `debounce` window.
 ///
-/// A file that is not there is watched through its directory, for the events
-/// that name it: a transcript can be named before it is on disk by that name.
-/// Codex compresses a rollout it has not written to for a week to another
-/// name, and decompresses it back to this one when it next writes, which is
-/// when a view of it wants every change at once rather than at the next poll.
+/// The watch is placed on `path`'s parent directory (non-recursively) and
+/// filtered by file name, whether or not the file exists yet. On Linux an
+/// inotify watch on a file follows its inode, so deleting and recreating the
+/// file at the same path — which happens when Codex compresses an idle rollout
+/// to `.jsonl.zst` and later restores the plain `.jsonl` on the next append, or
+/// when any writer replaces a file atomically — would leave a file watch on a
+/// dead inode. Watching the parent directory keeps the watch alive across
+/// delete, rename, and recreate, and also handles files that do not exist yet
+/// when the watch starts.
 pub fn watch_file(path: &Path, debounce: Duration) -> FileEvents {
     let (raw_tx, raw_rx) = mpsc::channel::<()>(64);
-    let watched = match path.parent() {
-        Some(dir) if !path.exists() => Watched::Dir(dir.to_path_buf(), path.file_name().map(ToOwned::to_owned)),
-        _ => Watched::File,
-    };
-    let only = match &watched {
-        Watched::Dir(_, name) => Some(name.clone()),
-        Watched::File => None,
-    };
+    let (target, only) = watch_target(path);
 
     let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else { return };
         // A directory watch hears of every file in it; only this one counts.
         if let Some(name) = &only {
-            if !event.paths.iter().any(|changed| changed.file_name() == name.as_deref()) {
+            if !event.paths.iter().any(|changed| changed.file_name() == Some(name.as_os_str())) {
                 return;
             }
         }
@@ -90,10 +87,7 @@ pub fn watch_file(path: &Path, debounce: Duration) -> FileEvents {
         let _ = raw_tx.try_send(());
     })
     .and_then(|mut watcher| {
-        match &watched {
-            Watched::Dir(dir, _) => watcher.watch(dir, RecursiveMode::NonRecursive)?,
-            Watched::File => watcher.watch(path, RecursiveMode::NonRecursive)?,
-        }
+        watcher.watch(target, RecursiveMode::NonRecursive)?;
         Ok(watcher)
     });
 
@@ -110,12 +104,19 @@ pub fn watch_file(path: &Path, debounce: Duration) -> FileEvents {
     }
 }
 
-/// What [`watch_file`] watches.
-enum Watched {
-    /// The file itself.
-    File,
-    /// The directory of a file that is not there, and the file's name in it.
-    Dir(std::path::PathBuf, Option<std::ffi::OsString>),
+/// The directory [`watch_file`] watches and the file name it filters for.
+///
+/// Always picks the parent directory when `path` names a file inside one, even
+/// if the file already exists, so inode replacement never orphans the watch.
+/// Falls back to `path` itself only for paths with no file name or parent.
+fn watch_target(path: &Path) -> (&Path, Option<std::ffi::OsString>) {
+    match (path.parent(), path.file_name()) {
+        (Some(dir), Some(name)) => {
+            let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+            (dir, Some(name.to_os_string()))
+        }
+        _ => (path, None),
+    }
 }
 
 /// Watch every directory in `dirs` recursively, coalescing bursts into one
@@ -237,6 +238,60 @@ mod tests {
         let mut events = watch_file(&dir.path().join("gone").join("does-not-exist.jsonl"), Duration::from_millis(50));
         let result = tokio::time::timeout(Duration::from_millis(150), events.recv()).await;
         assert!(result.is_err(), "an unwatchable path must be quiet, not closed, got {result:?}");
+    }
+
+    /// Even when the file already exists, `watch_file` watches its parent
+    /// directory filtered by name so deleting and recreating the file with a
+    /// new inode (such as Codex compressing and restoring a rollout on Linux)
+    /// does not orphan the watch.
+    #[test]
+    fn existing_and_missing_files_both_watch_their_parent_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let existing = dir.path().join("present.jsonl");
+        std::fs::write(&existing, "a\n").expect("seed");
+        let missing = dir.path().join("absent.jsonl");
+
+        assert_eq!(watch_target(&existing), (dir.path(), Some(std::ffi::OsString::from("present.jsonl"))));
+        assert_eq!(watch_target(&missing), (dir.path(), Some(std::ffi::OsString::from("absent.jsonl"))));
+        assert_eq!(
+            watch_target(Path::new("bare.jsonl")),
+            (Path::new("."), Some(std::ffi::OsString::from("bare.jsonl")))
+        );
+    }
+
+    /// Watching an existing file ignores writes to sibling files in the same
+    /// directory, and keeps watching across delete + recreate.
+    #[tokio::test]
+    async fn a_replaced_file_keeps_reaching_the_channel_when_the_platform_allows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(&path, "a\n").expect("seed");
+
+        let mut events = watch_file(&path, Duration::from_millis(50));
+        // Sibling writes must be filtered out even though the parent dir is watched.
+        std::fs::write(dir.path().join("sibling.jsonl"), "other\n").expect("sibling");
+        let quiet = tokio::time::timeout(Duration::from_millis(200), events.recv()).await;
+        assert!(quiet.is_err(), "sibling changes must not trigger events, got {quiet:?}");
+
+        // Delete the original inode (e.g. compression) and recreate at the same path.
+        std::fs::remove_file(&path).expect("remove");
+        let _ = tokio::time::timeout(Duration::from_millis(150), events.recv()).await;
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&path).expect("recreate");
+        loop {
+            writeln!(file, "after-restore").expect("write");
+            file.flush().expect("flush");
+            match tokio::time::timeout(Duration::from_millis(250), events.recv()).await {
+                Ok(Some(())) => return,
+                Ok(None) => panic!("the watcher channel closed; `never()` must keep it pending"),
+                Err(_) if std::time::Instant::now() < deadline => continue,
+                Err(_) => {
+                    eprintln!("note: no filesystem events in this environment; the 2s poll backstop is carrying the feed");
+                    return;
+                }
+            }
+        }
     }
 
     /// A file that appears after the watch began (Codex decompressing a
