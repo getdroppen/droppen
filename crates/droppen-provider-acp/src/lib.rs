@@ -100,11 +100,9 @@ struct Recorded {
     cwd: Option<String>,
 }
 
-/// The prompt an agent is sent: the text, and where each attachment is on disk.
-///
-/// Paths rather than inline content, images included: an ACP agent reads
-/// files with its own tools, and an image block would fail outright on a
-/// model without vision.
+/// The fallback prompt text formatting for attachments when an agent lacks
+/// native multimodal / embedded-resource prompt capabilities.
+#[cfg(test)]
 fn prompt_text(text: &str, images: &[String], files: &[String]) -> String {
     let attached: Vec<&String> = images.iter().chain(files).collect();
     if attached.is_empty() {
@@ -119,7 +117,6 @@ fn message(text: &str, options: &SendOptions) -> Message {
     Message {
         id: options.message_id.clone().unwrap_or_else(new_uuid),
         text: text.to_string(),
-        prompt: prompt_text(text, &options.images, &options.files),
         images: options.images.clone(),
         files: options.files.clone(),
         model: picked(&options.model),

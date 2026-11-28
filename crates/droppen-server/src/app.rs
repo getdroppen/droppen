@@ -996,7 +996,7 @@ mod tests {
             Capabilities {
                 questions: false,
                 permissions: false,
-                chat_inline_attachments: false,
+                chat_inline_attachments: true,
                 rotations: false,
                 ..all
             }

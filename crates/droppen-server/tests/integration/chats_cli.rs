@@ -472,7 +472,8 @@ async fn a_session_keeps_its_path_based_attachment_delivery() {
 async fn a_codex_chat_hands_its_attachments_to_the_cli() {
     let probe = support::Probe::start().await;
     let anchor = probe.data_dir().join("chats");
-    let image = probe.upload("shot.png", &[0x89, b'P', b'N', b'G']).await["path"]
+    let png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3];
+    let image = probe.upload("shot.png", png).await["path"]
         .as_str()
         .expect("the image path")
         .to_string();
@@ -504,15 +505,15 @@ async fn a_codex_chat_hands_its_attachments_to_the_cli() {
     let input = turn["params"]["input"].as_array().expect("input");
     assert_eq!(
         input[0]["text"],
-        format!("look\n\n[1 attached file(s) — view with the Read tool:]\n- {file}"),
-        "non-images travel in the prompt, as for a session"
+        format!("look{}", droppen_sessions::util::chat_file_block(&file, "the notes")),
+        "non-image text files are inlined into a codex chat prompt"
     );
     assert_eq!(input[1], json!({"type": "localImage", "path": image}), "the image is input, not a path to read");
 
     // A follow-up in the same chat is another turn with its own attachments.
     seed_codex_chat(&probe, &id, &anchor).await;
     wait_for_chat(&probe, &id).await;
-    let later = probe.upload("later.png", &[0x89, b'P', b'N', b'G']).await["path"]
+    let later = probe.upload("later.png", png).await["path"]
         .as_str()
         .expect("the second image path")
         .to_string();

@@ -26,7 +26,7 @@ use droppen_provider::common::{busy_message, new_uuid, session_workdir, Phase, Q
 use droppen_provider::gate::{ClaimError, SessionLease, SpawnGate};
 use droppen_sessions::archive::ArchiveError;
 use droppen_provider::{
-    attachment_suffix, require_provider, runs, shim, AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry,
+    require_provider, runs, shim, AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry,
     Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnPermit, StartAt, WrittenAt,
 };
 
@@ -37,17 +37,29 @@ mod tests;
 
 use driver::Driver;
 use protocol::{
-    message, reject_request, rpc, write, ApprovalPolicy, ClientInfo, InitializeParams, NoParams, Notification, Request,
+    prepare_message, reject_request, rpc, write, ApprovalPolicy, ClientInfo, InitializeParams, NoParams, Notification, Request,
     StoredParams, ThreadArchiveParams, ThreadParams, ThreadSettings, TurnInterruptParams, TurnStartOnThread,
     TurnSteerParams,
 };
+#[cfg(test)]
+use protocol::message;
+
+/// Format a non-image file path suffix for Codex sessions without naming
+/// Claude's `Read` tool.
+pub(crate) fn codex_attachment_suffix(paths: &[String]) -> String {
+    if paths.is_empty() {
+        return String::new();
+    }
+    let list = paths.iter().map(|path| format!("- {path}")).collect::<Vec<_>>().join("\n");
+    format!("\n\n[{} attached file(s):]\n{list}", paths.len())
+}
 
 /// codex has no flag for non-image files, so point it at them in the prompt text.
-fn with_codex_files(text: &str, options: &SendOptions) -> String {
-    if options.files.is_empty() {
+fn with_codex_files(text: &str, files: &[String]) -> String {
+    if files.is_empty() {
         text.to_string()
     } else {
-        format!("{text}{}", attachment_suffix(&options.files))
+        format!("{text}{}", codex_attachment_suffix(files))
     }
 }
 
@@ -92,6 +104,15 @@ pub(crate) struct State {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+struct DeliveryRecord {
+    text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    files: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Message {
     id: String,
     text: String,
@@ -102,6 +123,11 @@ struct Message {
     /// explicit withdrawal is safe; automatically replaying may duplicate work.
     #[serde(default)]
     uncertain: bool,
+    /// Attachment metadata recorded into `chat_deliveries` once the message is
+    /// written to the app-server (used for Codex chats with inlined files and
+    /// as a fallback thumbnail record for native `localImage` turns).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delivery: Option<DeliveryRecord>,
 }
 
 #[derive(Clone)]
@@ -450,7 +476,7 @@ impl Provider for Codex {
             permissions: false,
             chats: true,
             chat_attachments: true,
-            chat_inline_attachments: false,
+            chat_inline_attachments: true,
             schedules: true,
             rotations: false,
         }
@@ -846,7 +872,7 @@ impl CodexRuns {
         options: &SendOptions,
         account: Option<CodexAccount>,
     ) -> Result<(String, Sent), InjectError> {
-        let message = message(text, options)?;
+        let message = prepare_message(&self.host.paths, text, options).await?;
         // A new thread: nobody can name it before its app server does, so no
         // other start can be for it, and the gate it takes its permit from is
         // given up at once rather than held while it starts. Its id is claimed

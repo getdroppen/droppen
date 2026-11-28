@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use agent_client_protocol_schema::v1::{RequestPermissionOutcome, SelectedPermissionOutcome};
+use agent_client_protocol_schema::v1::{
+    ContentBlock as WireContentBlock, EmbeddedResource, EmbeddedResourceResource, ImageContent, RequestPermissionOutcome,
+    ResourceLink, SelectedPermissionOutcome, TextContent, TextResourceContents,
+};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
@@ -15,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::{Client, IncomingPermission};
 use super::conn::{Conn, Event};
-use crate::protocol::{category, option_for, ConfigOption, PermissionOptionKindWire, SessionUpdate, ToolKind};
+use crate::protocol::{category, option_for, ConfigOption, PermissionOptionKindWire, PromptCapabilities, SessionUpdate, ToolKind};
 use crate::agents::AcpAgent;
 use droppen_provider::permissions::{self, PermissionSpec};
 use droppen_provider::{InjectError, PermissionOutcome, PermissionReply, Phase, QueueOutcome, ResidentState, Sent};
@@ -76,8 +79,6 @@ pub(super) struct Message {
     pub(super) id: String,
     /// What the user typed, as the transcript shows it.
     pub(super) text: String,
-    /// What the agent is sent: the text and where its attachments are.
-    pub(super) prompt: String,
     pub(super) images: Vec<String>,
     pub(super) files: Vec<String>,
     /// The model the turn is to run on, when the user picked one.
@@ -486,6 +487,117 @@ impl StderrTail {
     }
 }
 
+/// Build an RFC 8089 `file://` URI for an absolute local path, percent-encoding
+/// characters outside the unreserved/path-safe set.
+pub(super) fn file_uri(path: &str) -> String {
+    let mut encoded = String::with_capacity("file://".len() + path.len());
+    encoded.push_str("file://");
+    for &byte in path.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~' | b':') {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write as _;
+            let _ = write!(&mut encoded, "%{byte:02X}");
+        }
+    }
+    encoded
+}
+
+fn file_display_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Build ACP `session/prompt` content blocks matching what the agent declared
+/// in `initialize.agentCapabilities.promptCapabilities`:
+///
+/// * Images -> `ContentBlock::Image` (base64 + mimeType + `file://` URI) when
+///   `caps.image` is true and the image is valid PNG/JPEG/GIF/WebP within caps;
+///   otherwise `ContentBlock::ResourceLink` plus a concise path fallback.
+/// * Files -> `ContentBlock::Resource(TextResourceContents)` when
+///   `caps.embedded_context` is true and the file is UTF-8 within caps;
+///   otherwise `ContentBlock::ResourceLink` plus a concise path fallback.
+/// * Escaped or hard-linked uploads fail loudly.
+pub(super) async fn build_prompt_blocks(
+    paths: &droppen_instance::paths::Paths,
+    message: &Message,
+    caps: &PromptCapabilities,
+) -> Result<Vec<WireContentBlock>, String> {
+    use droppen_provider::chat_attachments::{
+        read_chat_image, read_chat_text_file, ChatAttachmentError, MAX_IMAGE_TOTAL_BYTES,
+    };
+
+    if message.images.is_empty() && message.files.is_empty() {
+        return Ok(vec![WireContentBlock::Text(TextContent::new(message.text.clone()))]);
+    }
+
+    let mut extra_blocks = Vec::new();
+    let mut fallback_paths = Vec::new();
+    let mut image_total = 0u64;
+    let mut text_total = 0u64;
+
+    for path in &message.images {
+        let uri = file_uri(path);
+        if caps.image {
+            match read_chat_image(paths, path).await {
+                Ok(img) if image_total.saturating_add(img.raw_len) <= MAX_IMAGE_TOTAL_BYTES => {
+                    image_total = image_total.saturating_add(img.raw_len);
+                    extra_blocks.push(WireContentBlock::Image(
+                        ImageContent::new(img.data, img.media_type).uri(uri),
+                    ));
+                    continue;
+                }
+                Err(error @ (ChatAttachmentError::OutsideUploads | ChatAttachmentError::HardLinked { .. })) => {
+                    return Err(error.to_string());
+                }
+                Ok(_) | Err(_) => {}
+            }
+        }
+        extra_blocks.push(WireContentBlock::ResourceLink(ResourceLink::new(file_display_name(path), uri)));
+        fallback_paths.push(path.clone());
+    }
+
+    for path in &message.files {
+        let uri = file_uri(path);
+        if caps.embedded_context {
+            match read_chat_text_file(paths, path, &mut text_total).await {
+                Ok(content) => {
+                    extra_blocks.push(WireContentBlock::Resource(EmbeddedResource::new(
+                        EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(content, uri)),
+                    )));
+                    continue;
+                }
+                Err(error @ (ChatAttachmentError::OutsideUploads | ChatAttachmentError::HardLinked { .. })) => {
+                    return Err(error.to_string());
+                }
+                Err(_) => {}
+            }
+        }
+        extra_blocks.push(WireContentBlock::ResourceLink(ResourceLink::new(file_display_name(path), uri)));
+        fallback_paths.push(path.clone());
+    }
+
+    let text = if fallback_paths.is_empty() {
+        message.text.clone()
+    } else {
+        let list = fallback_paths
+            .iter()
+            .map(|path| format!("- {path}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{}\n\n[{} attached file(s):]\n{list}", message.text, fallback_paths.len())
+    };
+    let mut blocks = Vec::with_capacity(1 + extra_blocks.len());
+    if !text.is_empty() || extra_blocks.is_empty() {
+        blocks.push(WireContentBlock::Text(TextContent::new(text)));
+    }
+    blocks.extend(extra_blocks);
+    Ok(blocks)
+}
+
 /// The transcript file, opened for appending.
 pub(super) struct Transcript {
     file: tokio::fs::File,
@@ -773,7 +885,21 @@ impl Driver {
             };
         }
         self.record_choice().await;
-        if let Err(error) = self.conn.prompt(&self.agent_session, message.prompt).await {
+        let caps = self.conn.prompt_capabilities();
+        let content = match build_prompt_blocks(&self.runs.host.paths, &message, &caps).await {
+            Ok(content) => content,
+            Err(reason) => {
+                self.runs
+                    .host
+                    .note_receipt(Source::Acp, &self.id, &message.id, droppen_sessions::delivery::ReceiptStatus::Failed);
+                let said = self.redact(&reason);
+                self.transcript.append(&[Record::Error { message: &said }.stamped()]).await;
+                self.start_turn();
+                self.end_turn(Some(said), false);
+                return Ok(());
+            }
+        };
+        if let Err(error) = self.conn.prompt(&self.agent_session, content).await {
             // The prompt did not reach the agent, so the turn never started:
             // the message failed, and `died`, which this ends in, says so
             // once, as for a switch it never answered.
@@ -1229,5 +1355,69 @@ mod tests {
         let text = ring.text();
         assert!(!text.contains("value"), "the cut line's end is not shown: {text}");
         assert!(text.ends_with("xx\nlast line"), "{text}");
+    }
+
+    #[test]
+    fn file_uri_encodes_spaces_and_unicode() {
+        assert_eq!(file_uri("/tmp/a b/图片.png"), "file:///tmp/a%20b/%E5%9B%BE%E7%89%87.png");
+    }
+
+    #[tokio::test]
+    async fn build_prompt_blocks_uses_native_blocks_when_supported_and_falls_back_cleanly() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = droppen_instance::paths::Paths::new(home.path().to_path_buf());
+        let dir = paths.uploads_dir().join("u1");
+        std::fs::create_dir_all(&dir).expect("uploads dir");
+        let png_path = dir.join("shot.png");
+        let txt_path = dir.join("notes.txt");
+        let bin_path = dir.join("blob.bin");
+        std::fs::write(&png_path, &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]).expect("png");
+        std::fs::write(&txt_path, b"hello world").expect("txt");
+        std::fs::write(&bin_path, &[0xff, 0xfe, 0x00]).expect("bin");
+
+        let msg = Message {
+            id: "m-1".into(),
+            text: "inspect".into(),
+            images: vec![png_path.to_string_lossy().into_owned()],
+            files: vec![
+                txt_path.to_string_lossy().into_owned(),
+                bin_path.to_string_lossy().into_owned(),
+            ],
+            model: None,
+            effort: None,
+        };
+
+        // Agent with both image and embedded_context capabilities:
+        // PNG -> ImageContent, UTF-8 txt -> EmbeddedResource, binary -> ResourceLink + fallback path.
+        let capable = PromptCapabilities {
+            image: true,
+            audio: false,
+            embedded_context: true,
+        };
+        let blocks = build_prompt_blocks(&paths, &msg, &capable).await.expect("capable blocks");
+        let encoded: Vec<Value> = blocks.iter().map(|b| serde_json::to_value(b).unwrap()).collect();
+        assert_eq!(encoded.len(), 4);
+        assert_eq!(encoded[0]["type"], "text");
+        assert!(encoded[0]["text"].as_str().unwrap().contains("blob.bin"));
+        assert!(!encoded[0]["text"].as_str().unwrap().contains("shot.png"));
+        assert!(!encoded[0]["text"].as_str().unwrap().contains("notes.txt"));
+        assert_eq!(encoded[1]["type"], "image");
+        assert_eq!(encoded[1]["mimeType"], "image/png");
+        assert!(encoded[1]["uri"].as_str().unwrap().starts_with("file://"));
+        assert_eq!(encoded[2]["type"], "resource");
+        assert_eq!(encoded[2]["resource"]["text"], "hello world");
+        assert_eq!(encoded[3]["type"], "resource_link");
+
+        // Agent with no multimodal capabilities: everything becomes ResourceLink + fallback suffix.
+        let basic = PromptCapabilities::default();
+        let blocks = build_prompt_blocks(&paths, &msg, &basic).await.expect("basic blocks");
+        let encoded: Vec<Value> = blocks.iter().map(|b| serde_json::to_value(b).unwrap()).collect();
+        assert_eq!(encoded.len(), 4);
+        assert_eq!(encoded[0]["type"], "text");
+        assert!(encoded[0]["text"].as_str().unwrap().contains("shot.png"));
+        assert!(encoded[0]["text"].as_str().unwrap().contains("notes.txt"));
+        assert_eq!(encoded[1]["type"], "resource_link");
+        assert_eq!(encoded[2]["type"], "resource_link");
+        assert_eq!(encoded[3]["type"], "resource_link");
     }
 }

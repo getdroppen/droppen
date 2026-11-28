@@ -395,7 +395,7 @@ fn turn_params_preserve_settings_and_attachments() {
     // The bytes the journal keeps and every later turn/start is cloned from.
     assert_eq!(
         serde_json::to_string(&m.params).unwrap(),
-        r#"{"input":[{"type":"text","text":"hello\n\n[1 attached file(s) — view with the Read tool:]\n- /uploads/a.txt"},{"type":"localImage","path":"/uploads/a.png"}],"approvalPolicy":"never","model":"gpt-5","effort":"high","sandboxPolicy":{"type":"workspaceWrite"}}"#
+        r#"{"input":[{"type":"text","text":"hello\n\n[1 attached file(s):]\n- /uploads/a.txt"},{"type":"localImage","path":"/uploads/a.png"}],"approvalPolicy":"never","model":"gpt-5","effort":"high","sandboxPolicy":{"type":"workspaceWrite"}}"#
     );
     assert!(message(
         "x",

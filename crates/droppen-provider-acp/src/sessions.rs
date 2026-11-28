@@ -424,11 +424,70 @@ impl Translator {
     /// The records an update replayed by `session/load` adds.
     ///
     /// The same as a live one, except that the user's own messages are kept:
-    /// a replay is the only copy of them this server will ever see.
+    /// a replay is the only copy of them this server will ever see. Image,
+    /// resource-link, and embedded-resource blocks that carry a `file://` URI
+    /// preserve their upload paths so thumbnails and file chips survive replay.
     pub fn replayed(&mut self, update: &SessionUpdate) -> Vec<Value> {
         if let SessionUpdate::UserMessageChunk(chunk) = update {
-            let text = content_text(&chunk.content);
             let mut out = self.flush();
+            match &chunk.content {
+                ContentBlock::Image { uri: Some(uri) } => {
+                    if let Some(path) = file_uri_to_path(uri) {
+                        let images = [path];
+                        out.push(
+                            Record::User {
+                                text: "",
+                                images: &images,
+                                files: &[],
+                            }
+                            .stamped(),
+                        );
+                        return out;
+                    }
+                }
+                ContentBlock::ResourceLink { uri: Some(uri), .. } => {
+                    if let Some(path) = file_uri_to_path(uri) {
+                        if droppen_sessions::util::is_image_name(&path) {
+                            let images = [path];
+                            out.push(
+                                Record::User {
+                                    text: "",
+                                    images: &images,
+                                    files: &[],
+                                }
+                                .stamped(),
+                            );
+                        } else {
+                            let files = [path];
+                            out.push(
+                                Record::User {
+                                    text: "",
+                                    images: &[],
+                                    files: &files,
+                                }
+                                .stamped(),
+                            );
+                        }
+                        return out;
+                    }
+                }
+                ContentBlock::Resource { resource } => {
+                    if let Some(path) = resource.uri.as_deref().and_then(file_uri_to_path) {
+                        let files = [path];
+                        out.push(
+                            Record::User {
+                                text: "",
+                                images: &[],
+                                files: &files,
+                            }
+                            .stamped(),
+                        );
+                        return out;
+                    }
+                }
+                _ => {}
+            }
+            let text = content_text(&chunk.content);
             if !text.trim().is_empty() {
                 out.push(Record::ReplayedUser { text: &text }.stamped());
             }
@@ -477,12 +536,43 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// Decode a `file://` URI back into a local absolute path, percent-decoding
+/// any `%XX` escapes.
+fn file_uri_to_path(uri: &str) -> Option<String> {
+    let raw = uri.strip_prefix("file://")?;
+    if !raw.starts_with('/') {
+        return None;
+    }
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
+            if let Ok(decoded) = u8::from_str_radix(hex, 16) {
+                out.push(decoded);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
 /// The text of one ACP content block.
 fn content_text(content: &ContentBlock) -> String {
     match content {
         ContentBlock::Text { text } => text.clone(),
-        ContentBlock::ResourceLink { name } => format!("[{name}]"),
-        ContentBlock::Image {} => "[image]".to_string(),
+        ContentBlock::ResourceLink { name, .. } => format!("[{name}]"),
+        ContentBlock::Image { .. } => "[image]".to_string(),
+        ContentBlock::Resource { resource } => resource
+            .uri
+            .as_deref()
+            .and_then(file_uri_to_path)
+            .and_then(|p| Path::new(&p).file_name().map(|n| format!("[{}]", n.to_string_lossy())))
+            .unwrap_or_default(),
         ContentBlock::Other => String::new(),
     }
 }
@@ -1375,5 +1465,36 @@ pub(crate) mod tests {
         for bad in ["", "-x", "Bub", "a_b", "a.b", "../x", "a/b", "é", &"x".repeat(MAX_AGENT_ID + 1)] {
             assert!(!valid_agent_id(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn replayed_media_and_resource_uris_preserve_attachment_paths() {
+        let mut translator = Translator::default();
+        let img_update: SessionUpdate = serde_json::from_value(json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "image", "data": "AAAA", "mimeType": "image/png", "uri": "file:///uploads/u/my%20shot.png" }
+        }))
+        .unwrap();
+        let link_update: SessionUpdate = serde_json::from_value(json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "resource_link", "name": "notes.txt", "uri": "file:///uploads/u/notes.txt" }
+        }))
+        .unwrap();
+        let res_update: SessionUpdate = serde_json::from_value(json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "resource", "resource": { "uri": "file:///uploads/u/spec.md", "text": "hi" } }
+        }))
+        .unwrap();
+
+        let mut records = Vec::new();
+        records.extend(translator.replayed(&img_update));
+        records.extend(translator.replayed(&link_update));
+        records.extend(translator.replayed(&res_update));
+        let lines: Vec<String> = records.into_iter().map(|r| r.to_string()).collect();
+        let items = parse_lines(lines.iter().map(String::as_str));
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].images.as_deref(), Some(["/uploads/u/my shot.png".to_string()].as_slice()));
+        assert_eq!(items[1].files.as_deref().unwrap()[0].path, "/uploads/u/notes.txt");
+        assert_eq!(items[2].files.as_deref().unwrap()[0].path, "/uploads/u/spec.md");
     }
 }
