@@ -36,7 +36,7 @@ pub mod testing;
 
 pub use common::{AnswerOutcome, PermissionOutcome, PermissionReply, Phase, QueueOutcome, Reply, ResidentState, StopTaskOutcome};
 pub use gate::{SessionLease, SpawnGate, SpawnPermit};
-pub use registry::{Capabilities, ContinueError, Provider, ProviderRegistry, Run, SendTo, StartAt};
+pub use registry::{has_work_in_flight, Capabilities, ContinueError, Provider, ProviderRegistry, Run, SendTo, StartAt};
 
 /// How often an adopted run's pid is probed.
 ///

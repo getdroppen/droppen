@@ -716,6 +716,7 @@ impl Provider for ClaudeCode {
             chat_attachments: true,
             chat_inline_attachments: true,
             schedules: true,
+            rotations: true,
         }
     }
 
@@ -740,6 +741,18 @@ impl Provider for ClaudeCode {
     /// ([`crate::sessions::claude::continuation`]).
     fn continue_on_account<'a>(&'a self, id: &'a str, new_id: &'a str) -> BoxFuture<'a, Result<std::path::PathBuf, droppen_provider::ContinueError>> {
         Box::pin(crate::sessions::claude::continuation::copy_local_session(&self.runs.host.paths, id, new_id))
+    }
+
+    fn purge_archived<'a>(&'a self, paths: &'a droppen_instance::paths::Paths, cutoff_ms: i64) -> BoxFuture<'a, droppen_sessions::Purged> {
+        Box::pin(async move {
+            let live = crate::sessions::claude::live_claude_sessions(paths).await;
+            let skip = |id: &str| {
+                let state = self.resident(id);
+                droppen_provider::has_work_in_flight(state.as_ref())
+                    || (live.contains_key(id) && state.is_none())
+            };
+            crate::sessions::claude::archive::purge_archived(paths, cutoff_ms, &skip).await
+        })
     }
 }
 

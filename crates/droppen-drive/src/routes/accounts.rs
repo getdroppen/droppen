@@ -64,8 +64,8 @@ pub async fn bind_session_account(
             return Err(provider_mismatch());
         }
     }
-    if source == Source::Codex {
-        return bind_codex_session(&state, &id, account_id).await;
+    if !state.drive.providers.capabilities(source).rotations {
+        return bind_in_place_session(&state, source, provider, &id, account_id).await;
     }
     let found = state.drive.transcripts.find_root(&state.paths, source, &id).await;
     // Scoped to claude, because the binding table holds both CLIs' rows: a
@@ -93,7 +93,7 @@ pub async fn bind_session_account(
             },
         ));
     }
-    write_binding(&state, Source::Claude, &id, account_id).await
+    write_binding(&state, source, &id, account_id).await
 }
 
 /// Carry a local-login claude session onto an account, as a new session.
@@ -125,19 +125,22 @@ pub async fn continue_session_on_account(
     ApiPath((source, id)): ApiPath<(Source, String)>,
     ApiJson(body): ApiJson<SessionContinue>,
 ) -> Result<Json<ContinuedSession>, ApiError> {
-    if source != Source::Claude {
-        return Err(continue_not_supported());
+    let Some(provider) = AccountProvider::of(source) else {
+        return Err(continue_not_supported(source));
+    };
+    if !state.drive.providers.capabilities(source).rotations {
+        return Err(continue_not_supported(source));
     }
     body.account_id.require_uuid()?;
     let Some(account) = state.drive.accounts.get(&body.account_id).await else {
         return Err(account_not_found());
     };
-    if account.provider != AccountProvider::Claude {
+    if account.provider != provider {
         return Err(provider_mismatch());
     }
     // The same row, and the same ownership verdict, the list and the composer
     // were given: somebody else's session is not this server's to copy.
-    let summary = crate::routes::writable_session(&state.drive, Source::Claude, &id).await?;
+    let summary = crate::routes::writable_session(&state.drive, source, &id).await?;
     if summary.claude_root != Some(ClaudeRoot::Local) {
         return Err(ApiError::refusal(
             StatusCode::CONFLICT,
@@ -150,7 +153,7 @@ pub async fn continue_session_on_account(
 
     let new_id = uuid::Uuid::new_v4().to_string();
     let copy = state.drive.providers.continue_on_account(source, &id, &new_id).await.map_err(|error| match error {
-        ContinueError::Unsupported => continue_not_supported(),
+        ContinueError::Unsupported => continue_not_supported(source),
         ContinueError::NotFound => ApiError::not_found("session not found"),
         ContinueError::Taken => ApiError::conflict(error.to_string()),
         ContinueError::Io(_) => {
@@ -161,7 +164,7 @@ pub async fn continue_session_on_account(
     if let Err(error) = state
         .drive
         .accounts
-        .bind_session_account(&new_id, Some(&account.id), AccountProvider::Claude)
+        .bind_session_account(&new_id, Some(&account.id), provider)
         .await
     {
         // A copy with no account would list as a managed session that refuses
@@ -181,26 +184,28 @@ pub async fn continue_session_on_account(
         .note_hand_binding(&new_id, droppen_accounts::rest::now_ms());
     // A name somebody gave the conversation goes with it.
     let titles = state.drive.titles.read().await;
-    if let Some(title) = titles.get(&droppen_sessions::reference::title_key(Source::Claude, &id)) {
-        if let Err(error) = state.drive.titles.set(Source::Claude, &new_id, title).await {
+    if let Some(title) = titles.get(&droppen_sessions::reference::title_key(source, &id)) {
+        if let Err(error) = state.drive.titles.set(source, &new_id, title).await {
             tracing::warn!(session = %new_id, %error, "cannot carry the title over to the continued session");
         }
     }
     tracing::info!(session = %id, continued = %new_id, account = %account.id, "continued a local-login session on an account as a new session");
-    state.refresh.request_refresh(Some((&Source::Claude, &new_id)));
-    Ok(Json(ContinuedSession {
-        source: Source::Claude,
-        id: new_id,
-    }))
+    state.refresh.request_refresh(Some((&source, &new_id)));
+    Ok(Json(ContinuedSession { source, id: new_id }))
 }
 
 /// Continuing a session on an account is refused for its CLI.
-fn continue_not_supported() -> ApiError {
+fn continue_not_supported(source: Source) -> ApiError {
+    let hint = if AccountProvider::of(source).is_some() {
+        "a codex session switches accounts in place; bind it to the account instead"
+    } else {
+        "this session runs on the agent's own configuration and does not use a Droppen account"
+    };
     ApiError::refusal(
         StatusCode::BAD_REQUEST,
         Hinted {
             error: "continue_not_supported",
-            hint: "a codex session switches accounts in place; bind it to the account instead",
+            hint,
         },
     )
 }
@@ -212,16 +217,22 @@ fn continue_not_supported() -> ApiError {
 /// somewhere else, and re-pointing its login from here would change which
 /// account the *other* driver bills. The refusal is the send route's own, so a
 /// client that already renders `external_session` renders this too.
-async fn bind_codex_session(state: &DriveState, id: &str, account_id: Option<String>) -> Result<Json<SessionAccount>, ApiError> {
-    let bound = state.drive.accounts.session_account_id_for(id, AccountProvider::Codex).await;
-    match crate::routes::writable_session(&state.drive, Source::Codex, id).await {
+async fn bind_in_place_session(
+    state: &DriveState,
+    source: Source,
+    provider: AccountProvider,
+    id: &str,
+    account_id: Option<String>,
+) -> Result<Json<SessionAccount>, ApiError> {
+    let bound = state.drive.accounts.session_account_id_for(id, provider).await;
+    match crate::routes::writable_session(&state.drive, source, id).await {
         Ok(_) => {}
         // A session with no transcript yet but a binding already written is one
         // this server is in the middle of starting; it is ours by construction.
         Err(_) if bound.is_some() => {}
         Err(error) => return Err(error),
     }
-    write_binding(state, Source::Codex, id, account_id).await
+    write_binding(state, source, id, account_id).await
 }
 
 /// Store the binding and tell the feed the row changed.
@@ -242,7 +253,7 @@ async fn write_binding(state: &DriveState, source: Source, id: &str, account_id:
     // Somebody chose this account for the session: nothing moves it ahead of a
     // limit until the choice has stood for a while (see
     // [`droppen_accounts::rotation::HAND_BINDING_GRACE_MS`]).
-    if source == Source::Claude && account_id.is_some() {
+    if state.drive.providers.capabilities(source).rotations && account_id.is_some() {
         state.drive.accounts.rotation_log().note_hand_binding(id, droppen_accounts::rest::now_ms());
     }
     // The binding shows on the session row, so the list has to be re-read.

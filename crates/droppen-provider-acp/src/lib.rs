@@ -503,6 +503,13 @@ impl Provider for Acp {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn purge_archived<'a>(&'a self, paths: &'a droppen_instance::paths::Paths, cutoff_ms: i64) -> BoxFuture<'a, droppen_sessions::Purged> {
+        Box::pin(async move {
+            let skip = |id: &str| droppen_provider::has_work_in_flight(self.resident(id).as_ref());
+            crate::sessions::purge_archived(paths, cutoff_ms, &skip).await
+        })
+    }
 }
 
 impl Run for Acp {

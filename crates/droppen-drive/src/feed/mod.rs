@@ -516,10 +516,11 @@ pub async fn load_session_state(drive: &Arc<Drive>, source: Source, id: &str) ->
     droppen_sessions::children::apply(&drive.paths, &drive.transcripts, std::slice::from_mut(&mut summary)).await;
     droppen_sessions::attention::apply(&drive.paths, &drive.transcripts, std::slice::from_mut(&mut summary)).await;
     droppen_sessions::repo::apply(std::slice::from_mut(&mut summary)).await;
-    // Only claude sessions rotate, and only this instance's log knows about it.
-    let rotation = match source {
-        Source::Claude => drive.accounts.rotation_log().latest(id),
-        Source::Codex | Source::Acp => None,
+    // Only providers with rotations keep a rotation log for their sessions.
+    let rotation = if drive.providers.capabilities(source).rotations {
+        drive.accounts.rotation_log().latest(id)
+    } else {
+        None
     };
     let receipts = drive.injections.host.receipts().for_session(source, id, droppen_provider::receipts::now_ms());
     let questions = if drive.providers.capabilities(source).questions {

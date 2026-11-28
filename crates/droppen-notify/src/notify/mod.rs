@@ -242,11 +242,7 @@ impl NotifyCaller {
     /// Split a session key back into its two halves.
     fn parse(key: &str) -> Option<Self> {
         let (source, id) = key.split_once('/')?;
-        let source = match source {
-            "claude" => Source::Claude,
-            "codex" => Source::Codex,
-            _ => return None,
-        };
+        let source = Source::parse(source)?;
         (!id.is_empty()).then(|| Self { source, id: id.to_string() })
     }
 }
@@ -552,6 +548,7 @@ mod tests {
         assert_eq!(caller.id, "abc-123");
         assert_eq!(caller.key(), "claude/abc-123");
         assert_eq!(NotifyCaller::parse("codex/019a").expect("parsed").source, Source::Codex);
+        assert_eq!(NotifyCaller::parse("acp/019b").expect("parsed").source, Source::Acp);
 
         assert_eq!(NotifyCaller::parse("claude/"), None, "a source with no session is not a session");
         assert_eq!(NotifyCaller::parse("gemini/abc"), None);

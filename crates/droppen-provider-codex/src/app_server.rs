@@ -452,6 +452,7 @@ impl Provider for Codex {
             chat_attachments: true,
             chat_inline_attachments: false,
             schedules: true,
+            rotations: false,
         }
     }
 
@@ -474,6 +475,13 @@ impl Provider for Codex {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn purge_archived<'a>(&'a self, paths: &'a droppen_instance::paths::Paths, cutoff_ms: i64) -> BoxFuture<'a, droppen_sessions::Purged> {
+        Box::pin(async move {
+            let skip = |id: &str| droppen_provider::has_work_in_flight(self.resident(id).as_ref());
+            crate::sessions::purge::purge_archived(paths, cutoff_ms, &skip).await
+        })
     }
 }
 
