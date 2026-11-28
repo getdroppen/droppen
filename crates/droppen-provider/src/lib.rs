@@ -701,7 +701,7 @@ impl RunHost {
     ) -> Arc<Self> {
         let timings = Timings {
             idle_timeout: env_ms("DROPPEN_IDLE_TIMEOUT_MS", Duration::from_secs(20 * 60)),
-            interrupt_step: env_ms("DROPPEN_INTERRUPT_STEP_MS", Duration::from_secs(5)),
+            interrupt_step: env_ms("DROPPEN_INTERRUPT_STEP_MS", Duration::from_secs(1)),
             watchdog_interval: env_ms("DROPPEN_WATCHDOG_INTERVAL_MS", Duration::from_secs(60)),
         };
         Self::timed(paths, instance, accounts, quota, timings)

@@ -396,7 +396,7 @@ impl Driver {
                 rotation_attempt: 0,
             });
             self.set_phase(Phase::Working);
-            self.arm(seq, 1);
+            self.arm(seq, 1, false);
             return;
         }
         // A stop takes back the turn, and the question the turn is blocked on
@@ -410,6 +410,7 @@ impl Driver {
         turn.ladder = Some(0);
         turn.run.state.lock().expect("run state poisoned").interrupted = true;
         let seq = turn.seq;
+        let provisional = turn.provisional;
         let request = StdinLine::ControlRequest {
             request_id: format!("int-{}", new_uuid()),
             request: ControlRequest::Interrupt,
@@ -419,7 +420,7 @@ impl Driver {
         self.recorder.stdin(&request);
         // Arm the signal ladder before awaiting the stdin write so a wedged
         // process whose pipe is full still escalates on schedule.
-        self.arm(seq, 1);
+        self.arm(seq, 1, provisional);
         if let Err(error) = self.link.send_line(&request).await {
             tracing::warn!(session = %self.id, %error, "cannot ask claude to stop; the ladder will have to do it");
         }
@@ -487,16 +488,16 @@ impl Driver {
         }
         self.link.kill_claude(signal);
         if rung < 3 {
-            self.arm(turn, rung + 1);
+            self.arm(turn, rung + 1, false);
         }
     }
 
     /// Schedule the next rung, without holding the driver up for it.
-    fn arm(&self, turn: u64, rung: u8) {
+    fn arm(&self, turn: u64, rung: u8, provisional: bool) {
         let tx = self.tx.clone();
-        let step = self.runs.host.interrupt_step;
+        let wait = ladder_wait(self.runs.host.interrupt_step, self.runs.steer_settle, rung, provisional);
         tokio::spawn(async move {
-            tokio::time::sleep(step).await;
+            tokio::time::sleep(wait).await;
             let _ = tx.send(Cmd::Escalate { turn, rung });
         });
     }
@@ -1356,5 +1357,42 @@ impl Driver {
         self.set_phase(Phase::Starting);
         self.publish();
         Ok(())
+    }
+}
+
+/// How long the interrupt ladder waits before firing `rung` (1 = SIGINT,
+/// 2 = SIGTERM, 3 = SIGKILL).
+///
+/// Each rung doubles `step` (`1 s -> 2 s -> 4 s` at the default 1 s step) so
+/// the first signal arrives promptly without rushing straight to `SIGKILL`.
+/// For a provisional turn still waiting on `steer_settle`, rung 1 waits past
+/// the settle window so an already-finished turn closes quietly instead of
+/// being signalled.
+pub(super) fn ladder_wait(step: Duration, steer_settle: Duration, rung: u8, provisional: bool) -> Duration {
+    let shift = u32::from(rung.saturating_sub(1)).min(4);
+    let wait = step.saturating_mul(1u32 << shift);
+    if rung == 1 && provisional {
+        wait.max(steer_settle.saturating_add(step))
+    } else {
+        wait
+    }
+}
+
+#[cfg(test)]
+mod ladder_tests {
+    use super::*;
+
+    #[test]
+    fn ladder_doubles_per_rung_and_respects_provisional_settle() {
+        let step = Duration::from_secs(1);
+        let settle = Duration::from_secs(2);
+        assert_eq!(ladder_wait(step, settle, 1, false), Duration::from_secs(1));
+        assert_eq!(ladder_wait(step, settle, 2, false), Duration::from_secs(2));
+        assert_eq!(ladder_wait(step, settle, 3, false), Duration::from_secs(4));
+        assert_eq!(
+            ladder_wait(step, settle, 1, true),
+            Duration::from_secs(3),
+            "provisional turn waits past steer_settle before signalling"
+        );
     }
 }
