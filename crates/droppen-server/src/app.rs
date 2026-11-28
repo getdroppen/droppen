@@ -120,17 +120,29 @@ impl RemoteHandApp {
         // writes it, and while it exists the status route would keep
         // reporting `pending` for ever.
         droppen_aggregator::sweep_legacy_key(paths.as_ref());
-        // Attachments uploaded but never sent accumulate; sweep the stale
-        // ones once at boot, off the startup path so a slow disk cannot
-        // delay the listener.
+        let cancel = CancellationToken::new();
+        // Attachments uploaded but never sent accumulate; sweep stale unsent
+        // staging uploads at boot and periodically while the server runs, off
+        // the startup path so a slow disk cannot delay the listener. Sent
+        // uploads carry a marker and stay with their sessions.
         tokio::spawn({
             let roots = droppen_files::FileRoots::of(&paths);
             let paths = paths.clone();
+            let cancel = cancel.clone();
             async move {
-                roots.sweep_uploads().await;
-                // A chat delivery row whose uploads were just swept can show
-                // neither a thumbnail nor a chip; drop it with them.
-                droppen_sessions::chat_delivery::prune_missing(&paths);
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        () = cancel.cancelled() => break,
+                        _ = ticker.tick() => {
+                            roots.sweep_uploads().await;
+                            // A chat delivery row whose uploads are missing can show
+                            // neither a thumbnail nor a chip; drop it with them.
+                            droppen_sessions::chat_delivery::prune_missing(&paths);
+                        }
+                    }
+                }
             }
         });
         let auth = droppen_auth::Auth::new(&paths, &instance, &auth_settings, false, Arc::new(NotifyTokens));
@@ -170,7 +182,7 @@ impl RemoteHandApp {
             feeds,
             global,
             refresh,
-            cancel: CancellationToken::new(),
+            cancel,
             lock: Arc::new(std::sync::OnceLock::new()),
             desktop_app: self.desktop_app_override.unwrap_or_else(crate::desktop_app::from_env),
             send_limit: droppen_http::SEND_LIMIT,

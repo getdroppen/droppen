@@ -53,6 +53,7 @@ interface Sent {
   method: string;
   path: string;
   body: unknown;
+  streamClass?: string;
 }
 
 /** The device answers the chat form's routes, uploads anything, and starts a chat as `chat-1`. */
@@ -79,12 +80,24 @@ function device(sent: Sent[]): Transport {
     "/api/chats": { chats: [] },
   };
   return {
-    fetch: async (request: Request) => {
+    fetch: async (request: Request, options?: { class?: string }) => {
       const url = new URL(request.url);
       if (url.pathname === "/api/uploads" && request.method === "POST") {
         const file = (await request.formData()).get("file") as File;
-        sent.push({ method: "POST", path: url.pathname, body: file.name });
+        sent.push({ method: "POST", path: url.pathname, body: file.name, streamClass: options?.class });
         return Response.json({ path: `${UPLOADS}/${file.name}`, name: file.name, isImage: file.type.startsWith("image/") });
+      }
+      if (url.pathname.endsWith("/message") && request.method === "POST") {
+        const body = (await request.json()) as { files?: string[] };
+        sent.push({ method: "POST", path: url.pathname, body });
+        const refused = (body.files ?? []).find((path) => path.endsWith(".bin"));
+        if (refused) {
+          return Response.json(
+            { error: `${refused.split("/").pop()} is not a UTF-8 text file` },
+            { status: 400 },
+          );
+        }
+        return Response.json({ accepted: true, queued: false });
       }
       if (url.pathname === "/api/chats/new" && request.method === "POST") {
         const body = (await request.json()) as { backend?: string; files?: string[] };
@@ -197,6 +210,10 @@ test("the new-chat form uploads a pasted picture and file, and starts the chat w
   await paste(picture());
   await paste(notes());
   await until("both uploads", () => sent.filter((s) => s.path === "/api/uploads").length === 2);
+  assert.ok(
+    sent.filter((s) => s.path === "/api/uploads").every((s) => s.streamClass === "blob"),
+    "uploads travel on the low-priority blob stream class",
+  );
   await until("both chips", () => chips().length === 2);
   assert.ok(chips().some((n) => n.getAttribute("data-attachment") === "image"), "the picture is a thumbnail");
   assert.ok(chips().some((n) => n.getAttribute("data-attachment") === "file"), "the text file is a file chip");
@@ -326,11 +343,48 @@ for (const source of ["claude", "codex"] as const) {
     t.after(() => page.unmount());
     await until(`the ${source} chat composer`, () => !!textarea());
     assert.ok(attachButton(), "the session composer's attach control is offered in a chat");
-    if (source === "claude") {
-      assert.match(attachmentHint()?.textContent ?? "", /PNG\/JPEG\/GIF\/WebP/, "a claude chat says what it takes");
-    } else {
-      assert.equal(attachmentHint(), undefined, "codex takes what it is given and needs no claude-only note");
-    }
+    assert.match(attachmentHint()?.textContent ?? "", /PNG\/JPEG\/GIF\/WebP/, `a ${source} chat says what it takes`);
     assert.deepEqual(errors, []);
   });
 }
+
+test("the session composer persists ready attachments in its draft and restores them when a send is refused", async (t) => {
+  const sent: Sent[] = [];
+  reset(sent);
+  const drafts = createDraftStore();
+  const renderComposer = () => (
+    <Composer
+      source="claude"
+      id="chat-1"
+      detail={feed("claude")}
+      drafts={drafts}
+      subtasks={[]}
+      chat
+      onQueueChanged={() => undefined}
+    />
+  );
+
+  // Paste an attachment and type text, then unmount and remount (simulating reload).
+  const firstMount = await mount("/chat/claude/chat-1", renderComposer);
+  await until("the composer", () => !!textarea());
+  await paste(binary());
+  await until("the upload", () => sent.some((s) => s.path === "/api/uploads"));
+  await until("the chip", () => chips().length === 1);
+  await type("check this file");
+  await React.act(async () => {
+    firstMount.page.unmount();
+  });
+
+  // Remount: both text and attachment chip come back from the persisted draft.
+  const secondMount = await mount("/chat/claude/chat-1", renderComposer);
+  t.after(() => secondMount.page.unmount());
+  await until("restored textarea", () => !!textarea() && (textarea() as HTMLTextAreaElement).value === "check this file");
+  await until("restored chip", () => chips().length === 1);
+
+  // Send is refused by the server: both text and attachment are restored into the composer.
+  await until("sendable", () => propsOf(sendButton()).disabled === false);
+  await click(sendButton());
+  await until("the message refusal", () => (container.textContent ?? "").includes("is not a UTF-8 text file"));
+  await until("restored after refusal", () => chips().length === 1 && (textarea() as HTMLTextAreaElement).value === "check this file");
+  assert.deepEqual(secondMount.errors, []);
+});

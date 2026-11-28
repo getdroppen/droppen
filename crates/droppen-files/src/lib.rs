@@ -55,9 +55,13 @@ const ATTACHMENT_LIMIT: u64 = 100 * 1024 * 1024;
 /// past even the raised cap fails while the multipart body is being read, which
 /// the handler reports as its fallback text (a `400`), not a bare `413`.
 const MULTIPART_OVERHEAD: u64 = 64 * 1024;
-/// How long an uploaded-but-never-sent attachment survives; see
-/// [`FileRoots::sweep_uploads`].
-const UPLOAD_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// How long an uploaded-but-never-sent staging attachment survives before
+/// [`FileRoots::sweep_uploads`] reclaims it. Sent attachments are marked with
+/// [`SENT_UPLOAD_MARKER`] and stay with their sessions until session purge.
+const UNSENT_UPLOAD_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Marker file placed inside `<uploads>/<id>/` once an upload is referenced by
+/// an accepted session start, chat start, or message send.
+const SENT_UPLOAD_MARKER: &str = ".sent";
 /// How much of a download is read per stream poll.
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
@@ -582,8 +586,9 @@ impl FileRoots {
         let target = dir.join(&name);
         tokio::fs::write(&target, &file.bytes).await.map_err(|_| FsError::Other)?;
 
-        // This route's own extraction: `extension()` is `split('.').last()`, so a
-        // name with no dot is its own extension (and "png" is an image here).
+        // Require an actual dot before the extension (matching
+        // `droppen_sessions::util::is_image_name`), so a dotless file literally
+        // named `png` is not classified as an image.
         let extension = extension(&name);
         Ok(Attachment {
             path: target.to_string_lossy().into_owned(),
@@ -592,12 +597,37 @@ impl FileRoots {
             name,
         })
     }
-    /// Delete upload directories that have not been touched for seven days.
+    /// Mark uploaded attachment directories as referenced by a sent message so
+    /// [`FileRoots::sweep_uploads`] preserves them with their session.
     ///
-    /// Attachments are uploaded before a message is sent, and a message that is
-    /// never sent leaves its files behind forever; nothing else ever collects them.
-    /// Failures are ignored throughout — a sweep that cannot run is not a reason to
-    /// refuse to serve, and the next one will try again.
+    /// Paths outside the uploads root are ignored; marker write failures are
+    /// best-effort because the message itself has already been accepted.
+    pub async fn mark_uploads_sent(&self, paths: &[String]) {
+        let uploads_root = self.0.uploads_dir();
+        let canonical_root = std::fs::canonicalize(&uploads_root).unwrap_or(uploads_root);
+        for raw in paths {
+            let path = Path::new(raw);
+            let Ok(resolved) = self.assert_under_uploads(path) else {
+                continue;
+            };
+            // Each upload sits in `<uploads>/<uuid>/<filename>`; only mark the
+            // direct `<uuid>` directory under `uploads_dir()`.
+            let Some(dir) = resolved.parent() else { continue };
+            if dir.parent() != Some(canonical_root.as_path()) {
+                continue;
+            }
+            let marker = dir.join(SENT_UPLOAD_MARKER);
+            let _ = tokio::fs::write(&marker, b"").await;
+        }
+    }
+    /// Delete unreferenced staging upload directories that have not been
+    /// touched for [`UNSENT_UPLOAD_TTL`] (24 hours).
+    ///
+    /// Attachments uploaded before a message is sent and never attached to an
+    /// accepted message leave their staging directories behind; sent uploads
+    /// carry [`SENT_UPLOAD_MARKER`] and are kept intact with their sessions.
+    /// Failures are ignored throughout — a sweep that cannot run is not a reason
+    /// to refuse to serve, and the next tick will try again.
     pub async fn sweep_uploads(&self) {
         let Ok(mut reader) = tokio::fs::read_dir(self.0.uploads_dir()).await else {
             // No uploads directory yet: nothing to sweep.
@@ -607,10 +637,14 @@ impl FileRoots {
         let now = SystemTime::now();
         while let Ok(Some(entry)) = reader.next_entry().await {
             let target = entry.path();
+            // Sent attachments stay with their sessions until session purge.
+            if tokio::fs::try_exists(target.join(SENT_UPLOAD_MARKER)).await.unwrap_or(false) {
+                continue;
+            }
             // An unreadable entry is skipped, not a reason to abandon the sweep.
             let Ok(metadata) = tokio::fs::metadata(&target).await else { continue };
             let Ok(modified) = metadata.modified() else { continue };
-            if now.duration_since(modified).unwrap_or_default() > UPLOAD_TTL {
+            if now.duration_since(modified).unwrap_or_default() > UNSENT_UPLOAD_TTL {
                 let _ = tokio::fs::remove_dir_all(&target).await;
             }
         }
@@ -890,9 +924,9 @@ fn encode_uri_component(value: &str) -> String {
     out
 }
 
-/// The lowercased text after a name's last `.`, or the whole name when it has none.
+/// The lowercased text after a name's last `.`, or empty when it has no dot.
 fn extension(name: &str) -> String {
-    name.rsplit('.').next().unwrap_or_default().to_lowercase()
+    name.rsplit_once('.').map(|(_, ext)| ext.to_lowercase()).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,16 +1276,54 @@ mod tests {
     fn an_extension_is_the_tail_after_the_last_dot() {
         assert_eq!(extension("photo.PNG"), "png");
         assert_eq!(extension(".png"), "png");
-        // No dot at all: the whole name, not "".
-        assert_eq!(extension("file"), "file");
+        // No dot at all: empty, matching `droppen_sessions::util::is_image_name`.
+        assert_eq!(extension("file"), "");
     }
 
-    /// The upload route's extraction: a name with no dot is its own extension.
+    /// A dotless filename that happens to equal an image extension is not an image.
     #[test]
-    fn an_upload_whose_whole_name_is_an_extension_counts_as_an_image() {
-        assert!(droppen_base::text::is_image_ext(&extension("png")));
-        assert!(droppen_base::text::is_image_ext(&extension("JPG")));
+    fn a_dotless_filename_is_not_classified_as_an_image() {
+        assert!(!droppen_base::text::is_image_ext(&extension("png")));
+        assert!(!droppen_base::text::is_image_ext(&extension("JPG")));
+        assert!(droppen_base::text::is_image_ext(&extension("shot.PNG")));
         assert!(!droppen_base::text::is_image_ext(&extension("notes")));
+    }
+
+    #[tokio::test]
+    async fn sweep_uploads_reclaims_only_stale_unsent_uploads_and_keeps_sent_ones() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        let roots = FileRoots::of(&paths);
+
+        let unsent_old = roots
+            .save_attachment(&UploadedFile { name: "abandoned.txt".into(), bytes: b"old".to_vec() })
+            .await
+            .expect("save abandoned");
+        let sent_old = roots
+            .save_attachment(&UploadedFile { name: "sent.png".into(), bytes: b"png".to_vec() })
+            .await
+            .expect("save sent");
+        let unsent_fresh = roots
+            .save_attachment(&UploadedFile { name: "fresh.txt".into(), bytes: b"new".to_vec() })
+            .await
+            .expect("save fresh");
+
+        roots.mark_uploads_sent(&[sent_old.path.clone()]).await;
+
+        let stale = SystemTime::now() - Duration::from_secs(25 * 60 * 60);
+        for path in [&unsent_old.path, &sent_old.path] {
+            let dir = Path::new(path).parent().expect("uuid dir");
+            std::fs::File::open(dir)
+                .expect("open dir")
+                .set_times(std::fs::FileTimes::new().set_accessed(stale).set_modified(stale))
+                .expect("age dir");
+        }
+
+        roots.sweep_uploads().await;
+
+        assert!(!Path::new(&unsent_old.path).exists(), "stale unsent upload should be swept");
+        assert!(Path::new(&sent_old.path).exists(), "sent upload must survive the sweep even when old");
+        assert!(Path::new(&unsent_fresh.path).exists(), "fresh unsent upload must survive the sweep");
     }
 
     #[test]

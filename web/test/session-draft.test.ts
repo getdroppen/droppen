@@ -59,3 +59,27 @@ test("a write is heard by its session's subscribers, and only its own", () => {
   writeSessionDraft(storage, key, "after unsubscribe");
   assert.deepEqual(states, [{ text: "pending" }, { text: "" }]);
 });
+
+test("drafts persist ready attachments alongside text and clear only when both are empty", () => {
+  const storage = new MemoryStorage();
+  const key = sessionDraftKey({ machine: LOCAL, source: "claude", id: "attached" });
+  const shot = { path: "/uploads/u1/shot.png", name: "shot.png", isImage: true };
+
+  // Attachment-only draft survives reload and keeps the key.
+  writeSessionDraft(storage, key, "", [shot]);
+  assert.deepEqual(readSessionDraftSnapshot(storage, key), { text: "", attachments: [shot] });
+  assert.equal(storage.values.has(key), true);
+
+  // Text + attachment both round-trip.
+  writeSessionDraft(storage, key, "look at this", [shot]);
+  assert.deepEqual(readSessionDraftSnapshot(storage, key), { text: "look at this", attachments: [shot] });
+
+  // Clearing text while attachment remains keeps the attachment.
+  writeSessionDraft(storage, key, "", [shot]);
+  assert.deepEqual(readSessionDraftSnapshot(storage, key), { text: "", attachments: [shot] });
+
+  // Clearing both removes the storage key.
+  writeSessionDraft(storage, key, "", []);
+  assert.deepEqual(readSessionDraftSnapshot(storage, key), { text: "" });
+  assert.equal(storage.values.has(key), false);
+});

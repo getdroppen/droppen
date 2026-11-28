@@ -1,3 +1,4 @@
+import type { StoredAttachment } from "@/features/sessions/composer-box";
 import type { SessionRef } from "@/lib/machines/key";
 import { claimMachineItem, machineStorageKey } from "@/lib/machines/storage";
 
@@ -9,11 +10,13 @@ export interface DraftStorage {
 
 export interface SessionDraftSnapshot {
   text: string;
+  attachments?: StoredAttachment[];
 }
 
 interface StoredSessionDraft {
   version: 1;
   text: string;
+  attachments?: StoredAttachment[];
   revision: string;
 }
 
@@ -29,7 +32,19 @@ function nextRevision(): string {
 
 interface DecodedSessionDraft {
   text: string;
+  attachments?: StoredAttachment[];
   revision: string | null;
+}
+
+function readDraftAttachments(value: unknown): StoredAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.flatMap((item: unknown) => {
+    const { path, name, isImage } = (item ?? {}) as Record<string, unknown>;
+    return typeof path === "string" && path && typeof name === "string" && typeof isImage === "boolean"
+      ? [{ path, name, isImage }]
+      : [];
+  });
+  return out.length > 0 ? out : undefined;
 }
 
 function decodeSessionDraft(raw: string | null): DecodedSessionDraft {
@@ -41,7 +56,8 @@ function decodeSessionDraft(raw: string | null): DecodedSessionDraft {
       typeof parsed.text === "string" &&
       typeof parsed.revision === "string"
     ) {
-      return { text: parsed.text, revision: parsed.revision };
+      const attachments = readDraftAttachments(parsed.attachments);
+      return { text: parsed.text, ...(attachments ? { attachments } : {}), revision: parsed.revision };
     }
   } catch {
     // Drafts written before the versioned format were plain strings.
@@ -106,7 +122,8 @@ export function readSessionDraftSnapshot(
   key: string,
 ): SessionDraftSnapshot {
   try {
-    return { text: decodeSessionDraft(storage.getItem(key)).text };
+    const decoded = decodeSessionDraft(storage.getItem(key));
+    return decoded.attachments ? { text: decoded.text, attachments: decoded.attachments } : { text: decoded.text };
   } catch {
     return { text: "" };
   }
@@ -116,12 +133,15 @@ export function writeSessionDraft(
   storage: DraftStorage,
   key: string,
   value: string,
+  attachments?: readonly StoredAttachment[],
 ): void {
+  const ready = attachments && attachments.length > 0 ? [...attachments] : undefined;
   try {
-    if (value) {
+    if (value || ready) {
       const stored: StoredSessionDraft = {
         version: 1,
         text: value,
+        ...(ready ? { attachments: ready } : {}),
         revision: nextRevision(),
       };
       storage.setItem(key, JSON.stringify(stored));
@@ -131,7 +151,7 @@ export function writeSessionDraft(
   } catch {
     // storage unavailable: callers keep their in-memory value
   }
-  notifySessionDraft(key, { text: value });
+  notifySessionDraft(key, ready ? { text: value, attachments: ready } : { text: value });
 }
 
 export function subscribeSessionDraft(key: string, listener: DraftListener): () => void {
