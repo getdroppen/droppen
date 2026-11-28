@@ -59,7 +59,17 @@ tests (`.github/codeql/codeql-config.yml`).
 Drafts are not reviewed. Their runs wait until the pull request is marked
 ready. The repository variable `LLM_REVIEW_ENABLED` switches the review on
 (`true`). When it is off, every job of the workflow is skipped, and a fork's
-runs wait for a maintainer.
+runs wait for a maintainer. A skipped job passes the ruleset's required
+`llm-security-review`; the check is reported as skipped, not as missing.
+
+While the review is paused (issue #714), `LLM_REVIEW_ENABLED` is `false`. To
+turn it back on, set it to `true` again
+(`gh variable set LLM_REVIEW_ENABLED --body true`); nothing else has to change,
+and the ruleset keeps requiring the check. A push to a pull request or a re-run
+of its review run then reports the check again. Do not disable the workflow
+itself: a disabled workflow reports no check run at all, and the required check
+then never arrives.
+
 
 ### First-time contributors
 
