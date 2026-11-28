@@ -13,15 +13,33 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use droppen_base::process_env::{AGENTS_TOKEN_ENV, AGENTS_URL_ENV};
+use droppen_sessions::Source;
 
 use super::routes::{AGENTS_LIST_PATH, AGENTS_SEND_PATH};
 use super::token::MCP_SERVER_NAME;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_PROTOCOL_VERSION: &str = "2025-03-26";
+/// Maximum bytes accepted for a single JSON-RPC line on stdin (1 MiB).
+const MAX_LINE_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, PartialEq, Eq)]
+enum StdinLine {
+    Line(String),
+    TooLong,
+    InvalidUtf8,
+}
+
+fn deserialize_present_id<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
+}
 
 #[derive(Debug, Deserialize)]
 struct RpcRequest {
+    #[serde(default, deserialize_with = "deserialize_present_id")]
     id: Option<Value>,
     method: String,
     #[serde(default)]
@@ -54,16 +72,32 @@ impl RpcResponse {
         }
     }
 
-    fn method_not_found(id: Value, method: &str) -> Self {
+    fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
             result: None,
             error: Some(RpcError {
-                code: -32601,
-                message: format!("method not found: {method}"),
+                code,
+                message: message.into(),
             }),
         }
+    }
+
+    fn parse_error(message: impl Into<String>) -> Self {
+        Self::error(Value::Null, -32700, message)
+    }
+
+    fn invalid_request(message: impl Into<String>) -> Self {
+        Self::error(Value::Null, -32600, message)
+    }
+
+    fn method_not_found(id: Value, method: &str) -> Self {
+        Self::error(id, -32601, format!("method not found: {method}"))
+    }
+
+    fn invalid_params(id: Value, message: impl Into<String>) -> Self {
+        Self::error(id, -32602, message)
     }
 }
 
@@ -105,9 +139,8 @@ struct ToolDef {
     input_schema: Value,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ToolCallParams {
-    #[serde(default)]
     name: String,
     #[serde(default)]
     arguments: Value,
@@ -159,6 +192,72 @@ struct ReadSessionArgs {
     include_tools: Option<bool>,
 }
 
+/// Read one `\n`-terminated line up to `limit` bytes. Oversized lines are
+/// drained cleanly through `\n` (or EOF) without further allocation so the next
+/// frame starts at a clean boundary.
+fn read_bounded_line<R: BufRead>(reader: &mut R, limit: usize) -> std::io::Result<Option<StdinLine>> {
+    let mut buf = Vec::new();
+    let mut too_long = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if too_long {
+                return Ok(Some(StdinLine::TooLong));
+            }
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(match String::from_utf8(buf) {
+                Ok(line) => StdinLine::Line(line),
+                Err(_) => StdinLine::InvalidUtf8,
+            }));
+        }
+        if let Some(newline_pos) = available.iter().position(|&b| b == b'\n') {
+            let take = newline_pos + 1;
+            if !too_long {
+                if buf.len() + take > limit {
+                    too_long = true;
+                    buf.clear();
+                } else {
+                    buf.extend_from_slice(&available[..take]);
+                }
+            }
+            reader.consume(take);
+            if too_long {
+                return Ok(Some(StdinLine::TooLong));
+            }
+            return Ok(Some(match String::from_utf8(buf) {
+                Ok(line) => StdinLine::Line(line),
+                Err(_) => StdinLine::InvalidUtf8,
+            }));
+        }
+        let len = available.len();
+        if !too_long {
+            if buf.len() + len > limit {
+                too_long = true;
+                buf.clear();
+            } else {
+                buf.extend_from_slice(available);
+            }
+        }
+        reader.consume(len);
+    }
+}
+
+fn write_response<W: Write>(writer: &mut W, response: &RpcResponse) -> Result<(), String> {
+    let encoded = serde_json::to_string(response).map_err(|error| format!("encode failed: {error}"))?;
+    writer
+        .write_all(encoded.as_bytes())
+        .map_err(|error| format!("stdout write failed: {error}"))?;
+    writer
+        .write_all(b"\n")
+        .map_err(|error| format!("stdout write failed: {error}"))?;
+    writer
+        .flush()
+        .map_err(|error| format!("stdout flush failed: {error}"))?;
+    Ok(())
+}
+
 /// Run the stdio MCP server using `DROPPEN_AGENTS_URL` and `DROPPEN_AGENTS_TOKEN`.
 pub async fn run() -> Result<(), String> {
     let base_url = std::env::var(AGENTS_URL_ENV)
@@ -179,15 +278,14 @@ pub async fn run() -> Result<(), String> {
 
     // Read stdin on a dedicated OS thread so blocking reads never stall the
     // tokio runtime while an HTTP call or timeout is in flight.
-    let (tx, rx) = mpsc::channel::<std::io::Result<String>>(16);
+    let (tx, rx) = mpsc::channel::<std::io::Result<StdinLine>>(16);
     std::thread::spawn(move || {
         let stdin = std::io::stdin();
         let mut lock = stdin.lock();
         loop {
-            let mut line = String::new();
-            match lock.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
+            match read_bounded_line(&mut lock, MAX_LINE_BYTES) {
+                Ok(None) => break,
+                Ok(Some(line)) => {
                     if tx.blocking_send(Ok(line)).is_err() {
                         break;
                     }
@@ -205,37 +303,63 @@ pub async fn run() -> Result<(), String> {
 }
 
 async fn serve_lines<W: Write>(
-    mut rx: mpsc::Receiver<std::io::Result<String>>,
+    mut rx: mpsc::Receiver<std::io::Result<StdinLine>>,
     mut writer: W,
     client: &reqwest::Client,
     base_url: &str,
     token: &str,
 ) -> Result<(), String> {
     while let Some(item) = rx.recv().await {
-        let line = item.map_err(|error| format!("stdin read failed: {error}"))?;
+        let line = match item.map_err(|error| format!("stdin read failed: {error}"))? {
+            StdinLine::Line(line) => line,
+            StdinLine::TooLong => {
+                write_response(
+                    &mut writer,
+                    &RpcResponse::parse_error(format!("request exceeds {MAX_LINE_BYTES} byte limit")),
+                )?;
+                continue;
+            }
+            StdinLine::InvalidUtf8 => {
+                write_response(&mut writer, &RpcResponse::parse_error("invalid UTF-8 in request"))?;
+                continue;
+            }
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let Ok(req) = serde_json::from_str::<RpcRequest>(trimmed) else {
+        let raw_value: Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(error) => {
+                write_response(&mut writer, &RpcResponse::parse_error(format!("parse error: {error}")))?;
+                continue;
+            }
+        };
+        if !raw_value.is_object() {
+            write_response(&mut writer, &RpcResponse::invalid_request("invalid request"))?;
             continue;
+        }
+        let req: RpcRequest = match serde_json::from_value(raw_value) {
+            Ok(req) => req,
+            Err(error) => {
+                write_response(
+                    &mut writer,
+                    &RpcResponse::invalid_request(format!("invalid request: {error}")),
+                )?;
+                continue;
+            }
         };
         let Some(id) = req.id else {
-            // Notifications (such as `notifications/initialized`) expect no reply.
+            // Notifications (omitted `id`, such as `notifications/initialized`) expect no reply.
             continue;
         };
+        if !matches!(id, Value::Null | Value::Number(_) | Value::String(_)) {
+            write_response(&mut writer, &RpcResponse::invalid_request("invalid request id"))?;
+            continue;
+        }
 
         let response = dispatch(client, base_url, token, id, &req.method, req.params).await;
-        let encoded = serde_json::to_string(&response).map_err(|error| format!("encode failed: {error}"))?;
-        writer
-            .write_all(encoded.as_bytes())
-            .map_err(|error| format!("stdout write failed: {error}"))?;
-        writer
-            .write_all(b"\n")
-            .map_err(|error| format!("stdout write failed: {error}"))?;
-        writer
-            .flush()
-            .map_err(|error| format!("stdout flush failed: {error}"))?;
+        write_response(&mut writer, &response)?;
     }
     Ok(())
 }
@@ -250,7 +374,14 @@ async fn dispatch(
 ) -> RpcResponse {
     match method {
         "initialize" => {
-            let parsed: InitializeParams = serde_json::from_value(params).unwrap_or_default();
+            let parsed: InitializeParams = if params.is_null() {
+                InitializeParams::default()
+            } else {
+                match serde_json::from_value(params) {
+                    Ok(parsed) => parsed,
+                    Err(error) => return RpcResponse::invalid_params(id, format!("invalid initialize params: {error}")),
+                }
+            };
             let protocol_version = parsed
                 .protocol_version
                 .filter(|v| !v.is_empty())
@@ -272,12 +403,56 @@ async fn dispatch(
         "ping" | "server/discover" => RpcResponse::ok(id, serde_json::Map::<String, Value>::new()),
         "tools/list" => RpcResponse::ok(id, ToolListResult { tools: tool_definitions() }),
         "tools/call" => {
-            let parsed: ToolCallParams = serde_json::from_value(params).unwrap_or_default();
+            let parsed: ToolCallParams = match serde_json::from_value(params) {
+                Ok(parsed) => parsed,
+                Err(error) => return RpcResponse::invalid_params(id, format!("invalid tools/call params: {error}")),
+            };
+            if parsed.name.trim().is_empty() {
+                return RpcResponse::invalid_params(id, "tool name must not be empty");
+            }
+            if !matches!(parsed.arguments, Value::Null | Value::Object(_)) {
+                return RpcResponse::invalid_params(id, "tool arguments must be an object");
+            }
             let result = call_tool(client, base_url, token, &parsed.name, parsed.arguments).await;
             RpcResponse::ok(id, result)
         }
         _ => RpcResponse::method_not_found(id, method),
     }
+}
+
+fn parse_read_target(raw: &str) -> Result<(Source, &str), String> {
+    let target = raw.trim();
+    let Some((source_raw, id)) = target.split_once('/') else {
+        return Err(format!("target must be '<source>/<id>' (from list_agents), got '{target}'"));
+    };
+    let Some(source) = Source::parse(source_raw) else {
+        return Err(format!("invalid target source: '{source_raw}'"));
+    };
+    if !is_valid_session_id_segment(id) {
+        return Err(format!("invalid target ref: '{target}'"));
+    }
+    Ok((source, id))
+}
+
+fn is_valid_session_id_segment(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && !id.contains("..")
+        && !id
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | '?' | '#' | '%') || c.is_whitespace() || c.is_ascii_control())
+}
+
+fn transcript_url(base_url: &str, source: Source, id: &str) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(base_url).map_err(|error| format!("invalid base URL: {error}"))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|()| "base URL cannot accept path segments".to_string())?;
+        segments.pop_if_empty();
+        segments.extend(["api", "agents", source.as_str(), id, "transcript"]);
+    }
+    Ok(url)
 }
 
 fn tool_definitions() -> Vec<ToolDef> {
@@ -332,7 +507,14 @@ async fn call_tool(
 ) -> ToolCallResult {
     match name {
         "list_agents" => {
-            let args: ListAgentsArgs = serde_json::from_value(args).unwrap_or_default();
+            let args: ListAgentsArgs = if args.is_null() {
+                ListAgentsArgs::default()
+            } else {
+                match serde_json::from_value(args) {
+                    Ok(parsed) => parsed,
+                    Err(error) => return ToolCallResult::text(format!("invalid arguments: {error}"), true),
+                }
+            };
             let mut params: Vec<(&str, String)> = Vec::new();
             if let Some(cwd) = args.cwd.filter(|s| !s.is_empty()) {
                 params.push(("cwd", cwd));
@@ -368,16 +550,14 @@ async fn call_tool(
                 Ok(parsed) => parsed,
                 Err(error) => return ToolCallResult::text(format!("invalid arguments: {error}"), true),
             };
-            let target = args.target.trim();
-            let Some((source, id)) = target.split_once('/') else {
-                return ToolCallResult::text(
-                    format!("target must be '<source>/<id>' (from list_agents), got '{target}'"),
-                    true,
-                );
+            let (source, id) = match parse_read_target(&args.target) {
+                Ok(parts) => parts,
+                Err(message) => return ToolCallResult::text(message, true),
             };
-            if source.is_empty() || id.is_empty() || id.contains('/') || id.contains("..") {
-                return ToolCallResult::text(format!("invalid target ref: '{target}'"), true);
-            }
+            let url = match transcript_url(base_url, source, id) {
+                Ok(url) => url,
+                Err(message) => return ToolCallResult::text(message, true),
+            };
             let mut params: Vec<(&str, String)> = Vec::new();
             if let Some(limit) = args.limit {
                 params.push(("limit", limit.to_string()));
@@ -385,8 +565,7 @@ async fn call_tool(
             if let Some(include_tools) = args.include_tools {
                 params.push(("includeTools", include_tools.to_string()));
             }
-            let url = format!("{base_url}/api/agents/{source}/{id}/transcript");
-            execute_request(client.get(&url).bearer_auth(token).query(&params)).await
+            execute_request(client.get(url).bearer_auth(token).query(&params)).await
         }
         other => ToolCallResult::text(format!("unknown tool: {other}"), true),
     }
@@ -420,6 +599,27 @@ async fn execute_request(req: reqwest::RequestBuilder) -> ToolCallResult {
 mod tests {
     use super::*;
     use gotcha::axum::{routing::get, Json, Router};
+    use std::io::Cursor;
+
+    async fn run_framed_lines(raw_input: &[u8], limit: usize, base_url: &str) -> Vec<Value> {
+        let mut cursor = Cursor::new(raw_input);
+        let (tx, rx) = mpsc::channel(32);
+        while let Some(line) = read_bounded_line(&mut cursor, limit).expect("read") {
+            tx.send(Ok(line)).await.expect("send");
+        }
+        drop(tx);
+
+        let mut output = Vec::new();
+        let client = reqwest::Client::new();
+        serve_lines(rx, &mut output, &client, base_url, "rha1.test-token")
+            .await
+            .expect("serve");
+        String::from_utf8(output)
+            .expect("utf8")
+            .lines()
+            .map(|l| serde_json::from_str(l).expect("json"))
+            .collect()
+    }
 
     #[tokio::test]
     async fn stdio_mcp_handles_handshake_and_proxies_tools_over_loopback() {
@@ -446,25 +646,10 @@ mod tests {
             json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}).to_string(),
             json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_agents","arguments":{}}}).to_string(),
         ];
-
-        let (tx, rx) = mpsc::channel(16);
-        for line in inputs {
-            tx.send(Ok(format!("{line}\n"))).await.expect("send");
-        }
-        drop(tx);
-
-        let mut output = Vec::new();
-        let client = reqwest::Client::new();
-        serve_lines(rx, &mut output, &client, &format!("http://{addr}"), "rha1.test-token")
-            .await
-            .expect("serve");
+        let joined = format!("{}\n", inputs.join("\n"));
+        let lines = run_framed_lines(joined.as_bytes(), MAX_LINE_BYTES, &format!("http://{addr}")).await;
         server.abort();
 
-        let lines: Vec<Value> = String::from_utf8(output)
-            .expect("utf8")
-            .lines()
-            .map(|l| serde_json::from_str(l).expect("json"))
-            .collect();
         assert_eq!(lines.len(), 4, "notification produces no response");
         assert_eq!(lines[0]["id"], 1);
         assert_eq!(lines[1]["result"]["protocolVersion"], "2025-11-25");
@@ -473,5 +658,88 @@ mod tests {
         assert_eq!(tools.len(), 3);
         assert_eq!(lines[3]["result"]["isError"], false);
         assert!(lines[3]["result"]["content"][0]["text"].as_str().unwrap().contains("claude/c1"));
+    }
+
+    #[tokio::test]
+    async fn jsonrpc_distinguishes_null_id_parse_errors_and_invalid_params() {
+        let inputs = [
+            // Omitted id -> notification (no response)
+            json!({"jsonrpc":"2.0","method":"ping","params":{}}).to_string(),
+            // Explicit null id -> must respond with id: null
+            json!({"jsonrpc":"2.0","id":null,"method":"ping","params":{}}).to_string(),
+            // Malformed JSON -> -32700 parse error with id: null
+            "{not valid json".to_string(),
+            // Malformed tools/call params (missing name) -> -32602
+            json!({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{}}).to_string(),
+            // Malformed tools/call arguments (non-object) -> -32602
+            json!({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"list_agents","arguments":"bad"}}).to_string(),
+            // Wrong tool argument types -> tool error (isError: true), not silently defaulted
+            json!({"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"list_agents","arguments":{"limit":"ten"}}}).to_string(),
+        ];
+        let joined = format!("{}\n", inputs.join("\n"));
+        let lines = run_framed_lines(joined.as_bytes(), MAX_LINE_BYTES, "http://127.0.0.1:1").await;
+
+        assert_eq!(lines.len(), 5, "{lines:#?}");
+        assert_eq!(lines[0]["id"], Value::Null);
+        assert!(lines[0]["result"].is_object());
+
+        assert_eq!(lines[1]["id"], Value::Null);
+        assert_eq!(lines[1]["error"]["code"], -32700);
+
+        assert_eq!(lines[2]["id"], 10);
+        assert_eq!(lines[2]["error"]["code"], -32602);
+
+        assert_eq!(lines[3]["id"], 11);
+        assert_eq!(lines[3]["error"]["code"], -32602);
+
+        assert_eq!(lines[4]["id"], 12);
+        assert_eq!(lines[4]["result"]["isError"], true);
+        assert!(lines[4]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("invalid arguments"));
+    }
+
+    #[tokio::test]
+    async fn oversized_stdin_line_returns_parse_error_and_drains_cleanly() {
+        let oversized = format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"{}\"}}\n", "x".repeat(256));
+        let valid = format!("{}\n", json!({"jsonrpc":"2.0","id":2,"method":"ping","params":{}}));
+        let combined = format!("{oversized}{valid}");
+
+        let lines = run_framed_lines(combined.as_bytes(), 128, "http://127.0.0.1:1").await;
+        assert_eq!(lines.len(), 2, "{lines:#?}");
+        assert_eq!(lines[0]["id"], Value::Null);
+        assert_eq!(lines[0]["error"]["code"], -32700);
+        assert_eq!(lines[1]["id"], 2);
+        assert!(lines[1]["result"].is_object());
+    }
+
+    #[test]
+    fn read_session_target_validation_rejects_traversal_and_url_metachars() {
+        assert_eq!(parse_read_target("acp/sess-123_abc"), Ok((Source::Acp, "sess-123_abc")));
+        assert_eq!(parse_read_target("claude/uuid-1"), Ok((Source::Claude, "uuid-1")));
+        assert_eq!(parse_read_target("codex/thread-1"), Ok((Source::Codex, "thread-1")));
+
+        for bad in [
+            "unknown/sess-1",
+            "acp/",
+            "/sess-1",
+            "acp/.",
+            "acp/..",
+            "acp/a..b",
+            "acp/a/b",
+            "acp/a\\b",
+            "acp/id?limit=999",
+            "acp/id#frag",
+            "acp/id%2f..",
+            "acp/id with space",
+            "acp/id\tbad",
+            "acp/id\x07bell",
+        ] {
+            assert!(parse_read_target(bad).is_err(), "expected rejection for {bad:?}");
+        }
+
+        let built = transcript_url("http://127.0.0.1:4321", Source::Acp, "sess-1").expect("url");
+        assert_eq!(built.as_str(), "http://127.0.0.1:4321/api/agents/acp/sess-1/transcript");
     }
 }

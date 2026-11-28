@@ -402,6 +402,8 @@ async fn deliver_message(
                 .answer_question(source, &id, &request_id, Reply::Answer(answer), by.clone())
                 .await
             {
+                // A human answer clears any consecutive cross-session hop streak on this session.
+                drive.agents.reset_hops(source, &id);
                 let sent_uploads: Vec<String> = images.iter().chain(attachments.iter()).cloned().collect();
                 if !sent_uploads.is_empty() {
                     droppen_files::FileRoots::of(&drive.paths).mark_uploads_sent(&sent_uploads).await;

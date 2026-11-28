@@ -421,13 +421,25 @@ mod tests {
     fn an_inherited_notify_channel_stays_with_the_server() {
         assert!(is_server_only_variable(NOTIFY_URL_ENV) && is_server_only_variable(NOTIFY_TOKEN_ENV));
         assert!(is_server_only_variable(AGENTS_URL_ENV) && is_server_only_variable(AGENTS_TOKEN_ENV));
-        let inherited = [(NOTIFY_URL_ENV, "http://outer/api/notify"), (NOTIFY_TOKEN_ENV, "outer"), ("HOME", "/home/ada")]
-            .map(|(k, v)| (k.to_string(), v.to_string()));
+        let inherited = [
+            (NOTIFY_URL_ENV, "http://outer/api/notify"),
+            (NOTIFY_TOKEN_ENV, "outer"),
+            (AGENTS_URL_ENV, "http://127.0.0.1:9999"),
+            (AGENTS_TOKEN_ENV, "rha1.outer"),
+            ("HOME", "/home/ada"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()));
         let env = clean_env_from(inherited.clone(), std::iter::empty::<(String, String)>());
         assert!(!env.contains_key(NOTIFY_URL_ENV) && !env.contains_key(NOTIFY_TOKEN_ENV), "{env:?}");
+        assert!(!env.contains_key(AGENTS_URL_ENV) && !env.contains_key(AGENTS_TOKEN_ENV), "{env:?}");
         assert_eq!(env.get("HOME").map(String::as_str), Some("/home/ada"));
-        let env = clean_env_from(inherited, [(NOTIFY_TOKEN_ENV, "own")]);
+        let env = clean_env_from(
+            inherited,
+            [(NOTIFY_TOKEN_ENV, "own"), (AGENTS_URL_ENV, "http://127.0.0.1:4321"), (AGENTS_TOKEN_ENV, "rha1.own")],
+        );
         assert_eq!(env.get(NOTIFY_TOKEN_ENV).map(String::as_str), Some("own"), "what a caller adds is its own");
+        assert_eq!(env.get(AGENTS_URL_ENV).map(String::as_str), Some("http://127.0.0.1:4321"));
+        assert_eq!(env.get(AGENTS_TOKEN_ENV).map(String::as_str), Some("rha1.own"));
     }
 
     /// What an older Droppen hands its children never reaches one of ours: a

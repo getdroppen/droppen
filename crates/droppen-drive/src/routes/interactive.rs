@@ -313,7 +313,10 @@ pub(super) async fn settle_question(
         QuestionState::Expired => settle_expired(drive, &summary, &stored, reply, by).await,
         _ => Err(already_settled(stored.wire())),
     };
-    if settled.is_ok() {
+    if let Ok(result) = &settled {
+        if result.delivered != QuestionDelivery::None {
+            drive.agents.reset_hops(source, id);
+        }
         drive.injections.host.announce(source, id);
     }
     settled

@@ -143,7 +143,7 @@ pub async fn caller(paths: &Paths, instance: &str, headers: &HeaderMap) -> Optio
 /// Returns `None` when the server has not written its loopback port file (for
 /// instance in lock-less unit tests) or when no signing secret can be obtained.
 pub async fn mcp_server_for(paths: &Paths, instance: &InstanceDirs, source: Source, id: &str) -> Option<StdioMcpServer> {
-    let port: u16 = std::fs::read_to_string(instance.port_file()).ok()?.trim().parse().ok()?;
+    let port: u16 = tokio::fs::read_to_string(instance.port_file()).await.ok()?.trim().parse().ok()?;
     let secret = match droppen_notify::notify::store::secret(paths).await {
         Ok(secret) => secret,
         Err(error) => {

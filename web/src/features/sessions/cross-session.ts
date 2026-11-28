@@ -17,6 +17,18 @@ export interface CrossSessionMessage {
 const OPEN = /^<cross-session-message\b([^>]*)>\s*/;
 const CLOSE = /<\/cross-session-message>\s*$/;
 
+const XML_ENTITIES: Record<string, string> = {
+  "&quot;": '"',
+  "&apos;": "'",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&amp;": "&",
+};
+
+function unescapeXmlEntities(raw: string): string {
+  return raw.replace(/&(?:quot|apos|lt|gt|amp);/g, (entity) => XML_ENTITIES[entity] ?? entity);
+}
+
 /**
  * `text` as a cross-session message, or `null` for every other text.
  *
@@ -27,7 +39,8 @@ const CLOSE = /<\/cross-session-message>\s*$/;
 export function crossSessionOf(text: string): CrossSessionMessage | null {
   const open = OPEN.exec(text);
   if (!open) return null;
-  const name = /\bfrom-name="([^"]*)"/.exec(open[1] ?? "")?.[1]?.trim();
+  const rawName = /\bfrom-name="([^"]*)"/.exec(open[1] ?? "")?.[1];
+  const name = rawName ? unescapeXmlEntities(rawName).trim() : "";
   const body = text.slice(open[0].length).replace(CLOSE, "").trim();
   return { from: name ? name : null, body };
 }

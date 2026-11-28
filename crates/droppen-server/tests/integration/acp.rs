@@ -1525,4 +1525,39 @@ async fn two_acp_sessions_discover_and_message_each_other_through_the_agent_bus(
         401
     );
     guarded.stop().await;
+
+    // Archiving alpha revokes its eligibility on all three agent-bus routes.
+    let unguarded = TestServer::start_at(home.path(), None).await;
+    let unguarded_url = format!("http://127.0.0.1:{}", unguarded.addr.port());
+    let (status, body) = unguarded.json("POST", &format!("/api/sessions/acp/{id_a}/archive"), &json!({})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        http.get(format!("{unguarded_url}/api/agents"))
+            .bearer_auth(&token_a)
+            .send()
+            .await
+            .expect("archived list")
+            .status(),
+        403
+    );
+    assert_eq!(
+        http.post(format!("{unguarded_url}/api/agents/send"))
+            .bearer_auth(&token_a)
+            .json(&json!({ "target": format!("acp/{id_b}"), "message": "ghost" }))
+            .send()
+            .await
+            .expect("archived send")
+            .status(),
+        403
+    );
+    assert_eq!(
+        http.get(format!("{unguarded_url}/api/agents/acp/{id_b}/transcript"))
+            .bearer_auth(&token_a)
+            .send()
+            .await
+            .expect("archived transcript")
+            .status(),
+        403
+    );
+    unguarded.stop().await;
 }

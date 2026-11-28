@@ -39,6 +39,12 @@ pub trait Transcripts: Send + Sync {
     /// One session's list row, or `None` when there is no such session.
     fn find<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<SessionSummary>>;
 
+    /// Whether session `id` is explicitly archived, even if an idle resident
+    /// process is still registered for it.
+    fn is_archived<'a>(&'a self, _paths: &'a Paths, _id: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(std::future::ready(false))
+    }
+
     /// Where one session's transcript is, or `None` when there is no such
     /// session. The row's own `file_path` unless the reader can find the file
     /// without building the row.
@@ -282,6 +288,15 @@ impl TranscriptSources {
     /// [`Transcripts::find_file`].
     pub async fn find_file(&self, paths: &Paths, source: Source, id: &str) -> Option<PathBuf> {
         self.get(source)?.find_file(paths, id).await
+    }
+
+    /// Whether session `id` of `source` is explicitly archived; see
+    /// [`Transcripts::is_archived`].
+    pub async fn is_archived(&self, paths: &Paths, source: Source, id: &str) -> bool {
+        match self.get(source) {
+            Some(reader) => reader.is_archived(paths, id).await,
+            None => false,
+        }
     }
 
     /// The Claude root of session `id` of `source`; see
