@@ -237,6 +237,13 @@ impl SelfUpdateState {
     )
 )]
 pub async fn self_upgrade(State(state): State<SelfUpdateState>, multipart: Multipart) -> Result<Json<SelfUpgrade>, ApiError> {
+    // Serialize upgrades so a second concurrent upload cannot `sweep_staging`
+    // out from under an active upload's health check or promote step.
+    static UPGRADE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let Ok(_upgrade_guard) = UPGRADE_LOCK.get_or_init(|| tokio::sync::Mutex::new(())).try_lock() else {
+        return Err(ApiError::conflict("a server upgrade is already in progress"));
+    };
+
     // Before anything else, and before a byte is read: a server the desktop app
     // runs is updated with the app, and this route would only replace the
     // shared `<data>/bin` that other instances run (the server's `desktop_app`).

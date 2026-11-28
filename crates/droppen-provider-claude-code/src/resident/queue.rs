@@ -417,10 +417,12 @@ impl Driver {
         .line();
         self.recorder.lifecycle(Stage::Interrupt, Some("asking claude to end the turn"));
         self.recorder.stdin(&request);
+        // Arm the signal ladder before awaiting the stdin write so a wedged
+        // process whose pipe is full still escalates on schedule.
+        self.arm(seq, 1);
         if let Err(error) = self.link.send_line(&request).await {
             tracing::warn!(session = %self.id, %error, "cannot ask claude to stop; the ladder will have to do it");
         }
-        self.arm(seq, 1);
     }
 
     /// Ask claude to stop one background task, and nothing else.

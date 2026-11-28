@@ -64,6 +64,9 @@ struct Live {
     requests: mpsc::Sender<Option<String>>,
     cancel: CancellationToken,
     clients: usize,
+    /// Whether the initial scan has populated `seen` and `list` (distinct from
+    /// `list.is_empty()`, which stays true on an empty machine).
+    initialized: bool,
     /// `source/id` -> serialized summary, for diffing.
     seen: HashMap<String, String>,
     /// The newest list, so a second client attaches without re-scanning.
@@ -140,6 +143,7 @@ impl GlobalFeed {
             requests,
             cancel: CancellationToken::new(),
             clients: 1,
+            initialized: true,
             seen: HashMap::new(),
             list: Vec::new(),
         });
@@ -264,6 +268,7 @@ pub async fn attach(
                     requests,
                     cancel: cancel.clone(),
                     clients: 1,
+                    initialized: false,
                     seen: HashMap::new(),
                     list: Vec::new(),
                 });
@@ -272,6 +277,10 @@ pub async fn attach(
             }
         }
     };
+    // Construct the RAII handle immediately after incrementing `live.clients`
+    // so cancelling `attach` during the initial scan still detaches and tears
+    // down the watcher instead of leaking it permanently.
+    let attachment = GlobalAttachment { feed: feed.clone(), rx };
 
     // First subscriber since the feed started: build the initial list. A second
     // client attaching meanwhile reuses it rather than scanning again.
@@ -280,14 +289,15 @@ pub async fn attach(
         .lock()
         .expect("global feed poisoned")
         .as_ref()
-        .is_some_and(|live| live.list.is_empty());
+        .is_some_and(|live| !live.initialized);
     if needs_initial {
         let sessions = collect_sessions(drive).await;
         let mut guard = feed.live.lock().expect("global feed poisoned");
         if let Some(live) = guard.as_mut() {
-            if live.list.is_empty() {
+            if !live.initialized {
                 live.seen = index(&sessions);
                 live.list = sessions;
+                live.initialized = true;
             }
         }
     }
@@ -299,7 +309,7 @@ pub async fn attach(
 
     Attached {
         opening: vec![settings_frame(paths, instance, started_at, claude_dirs, plugins), snapshot],
-        attachment: GlobalAttachment { feed: feed.clone(), rx },
+        attachment,
     }
 }
 
@@ -412,6 +422,7 @@ async fn refresh(feed: &Arc<GlobalFeed>, drive: &Arc<Drive>, tx: &broadcast::Sen
     }
     live.seen = next;
     live.list = sessions;
+    live.initialized = true;
 }
 
 /// The `sessions:delta` a client holding `seen` needs to arrive at `sessions`,
@@ -1153,5 +1164,31 @@ mod tests {
         tokio::time::timeout(CLOSE_LIMIT / 2, socket)
             .await
             .expect("a shutdown ends the stuck socket at once");
+    }
+
+    #[tokio::test]
+    async fn cancelling_attach_mid_scan_does_not_leak_the_watcher() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+
+        let home = tempfile::tempdir().expect("a temp dir");
+        let (_paths, drive) = crate::fake::drive(home.path());
+        let feed = GlobalFeed::new();
+        let dirs = claude_dirs();
+        {
+            let mut fut = std::pin::pin!(attach(&feed, &drive, DEFAULT_INSTANCE, "2026-01-01T00:00:00.000Z", &dirs, &[]));
+            let waker = Waker::noop();
+            let mut cx = Context::from_waker(waker);
+            match fut.as_mut().poll(&mut cx) {
+                Poll::Pending => {
+                    assert!(feed.is_running(), "attach started the watcher before yielding");
+                }
+                Poll::Ready(_attached) => {
+                    // Even if the scan finished synchronously on an empty dir,
+                    // dropping `Attached` must tear the watcher down.
+                }
+            }
+        }
+        assert!(!feed.is_running(), "dropping attach mid-scan must detach and stop the watcher");
     }
 }
