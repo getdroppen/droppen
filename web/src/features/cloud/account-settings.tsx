@@ -109,7 +109,6 @@ type Editing = { kind: "add" } | { kind: "password" } | { kind: "removePassword"
 
 /** The settings, with the account's sign-in methods read from the hub. */
 export function AccountPanel({ account, link, onWords }: { account: CloudAccount; link: HubLink; onWords: (words: string[]) => void }) {
-  const { t } = useTranslation();
   const me = useMe(account, link);
   const [methods, setMethods] = useState<SignInMethods | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);

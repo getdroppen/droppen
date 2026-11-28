@@ -6,17 +6,6 @@ import { checkE2eSupport, compatCovers, E2eUnsupportedError, type E2eSupport, in
 import { compatAgreedFor, compatModeActive, consentToCompat, e2eReadiness } from "@/lib/e2e/compat";
 import { AccountError, CloudAccount, KeysUnreadableError } from "@/lib/hub/account";
 import { clearSession, HubApi, HubApiError, type HubSession, loadSession, saveSession } from "@/lib/hub/api";
-import {
-  finishPasskeyLogin,
-  type PasskeyAnswer,
-  PasskeyAutofill,
-  passkeyCancelled,
-  passkeyLogin,
-  passkeySignUp,
-  pageCredentials,
-  probePasskeys,
-  webAuthnAvailable,
-} from "@/lib/hub/passkey";
 import { hubOrigin } from "@/lib/hub/config";
 import { HubLink } from "@/lib/hub/link";
 import { startConnectionLog } from "@/lib/connection-log";

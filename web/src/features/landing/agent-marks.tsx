@@ -202,6 +202,7 @@ export function AgentGlyph({ piece, className }: { piece: AgentPiece; className?
       // An ink mark takes the page's ink in both themes (`currentColor`). No filter: in the
       // dark theme the mark is already white, and inverting it would turn it black.
       className={cn("block size-full", piece.icon?.tone === "ink" && "[&_path]:fill-current", className)}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: bundled static SVG mark
       dangerouslySetInnerHTML={{ __html: piece.mark.body }}
     />
   );

@@ -13,7 +13,7 @@ import { type CloudAccount, deviceFingerprint, hasRunAi, type RotationReport } f
 import { type PairingSummary, type RegisteredDevice } from "@/lib/hub/api";
 import type { HubLink } from "@/lib/hub/link";
 import { abandonCandidate, type Candidate, candidateFromOffer, runCodeInitiator } from "@/lib/hub/pairing";
-import { uaLabel, uaLabelOf } from "@/lib/hub/ua-label";
+import { uaLabelOf } from "@/lib/hub/ua-label";
 import { cn } from "@/lib/cn";
 import { atLimit, DEVICES_KEY, type LimitHit, limitOf } from "@/lib/hub/plan";
 import { shellCourier } from "./hub-shell";

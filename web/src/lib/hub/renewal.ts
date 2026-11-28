@@ -988,7 +988,7 @@ export class RenewalRunner {
   }
 
   /** What an automatic attempt's failure means for the next one (§4.2's table). */
-  private failed(host: string, run: HostRun, error: unknown): void {
+  private failed(_host: string, run: HostRun, error: unknown): void {
     const why = error instanceof RenewalError ? error : null;
     run.error = error instanceof Error ? error.message : String(error);
     run.cause = error;

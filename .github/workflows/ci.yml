@@ -76,6 +76,7 @@ jobs:
       # The open-source boundary check's own tests (the check itself runs in
       # the server job, which has cargo).
       - run: pnpm test:boundary
+      - run: pnpm lint:web
       - run: pnpm typecheck
       - run: pnpm --filter @droppen/plugin-sdk test
       # The web app's own tests run in the three `web-tests` shards below.

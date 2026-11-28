@@ -58,5 +58,5 @@ export function shallowEqual<T extends object>(a: T, b: T): boolean {
   const ka = Object.keys(a) as (keyof T)[];
   const kb = Object.keys(b);
   if (ka.length !== kb.length) return false;
-  return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && Object.is(a[k], b[k]));
+  return ka.every((k) => Object.hasOwn(b, k) && Object.is(a[k], b[k]));
 }

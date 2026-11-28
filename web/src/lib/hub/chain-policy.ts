@@ -473,7 +473,7 @@ export function pauseReturns(chain: ChainState, pause: OpenPause): { edges: { ho
  * flag. `null`: it may come back.
  */
 export function edgeHeld(
-  chain: ChainState,
+  _chain: ChainState,
   edge: { host: string; id: string },
   held: { exposed: ReadonlyMap<string, Exposure>; isolated: (id: string) => boolean; flagged: (id: string) => boolean },
 ): { who: string; why: "exposed" | "isolated" | "flagged" } | null {
@@ -556,7 +556,7 @@ export function hostsToRotate(chain: ChainState, renews: (host: string) => boole
       if (from.type === "devices") for (const id of from.ids) now.set(id, admittedSince(replay, host, id) ?? seq);
       admitted.set(host, now);
     },
-    setHost: (seq, id, host) => {
+    setHost: (_seq, id, host) => {
       // Its list goes with it; what it may have been copied stays (its identity key is the same when it runs AI again).
       if (!host) admitted.delete(id);
     },

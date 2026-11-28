@@ -384,7 +384,7 @@ export function WrapStep({ progress, tools, signIn }: StepProps) {
                 ["Claude Code", toolSummary(tools, "claude", t)],
                 ["Codex", toolSummary(tools, "codex", t)],
                 [t("Where to use it"), where],
-                [t("First session"), cwd ? <span className="font-mono">{cwd}</span> : progress.steps.first === "skipped" ? skipped : "—"],
+                [t("First session"), cwd ? <span key="cwd" className="font-mono">{cwd}</span> : progress.steps.first === "skipped" ? skipped : "—"],
               ] as const
             ).map(([label, value]) => (
               <tr key={label} className="h-8 border-y border-border">

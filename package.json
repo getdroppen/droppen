@@ -14,6 +14,7 @@
     "build:server": "cargo build --release --manifest-path Cargo.toml -p droppen-server",
     "build:web": "pnpm --filter @droppen/web build",
     "gen:api": "DROPPEN_EXPORT_ROOT=$(mktemp -d) && DROPPEN_CONFIG_DIR=$DROPPEN_EXPORT_ROOT/config DROPPEN_DATA_DIR=$DROPPEN_EXPORT_ROOT/data APP_INSTANCE=openapi-export DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo run --quiet --manifest-path Cargo.toml -p droppen-server -- export-openapi --out openapi/openapi.json; status=$?; rm -rf $DROPPEN_EXPORT_ROOT; [ $status -eq 0 ] && pnpm --filter @droppen/web gen:api",
+    "lint:web": "biome lint web/src",
     "typecheck": "pnpm -r typecheck",
     "check:hub-api": "node docs/hub-api/check.mjs",
     "test": "pnpm --filter @droppen/web test && DROPPEN_ALLOW_MISSING_WEB_DIST=1 cargo test --manifest-path Cargo.toml -p droppen-server",
@@ -37,5 +38,8 @@
     "deploy:web:www": "corepack enable 2>/dev/null || true; pnpm install --frozen-lockfile && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm build:web:site && npx --yes wrangler@4.152.0 deploy -c web/wrangler.www.jsonc",
     "preview:web:www": "corepack enable 2>/dev/null || true; pnpm install --frozen-lockfile && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm build:web:site && npx --yes wrangler@4.152.0 preview -c web/wrangler.www.jsonc",
     "check:hub-spec": "node scripts/check-hub-spec.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.9"
   }
 }

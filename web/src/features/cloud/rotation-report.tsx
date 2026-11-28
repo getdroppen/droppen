@@ -7,7 +7,7 @@
 import { type RotationReport } from "@/lib/hub/account";
 import { hostRefusalText } from "@/api/errors";
 import { cn } from "@/lib/cn";
-import { danger, knownText } from "./ui";
+import { knownText } from "./ui";
 
 function mailWhy(code: string | undefined, t: (key: string, opts?: Record<string, unknown>) => string): string {
   if (code === "mailbox_full") return t("its mailbox at the hub is full");

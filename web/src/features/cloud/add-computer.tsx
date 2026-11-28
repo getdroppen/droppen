@@ -503,7 +503,7 @@ const PATIENCE_MS = 20_000;
  * 「现在可以把两台设备放进同一个屏幕」 and the button that does it; with none,
  * the way to open it — and to add the next one.
  */
-export function NewDeviceReady({ account, added, machines, onDone }: { account: CloudAccount; added: MachineInfo; machines: readonly MachineInfo[]; onDone: () => void }) {
+export function NewDeviceReady({ added, machines, onDone }: { account: CloudAccount; added: MachineInfo; machines: readonly MachineInfo[]; onDone: () => void }) {
   const { t } = useTranslation();
   const shell = hubShell();
   const keys = machines.map((m) => m.key);

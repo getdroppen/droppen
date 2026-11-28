@@ -57,9 +57,7 @@ import {
   type MachineKey,
   machineKeyFrom,
   type NoiseKeyPair,
-  openFrom,
   openFromRecovery,
-  RECOVERY_RECIPIENT,
   requireCommitted,
   type SealContext,
   Serial,
@@ -67,7 +65,6 @@ import {
   underKeyStoreLock,
   unwrapUnder,
   utf8,
-  WrapError,
   wrapUnder,
   Writer,
 } from "@/lib/e2e";
