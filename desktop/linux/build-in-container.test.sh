@@ -27,11 +27,9 @@ fail() { FAILED=$((FAILED + 1)); echo "FAIL: $*" >&2; }
   echo '"$@"'
 } >"$TMP/fn.sh"
 
-mkpkg() { # archive-dir, source, version, file...
-  local dir=$1 src=$2 ver=$3 area d sha size
+mkpkg_at() { # target-dir, source, version, file...
+  local d=$1 src=$2 ver=$3 sha size
   shift 3
-  case "$src" in lib*) area=${src:3:1} ;; *) area=${src:0:1} ;; esac
-  d=$dir/pool/main/$area/$src
   mkdir -p "$d"
   {
     printf 'Format: 3.0 (quilt)\nSource: %s\nVersion: %s\nChecksums-Sha256:\n' "$src" "$ver"
@@ -44,13 +42,23 @@ mkpkg() { # archive-dir, source, version, file...
   } >"$d/${src}_${ver#*:}.dsc"
 }
 
+mkpkg() { # archive-dir, source, version, file...
+  local dir=$1 src=$2 ver=$3 area
+  shift 3
+  case "$src" in lib*) area=${src:3:1} ;; *) area=${src:0:1} ;; esac
+  mkpkg_at "$dir/pool/main/$area/$src" "$src" "$ver" "$@"
+}
+
 SRV=$TMP/srv
-mkdir -p "$SRV/one" "$SRV/two"
+mkdir -p "$SRV/one" "$SRV/two" "$SRV/lp"
 # one: libssl (area l, the fourth letter of lib*); two: libssl too, and krb5
-# (area k) which one does not have.
+# (area k) which one does not have; lp: superseded krb5 + epoch zlib only in
+# Launchpad's +sourcefiles archive.
 mkpkg "$SRV/one" libssl3 3.0.2-0ubuntu1.20 libssl3_3.0.2-0.orig.tar.gz libssl3_3.0.2-0.debian.tar.xz
 mkpkg "$SRV/two" libssl3 3.0.2-0ubuntu1.20 libssl3_3.0.2-0.orig.tar.gz libssl3_3.0.2-0.debian.tar.xz
 mkpkg "$SRV/two" krb5 1.19.2-2ubuntu0.12 krb5_1.19.2.orig.tar.gz krb5_1.19.2-2ubuntu0.12.debian.tar.xz
+mkpkg_at "$SRV/lp/+sourcefiles/krb5/1.19.2-2ubuntu0.10" krb5 1.19.2-2ubuntu0.10 krb5_1.19.2.orig.tar.gz krb5_1.19.2-2ubuntu0.10.debian.tar.xz
+mkpkg_at "$SRV/lp/+sourcefiles/zlib/1:1.2.11.dfsg-2ubuntu9.2" zlib 1:1.2.11.dfsg-2ubuntu9.2 zlib_1.2.11.dfsg.orig.tar.gz zlib_1.2.11.dfsg-2ubuntu9.2.debian.tar.xz
 
 python3 -u -c 'import sys, http.server, functools
 done = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1]))
@@ -65,10 +73,11 @@ done
 [ -n "${PORT:-}" ] || { echo "no local server" >&2; exit 1; }
 BASE=http://127.0.0.1:$PORT
 
-# The function's three bases, rewritten to the stand-in's two archives.
+# The function's four bases, rewritten to the stand-in archives.
 sed -e "s#https://security.ubuntu.com/ubuntu#$BASE/one#g" \
     -e "s#https://archive.ubuntu.com/ubuntu#$BASE/two#g" \
     -e "s#https://ports.ubuntu.com/ubuntu-ports#$BASE/none#g" \
+    -e "s#https://launchpad.net/ubuntu/+archive/primary#$BASE/lp#g" \
     -e "s#--proto '=https' --proto-redir '=https' --tlsv1.2#--proto '=http' --proto-redir '=http'#" \
     "$TMP/fn.sh" >"$TMP/fn-http.sh"
 
@@ -81,6 +90,14 @@ done
 # krb5: only the second has it (area k, not lib*).
 if D=$(dst b) && bash "$TMP/fn-http.sh" fetch_dsc_from_pool krb5 1.19.2-2ubuntu0.12 "$D" >/dev/null 2>&1; then pass; else fail "krb5 from the second archive"; fi
 [ -f "$TMP/b/krb5_1.19.2-2ubuntu0.12.dsc" ] && pass || fail "krb5: its .dsc"
+# krb5 1.19.2-2ubuntu0.10: purged from pools, recovered from Launchpad's +sourcefiles.
+if D=$(dst e) && bash "$TMP/fn-http.sh" fetch_dsc_from_pool krb5 1.19.2-2ubuntu0.10 "$D" >/dev/null 2>&1; then pass; else fail "superseded krb5 from Launchpad"; fi
+for f in krb5_1.19.2-2ubuntu0.10.dsc krb5_1.19.2.orig.tar.gz krb5_1.19.2-2ubuntu0.10.debian.tar.xz; do
+  [ -f "$TMP/e/$f" ] && pass || fail "Launchpad krb5: $f"
+done
+# Epoch version in Launchpad: directory carries the epoch, .dsc filename strips it.
+if D=$(dst f) && bash "$TMP/fn-http.sh" fetch_dsc_from_pool zlib 1:1.2.11.dfsg-2ubuntu9.2 "$D" >/dev/null 2>&1; then pass; else fail "epoch zlib from Launchpad"; fi
+[ -f "$TMP/f/zlib_1.2.11.dfsg-2ubuntu9.2.dsc" ] && pass || fail "Launchpad zlib: its .dsc"
 # The version is matched, not assumed: one no archive has is not taken.
 if D=$(dst c) && bash "$TMP/fn-http.sh" fetch_dsc_from_pool krb5 1.19.2-2ubuntu0.13 "$D" >/dev/null 2>&1; then fail "a version no archive has"; else pass; fi
 # A file the .dsc names and the pool lacks: the hash check fails it.
