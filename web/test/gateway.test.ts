@@ -338,3 +338,41 @@ test("the page shows other devices only when the install says this account sees 
   // An older install, without the field: nothing.
   assert.equal(showsOtherDevices({ aggregator: { enabled: true, state: "on" } }), false);
 });
+
+test("GatewayLink ignores concurrent start() during socketUrl and drops silent sockets", async (t) => {
+  let now = 0;
+  const sockets: FakeSocket[] = [];
+  const resolvers: ((url: string) => void)[] = [];
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  const link = new GatewayLink({
+    socketUrl: () => new Promise<string>((resolve) => void resolvers.push(resolve)),
+    openSocket: (url) => {
+      const socket = new FakeSocket(url);
+      sockets.push(socket);
+      return socket;
+    },
+    backoffMs: [10],
+    pingMs: 1000,
+    silenceMs: 2500,
+    now: () => now,
+  });
+  t.after(() => link.close());
+  link.start();
+  link.start();
+  assert.equal(resolvers.length, 1, "second start() while connecting does not duplicate socketUrl");
+  resolvers[0]!("ws://127.0.0.1:1/api/agg/ws?ticket=1");
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(sockets.length, 1);
+  sockets[0]!.open();
+  // First ping within silence window keeps the socket open.
+  now += 1000;
+  t.mock.timers.tick(1000);
+  assert.equal(sockets[0]!.readyState, 1);
+  // Silence beyond silenceMs closes the dead socket and schedules reconnect.
+  now += 2600;
+  t.mock.timers.tick(1000);
+  assert.equal(sockets[0]!.readyState, 3);
+  t.mock.timers.tick(10);
+  assert.equal(resolvers.length, 2, "reconnects after dropping silent socket");
+});

@@ -31,7 +31,7 @@ import { matchLanguage } from "@/i18n/match";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { requestConfirm } from "./confirm";
-import { pluginEvents } from "./events";
+import { pluginEventsFor } from "./events";
 
 /** The i18next namespace a plugin's strings live in. */
 export const pluginNamespace = (id: string) => `plugin:${id}`;
@@ -110,7 +110,7 @@ export function httpStorage(id: string, machine: MachineKey): PluginStorage {
       return (data?.docs ?? []) as Doc<unknown>[];
     },
     watch(name, onChange) {
-      return pluginEvents.onDoc((event) => {
+      return pluginEventsFor(machine).onDoc((event) => {
         if (event.plugin === "*" || (event.plugin === id && event.name === name)) onChange(event.revision);
       });
     },

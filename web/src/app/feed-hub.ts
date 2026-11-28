@@ -195,6 +195,7 @@ export class FeedHub {
   private ws: HubSocket | null = null;
   private handlers: HubHandlers | null = null;
   private retry = 0;
+  private connectGen = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private lastHeard = 0;
@@ -267,6 +268,7 @@ export class FeedHub {
   stop(): void {
     this.list = "stopped";
     this.running = false;
+    this.connectGen += 1;
     this.handlers = null;
     this.early = [];
     this.earlyLost = false;
@@ -417,11 +419,15 @@ export class FeedHub {
   }
 
   private connect(): void {
+    const gen = ++this.connectGen;
     const compress = this.deps.inflate !== null && (this.deps.compress ?? notCloud)();
     this.deps.socketUrl(`/api/events?v=2${compress ? "&z=1" : ""}`).then(
-      (url) => this.openSocket(url, compress),
+      (url) => {
+        if (!this.running || gen !== this.connectGen) return;
+        this.openSocket(url, compress);
+      },
       () => {
-        if (this.running) this.retryLater();
+        if (this.running && gen === this.connectGen) this.retryLater();
       },
     );
   }
@@ -429,11 +435,22 @@ export class FeedHub {
   private retryLater(): void {
     this.retry += 1;
     this.deps.noteFailure(this.retry);
+    clearTimeout(this.timer);
     this.timer = setTimeout(() => this.connect(), hubBackoff(this.retry, this.deps.random));
   }
 
   private openSocket(url: string, compress: boolean): void {
     if (!this.running) return;
+    if (this.ws) {
+      const prev = this.ws;
+      this.ws = null;
+      prev.onopen = prev.onmessage = prev.onclose = null;
+      try {
+        prev.close();
+      } catch {
+        /* already closing */
+      }
+    }
     const ws = this.deps.openSocket(url);
     ws.binaryType = "arraybuffer";
     this.ws = ws;

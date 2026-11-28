@@ -186,6 +186,7 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
 
     return () => {
       disposed = true;
+      fitRef.current = null;
       clearTimeout(timer);
       observer.disconnect();
       cancelAnimationFrame(raf);
@@ -198,10 +199,10 @@ export function XtermPane({ id, visible }: { id: string; visible: boolean }) {
   }, [id, runtime]);
 
   useEffect(() => {
-    if (visible) {
-      // The pane just became visible; measurements were 0 while hidden.
-      requestAnimationFrame(() => fitRef.current?.fit());
-    }
+    if (!visible) return;
+    // The pane just became visible; measurements were 0 while hidden.
+    const raf = requestAnimationFrame(() => fitRef.current?.fit());
+    return () => cancelAnimationFrame(raf);
   }, [visible]);
 
   const note =

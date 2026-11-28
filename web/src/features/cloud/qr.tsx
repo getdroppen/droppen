@@ -113,42 +113,61 @@ export function QrScanner({ onText, accept }: { onText: (text: string) => void; 
   const video = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
   const done = useRef(false);
+  const onTextRef = useRef(onText);
+  const acceptRef = useRef(accept);
+  onTextRef.current = onText;
+  acceptRef.current = accept;
   useEffect(() => {
     let stream: MediaStream | null = null;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const stopTracks = (s: MediaStream | null) => {
+      for (const track of s?.getTracks() ?? []) track.stop();
+    };
     void (async () => {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error(t("this browser cannot use a camera here"));
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-        if (stopped) return;
-        const el = video.current!;
+        const acquired = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        if (stopped) {
+          stopTracks(acquired);
+          return;
+        }
+        stream = acquired;
+        const el = video.current;
+        if (!el) {
+          stopTracks(stream);
+          stream = null;
+          return;
+        }
         el.srcObject = stream;
         await el.play().catch(() => undefined);
+        if (stopped) return;
         const read = await frameReader();
+        if (stopped) return;
         const scan = async () => {
           if (stopped || done.current) return;
           try {
             const text = await read(el);
-            if (text && accept(text)) {
+            if (!stopped && text && acceptRef.current(text)) {
               done.current = true;
-              onText(text);
+              onTextRef.current(text);
               return;
             }
           } catch {
             // a frame it could not read
           }
-          timer = setTimeout(() => void scan(), 200);
+          if (!stopped && !done.current) timer = setTimeout(() => void scan(), 200);
         };
         void scan();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (!stopped) setError(err instanceof Error ? err.message : String(err));
       }
     })();
     return () => {
       stopped = true;
       if (timer) clearTimeout(timer);
-      for (const track of stream?.getTracks() ?? []) track.stop();
+      stopTracks(stream);
+      stream = null;
     };
     // Once per mount: a new code means a new scanner.
   }, []);

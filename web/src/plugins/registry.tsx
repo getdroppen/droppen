@@ -31,7 +31,7 @@ import { mq } from "@/lib/machines/query";
 import { activatePlugin, activationKey, type Activation, type PluginSource } from "./activation";
 import { pluginAlias } from "./aliases";
 import { ConfirmHost } from "./confirm";
-import { pluginEvents } from "./events";
+import { pluginEventsFor } from "./events";
 import { baselineOf, changedUnderPage, runningStatuses, type PluginBaseline } from "./statuses";
 import type { PluginStatus } from "./types";
 
@@ -104,7 +104,7 @@ function InstalledPluginRegistry({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (feedSettings && Array.isArray(feedSettings.plugins)) remember(feedSettings.plugins);
   }, [feedSettings, remember]);
-  useEffect(() => pluginEvents.onStatuses(remember), [remember]);
+  useEffect(() => pluginEventsFor(machine).onStatuses(remember), [machine, remember]);
   const fallback = useQuery({
     queryKey: mq(machine, "plugins"),
     enabled: statuses === null,

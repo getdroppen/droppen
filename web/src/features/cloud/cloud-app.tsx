@@ -155,6 +155,18 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
   }, [checkSupport]);
   const booted = useRef(false);
   const opened = useRef<CloudAccount | null>(null);
+  const activeCleanups = useRef<(() => void)[]>([]);
+  const teardownActive = useCallback(() => {
+    for (const off of activeCleanups.current.splice(0)) off();
+  }, []);
+  useEffect(
+    () => () => {
+      teardownActive();
+      opened.current?.stopSession();
+      endHubShell();
+    },
+    [teardownActive],
+  );
   const queryClient = useQueryClient();
   const pathname = usePathname();
   // droppen.app/link, opened by a computer's local settings: the handshake
@@ -173,6 +185,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
     async (account: CloudAccount, link: HubLink | null) => {
       // This page is deleting the account: the hub ending its sessions is that, and the page leaves on its own.
       if (deletingAccount()) return;
+      teardownActive();
       account.stopSession();
       link?.stop();
       const refusal = account.refusal;
@@ -188,21 +201,23 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
       endHubShell();
       setPhase({ kind: "refused", reason: refusal ?? "denied" });
     },
-    [store],
+    [store, teardownActive],
   );
 
   /** The chain as served conflicts with what this browser verified: stop everything (the keys stay) and say so. */
   const forked = useCallback((account: CloudAccount, link: HubLink | null, message: string) => {
+    teardownActive();
     account.stopSession();
     link?.stop();
     endHubShell();
     setPhase({ kind: "fork", message, held: { api: account.api, token: account.session.token, account: account.account, store } });
-  }, [store]);
+  }, [store, teardownActive]);
 
   /** Where a signed-in session (a kept device session, or a password sign-in) goes next. */
   const proceed = useCallback(
     async (session: HubSession, { replaceUnreadableKeys = false }: { replaceUnreadableKeys?: boolean } = {}) => {
       try {
+        teardownActive();
         // Before any key is read or made: a browser that cannot run the
         // encryption says so (or, agreed to before, goes on in compatibility
         // mode), instead of failing at its keys as if its storage had.
@@ -217,7 +232,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         if (account.refusal) return await refused(account, null);
         let link: HubLink | null = null;
         let stopped = false;
-        account.onChange(() => {
+        const offAccount = account.onChange(() => {
           if (stopped) return;
           if (account.forked !== null) {
             stopped = true;
@@ -227,6 +242,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
           stopped = true;
           void refused(account, link);
         });
+        activeCleanups.current.push(offAccount);
         // Listened for first: a fork the seen record's watch finds as it starts (in here) is heard.
         account.keepSessionFresh();
         if (stopped) return;
@@ -254,13 +270,15 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         }
         link = startLink(account, origin);
         const live = link;
+        activeCleanups.current.push(() => live.stop());
         // Follow the chain (attesting each new head), take keys mailed to
         // this device, and notice it being removed (or refused).
-        new ChainFollower({
+        const follower = new ChainFollower({
           link,
           account,
           onRemoved: () => {
             stopped = true;
+            teardownActive();
             void wipeRemoved(account, live, store).then((failures) => setPhase({ kind: "removed", failures }));
           },
           onRefused: () => {
@@ -274,10 +292,13 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
             stopped = true;
             forked(account, live, message);
           },
-        }).start();
+        });
+        follower.start();
+        activeCleanups.current.push(() => follower.stop());
         // The relays channels go through (relay-and-plans §2.6); the hub carries one only when none can.
         const relays = new RelayPool({ api, account });
         relays.start();
+        activeCleanups.current.push(() => relays.stop());
         // Every machine of the account, each on its copy until it is wanted
         // live, and the one this browser last had in view brought back.
         endHubShell();
@@ -289,7 +310,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         setRenewalRunner(renewals);
         renewals.start();
         // This browser's push subscription follows its device's renewed key (§2.2 推送).
-        followPushRenewals(account);
+        activeCleanups.current.push(followPushRenewals(account));
         // The sign-in popup (`/link`) opens no machine: it adds one.
         if (!isLinkPath(location.pathname)) shell.start();
         // For diagnostics (and the acceptance harness's latency probe): the
@@ -316,7 +337,7 @@ export function CloudApp({ children, store: givenStore, keyReadRetryMs }: { chil
         setPhase({ kind: "error", message: errorText(error), held });
       }
     },
-    [api, store, origin, queryClient, refused, forked, checkSupport, keyReadRetryMs],
+    [api, store, origin, queryClient, refused, forked, checkSupport, keyReadRetryMs, teardownActive],
   );
 
   useEffect(() => {
