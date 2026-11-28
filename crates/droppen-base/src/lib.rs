@@ -2,6 +2,7 @@
 //! none owns. Nothing here names a subsystem, so the server may use any of it
 //! from anywhere without tying its subsystems together.
 //!
+//! * [`backoff`] — exponential backoff with full jitter;
 //! * [`time`] — the clock, and the ISO-8601 spelling the server writes and reads;
 //! * [`text`] — hex, the SHA-256 digest spelling, terminal-escape stripping and
 //!   the image extensions a browser draws;
@@ -16,6 +17,7 @@
 //! * [`env_block`] — the `KEY=VALUE` block a person types for a CLI's environment;
 //! * [`watch`] — a debounced "this file or directory changed" signal.
 
+pub mod backoff;
 pub mod env;
 pub mod env_block;
 pub mod fsutil;

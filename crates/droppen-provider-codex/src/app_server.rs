@@ -703,8 +703,9 @@ impl CodexRuns {
             };
             state.queue.remove(index);
             record.payload.codex = Some(state.clone());
-            self.host.journal.add(record);
         }
+        // Persist to SQLite outside the in-memory `handle.shared` lock.
+        self.host.journal.add(record);
         self.host.note_receipt(Source::Codex, id, qid, droppen_sessions::delivery::ReceiptStatus::Failed);
         QueueOutcome::Done
     }
