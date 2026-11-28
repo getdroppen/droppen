@@ -75,8 +75,8 @@ export function canCreateConversation(input: NewConversation, busy: boolean): bo
  * Both CLIs now carry an account: `accountId` absent means "follow this CLI's
  * stored default", `null` means the user asked for the local login by hand.
  *
- * An empty model or permission is left out: an ACP agent may choose both itself, and
- * refuses a start that names either.
+ * An empty model or permission is left out: an ACP agent may publish neither
+ * (or only one of them), and refuses a start that names an unsupported value.
  */
 export function creationRequest(input: NewConversation, clientMessageId?: string) {
   const common = { text: input.text.trim(), ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}) };

@@ -31,9 +31,9 @@ type CliChoice = components["schemas"]["CliChoice"];
 type Source = components["schemas"]["Source"];
 
 /**
- * The agents whose model, effort, permission and account a composer chooses.
- * An ACP agent chooses all four from its own configuration, so its composer offers
- * none of them and sends none of them.
+ * The built-in CLIs with static model/effort/permission fallbacks and managed
+ * accounts. An ACP agent has no accounts and publishes whatever models,
+ * efforts and permission modes it supports through `/api/models`.
  */
 export type CliSource = "claude" | "codex";
 
@@ -112,6 +112,18 @@ function unlessDangerous(value: string | null | undefined): string | undefined {
  * or a transcript reading the composer cannot send — falls back to the CLI
  * default, exactly as before.
  */
+function pickPermissionCandidate(input: {
+  existing: boolean;
+  stored?: string | null;
+  observed?: string | null;
+  sourceDefault?: string | null;
+  legacy?: string;
+}): string | undefined {
+  return input.existing
+    ? (input.stored ?? unlessDangerous(input.observed) ?? unlessDangerous(input.legacy))
+    : (input.sourceDefault ?? input.legacy);
+}
+
 export function resolvePermission(input: {
   existing: boolean;
   stored?: string | null;
@@ -120,10 +132,37 @@ export function resolvePermission(input: {
   legacy?: string;
   cli: CliSource;
 }): string {
-  const chosen = input.existing
-    ? (input.stored ?? unlessDangerous(input.observed) ?? unlessDangerous(input.legacy))
-    : (input.sourceDefault ?? input.legacy);
+  const chosen = pickPermissionCandidate(input);
   return chosen && PERMISSION_OPTIONS[input.cli].includes(chosen) ? chosen : PERMISSION_DEFAULT[input.cli];
+}
+
+/**
+ * The permission an ACP session's composer shows and sends from the modes the
+ * agent itself published.
+ *
+ * Uses the same `#563` safety rules as [`resolvePermission`]: an existing
+ * session never inherits `sourceDefault`, and a dangerous mode is adopted only
+ * from the session's own stored row. Anything unlisted for the current agent
+ * (for instance a default left behind by a different ACP agent) falls back to
+ * `defaultPermission` when listed, else the first published mode. Returns `""`
+ * when the agent offers no modes.
+ */
+export function resolveAcpPermission(input: {
+  existing: boolean;
+  stored?: string | null;
+  observed?: string | null;
+  sourceDefault?: string | null;
+  legacy?: string;
+  options: readonly { value: string; label: string }[];
+  defaultPermission?: string | null;
+}): string {
+  if (input.options.length === 0) return "";
+  const chosen = pickPermissionCandidate(input);
+  if (chosen && input.options.some((o) => o.value === chosen)) return chosen;
+  if (input.defaultPermission && input.options.some((o) => o.value === input.defaultPermission)) {
+    return input.defaultPermission;
+  }
+  return input.options[0]!.value;
 }
 
 /**
@@ -423,15 +462,15 @@ export function useComposerChoice(
   accountId?: string | null,
   /** The model to start on when none (sendable) is stored: the one the server paired with the login shown ([`useComposerStart`]). */
   startModel?: string | null,
-  /** An ACP session's agent, by id: whose models and efforts are offered. */
+  /** An ACP session's agent, by id: whose models, efforts and permission modes are offered. */
   acpAgent?: string | null,
 ) {
   const api = useApi();
   const machine = useMachine();
   const queryClient = useQueryClient();
   const prefsKey = scope ? `${source}/${scope}` : null;
-  // An ACP agent chooses nothing here (see `CliSource`); the hooks below still run, as
-  // hooks must, against a stand-in that is never shown or sent.
+  // Hooks below that only apply to built-in CLIs still run, as hooks must,
+  // against a stand-in `CliSource` that ACP branches ignore.
   const acp = source === "acp";
   const cli: CliSource = acp ? "codex" : source;
 
@@ -531,7 +570,7 @@ export function useComposerChoice(
     enabled: !acp || modelAgent !== null,
   });
   // An ACP agent's list is the agent's own (its `model` option); there is no
-  // static guess to fall back on, and no list means no pickers at all.
+  // static guess to fall back on.
   const catalog = modelData?.models.length ? modelData.models : acp ? [] : MODEL_FALLBACK[cli];
   // Whether the list on offer describes this machine's CLI or is a static guess.
   // A pending query answers "no": a warning that flashes on every mount is noise
@@ -583,9 +622,22 @@ export function useComposerChoice(
   };
 
   if (acp) {
-    // No permission modes, and nothing at all while the agent's list is
-    // unknown: an empty choice is "send none", which the composers leave out
-    // of the request.
+    const acpPermissionOptions = (modelData?.permissions ?? []).map((p) => ({
+      value: p.id,
+      label: p.label || p.id,
+    }));
+    const acpActivePermission = resolveAcpPermission({
+      existing: !!scope,
+      stored: entry?.permission,
+      observed: cliChoice?.permission,
+      sourceDefault: sourceDefault?.permission,
+      legacy: legacyScoped("permission"),
+      options: acpPermissionOptions,
+      defaultPermission: modelData?.defaultPermission,
+    });
+    // Nothing to send while the agent's model or permission list is unknown or
+    // empty: an empty choice is "send none", which the composers leave out of
+    // the request.
     return {
       models,
       activeModel,
@@ -596,8 +648,9 @@ export function useComposerChoice(
       modelsHidden: modelData?.hidden ?? 0,
       pickModel: models.length ? pickModel : () => {},
       setEffort: (v: string) => save.mutate({ effort: v }),
-      activePermission: "",
-      setPermission: () => {},
+      permissionOptions: acpPermissionOptions,
+      activePermission: acpActivePermission,
+      setPermission: acpPermissionOptions.length ? (v: string) => save.mutate({ permission: v }) : () => {},
     };
   }
   return {
@@ -615,6 +668,8 @@ export function useComposerChoice(
     modelsHidden: 0,
     pickModel,
     setEffort: (v: string) => save.mutate({ effort: v }),
+    /** Permission modes offered by this CLI or ACP agent; empty hides the picker. */
+    permissionOptions: PERMISSION_OPTIONS[cli].map((p) => ({ value: p, label: p })),
     activePermission,
     setPermission: (v: string) => save.mutate({ permission: v }),
   };
@@ -754,23 +809,26 @@ export function ComposerChoiceChips({
   account?: ReactNode;
 }) {
   const { t } = useTranslation();
-  // An ACP agent offers its own models and efforts, and no permission
-  // modes; with its list unknown there is nothing to pick at all.
+  // An ACP agent offers whatever models, efforts and permission modes it
+  // publishes; with none of them available there is nothing to pick at all.
   const acp = source === "acp";
-  if (acp && choice.models.length === 0) {
+  const showPermission = permission && choice.permissionOptions.length > 0;
+  if (acp && choice.models.length === 0 && !showPermission) {
     // Every model left out still says why there is no picker.
     return choice.modelsHidden > 0 ? <ModelSourceHint fallback={false} hidden={choice.modelsHidden} /> : null;
   }
   return (
     <>
-      <ModelSelect
-        ghost
-        models={choice.models}
-        value={choice.activeModel.id}
-        customId={choice.customModel}
-        onChange={choice.pickModel}
-        allowCustom={!acp}
-      />
+      {(!acp || choice.models.length > 0) && (
+        <ModelSelect
+          ghost
+          models={choice.models}
+          value={choice.activeModel.id}
+          customId={choice.customModel}
+          onChange={choice.pickModel}
+          allowCustom={!acp}
+        />
+      )}
       <ModelSourceHint fallback={choice.modelsAreFallback} hidden={choice.modelsHidden} />
       {/* Absent, not disabled, for a model that takes no effort: an empty
           control in a toolbar reads as something that failed to load. */}
@@ -778,12 +836,12 @@ export function ComposerChoiceChips({
         <ComposerSelect ghost label={t("effort")} value={choice.activeEffort} options={choice.effortOptions} onChange={choice.setEffort} />
       )}
       {account}
-      {permission && !acp && (
+      {showPermission && (
         <ComposerSelect
           ghost
           label={t("permission")}
           value={choice.activePermission}
-          options={PERMISSION_OPTIONS[source]}
+          options={choice.permissionOptions}
           onChange={choice.setPermission}
           danger={DANGER_PERMISSIONS.has(choice.activePermission)}
         />

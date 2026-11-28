@@ -46,7 +46,9 @@ pub enum SessionUpdate {
     /// The session's configuration options changed: a model switch can bring
     /// a different set of efforts with it.
     ConfigOptionUpdate(ConfigOptionUpdate),
-    /// Anything else: plans, mode and command lists, session info.
+    /// The session's active mode changed (legacy `modes` protocol).
+    CurrentModeUpdate(CurrentModeUpdate),
+    /// Anything else: plans, command lists, session info.
     #[serde(other)]
     Other,
 }
@@ -239,6 +241,14 @@ impl ConfigOptionUpdate {
     }
 }
 
+/// `current_mode_update`: the session's active mode changed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentModeUpdate {
+    /// The mode id now in force.
+    pub current_mode_id: String,
+}
+
 /// What a configuration option is for. ACP names a few categories; an agent
 /// may use others, and they are kept as they were spelled.
 pub mod category {
@@ -246,6 +256,62 @@ pub mod category {
     pub const MODEL: &str = "model";
     /// How hard the model thinks: Droppen's "effort".
     pub const THOUGHT_LEVEL: &str = "thought_level";
+    /// The session's permission/approval mode.
+    pub const MODE: &str = "mode";
+}
+
+/// One mode in a legacy top-level `modes` block.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMode {
+    /// What `session/set_mode` names it by.
+    pub id: String,
+    /// What the user calls it.
+    #[serde(default)]
+    pub name: String,
+}
+
+/// Legacy top-level `modes` block reported by `session/new` or `session/load`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionModes {
+    /// The mode currently in force.
+    pub current_mode_id: String,
+    /// Modes the session can be switched to, in the order offered.
+    pub available_modes: Vec<SessionMode>,
+}
+
+impl SessionModes {
+    /// Whether `value` is one of the available modes.
+    pub fn accepts(&self, value: &str) -> bool {
+        self.available_modes.iter().any(|mode| mode.id == value)
+    }
+}
+
+/// Read the legacy top-level `modes` block of an answer, leniently: unreadable
+/// entries are skipped and the list is bounded to [`MAX_SELECT_VALUES`].
+/// Returns `None` when `modes` is absent or has no usable `availableModes`.
+pub fn session_modes(answer: &Value) -> Option<SessionModes> {
+    let modes = answer.get("modes")?.as_object()?;
+    let available_modes: Vec<SessionMode> = modes
+        .get("availableModes")?
+        .as_array()?
+        .iter()
+        .filter_map(|item| serde_json::from_value::<SessionMode>(item.clone()).ok())
+        .filter(|mode| !mode.id.is_empty())
+        .take(MAX_SELECT_VALUES)
+        .collect();
+    if available_modes.is_empty() {
+        return None;
+    }
+    let current_mode_id = modes
+        .get("currentModeId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Some(SessionModes {
+        current_mode_id,
+        available_modes,
+    })
 }
 
 /// One of a session's configuration options, as `session/new`,
@@ -721,5 +787,50 @@ mod tests {
         ]}}));
         assert_eq!(ids, vec!["gemini-4-neon-high", "gpt-oss-120b-medium"]);
         assert!(available_model_ids(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn mode_config_option_legacy_modes_and_current_mode_update_are_read() {
+        let answer = json!({
+            "configOptions": [
+                {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "default",
+                 "options": [{"value": "default", "name": "Default"}, {"value": "accept-edits", "name": "Accept edits"}]}
+            ],
+            "modes": {
+                "currentModeId": "default",
+                "availableModes": [
+                    {"id": "default", "name": "Default"},
+                    {"id": "plan", "name": "Plan"},
+                    {"id": ""},
+                    {"bad": true}
+                ]
+            }
+        });
+        let options = config_options(&answer);
+        let mode = option_for(&options, category::MODE).expect("mode option");
+        assert!(mode.accepts("accept-edits"));
+        assert!(!mode.accepts("plan"));
+
+        let modes = session_modes(&answer).expect("legacy modes");
+        assert_eq!(modes.current_mode_id, "default");
+        assert_eq!(
+            modes.available_modes,
+            vec![
+                SessionMode { id: "default".into(), name: "Default".into() },
+                SessionMode { id: "plan".into(), name: "Plan".into() },
+            ]
+        );
+        assert!(modes.accepts("plan"));
+        assert!(!modes.accepts("auto"));
+        assert!(session_modes(&json!({})).is_none());
+        assert!(session_modes(&json!({"modes": {"currentModeId": "x", "availableModes": []}})).is_none());
+
+        let many: Vec<Value> = (0..MAX_SELECT_VALUES * 2).map(|i| json!({"id": format!("m{i}"), "name": "M"})).collect();
+        let bounded = session_modes(&json!({"modes": {"currentModeId": "m0", "availableModes": many}})).expect("bounded");
+        assert_eq!(bounded.available_modes.len(), MAX_SELECT_VALUES);
+
+        let update: SessionUpdate =
+            serde_json::from_value(json!({"sessionUpdate": "current_mode_update", "currentModeId": "plan"})).unwrap();
+        assert!(matches!(update, SessionUpdate::CurrentModeUpdate(CurrentModeUpdate { ref current_mode_id }) if current_mode_id == "plan"));
     }
 }

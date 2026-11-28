@@ -61,8 +61,20 @@ pub enum ModelListSource {
     AccountEnv,
 }
 
+/// One permission/session mode an ACP agent publishes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionModeInfo {
+    /// The id passed back to the agent when chosen.
+    pub id: String,
+    /// Human-facing label, when the agent publishes one that differs from `id`.
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub label: Optional<String>,
+}
+
 /// The `GET /api/models` response.
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelList {
     /// Models currently known to the local CLI, freshest first.
     pub models: Vec<ModelInfo>,
@@ -73,6 +85,13 @@ pub struct ModelList {
     /// absent when none are.
     #[serde(default, skip_serializing_if = "Optional::is_none")]
     pub hidden: Optional<u32>,
+    /// Permission/session modes an ACP agent publishes, in the order offered;
+    /// absent when the provider or agent publishes none.
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub permissions: Optional<Vec<PermissionModeInfo>>,
+    /// Default permission/session mode id, when `permissions` is present.
+    #[serde(default, skip_serializing_if = "Optional::is_none")]
+    pub default_permission: Optional<String>,
 }
 
 /// Query for `GET /api/models`.
@@ -108,6 +127,21 @@ pub struct ModelsQuery {
 /// brackets. So brackets were already getting through, by accident and
 /// unbalanced; this says what is meant instead.
 pub const MODEL_PATTERN: &str = r"^[A-Za-z0-9][[:word:].:-]*(?:\[[A-Za-z0-9]+\])?$";
+
+/// What a permission/session mode id may look like: starts with an ASCII letter
+/// (never `-`, so it can never read as a CLI flag) and contains only ASCII
+/// letters, digits, `_`, or `-`. Safe for CLI flags and ACP mode ids alike.
+pub const PERMISSION_PATTERN: &str = r"^[A-Za-z][A-Za-z0-9_-]*$";
+
+/// Whether `value` is a syntactically legal permission/session mode id: at most
+/// 64 characters and matching [`PERMISSION_PATTERN`].
+pub fn valid_permission(value: &str) -> bool {
+    static PERMISSION_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    value.chars().count() <= 64
+        && PERMISSION_RE
+            .get_or_init(|| regex::Regex::new(PERMISSION_PATTERN).expect("valid permission pattern"))
+            .is_match(value)
+}
 
 /// How a CLI's model ids are spelled, which every model id is held to before
 /// it reaches the CLI: on the send routes, in the composer's choices and in a

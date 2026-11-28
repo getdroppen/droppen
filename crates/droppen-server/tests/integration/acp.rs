@@ -543,7 +543,13 @@ async fn what_the_agent_cannot_do_is_refused_before_it_starts() {
         .json(
             "POST",
             "/api/sessions/new",
-            &json!({"source": "acp", "acpAgent": "fake", "cwd": workdir, "text": "hi", "permission": "auto"}),
+            &json!({
+                "source": "acp",
+                "acpAgent": "fake",
+                "cwd": workdir,
+                "text": "hi",
+                "accountId": "00000000-0000-4000-8000-000000000000"
+            }),
         )
         .await;
     assert_ne!(status, 200, "{body}");
@@ -711,10 +717,11 @@ async fn models_and_efforts_come_from_the_agent_and_are_set_before_the_turn() {
         .json(
             "POST",
             &format!("/api/sessions/acp/{id}/message"),
-            &json!({"text": "x", "permission": "auto"}),
+            &json!({"text": "x", "permission": "no-such-mode"}),
         )
         .await;
     assert_ne!(status, 200, "{body}");
+    assert!(body.contains("no-such-mode"), "{body}");
     assert_eq!(log_calls().len(), before);
 
     // New settings may mean another configuration: the next list is probed afresh.
@@ -1311,5 +1318,194 @@ async fn the_built_in_agents_say_whether_their_executable_is_on_path() {
     for preset in listed["presets"].as_array().unwrap() {
         assert!(preset["onPath"].is_boolean(), "{preset:#}");
     }
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn permission_modes_are_advertised_applied_switched_and_validated() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let program = install_fake(home.path());
+    let dirs = workdirs(home.path(), &["work-modes", "work-nomodes"]);
+    let server = TestServer::start_at(home.path(), None).await;
+    configure(&server, &program).await;
+
+    // `/api/models` advertises permission modes and their default from `configOptions`.
+    let models = server.get_json("/api/models?source=acp&acpAgent=fake").await;
+    assert_eq!(
+        models["permissions"],
+        json!([
+            {"id": "default", "label": "Default"},
+            {"id": "accept-edits", "label": "Accept edits"},
+            {"id": "auto", "label": "Auto"},
+            {"id": "plan", "label": "Plan"},
+        ]),
+        "{models:#}"
+    );
+    assert_eq!(models["defaultPermission"], "default", "{models:#}");
+
+    // Starting a session with `permission` applies it via `session/set_config_option`.
+    let (status, body) = server
+        .json(
+            "POST",
+            "/api/sessions/new",
+            &json!({"source": "acp", "acpAgent": "fake", "cwd": dirs[0], "text": "hi", "permission": "accept-edits"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<Value>(&body).expect("json")["id"].as_str().expect("id").to_string();
+    let detail = wait_for(&server, &id, "first turn", finished).await;
+    assert_eq!(detail["injection"]["state"], "ok", "{detail:#}");
+    assert_eq!(detail["cliChoice"]["permission"], "accept-edits", "{detail:#}");
+    let set_calls: Vec<Value> = calls(&dirs[0])
+        .into_iter()
+        .filter(|c| c["method"] == "session/set_config_option")
+        .collect();
+    assert_eq!(set_calls.len(), 1, "{set_calls:#?}");
+    assert_eq!(set_calls[0]["params"]["configId"], "mode");
+    assert_eq!(set_calls[0]["params"]["value"], "accept-edits");
+
+    // Switching permission on a follow-up message sends `session/set_config_option` and updates `cliChoice`.
+    let (status, body) = server
+        .json(
+            "POST",
+            &format!("/api/sessions/acp/{id}/message"),
+            &json!({"text": "plan it", "permission": "plan"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    wait_for(&server, &id, "second turn items", |d| texts(d).len() == 10).await;
+    let detail = wait_for(&server, &id, "second turn", finished).await;
+    assert_eq!(detail["cliChoice"]["permission"], "plan", "{detail:#}");
+    let set_calls: Vec<Value> = calls(&dirs[0])
+        .into_iter()
+        .filter(|c| c["method"] == "session/set_config_option")
+        .collect();
+    assert_eq!(set_calls.len(), 2, "{set_calls:#?}");
+    assert_eq!(set_calls[1]["params"]["configId"], "mode");
+    assert_eq!(set_calls[1]["params"]["value"], "plan");
+
+    // Repeating the same permission does not call `session/set_config_option` again.
+    let (status, body) = server
+        .json(
+            "POST",
+            &format!("/api/sessions/acp/{id}/message"),
+            &json!({"text": "stay in plan", "permission": "plan"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    wait_for(&server, &id, "third turn items", |d| texts(d).len() == 15).await;
+    wait_for(&server, &id, "third turn", finished).await;
+    let set_calls_after = calls(&dirs[0])
+        .into_iter()
+        .filter(|c| c["method"] == "session/set_config_option")
+        .count();
+    assert_eq!(set_calls_after, 2);
+
+    // Unknown permission mode is refused before touching the agent.
+    let before = calls(&dirs[0]).len();
+    let (status, body) = server
+        .json(
+            "POST",
+            &format!("/api/sessions/acp/{id}/message"),
+            &json!({"text": "nope", "permission": "unknown-mode"}),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("unknown-mode"), "{body}");
+    assert_eq!(calls(&dirs[0]).len(), before);
+
+    // An agent publishing no modes omits `permissions`/`defaultPermission` and refuses `permission`.
+    configure_env(&server, "nomodes", &program, "FAKE_AGENT_NO_MODES=1").await;
+    let models = server.get_json("/api/models?source=acp&acpAgent=nomodes").await;
+    assert!(models.get("permissions").is_none(), "{models:#}");
+    assert!(models.get("defaultPermission").is_none(), "{models:#}");
+
+    let (status, body) = server
+        .json(
+            "POST",
+            "/api/sessions/new",
+            &json!({"source": "acp", "acpAgent": "nomodes", "cwd": dirs[1], "text": "hi", "permission": "auto"}),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("offers no permission mode"), "{body}");
+    assert!(calls(&dirs[1]).is_empty(), "nothing was started");
+
+    let nomodes_id = start(&server, "nomodes", &dirs[1], "plain turn").await;
+    let detail = wait_for(&server, &nomodes_id, "no-modes turn", finished).await;
+    assert!(detail["cliChoice"]["permission"].is_null(), "{detail:#}");
+
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn legacy_modes_agent_switches_via_session_set_mode() {
+    let home = tempfile::tempdir().expect("tempdir");
+    let program = install_fake(home.path());
+    let workdir = workdirs(home.path(), &["work-legacy"]).remove(0);
+    let server = TestServer::start_at(home.path(), None).await;
+    configure_env(&server, "legacy", &program, "FAKE_AGENT_LEGACY_MODES=1").await;
+
+    let models = server.get_json("/api/models?source=acp&acpAgent=legacy").await;
+    assert_eq!(
+        models["permissions"],
+        json!([
+            {"id": "default", "label": "Default"},
+            {"id": "accept-edits", "label": "Accept edits"},
+            {"id": "auto", "label": "Auto"},
+            {"id": "plan", "label": "Plan"},
+        ]),
+        "{models:#}"
+    );
+    assert_eq!(models["defaultPermission"], "default", "{models:#}");
+
+    let (status, body) = server
+        .json(
+            "POST",
+            "/api/sessions/new",
+            &json!({"source": "acp", "acpAgent": "legacy", "cwd": workdir, "text": "hi", "permission": "auto"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let id = serde_json::from_str::<Value>(&body).expect("json")["id"].as_str().expect("id").to_string();
+    let detail = wait_for(&server, &id, "first legacy turn", finished).await;
+    assert_eq!(detail["injection"]["state"], "ok", "{detail:#}");
+    assert_eq!(detail["cliChoice"]["permission"], "auto", "{detail:#}");
+
+    let (status, body) = server
+        .json(
+            "POST",
+            &format!("/api/sessions/acp/{id}/message"),
+            &json!({"text": "switch", "permission": "plan"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    wait_for(&server, &id, "second legacy turn items", |d| texts(d).len() == 10).await;
+    let detail = wait_for(&server, &id, "second legacy turn", finished).await;
+    assert_eq!(detail["cliChoice"]["permission"], "plan", "{detail:#}");
+
+    let sent = calls(&workdir);
+    assert!(
+        !sent.iter().any(|c| c["method"] == "session/set_config_option"),
+        "legacy modes must not call session/set_config_option: {sent:#?}"
+    );
+    let mode_calls: Vec<&Value> = sent.iter().filter(|c| c["method"] == "session/set_mode").collect();
+    assert_eq!(mode_calls.len(), 2, "{mode_calls:#?}");
+    assert_eq!(mode_calls[0]["params"], json!({"sessionId": SESSION, "modeId": "auto"}));
+    assert_eq!(mode_calls[1]["params"], json!({"sessionId": SESSION, "modeId": "plan"}));
+
+    // Unknown mode refused upfront.
+    let before = calls(&workdir).len();
+    let (status, body) = server
+        .json(
+            "POST",
+            &format!("/api/sessions/acp/{id}/message"),
+            &json!({"text": "bad", "permission": "nope"}),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert!(body.contains("nope"), "{body}");
+    assert_eq!(calls(&workdir).len(), before);
+
     server.stop().await;
 }

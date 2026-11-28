@@ -264,6 +264,8 @@ impl Models for ClaudeModels {
                 models,
                 source,
                 hidden: None.into(),
+                permissions: None.into(),
+                default_permission: None.into(),
             })
         })
     }

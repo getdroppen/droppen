@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol_schema::v1::{
     CancelNotification, ClientCapabilities, CloseSessionRequest, ContentBlock, Error as RpcError, FileSystemCapabilities, Implementation,
     InitializeRequest, JsonRpcMessage, LoadSessionRequest, NewSessionRequest, Notification, PromptRequest, Request, RequestId,
-    SetSessionConfigOptionRequest, AGENT_METHOD_NAMES,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, AGENT_METHOD_NAMES,
 };
 use agent_client_protocol_schema::ProtocolVersion;
 use serde::Serialize;
@@ -35,7 +35,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::Client;
 use super::{absolute, InjectError, Replay};
-use crate::protocol::{available_model_ids, config_options, ConfigOption, InitializeResponse, PromptCapabilities, PromptResponse, SessionNotification};
+use crate::protocol::{available_model_ids, config_options, session_modes, ConfigOption, InitializeResponse, PromptCapabilities, PromptResponse, SessionModes, SessionNotification};
 
 /// How long a write to the agent's stdin may block.
 const WRITE_TIMEOUT: std::time::Duration = if cfg!(test) {
@@ -120,6 +120,8 @@ pub(super) struct Opened {
     /// Legacy `models.availableModels[].modelId` entries, when the agent reports
     /// them alongside `configOptions` (used to infer per-model effort ladders).
     pub(super) available_models: Vec<String>,
+    /// Legacy top-level `modes` block, when the agent reports one.
+    pub(super) modes: Option<SessionModes>,
 }
 
 /// One agent's connection.
@@ -230,6 +232,7 @@ impl Conn {
                     replay: Vec::new(),
                     options: config_options(&created),
                     available_models: available_model_ids(&created),
+                    modes: session_modes(&created),
                 })
             }
             Some(id) => {
@@ -252,6 +255,7 @@ impl Conn {
                     replay: replayed,
                     options: config_options(&loaded),
                     available_models: available_model_ids(&loaded),
+                    modes: session_modes(&loaded),
                 })
             }
         }
@@ -266,6 +270,16 @@ impl Conn {
             )
             .await?;
         Ok(config_options(&answer))
+    }
+
+    /// Set the session's mode via the legacy `session/set_mode` method.
+    pub(super) async fn set_mode(&self, id: &str, mode_id: &str) -> Result<(), InjectError> {
+        self.call(
+            AGENT_METHOD_NAMES.session_set_mode,
+            SetSessionModeRequest::new(id.to_owned(), mode_id.to_owned()),
+        )
+        .await?;
+        Ok(())
     }
 
     /// Forget a session, where the agent can: what a probe opened only to read

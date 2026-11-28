@@ -4338,6 +4338,8 @@ export interface components {
         };
         /** @description The `GET /api/models` response. */
         ModelList: {
+            /** @description Default permission/session mode id, when `permissions` is present. */
+            defaultPermission?: string;
             /**
              * @description How many of an ACP agent's models are left out because their ids look
              *     like a credential, so a picker can say why its list is short or empty;
@@ -4346,6 +4348,11 @@ export interface components {
             hidden?: number;
             /** @description Models currently known to the local CLI, freshest first. */
             models: components["schemas"]["ModelInfo"][];
+            /**
+             * @description Permission/session modes an ACP agent publishes, in the order offered;
+             *     absent when the provider or agent publishes none.
+             */
+            permissions?: components["schemas"]["PermissionModeInfo"][];
             /** @description Whether `models` came from the CLI's cache or from the static fallback. */
             source: components["schemas"]["ModelListSource"];
         };
@@ -4521,6 +4528,13 @@ export interface components {
          * @enum {string}
          */
         PathRead: "ok" | "timeout" | "failed" | "unknown";
+        /** @description One permission/session mode an ACP agent publishes. */
+        PermissionModeInfo: {
+            /** @description The id passed back to the agent when chosen. */
+            id: string;
+            /** @description Human-facing label, when the agent publishes one that differs from `id`. */
+            label?: string;
+        };
         /** @description One choice the user can pick on a permission prompt. */
         PermissionOption: {
             /** @description The option id sent back to the agent. */

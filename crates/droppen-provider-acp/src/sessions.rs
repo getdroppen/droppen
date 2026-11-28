@@ -266,8 +266,14 @@ pub(crate) enum Record<'a> {
     Compact {},
     /// `usage`.
     Usage { used: u64, size: u64 },
-    /// `config`: both keys, a value left out written as `null`.
-    Config { model: Option<&'a str>, effort: Option<&'a str> },
+    /// `config`: `model` and `effort` always present (`null` when absent),
+    /// and `permission` when the agent publishes a session mode.
+    Config {
+        model: Option<&'a str>,
+        effort: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        permission: Option<&'a str>,
+    },
     /// `turn_end`.
     TurnEnd {
         #[serde(rename = "stopReason")]
@@ -836,7 +842,7 @@ pub fn spoken_texts(entry: &Map<String, Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The model and effort the session last ran on: its newest `config` record.
+/// The model, effort and permission mode the session last ran on: its newest `config` record.
 pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliChoice> {
     let lines = read_tail_lines(file_path, HEAD_BYTES as u64).await.ok()?;
     lines.iter().rev().filter_map(|line| try_parse(line)).find_map(|entry| {
@@ -847,8 +853,7 @@ pub async fn read_cli_choice(file_path: &Path) -> Option<droppen_sessions::CliCh
         Some(droppen_sessions::CliChoice {
             model: Nullable(field("model")),
             effort: Nullable(field("effort")),
-            // An ACP agent chooses its own permissions; there is no mode here.
-            permission: Nullable(None),
+            permission: Nullable(field("permission")),
             at: Nullable(field("timestamp")),
         })
     })
@@ -1496,5 +1501,39 @@ pub(crate) mod tests {
         assert_eq!(items[0].images.as_deref(), Some(["/uploads/u/my shot.png".to_string()].as_slice()));
         assert_eq!(items[1].files.as_deref().unwrap()[0].path, "/uploads/u/notes.txt");
         assert_eq!(items[2].files.as_deref().unwrap()[0].path, "/uploads/u/spec.md");
+    }
+
+    #[tokio::test]
+    async fn config_records_carry_permission_when_present_and_read_cli_choice_reads_it() {
+        let without = Record::Config {
+            model: Some("m1"),
+            effort: Some("high"),
+            permission: None,
+        }
+        .stamped()
+        .to_string();
+        assert_eq!(
+            unstamped(&without),
+            r#"{"model":"m1","effort":"high","type":"config","timestamp":"<timestamp>"}"#
+        );
+        let with = Record::Config {
+            model: Some("m1"),
+            effort: Some("high"),
+            permission: Some("accept-edits"),
+        }
+        .stamped()
+        .to_string();
+        assert_eq!(
+            unstamped(&with),
+            r#"{"model":"m1","effort":"high","permission":"accept-edits","type":"config","timestamp":"<timestamp>"}"#
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("s.jsonl");
+        tokio::fs::write(&file, format!("{without}\n{with}\n")).await.unwrap();
+        let choice = read_cli_choice(&file).await.expect("cli choice");
+        assert_eq!(choice.model.0.as_deref(), Some("m1"));
+        assert_eq!(choice.effort.0.as_deref(), Some("high"));
+        assert_eq!(choice.permission.0.as_deref(), Some("accept-edits"));
     }
 }

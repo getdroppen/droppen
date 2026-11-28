@@ -64,7 +64,7 @@ use std::time::Duration;
 use droppen_provider::common::{new_uuid, session_workdir, QueueOutcome, ResidentState};
 use droppen_provider::{AccountChoice, Capabilities, DriverStatesBuilder, InjectError, InjectionRegistry, PermissionOutcome, PermissionReply, Provider, ProviderRuns, Run, RunHost, SendOptions, SendTo, Sent, SpawnGate, SpawnPermit, StartAt, WrittenAt};
 use futures_util::future::BoxFuture;
-use crate::protocol::{category, option_for, ConfigOption, InitializeResponse};
+use crate::protocol::{category, option_for, ConfigOption, InitializeResponse, SessionModes};
 use crate::agents::{AcpAgent, AcpAgentRegistry, AcpCheck, AcpCheckState};
 use crate::sessions::{has_conversation, read_header, AcpTranscripts, Record, Translator};
 use droppen_sessions::{Injection, SessionSummary, Source};
@@ -121,25 +121,22 @@ fn message(text: &str, options: &SendOptions) -> Message {
         files: options.files.clone(),
         model: picked(&options.model),
         effort: picked(&options.effort),
+        permission: picked(&options.permission),
     }
 }
 
 /// Refuse what an ACP session cannot do differently per message.
 ///
-/// An ACP agent has no accounts here and no permission modes; a request that
-/// names either is refused rather than quietly run on something else. Its
-/// model and effort are its own configuration options, checked against what
-/// it publishes ([`check_choice`]).
+/// An ACP agent has no accounts here and cannot run instant chats; a request
+/// that asks for either is refused rather than quietly run on something else.
+/// Its model, effort and permission mode are its own configuration options (or
+/// legacy session modes), checked against what it publishes ([`check_choice`]).
 fn check_options(agent: &AcpAgent, options: &SendOptions) -> Result<(), InjectError> {
     let name = &agent.name;
     if options.account.named().is_some() || matches!(options.account, AccountChoice::Rule(_)) {
         return Err(InjectError::message(format!(
             "{name} runs on its own configuration; there is no account to choose"
         )));
-    }
-    let named = |value: &Option<String>| value.as_deref().is_some_and(|value| !value.trim().is_empty());
-    if named(&options.permission) {
-        return Err(InjectError::message(format!("{name} has no permission modes to choose between")));
     }
     if options.chat {
         return Err(InjectError::message(format!(
@@ -149,14 +146,22 @@ fn check_options(agent: &AcpAgent, options: &SendOptions) -> Result<(), InjectEr
     Ok(())
 }
 
-/// Refuse a model or effort the agent does not offer, when what it offers is
-/// known; with nothing known yet, the agent itself answers when it is set.
+/// Refuse a model, effort or permission mode the agent does not offer, when
+/// what it offers is known; with nothing known yet, the agent itself answers
+/// when it is set.
 ///
 /// When a message is switching to a different model, the new model may publish
 /// a different `thought_level` ladder (or omit it altogether), so `effort` is
 /// deferred to [`Driver::configure`] once the model switch completes.
-fn check_choice(agent: &AcpAgent, offered: &[ConfigOption], model: Option<&str>, effort: Option<&str>) -> Result<(), InjectError> {
-    if offered.is_empty() {
+fn check_choice(
+    agent: &AcpAgent,
+    offered: &[ConfigOption],
+    modes: Option<&SessionModes>,
+    model: Option<&str>,
+    effort: Option<&str>,
+    permission: Option<&str>,
+) -> Result<(), InjectError> {
+    if offered.is_empty() && modes.is_none() {
         return Ok(());
     }
     let model_option = option_for(offered, category::MODEL);
@@ -181,6 +186,28 @@ fn check_choice(agent: &AcpAgent, offered: &[ConfigOption], model: Option<&str>,
                 }
                 Some(_) => {}
             }
+        }
+    }
+    if let Some(wanted) = permission {
+        if let Some(option) = option_for(offered, category::MODE) {
+            if !option.accepts(wanted) {
+                return Err(InjectError::message(format!(
+                    "{} has no permission mode \"{wanted}\"",
+                    agent.name
+                )));
+            }
+        } else if let Some(modes) = modes {
+            if !modes.accepts(wanted) {
+                return Err(InjectError::message(format!(
+                    "{} has no permission mode \"{wanted}\"",
+                    agent.name
+                )));
+            }
+        } else {
+            return Err(InjectError::message(format!(
+                "{} offers no permission mode to choose",
+                agent.name
+            )));
         }
     }
     Ok(())
@@ -347,6 +374,7 @@ struct Open {
     started: Started,
     transcript: driver::Transcript,
     options: Vec<ConfigOption>,
+    modes: Option<SessionModes>,
 }
 
 /// A scratch directory for an agent that is only asked something: removed
@@ -386,15 +414,17 @@ impl Acp {
     }
 }
 
-/// What a fresh session of an ACP agent offered: its configuration options and
-/// optional `models.availableModels` ids.
+/// What a fresh session of an ACP agent offered: its configuration options,
+/// optional `models.availableModels` ids, and optional legacy `modes`.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AcpOffered {
-    /// The session's configuration options (`model`, `thought_level`, …).
+    /// The session's configuration options (`model`, `thought_level`, `mode`, …).
     pub(crate) options: Vec<ConfigOption>,
     /// Optional `models.availableModels[].modelId` entries reported alongside
     /// `configOptions`, used to derive per-model effort ladders.
     pub(crate) available_models: Vec<String>,
+    /// Optional legacy top-level `modes` block.
+    pub(crate) modes: Option<SessionModes>,
 }
 
 /// The ACP agents' runs: the agent process behind each session, what each
@@ -639,7 +669,7 @@ impl AcpRuns {
         }
         let scratch = scratch("probe").map_err(|error| InjectError::Internal(error.to_string()))?;
         let offered = self.probe(agent, &scratch).await?;
-        self.remember_acp_options(&agent.id, &offered.options, &offered.available_models);
+        self.remember_acp_options(&agent.id, &offered.options, &offered.available_models, offered.modes.as_ref());
         Ok(offered)
     }
 
@@ -668,17 +698,25 @@ impl AcpRuns {
         Ok(AcpOffered {
             options: opened.options,
             available_models: opened.available_models,
+            modes: opened.modes,
         })
     }
 
     /// What the agent `agent` offers, as a fresh session reports it.
-    pub(crate) fn remember_acp_options(&self, agent: &str, options: &[ConfigOption], available_models: &[String]) {
-        if !options.is_empty() {
+    pub(crate) fn remember_acp_options(
+        &self,
+        agent: &str,
+        options: &[ConfigOption],
+        available_models: &[String],
+        modes: Option<&SessionModes>,
+    ) {
+        if !options.is_empty() || modes.is_some() {
             self.acp_options.lock().unwrap().insert(
                 agent.to_string(),
                 AcpOffered {
                     options: options.to_vec(),
                     available_models: available_models.to_vec(),
+                    modes: modes.cloned(),
                 },
             );
         }
@@ -845,14 +883,21 @@ impl AcpRuns {
         let message = message(text, options);
         // Checked before anything starts, against what the agent last offered:
         // a refused pick must not leave a new, empty session behind.
-        let offered = self
+        let (offered, modes) = self
             .acp_options
             .lock()
             .unwrap()
             .get(&agent.id)
-            .map(|o| o.options.clone())
+            .map(|o| (o.options.clone(), o.modes.clone()))
             .unwrap_or_default();
-        check_choice(&agent, &offered, message.model.as_deref(), message.effort.as_deref())?;
+        check_choice(
+            &agent,
+            &offered,
+            modes.as_ref(),
+            message.model.as_deref(),
+            message.effort.as_deref(),
+            message.permission.as_deref(),
+        )?;
         let name = agent.name.clone();
         let id = new_uuid();
         let (starting, delivery) = self.acp_starting(&agent, &id, message);
@@ -891,17 +936,24 @@ impl AcpRuns {
         let running = current.filter(Handle::takes_messages);
         // Checked before anything starts, against the session's own options
         // when it is running and what the agent last offered otherwise.
-        let offered = match &running {
-            Some(handle) => handle.options(),
+        let (offered, modes) = match &running {
+            Some(handle) => (handle.options(), handle.modes()),
             None => self
                 .acp_options
                 .lock()
                 .unwrap()
                 .get(&agent.id)
-                .map(|o| o.options.clone())
+                .map(|o| (o.options.clone(), o.modes.clone()))
                 .unwrap_or_default(),
         };
-        check_choice(&agent, &offered, message.model.as_deref(), message.effort.as_deref())?;
+        check_choice(
+            &agent,
+            &offered,
+            modes.as_ref(),
+            message.model.as_deref(),
+            message.effort.as_deref(),
+            message.permission.as_deref(),
+        )?;
         let name = agent.name.clone();
         if let Some(handle) = running {
             let delivery = handle.deliver(message);
@@ -1046,7 +1098,7 @@ impl AcpRuns {
                 // A new session's options say what a fresh one starts on — the
                 // defaults the composer offers. A reopened one's say what *it*
                 // was switched to, which is nobody else's default.
-                self.remember_acp_options(&agent.id, &opened.options, &opened.available_models);
+                self.remember_acp_options(&agent.id, &opened.options, &opened.available_models, opened.modes.as_ref());
                 let dir = AcpTranscripts::of(&self.host.paths).agent_dir(&agent.id).ok_or_else(|| InjectError::Internal(format!("unusable agent id {}", agent.id)))?;
                 tokio::fs::create_dir_all(&dir)
                     .await
@@ -1084,6 +1136,7 @@ impl AcpRuns {
             started,
             transcript,
             options: opened.options,
+            modes: opened.modes,
         })
     }
 
@@ -1099,6 +1152,7 @@ impl AcpRuns {
             started: Started { process, stderr, client, conn },
             transcript,
             options,
+            modes,
         } = open;
         let (perm_tx, perm_rx) = mpsc::unbounded_channel();
         client.attach_permissions(perm_tx);
@@ -1113,7 +1167,7 @@ impl AcpRuns {
             stderr,
             transcript,
             translator: Translator::default(),
-            state: State::opened(options, starting.handle.injection()),
+            state: State::opened(options, modes, starting.handle.injection()),
             shared: starting.handle.shared(),
             rx,
             perm_rx,
@@ -1201,13 +1255,17 @@ mod tests {
             }
         )
         .is_ok());
+        assert!(check_options(
+            agent,
+            &SendOptions {
+                permission: Some("auto".into()),
+                ..SendOptions::default()
+            }
+        )
+        .is_ok());
         for refused in [
             SendOptions {
                 account: AccountChoice::Account("a".into()),
-                ..SendOptions::default()
-            },
-            SendOptions {
-                permission: Some("auto".into()),
                 ..SendOptions::default()
             },
             SendOptions {
@@ -1228,30 +1286,44 @@ mod tests {
              "options": [{"value": "a:x", "name": "X"}, {"value": "a:y", "name": "Y"}]},
             {"id": "reasoning_effort", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": "auto",
              "options": [{"value": "auto", "name": "Auto"}, {"value": "high", "name": "High"}]},
+            {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "default",
+             "options": [{"value": "default", "name": "Default"}, {"value": "accept-edits", "name": "Accept edits"}]},
         ]}));
-        assert!(check_choice(agent, &offered, Some("a:y"), Some("high")).is_ok());
-        assert!(check_choice(agent, &offered, None, None).is_ok());
-        assert!(check_choice(agent, &offered, Some("a:z"), None).is_err());
-        assert!(check_choice(agent, &offered, None, Some("ultra")).is_err());
+        assert!(check_choice(agent, &offered, None, Some("a:y"), Some("high"), Some("accept-edits")).is_ok());
+        assert!(check_choice(agent, &offered, None, None, None, None).is_ok());
+        assert!(check_choice(agent, &offered, None, Some("a:z"), None, None).is_err());
+        assert!(check_choice(agent, &offered, None, None, Some("ultra"), None).is_err());
+        assert!(check_choice(agent, &offered, None, None, None, Some("nope")).is_err());
         assert!(
-            check_choice(agent, &[], Some("anything"), Some("goes")).is_ok(),
+            check_choice(agent, &[], None, Some("anything"), Some("goes"), Some("anything")).is_ok(),
             "unknown yet: the agent answers"
         );
         let model_only = &offered[..1];
-        let refused = check_choice(agent, model_only, None, Some("high")).expect_err("no effort to choose");
+        let refused = check_choice(agent, model_only, None, None, Some("high"), None).expect_err("no effort to choose");
         assert!(refused.to_string().contains("offers no effort"), "{refused}");
+        let refused_mode = check_choice(agent, model_only, None, None, None, Some("auto")).expect_err("no mode to choose");
+        assert!(refused_mode.to_string().contains("offers no permission mode"), "{refused_mode}");
+        // Legacy `modes` fallback works when `configOptions` has no `mode`.
+        let legacy = crate::protocol::session_modes(&json!({
+            "modes": {"currentModeId": "default", "availableModes": [{"id": "default", "name": "Default"}, {"id": "plan", "name": "Plan"}]}
+        }));
+        assert!(check_choice(agent, model_only, legacy.as_ref(), None, None, Some("plan")).is_ok());
+        let refused_legacy = check_choice(agent, model_only, legacy.as_ref(), None, None, Some("auto")).expect_err("not in legacy modes");
+        assert!(refused_legacy.to_string().contains("has no permission mode \"auto\""), "{refused_legacy}");
+        assert!(check_choice(agent, &[], legacy.as_ref(), None, None, Some("plan")).is_ok());
+        assert!(check_choice(agent, &[], legacy.as_ref(), None, None, Some("bad")).is_err());
         // Switching away from a model with no effort ladder to another model
         // defers effort validation until `Driver::configure` receives the new
         // model's updated `configOptions`.
         assert!(
-            check_choice(agent, model_only, Some("a:y"), Some("high")).is_ok(),
+            check_choice(agent, model_only, None, Some("a:y"), Some("high"), None).is_ok(),
             "switching model may unlock thought_level"
         );
         // Switching to another model with an effort not on the *previous*
         // model's ladder is also deferred to `Driver::configure`.
-        assert!(check_choice(agent, &offered, Some("a:y"), Some("xhigh")).is_ok());
+        assert!(check_choice(agent, &offered, None, Some("a:y"), Some("xhigh"), None).is_ok());
         // Keeping the current model still rejects unknown efforts upfront.
-        assert!(check_choice(agent, &offered, Some("a:x"), Some("xhigh")).is_err());
+        assert!(check_choice(agent, &offered, None, Some("a:x"), Some("xhigh"), None).is_err());
     }
 
     #[test]
@@ -1954,7 +2026,7 @@ mod tests {
             lines[1..],
             [
                 r#"{"text":"hi there","images":[],"files":[],"type":"user","timestamp":"<timestamp>"}"#,
-                r#"{"model":"fake:small","effort":"auto","type":"config","timestamp":"<timestamp>"}"#,
+                r#"{"model":"fake:small","effort":"auto","permission":"default","type":"config","timestamp":"<timestamp>"}"#,
                 r#"{"kind":"thinking","text":"Thinking about ","type":"delta","timestamp":"<timestamp>"}"#,
                 r#"{"kind":"thinking","text":"hi there","type":"delta","timestamp":"<timestamp>"}"#,
                 r#"{"text":"Thinking about hi there","type":"thinking","timestamp":"<timestamp>"}"#,
@@ -1984,7 +2056,7 @@ mod tests {
             transcript_lines(&state.paths, &id).await[1..3],
             [
                 r#"{"text":"see these","images":["/u/a.png"],"files":["/u/notes.txt","/u/b c.md"],"type":"user","timestamp":"<timestamp>"}"#,
-                r#"{"model":null,"effort":"auto","type":"config","timestamp":"<timestamp>"}"#,
+                r#"{"model":null,"effort":"auto","permission":"default","type":"config","timestamp":"<timestamp>"}"#,
             ]
         );
     }
@@ -2018,7 +2090,7 @@ mod tests {
             transcript_lines(&state.paths, &id).await[1..],
             [
                 r#"{"text":"fail","images":[],"files":[],"type":"user","timestamp":"<timestamp>"}"#,
-                r#"{"model":"fake:small","effort":"auto","type":"config","timestamp":"<timestamp>"}"#,
+                r#"{"model":"fake:small","effort":"auto","permission":"default","type":"config","timestamp":"<timestamp>"}"#,
                 r#"{"kind":"text","text":"Trying","type":"delta","timestamp":"<timestamp>"}"#,
                 r#"{"text":"Trying","type":"assistant","timestamp":"<timestamp>"}"#,
                 r#"{"message":"the model is unavailable","type":"error","timestamp":"<timestamp>"}"#,
