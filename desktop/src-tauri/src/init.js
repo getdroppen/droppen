@@ -59,6 +59,15 @@
 (function () {
   "use strict";
 
+  // Capture built-ins at DocumentStart before any page script runs, so page
+  // code cannot intercept closure tokens by monkey-patching globals.
+  var jsonStringify = JSON.stringify;
+  var jsonParse = JSON.parse;
+  var CustomEventCtor = CustomEvent;
+  var encodeUri = encodeURIComponent;
+  var dispatchEvt = window.dispatchEvent.bind(window);
+  var openWindow = window.open.bind(window);
+
   var server = location.protocol === "http:" && location.hostname === "127.0.0.1";
 
   // 5. The system's languages, in its order, on the app's own pages only.
@@ -198,29 +207,41 @@
     if (cleaned.charAt(0) !== "/" || cleaned.charAt(1) === "/" || cleaned.charAt(1) === "\\") return "/";
     return cleaned;
   }
+  var settingsActionToken = null;
+  var pendingReloginNext = null;
+  function requestRelogin(next) {
+    var clean = safeNext(next);
+    if (!settingsActionToken) {
+      pendingReloginNext = clean;
+      return;
+    }
+    pendingReloginNext = null;
+    location.replace("droppen-desktop://relogin?token=" + settingsActionToken + "&next=" + encodeUri(clean));
+  }
   ["pushState", "replaceState"].forEach(function (name) {
     var original = history[name];
     history[name] = function (state, title, url) {
       var target = url != null ? signInPage(url) : null;
       if (target) {
+        var next;
         if (target.pathname === SETUP_PATH) {
           // The setup page says nothing of where it came from: the login page
           // does, with the page this document is on — the one being left.
           var onSignIn = location.pathname === LOGIN_PATH || location.pathname === SETUP_PATH;
-          var next = onSignIn ? "/" : safeNext(location.pathname + location.search);
-          target = new URL(LOGIN_PATH, location.href);
-          if (next !== "/") target.searchParams.set("next", next);
+          next = onSignIn ? "/" : safeNext(location.pathname + location.search);
+        } else {
+          next = safeNext(target.searchParams.get("next") || "/");
         }
-        location.replace(target.href);
+        requestRelogin(next);
         return;
       }
       return original.apply(this, arguments);
     };
   });
 
-  // 2b. A plain link off the app opens in the browser, not in this window: it
-  // becomes a new-window request, which the app hands to the browser. (Frames
-  // may load the web; only the page itself is kept on the app.)
+  // 2b. A plain link off the app (or a `mailto:` link) opens in the browser/system,
+  // not in this window: it becomes a new-window request, which the app hands to
+  // the browser. (Frames may load the web; only the page itself is kept on the app.)
   document.addEventListener(
     "click",
     function (event) {
@@ -235,9 +256,14 @@
       } catch (e) {
         return;
       }
+      if (url.protocol === "mailto:") {
+        event.preventDefault();
+        openWindow(url.href, "_blank", "noopener");
+        return;
+      }
       if ((url.protocol !== "http:" && url.protocol !== "https:") || url.origin === location.origin) return;
       event.preventDefault();
-      window.open(url.href, "_blank", "noopener");
+      openWindow(url.href, "_blank", "noopener");
     },
     true,
   );
@@ -355,11 +381,13 @@
   // 8. Whether a tray host shows the app's icon (web/src/lib/desktop-app.ts).
   var TRAY_HOST = "__DROPPEN_TRAY_HOST__" === "1";
   // 9. The settings channel (web/src/features/settings/desktop-app-section.tsx):
-  //    the state the app pushes, and an ask that carries this launch's token.
+  //    `SETTINGS` only authenticates Rust → page pushes; the action token is
+  //    delivered only after Rust verifies this document's exact server origin.
   var SETTINGS = "__DROPPEN_SETTINGS__";
   var settingsState = null;
   function settingsAsk(what, extra) {
-    location.assign("droppen-desktop://settings/" + what + "?token=" + encodeURIComponent(SETTINGS) + (extra || ""));
+    if (!settingsActionToken) return;
+    location.assign("droppen-desktop://settings/" + what + "?token=" + settingsActionToken + (extra || ""));
   }
   var updateStatus = null;
   var restartToken = null;
@@ -370,28 +398,32 @@
         trayHost: TRAY_HOST,
         update: function (bridge, status, restart) {
           if (bridge !== BRIDGE) return;
-          updateStatus = status && typeof status === "object" ? JSON.stringify(status) : null;
+          updateStatus = status && typeof status === "object" ? jsonStringify(status) : null;
           restartToken = typeof restart === "string" && restart ? restart : null;
-          window.dispatchEvent(new CustomEvent("droppen:update"));
+          dispatchEvt(new CustomEventCtor("droppen:update"));
         },
         updateState: function () {
-          return updateStatus ? JSON.parse(updateStatus) : null;
+          return updateStatus ? jsonParse(updateStatus) : null;
         },
         checkForUpdates: function () {
           if (!restartToken) return;
-          location.assign("droppen-desktop://update/check?token=" + encodeURIComponent(restartToken));
+          location.assign("droppen-desktop://update/check?token=" + restartToken);
         },
         restartToUpdate: function () {
           if (!restartToken) return;
-          location.assign("droppen-desktop://update/restart?token=" + encodeURIComponent(restartToken));
+          location.assign("droppen-desktop://update/restart?token=" + restartToken);
         },
-        settings: function (bridge, state) {
+        settings: function (bridge, state, actionToken) {
           if (bridge !== SETTINGS) return;
-          settingsState = state && typeof state === "object" ? JSON.stringify(state) : null;
-          window.dispatchEvent(new CustomEvent("droppen:settings"));
+          settingsState = state && typeof state === "object" ? jsonStringify(state) : null;
+          if (typeof actionToken === "string" && actionToken) {
+            settingsActionToken = actionToken;
+            if (pendingReloginNext !== null) requestRelogin(pendingReloginNext);
+          }
+          dispatchEvt(new CustomEventCtor("droppen:settings"));
         },
         settingsState: function () {
-          return settingsState ? JSON.parse(settingsState) : null;
+          return settingsState ? jsonParse(settingsState) : null;
         },
         openInBrowser: function () {
           settingsAsk("open-in-browser");

@@ -664,25 +664,41 @@ pub fn restart_now<R: Runtime>(app: &AppHandle<R>) {
     app.exit(0);
 }
 
+/// Whether a page-triggered update request came from a window showing the app's
+/// own server and carries this launch's restart token.
+fn from_app_page<R: Runtime>(app: &AppHandle<R>, label: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    let Some(me) = app.try_state::<Updater<R>>() else { return false };
+    if me.restart_token != token {
+        return false;
+    }
+    let Some(port) = app.try_state::<Arc<Shell>>().and_then(|shell| shell.port()) else {
+        return false;
+    };
+    app.get_webview_window(label)
+        .and_then(|window| window.url().ok())
+        .is_some_and(|url| web::is_server(&url, port))
+}
+
 /// The web app's update page asked for a check (`init.js`): honoured only
-/// with the token this launch handed the app's pages.
-pub fn check_asked_by_page<R: Runtime>(app: &AppHandle<R>, token: &str) {
-    let ours = app.try_state::<Updater<R>>().is_some_and(|me| !token.is_empty() && me.restart_token == token);
-    if ours {
+/// from the app's own server window with the token this launch handed it.
+pub fn check_asked_by_page<R: Runtime>(app: &AppHandle<R>, label: &str, token: &str) {
+    if from_app_page(app, label, token) {
         check(app, true);
     } else {
-        log::warn!("updates: a check request without this launch's token was ignored");
+        log::warn!("updates: a check request without this launch's token, or outside the app's page, was ignored");
     }
 }
 
-/// The web app's entry asked for the restart (`init.js`): honoured only with
-/// the restart token this launch handed the app's pages.
-pub fn restart_asked_by_page<R: Runtime>(app: &AppHandle<R>, token: &str) {
-    let ours = app.try_state::<Updater<R>>().is_some_and(|me| !token.is_empty() && me.restart_token == token);
-    if ours {
+/// The web app's entry asked for the restart (`init.js`): honoured only from
+/// the app's own server window with the restart token this launch handed it.
+pub fn restart_asked_by_page<R: Runtime>(app: &AppHandle<R>, label: &str, token: &str) {
+    if from_app_page(app, label, token) {
         restart_now(app);
     } else {
-        log::warn!("updates: a restart request without this launch's restart token was ignored");
+        log::warn!("updates: a restart request without this launch's restart token, or outside the app's page, was ignored");
     }
 }
 

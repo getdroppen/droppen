@@ -41,23 +41,37 @@ use droppen_desktop_core::web;
 use crate::shell::Shell;
 use crate::tray;
 
-/// The settings channel's per-launch token. Managed state, set up before the
+/// The settings channel's per-launch tokens. Managed state, set up before the
 /// first window.
+///
+/// `bridge_token` is embedded in `init.js` solely to authenticate Rust → page
+/// `window.__droppenDesktop.settings(...)` pushes; `action_token` is never
+/// baked into `init.js` and is delivered only via `window.eval` gated on the
+/// exact server origin (`http://127.0.0.1:<port>`), so a navigation to another
+/// local port cannot obtain it.
 pub struct Channel {
-    token: String,
+    bridge_token: String,
+    action_token: String,
 }
 
-/// Set up the channel: a fresh token, this launch's.
+/// Set up the channel: fresh bridge and action tokens, this launch's.
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
-    app.manage(Channel { token: web::new_nonce() });
+    app.manage(Channel {
+        bridge_token: web::new_nonce(),
+        action_token: web::new_nonce(),
+    });
 }
 
-/// The token the init script embeds. A fresh one nothing will match if the
-/// channel is not set up, rather than no token at all.
+/// The bridge token the init script embeds (used only to verify pushes from
+/// Rust, never sent back as an action credential).
 pub fn token<R: Runtime>(app: &AppHandle<R>) -> String {
     app.try_state::<Channel>()
-        .map(|channel| channel.token.clone())
+        .map(|channel| channel.bridge_token.clone())
         .unwrap_or_else(web::new_nonce)
+}
+
+fn action_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    app.try_state::<Channel>().map(|channel| channel.action_token.clone())
 }
 
 /// What Settings → Desktop app shows of Start at Login. No login token, and no
@@ -81,14 +95,19 @@ fn state<R: Runtime>(app: &AppHandle<R>) -> Option<State> {
     })
 }
 
-/// The call that hands `state` to `init.js`'s bridge: it runs only in a page
-/// of the server's origin, and carries the settings token, never the login's.
+/// The call that hands `state` and the origin-gated `action_token` to
+/// `init.js`'s bridge: it runs only in a page of the server's exact origin, and
+/// carries neither the login token nor the login nonce.
 fn script<R: Runtime>(app: &AppHandle<R>, port: u16) -> Option<String> {
-    let state = serde_json::to_string(&state(app)?).ok()?;
-    let token = serde_json::to_string(&token(app)).ok()?;
+    let state = match state(app) {
+        Some(state) => serde_json::to_string(&state).ok()?,
+        None => "null".to_string(),
+    };
+    let bridge = serde_json::to_string(&token(app)).ok()?;
+    let action = serde_json::to_string(&action_token(app)?).ok()?;
     let origin = serde_json::to_string(&format!("http://127.0.0.1:{port}")).ok()?;
     Some(format!(
-        "(function(){{if(location.origin!=={origin})return;var d=window.__droppenDesktop;if(d)d.settings({token},{state});}})()"
+        "(function(){{if(location.origin!=={origin})return;var d=window.__droppenDesktop;if(d)d.settings({bridge},{state},{action});}})()"
     ))
 }
 
@@ -123,12 +142,12 @@ fn is_ours(current: Option<&Url>, port: Option<u16>, token: &str, mine: &str) ->
         && token == mine
 }
 
-/// [`is_ours`] against the window labelled `label` and the managed token.
-fn from_app_page<R: Runtime>(app: &AppHandle<R>, label: &str, token: &str) -> bool {
+/// [`is_ours`] against the window labelled `label` and the managed action token.
+pub fn from_app_page<R: Runtime>(app: &AppHandle<R>, label: &str, token: &str) -> bool {
     let Some(channel) = app.try_state::<Channel>() else { return false };
     let port = app.try_state::<Arc<Shell>>().and_then(|shell| shell.port());
     let current = app.get_webview_window(label).and_then(|window| window.url().ok());
-    is_ours(current.as_ref(), port, token, &channel.token)
+    is_ours(current.as_ref(), port, token, &channel.action_token)
 }
 
 fn refuse(what: &str) {
