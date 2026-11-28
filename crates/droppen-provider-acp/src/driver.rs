@@ -563,6 +563,9 @@ pub(super) struct Driver {
     pub(super) retire: Arc<AtomicBool>,
     /// A cancel was sent for the turn in flight.
     pub(super) interrupted: bool,
+    /// When the cancel was sent, for escalating to process termination if the
+    /// agent ignores `session/cancel`.
+    pub(super) interrupt_since: Option<Instant>,
     /// The model and effort the transcript last recorded the session running
     /// on, so a `config` record is written only when they change.
     pub(super) recorded_choice: Option<(Option<String>, Option<String>)>,
@@ -615,6 +618,7 @@ impl Driver {
                 }
             }
             let idle_deadline = idle_since + IDLE_EXIT;
+            let interrupt_deadline = self.interrupt_since.map(|at| at + self.runs.host.interrupt_step);
             tokio::select! {
                 event = self.conn.events.recv() => match event {
                     Some(Event::Update(notification)) => {
@@ -668,6 +672,14 @@ impl Driver {
                     self.exit().await;
                     return;
                 }
+                _ = async {
+                    if let Some(deadline) = interrupt_deadline {
+                        tokio::time::sleep_until(deadline.into()).await;
+                    }
+                }, if self.state.active && interrupt_deadline.is_some() => {
+                    self.died(&format!("{} did not stop after cancel; terminated", self.agent.name)).await;
+                    return;
+                }
             }
             idle_since = Instant::now();
         }
@@ -684,12 +696,19 @@ impl Driver {
                 let _ = reply.send(Sent { queued });
             }
             Cmd::Interrupt(turn) => {
-                if self.state.active && self.state.turns == turn && !self.interrupted {
-                    self.interrupted = true;
-                    // ACP requires cancelling all pending permission requests when
-                    // sending session/cancel so the agent unblocks promptly.
-                    self.cancel_permissions();
-                    self.conn.cancel(&self.agent_session).await?;
+                if self.state.active && self.state.turns == turn {
+                    if !self.interrupted {
+                        self.interrupted = true;
+                        self.interrupt_since = Some(Instant::now());
+                        // ACP requires cancelling all pending permission requests when
+                        // sending session/cancel so the agent unblocks promptly.
+                        self.cancel_permissions();
+                        self.conn.cancel(&self.agent_session).await?;
+                    } else {
+                        // A second Stop while already cancelling escalates immediately
+                        // to process termination via `died()`.
+                        return Err(InjectError::message(format!("{} stopped by force", self.agent.name)));
+                    }
                 }
             }
             Cmd::RespondPermission {
@@ -916,6 +935,7 @@ impl Driver {
     fn end_turn(&mut self, error: Option<String>, interrupted: bool) {
         self.cancel_permissions();
         self.interrupted = false;
+        self.interrupt_since = None;
         self.state.active = false;
         self.state.turn_started_at = None;
         let started_at = self

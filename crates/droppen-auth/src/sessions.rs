@@ -205,10 +205,17 @@ impl SessionsStore {
     async fn touch(&self, digest: &str) {
         let now = SystemTime::now();
         {
+            const MAX_FLUSHED_ENTRIES: usize = 1024;
             let mut flushed = self.flushed.lock().expect("auth sessions flush map poisoned");
             if let Some(last) = flushed.get(digest) {
                 if now.duration_since(*last).unwrap_or_default() < LAST_SEEN_FLUSH {
                     return;
+                }
+            }
+            if flushed.len() >= MAX_FLUSHED_ENTRIES {
+                flushed.retain(|_, seen| now.duration_since(*seen).unwrap_or_default() < LAST_SEEN_FLUSH);
+                if flushed.len() >= MAX_FLUSHED_ENTRIES {
+                    flushed.clear();
                 }
             }
             flushed.insert(digest.to_string(), now);

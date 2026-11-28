@@ -565,12 +565,26 @@ impl QuotaCache {
         let cache = self.clone();
         let key = login.clone();
         let pending: Pending = async move {
-            {
-                // Serialized: one CLI startup at a time across every login.
-                let _turn = cache.queue.clone().lock_owned().await;
-                cache.probe(&key, &target).await;
+            struct InFlightGuard {
+                cache: Arc<QuotaCache>,
+                key: UsageLogin,
             }
-            cache.in_flight.lock().expect("quota in-flight poisoned").remove(&key);
+            impl Drop for InFlightGuard {
+                fn drop(&mut self) {
+                    self.cache
+                        .in_flight
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&self.key);
+                }
+            }
+            let _guard = InFlightGuard {
+                cache: cache.clone(),
+                key: key.clone(),
+            };
+            // Serialized: one CLI startup at a time across every login.
+            let _turn = cache.queue.clone().lock_owned().await;
+            cache.probe(&key, &target).await;
         }
         .boxed()
         .shared();

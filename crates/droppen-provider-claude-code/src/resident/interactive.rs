@@ -227,13 +227,26 @@ impl Driver {
         let now = permissions::now_ms();
         let stored = match store.resolve(request_id, to, selected.as_deref(), Some(&response), by.as_deref(), now) {
             Ok(stored) => stored,
-            Err(Some(current)) => return PermissionOutcome::Resolved(current.wire()),
+            Err(Some(current)) => {
+                // Already resolved elsewhere (another device or expiry): drop it
+                // from `pending_permissions` so `awaiting_user()` does not stay stuck.
+                self.pending_permissions.remove(at);
+                self.publish();
+                self.announce();
+                return PermissionOutcome::Resolved(current.wire());
+            }
             Err(None) => {
                 let spec = self.permission_spec(&perm);
                 store.open(&spec, now);
                 match store.resolve(request_id, to, selected.as_deref(), Some(&response), by.as_deref(), now) {
                     Ok(stored) => stored,
-                    Err(current) => return current.map_or(PermissionOutcome::Unknown, |current| PermissionOutcome::Resolved(current.wire())),
+                    Err(Some(current)) => {
+                        self.pending_permissions.remove(at);
+                        self.publish();
+                        self.announce();
+                        return PermissionOutcome::Resolved(current.wire());
+                    }
+                    Err(None) => return PermissionOutcome::Unknown,
                 }
             }
         };
@@ -311,7 +324,14 @@ impl Driver {
             now,
         ) {
             Ok(stored) => stored,
-            Err(Some(current)) => return AnswerOutcome::Resolved(current.wire()),
+            Err(Some(current)) => {
+                // Already answered/dismissed/expired elsewhere: clear it from
+                // `asked` so `awaiting_user()` does not stay stuck permanently.
+                self.asked.remove(at);
+                self.publish();
+                self.announce();
+                return AnswerOutcome::Resolved(current.wire());
+            }
             // Not on record at all, which only a database that refused the
             // write when the question arrived can explain. The question is
             // real — claude is blocked on it — so it is put on record now and
@@ -328,7 +348,13 @@ impl Driver {
                     now,
                 ) {
                     Ok(stored) => stored,
-                    Err(current) => return current.map_or(AnswerOutcome::Unknown, |current| AnswerOutcome::Resolved(current.wire())),
+                    Err(Some(current)) => {
+                        self.asked.remove(at);
+                        self.publish();
+                        self.announce();
+                        return AnswerOutcome::Resolved(current.wire());
+                    }
+                    Err(None) => return AnswerOutcome::Unknown,
                 }
             }
         };
