@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use droppen_provider::models::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery};
+use droppen_provider::models::{ModelInfo, ModelList, ModelListSource, ModelRule, Models, ModelsQuery, PermissionModeInfo};
 use crate::AcpRuns;
-use droppen_http::openapi_ext::Nullable;
+use droppen_http::openapi_ext::{Nullable, Optional};
 use droppen_instance::paths::Paths;
 
 /// A model id as an ACP agent spells it: `provider:model`, where the model
@@ -31,23 +31,30 @@ impl AcpModels {
     }
 
     /// An ACP agent's list: the values of its `model` option, each with the
-    /// ladder of its `thought_level` option, as the agent itself publishes them
-    /// ([`AcpRuns::acp_options`]).
+    /// ladder of its `thought_level` option, and its permission modes, as the
+    /// agent itself publishes them ([`AcpRuns::acp_options`]).
     ///
     /// The agent's list is the whole list: there is no static guess to fall back
     /// on, so an agent that cannot be asked — or is not configured — yields no
     /// models, which hides the pickers, and a `fallback` source, which says why.
     ///
     /// With the models, how many were left out: see [`ModelList::hidden`].
-    async fn agent_models(&self, agent: &str) -> (Vec<ModelInfo>, ModelListSource, u32) {
+    async fn agent_models(&self, agent: &str) -> ModelList {
+        let fallback = || ModelList {
+            models: Vec::new(),
+            source: ModelListSource::Fallback,
+            hidden: None.into(),
+            permissions: None.into(),
+            default_permission: None.into(),
+        };
         let Some(agent) = crate::agents::AcpAgentRegistry::of(&self.paths).get(agent) else {
-            return (Vec::new(), ModelListSource::Fallback, 0);
+            return fallback();
         };
         let options = match self.runs.acp_options(&agent).await {
             Ok(options) => options,
             Err(error) => {
                 tracing::info!(agent = %agent.id, %error, "cannot read the agent's models");
-                return (Vec::new(), ModelListSource::Fallback, 0);
+                return fallback();
             }
         };
         // The agent's words, shown to whoever can start a session: a label is
@@ -59,7 +66,14 @@ impl AcpModels {
         let shown = |text: &str| droppen_base::text::clip(&runs.redact_acp(&agent, text), crate::agents::MAX_AGENT_WORD);
         let usable = |id: &str| runs.acp_id_shown(id);
         let (models, hidden) = build_models(&options.options, &options.available_models, shown, usable);
-        (models, ModelListSource::Cache, hidden)
+        let (permissions, default_permission) = build_permissions(&options.options, options.modes.as_ref(), shown, usable);
+        ModelList {
+            models,
+            source: ModelListSource::Cache,
+            hidden: (hidden > 0).then_some(hidden).into(),
+            permissions: (!permissions.is_empty()).then_some(permissions).into(),
+            default_permission: default_permission.into(),
+        }
     }
 }
 
@@ -144,6 +158,52 @@ fn build_models(
     (models, hidden)
 }
 
+/// Turn an agent's `mode` configuration option — or, when absent, its legacy
+/// top-level `modes` block — into the composer's [`PermissionModeInfo`] list
+/// and default mode id.
+fn build_permissions(
+    options: &[crate::protocol::ConfigOption],
+    modes: Option<&crate::protocol::SessionModes>,
+    shown: impl Fn(&str) -> String,
+    usable: impl Fn(&str) -> bool,
+) -> (Vec<PermissionModeInfo>, Option<String>) {
+    use crate::protocol::{category, option_for};
+
+    let (raw_items, raw_current): (Vec<(&str, &str)>, Option<&str>) = if let Some(opt) = option_for(options, category::MODE) {
+        (
+            opt.values().into_iter().map(|v| (v.value.as_str(), v.name.as_str())).collect(),
+            opt.current_value.as_deref(),
+        )
+    } else if let Some(modes) = modes {
+        (
+            modes.available_modes.iter().map(|m| (m.id.as_str(), m.name.as_str())).collect(),
+            (!modes.current_mode_id.is_empty()).then_some(modes.current_mode_id.as_str()),
+        )
+    } else {
+        return (Vec::new(), None);
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let permissions: Vec<PermissionModeInfo> = raw_items
+        .into_iter()
+        .filter(|(id, _)| usable(id) && droppen_provider::models::valid_permission(id) && seen.insert(*id))
+        .map(|(id, name)| {
+            let label = (!name.is_empty() && name != id)
+                .then(|| shown(name))
+                .filter(|label| !label.is_empty() && label != id);
+            PermissionModeInfo {
+                id: id.to_string(),
+                label: Optional(label),
+            }
+        })
+        .collect();
+    let default_permission = raw_current
+        .filter(|current| permissions.iter().any(|p| p.id == *current))
+        .map(str::to_owned)
+        .or_else(|| permissions.first().map(|p| p.id.clone()));
+    (permissions, default_permission)
+}
+
 impl Models for AcpModels {
     // The agent id is checked before it is used: it is the key the agent's
     // configuration is looked up by, and later a path segment (the agent's
@@ -157,12 +217,7 @@ impl Models for AcpModels {
                 .as_deref()
                 .filter(|id| crate::sessions::valid_agent_id(id))
                 .ok_or_else(|| "acpAgent names the ACP agent to list models for".to_string())?;
-            let (models, source, hidden) = self.agent_models(agent).await;
-            Ok(ModelList {
-                models,
-                source,
-                hidden: (hidden > 0).then_some(hidden).into(),
-            })
+            Ok(self.agent_models(agent).await)
         })
     }
 
@@ -176,7 +231,8 @@ impl Models for AcpModels {
         Box::pin(std::future::ready(None))
     }
 
-    // An ACP agent has no permission modes to choose between.
+    // Scheduled tasks never run on ACP, and ACP modes are per-agent rather than
+    // a fixed CLI table; per-session mode checks use the agent's own options.
     fn permission_is_known(&self, _permission: &str) -> bool {
         false
     }
@@ -253,6 +309,67 @@ mod tests {
         assert_eq!(hidden, 0);
         assert_eq!(models[0].efforts.0.as_deref(), Some([].as_slice()), "empty vec, not None");
         assert_eq!(models[0].default_effort.0, None);
+    }
+
+    #[test]
+    fn permission_modes_prefer_config_options_and_fall_back_to_legacy_modes() {
+        use crate::protocol::session_modes;
+
+        let answer = json!({
+            "configOptions": [
+                {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "accept-edits",
+                 "options": [
+                     {"value": "default", "name": "Default"},
+                     {"value": "accept-edits", "name": "Accept edits"},
+                     {"value": "accept-edits", "name": "Duplicate"},
+                     {"value": "auto", "name": "auto"},
+                     {"value": "-bad", "name": "Flag-like"},
+                     {"value": "secret-mode", "name": "Secret"},
+                 ]}
+            ],
+            "modes": {
+                "currentModeId": "plan",
+                "availableModes": [{"id": "plan", "name": "Plan"}]
+            }
+        });
+        let options = config_options(&answer);
+        let modes = session_modes(&answer);
+        let (perms, def) = build_permissions(&options, modes.as_ref(), str::to_owned, |id| id != "secret-mode");
+        assert_eq!(
+            perms,
+            vec![
+                PermissionModeInfo { id: "default".into(), label: Optional(Some("Default".into())) },
+                PermissionModeInfo { id: "accept-edits".into(), label: Optional(Some("Accept edits".into())) },
+                PermissionModeInfo { id: "auto".into(), label: Optional(None) },
+            ]
+        );
+        assert_eq!(def.as_deref(), Some("accept-edits"));
+
+        // Without configOptions mode, falls back to legacy `modes`; invalid current falls back to first.
+        let legacy = json!({
+            "modes": {
+                "currentModeId": "-invalid",
+                "availableModes": [
+                    {"id": "default", "name": ""},
+                    {"id": "plan", "name": "Plan Mode"},
+                ]
+            }
+        });
+        let legacy_modes = session_modes(&legacy);
+        let (perms, def) = build_permissions(&[], legacy_modes.as_ref(), str::to_owned, |_| true);
+        assert_eq!(
+            perms,
+            vec![
+                PermissionModeInfo { id: "default".into(), label: Optional(None) },
+                PermissionModeInfo { id: "plan".into(), label: Optional(Some("Plan Mode".into())) },
+            ]
+        );
+        assert_eq!(def.as_deref(), Some("default"));
+
+        // Neither published -> empty list and no default.
+        let (perms, def) = build_permissions(&[], None, str::to_owned, |_| true);
+        assert!(perms.is_empty());
+        assert_eq!(def, None);
     }
 }
 

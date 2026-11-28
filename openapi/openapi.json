@@ -3138,6 +3138,10 @@
       "ModelList": {
         "description": "The `GET /api/models` response.",
         "properties": {
+          "defaultPermission": {
+            "description": "Default permission/session mode id, when `permissions` is present.",
+            "type": "string"
+          },
           "hidden": {
             "description": "How many of an ACP agent's models are left out because their ids look\nlike a credential, so a picker can say why its list is short or empty;\nabsent when none are.",
             "type": "integer"
@@ -3146,6 +3150,13 @@
             "description": "Models currently known to the local CLI, freshest first.",
             "items": {
               "$ref": "#/components/schemas/ModelInfo"
+            },
+            "type": "array"
+          },
+          "permissions": {
+            "description": "Permission/session modes an ACP agent publishes, in the order offered;\nabsent when the provider or agent publishes none.",
+            "items": {
+              "$ref": "#/components/schemas/PermissionModeInfo"
             },
             "type": "array"
           },
@@ -3442,6 +3453,23 @@
           "unknown"
         ],
         "type": "string"
+      },
+      "PermissionModeInfo": {
+        "description": "One permission/session mode an ACP agent publishes.",
+        "properties": {
+          "id": {
+            "description": "The id passed back to the agent when chosen.",
+            "type": "string"
+          },
+          "label": {
+            "description": "Human-facing label, when the agent publishes one that differs from `id`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
       },
       "PermissionOption": {
         "description": "One choice the user can pick on a permission prompt.",

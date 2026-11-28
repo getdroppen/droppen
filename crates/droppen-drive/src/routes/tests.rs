@@ -70,9 +70,13 @@ fn state() -> (tempfile::TempDir, DriveState) {
 #[test]
 fn a_flag_value_that_could_read_as_a_flag_is_refused() {
     assert!(validate_flags(ModelRule::NAMED, Some("claude-opus-4.5"), Some("high"), Some("acceptEdits")).is_ok());
+    assert!(validate_flags(ModelRule::NAMED, None, None, Some("accept-edits")).is_ok());
+    assert!(validate_flags(ModelRule::NAMED, None, None, Some("mode_v2")).is_ok());
     assert!(validate_flags(ModelRule::NAMED, Some("--add-dir"), None, None).is_err());
     assert!(validate_flags(ModelRule::NAMED, None, Some("High"), None).is_err(), "effort is lowercase only");
     assert!(validate_flags(ModelRule::NAMED, None, None, Some("-x")).is_err());
+    assert!(validate_flags(ModelRule::NAMED, None, None, Some("1mode")).is_err());
+    assert!(validate_flags(ModelRule::NAMED, None, None, Some(&"p".repeat(65))).is_err());
     assert!(validate_flags(ModelRule::NAMED, Some(&"m".repeat(200)), None, None).is_err());
 }
 

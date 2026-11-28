@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::client::{Client, IncomingPermission};
 use super::conn::{Conn, Event};
-use crate::protocol::{category, option_for, ConfigOption, PermissionOptionKindWire, PromptCapabilities, SessionUpdate, ToolKind};
+use crate::protocol::{category, option_for, ConfigOption, PermissionOptionKindWire, PromptCapabilities, SessionModes, SessionUpdate, ToolKind};
 use crate::agents::AcpAgent;
 use droppen_provider::permissions::{self, PermissionSpec};
 use droppen_provider::{InjectError, PermissionOutcome, PermissionReply, Phase, QueueOutcome, ResidentState, Sent};
@@ -54,21 +54,50 @@ pub(super) struct State {
     queue: VecDeque<Message>,
     /// The last turn this driver ran, as the session row reports it.
     injection: Option<Injection>,
-    /// The session's configuration options as they stand: what its model and
-    /// effort are, and may be set to.
+    /// The session's configuration options as they stand: what its model,
+    /// effort and mode are, and may be set to.
     options: Vec<ConfigOption>,
+    /// Legacy top-level `modes` block, when the agent reported one.
+    modes: Option<SessionModes>,
     /// Oldest pending permission prompt's request id, if any.
     permission: Option<String>,
 }
 
 impl State {
-    /// A driver's state as its session opens: the options the agent reports,
-    /// and the last turn as its handle kept it on view ([`Handle::new`]).
-    pub(super) fn opened(options: Vec<ConfigOption>, injection: Option<Injection>) -> Self {
+    /// A driver's state as its session opens: the options and legacy modes the
+    /// agent reports, and the last turn as its handle kept it on view ([`Handle::new`]).
+    pub(super) fn opened(options: Vec<ConfigOption>, modes: Option<SessionModes>, injection: Option<Injection>) -> Self {
         Self {
             options,
+            modes,
             injection,
             ..Self::default()
+        }
+    }
+
+    /// Apply a `current_mode_update` notification: keep both legacy `modes` and
+    /// any `category::MODE` select in `options` in step so dual-protocol agents
+    /// never desync.
+    fn current_mode_changed(&mut self, mode_id: &str) {
+        if let Some(modes) = self.modes.as_mut() {
+            modes.current_mode_id = mode_id.to_string();
+        }
+        if let Some(option) = self
+            .options
+            .iter_mut()
+            .find(|option| option.kind == "select" && option.is(category::MODE))
+        {
+            option.current_value = Some(mode_id.to_string());
+        }
+    }
+
+    /// Keep legacy `modes.current_mode_id` aligned with `options`'s
+    /// `category::MODE` select whenever `options` is updated.
+    fn sync_modes_from_options(&mut self) {
+        if let Some(current) = option_for(&self.options, category::MODE).and_then(|option| option.current_value.as_deref()) {
+            if let Some(modes) = self.modes.as_mut() {
+                modes.current_mode_id = current.to_string();
+            }
         }
     }
 }
@@ -85,6 +114,8 @@ pub(super) struct Message {
     pub(super) model: Option<String>,
     /// The effort it is to run at, when the user picked one.
     pub(super) effort: Option<String>,
+    /// The permission/session mode it is to run in, when the user picked one.
+    pub(super) permission: Option<String>,
 }
 
 /// What the send path and the routes hold on to.
@@ -208,6 +239,11 @@ impl Handle {
     /// The session's configuration options as they stand.
     pub(super) fn options(&self) -> Vec<ConfigOption> {
         self.shared.lock().unwrap().options.clone()
+    }
+
+    /// The session's legacy `modes` block as it stands, if any.
+    pub(super) fn modes(&self) -> Option<SessionModes> {
+        self.shared.lock().unwrap().modes.clone()
     }
 
     pub(crate) fn alive(&self) -> bool {
@@ -678,9 +714,9 @@ pub(super) struct Driver {
     /// When the cancel was sent, for escalating to process termination if the
     /// agent ignores `session/cancel`.
     pub(super) interrupt_since: Option<Instant>,
-    /// The model and effort the transcript last recorded the session running
-    /// on, so a `config` record is written only when they change.
-    pub(super) recorded_choice: Option<(Option<String>, Option<String>)>,
+    /// The model, effort and permission mode the transcript last recorded the
+    /// session running on, so a `config` record is written only when they change.
+    pub(super) recorded_choice: Option<(Option<String>, Option<String>, Option<String>)>,
 }
 
 impl Driver {
@@ -735,9 +771,16 @@ impl Driver {
                 event = self.conn.events.recv() => match event {
                     Some(Event::Update(notification)) => {
                         if notification.session_id == self.agent_session {
-                            if let SessionUpdate::ConfigOptionUpdate(update) = &notification.update {
-                                self.options_changed(update.options());
-                                self.publish();
+                            match &notification.update {
+                                SessionUpdate::ConfigOptionUpdate(update) => {
+                                    self.options_changed(update.options());
+                                    self.publish();
+                                }
+                                SessionUpdate::CurrentModeUpdate(update) => {
+                                    self.state.current_mode_changed(&update.current_mode_id);
+                                    self.publish();
+                                }
+                                _ => {}
                             }
                             let records = self.translator.update(&notification.update);
                             if !records.is_empty() {
@@ -933,9 +976,9 @@ impl Driver {
         self.publish();
     }
 
-    /// Set the session's model and effort to what the message picked, where
-    /// they differ: one `session/set_config_option` each, answered within
-    /// [`CONFIG_TIMEOUT`].
+    /// Set the session's model, effort and permission mode to what the message
+    /// picked, where they differ: `session/set_config_option` (or legacy
+    /// `session/set_mode`), answered within [`CONFIG_TIMEOUT`].
     async fn configure(&mut self, message: &Message) -> Result<(), Unset> {
         let name = self.agent.name.clone();
         let mut model_switched = false;
@@ -952,30 +995,46 @@ impl Driver {
             }
         }
         if let Some(wanted) = message.effort.as_deref() {
-            let Some(option) = option_for(&self.state.options, category::THOUGHT_LEVEL).cloned() else {
+            if let Some(option) = option_for(&self.state.options, category::THOUGHT_LEVEL).cloned() {
+                let resolved = if option.accepts(wanted) {
+                    Some(wanted.to_string())
+                } else if model_switched {
+                    // Switching from a model with `xhigh` to one capped at `high`
+                    // clamps to the closest rung the new model offers (or keeps
+                    // its default) instead of aborting the turn.
+                    resolve_effort_for_option(&option, wanted)
+                } else {
+                    return Err(Unset::Refused(format!("{name} has no effort \"{wanted}\"")));
+                };
+                if let Some(resolved) = resolved {
+                    if option.current_value.as_deref() != Some(resolved.as_str()) {
+                        self.set_option(&name, "effort", &option.id, &resolved).await?;
+                    }
+                }
+            } else if !model_switched {
                 // Switching to a model with no thinking levels (e.g. an
                 // orchestrator or fixed-effort model) leaves effort unset
                 // rather than failing the turn on a stale carried value.
-                if model_switched {
-                    return Ok(());
-                }
                 return Err(Unset::Refused(format!("{name} offers no effort to choose")));
-            };
-            let resolved = if option.accepts(wanted) {
-                wanted.to_string()
-            } else if model_switched {
-                // Switching from a model with `xhigh` to one capped at `high`
-                // clamps to the closest rung the new model offers (or keeps
-                // its default) instead of aborting the turn.
-                match resolve_effort_for_option(&option, wanted) {
-                    Some(mapped) => mapped,
-                    None => return Ok(()),
+            }
+        }
+        if let Some(wanted) = message.permission.as_deref() {
+            if let Some(option) = option_for(&self.state.options, category::MODE).cloned() {
+                if option.current_value.as_deref() != Some(wanted) {
+                    if !option.accepts(wanted) {
+                        return Err(Unset::Refused(format!("{name} has no permission mode \"{wanted}\"")));
+                    }
+                    self.set_option(&name, "permission mode", &option.id, wanted).await?;
+                }
+            } else if let Some(modes) = self.state.modes.clone() {
+                if modes.current_mode_id != wanted {
+                    if !modes.accepts(wanted) {
+                        return Err(Unset::Refused(format!("{name} has no permission mode \"{wanted}\"")));
+                    }
+                    self.set_mode(&name, wanted).await?;
                 }
             } else {
-                return Err(Unset::Refused(format!("{name} has no effort \"{wanted}\"")));
-            };
-            if option.current_value.as_deref() != Some(resolved.as_str()) {
-                self.set_option(&name, "effort", &option.id, &resolved).await?;
+                return Err(Unset::Refused(format!("{name} offers no permission mode to choose")));
             }
         }
         // Published with the turn's start or its failure, not here: the session
@@ -1000,35 +1059,62 @@ impl Driver {
             if let Some(changed) = self.state.options.iter_mut().find(|candidate| candidate.id == option_id) {
                 changed.current_value = Some(wanted.to_string());
             }
+            self.state.sync_modes_from_options();
         } else {
             self.options_changed(options);
         }
         Ok(())
     }
 
+    async fn set_mode(&mut self, name: &str, wanted: &str) -> Result<(), Unset> {
+        let switched = tokio::time::timeout(CONFIG_TIMEOUT, self.conn.set_mode(&self.agent_session, wanted)).await;
+        match switched {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                return Err(Unset::Refused(format!(
+                    "{name} did not switch its permission mode to {wanted}: {error}"
+                )))
+            }
+            Err(_) => {
+                return Err(Unset::Silent(format!(
+                    "{name} did not answer a switch of its permission mode to {wanted} within {}s; it was stopped",
+                    CONFIG_TIMEOUT.as_secs()
+                )))
+            }
+        }
+        self.state.current_mode_changed(wanted);
+        Ok(())
+    }
+
     /// The session's options as the agent now reports them.
     fn options_changed(&mut self, options: Vec<ConfigOption>) {
         self.state.options = options;
+        self.state.sync_modes_from_options();
     }
 
-    /// Write down which model and effort the session runs on, when that is
-    /// news: what the composer shows for a session it reopens. A value the
-    /// model list would leave out ([`super::AcpRuns::acp_id_shown`]) is
-    /// left out here too.
+    /// Write down which model, effort and permission mode the session runs on,
+    /// when that is news: what the composer shows for a session it reopens. A
+    /// value the model list would leave out ([`super::AcpRuns::acp_id_shown`])
+    /// is left out here too.
     async fn record_choice(&mut self) {
         let current = |category: &str| {
             option_for(&self.state.options, category)
                 .and_then(|option| option.current_value.clone())
                 .filter(|value| self.runs.acp_id_shown(value))
         };
-        let choice = (current(category::MODEL), current(category::THOUGHT_LEVEL));
-        if choice == (None, None) || self.recorded_choice.as_ref() == Some(&choice) {
+        let permission = option_for(&self.state.options, category::MODE)
+            .and_then(|option| option.current_value.clone())
+            .or_else(|| self.state.modes.as_ref().map(|modes| modes.current_mode_id.clone()))
+            .filter(|value| droppen_provider::models::valid_permission(value) && self.runs.acp_id_shown(value));
+        let choice = (current(category::MODEL), current(category::THOUGHT_LEVEL), permission);
+        if choice == (None, None, None) || self.recorded_choice.as_ref() == Some(&choice) {
             return;
         }
         self.transcript
             .append(&[Record::Config {
                 model: choice.0.as_deref(),
                 effort: choice.1.as_deref(),
+                permission: choice.2.as_deref(),
             }
             .stamped()])
             .await;
@@ -1385,6 +1471,7 @@ mod tests {
             ],
             model: None,
             effort: None,
+            permission: None,
         };
 
         // Agent with both image and embedded_context capabilities:
@@ -1419,5 +1506,39 @@ mod tests {
         assert_eq!(encoded[1]["type"], "resource_link");
         assert_eq!(encoded[2]["type"], "resource_link");
         assert_eq!(encoded[3]["type"], "resource_link");
+    }
+
+    #[test]
+    fn current_mode_updates_and_config_options_stay_in_sync() {
+        let answer = serde_json::json!({
+            "configOptions": [
+                {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "plan",
+                 "options": [{"value": "default", "name": "Default"}, {"value": "plan", "name": "Plan"}]}
+            ],
+            "modes": {
+                "currentModeId": "plan",
+                "availableModes": [{"id": "default", "name": "Default"}, {"id": "plan", "name": "Plan"}]
+            }
+        });
+        let mut state = State::opened(
+            crate::protocol::config_options(&answer),
+            crate::protocol::session_modes(&answer),
+            None,
+        );
+        state.current_mode_changed("default");
+        assert_eq!(state.modes.as_ref().map(|m| m.current_mode_id.as_str()), Some("default"));
+        assert_eq!(
+            option_for(&state.options, category::MODE).and_then(|o| o.current_value.as_deref()),
+            Some("default")
+        );
+
+        state.options = crate::protocol::config_options(&serde_json::json!({
+            "configOptions": [
+                {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "plan",
+                 "options": [{"value": "default", "name": "Default"}, {"value": "plan", "name": "Plan"}]}
+            ]
+        }));
+        state.sync_modes_from_options();
+        assert_eq!(state.modes.as_ref().map(|m| m.current_mode_id.as_str()), Some("plan"));
     }
 }

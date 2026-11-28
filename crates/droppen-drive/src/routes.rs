@@ -66,18 +66,14 @@ pub(crate) fn validate_flags(rule: ModelRule, model: Option<&str>, effort: Optio
         return Err("invalid model".to_string());
     }
     static EFFORT_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    static PERMISSION_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     if let Some(value) = effort {
         let re = EFFORT_RE.get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9_-]*$").expect("valid effort pattern"));
         if value.chars().count() > 32 || !re.is_match(value) {
             return Err("invalid effort".to_string());
         }
     }
-    if let Some(value) = permission {
-        let re = PERMISSION_RE.get_or_init(|| regex::Regex::new(r"^[A-Za-z][A-Za-z-]*$").expect("valid permission pattern"));
-        if value.chars().count() > 40 || !re.is_match(value) {
-            return Err("invalid permission".to_string());
-        }
+    if permission.is_some_and(|value| !droppen_provider::models::valid_permission(value)) {
+        return Err("invalid permission".to_string());
     }
     Ok(())
 }

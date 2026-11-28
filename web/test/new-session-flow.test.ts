@@ -82,3 +82,20 @@ test("discovery matches source and id, never another CLI with the same id", () =
   assert.equal(resolveCreatedSession(null, [pending]), null);
   assert.deepEqual(resolveCreatedSession(pending, [pending]), pending);
 });
+
+test("ACP session creation includes permission when non-empty and omits it when empty", () => {
+  const base: NewConversation = {
+    kind: "session",
+    source: "acp",
+    acpAgent: "claude-acp",
+    cwd: "/project",
+    text: "hello",
+    model: "",
+    effort: null,
+    permission: "",
+  };
+  assert.equal("permission" in creationRequest(base).body, false);
+  const withMode = creationRequest({ ...base, permission: "accept-edits" }).body;
+  assert.equal(withMode.permission, "accept-edits");
+  assert.equal(withMode.acpAgent, "claude-acp");
+});

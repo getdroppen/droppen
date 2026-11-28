@@ -24,10 +24,10 @@ const { MachineProvider } = await import("../src/lib/machines/context.js");
 const { LOCAL } = await import("../src/lib/machines/key.js");
 const { mq } = await import("../src/lib/machines/query.js");
 const { machineStorageKey } = await import("../src/lib/machines/storage.js");
-const { useComposerChoice } = await import("../src/features/sessions/composer-controls.js");
+const { resolveAcpPermission, useComposerChoice } = await import("../src/features/sessions/composer-controls.js");
 const { withStartedPermission } = await import("../src/features/sessions/new-session-flow.js");
 
-type Source = "claude" | "codex";
+type Source = "claude" | "codex" | "acp";
 type Choice = {
   model: string | null;
   effort: string | null;
@@ -35,26 +35,67 @@ type Choice = {
   at: string | null;
 };
 type Prefs = { defaults: Record<string, Record<string, string>>; sessions: Record<string, Record<string, string>> };
+type AcpModels = {
+  models: { id: string; label: string | null; efforts: string[] | null; defaultEffort: string | null }[];
+  source: "cache";
+  permissions?: { id: string; label?: string }[];
+  defaultPermission?: string;
+};
 
 /** The composer's answer, read off the hook the composer itself uses. */
-function Probe({ source, scope, cliChoice }: { source: Source; scope?: string; cliChoice?: Choice | null }) {
-  const choice = useComposerChoice(source, scope, cliChoice, null);
-  return <output data-permission={choice.activePermission} />;
+function Probe({
+  source,
+  scope,
+  cliChoice,
+  acpAgent,
+}: {
+  source: Source;
+  scope?: string;
+  cliChoice?: Choice | null;
+  acpAgent?: string | null;
+}) {
+  const choice = useComposerChoice(source, scope, cliChoice, null, null, acpAgent);
+  return (
+    <output
+      data-permission={choice.activePermission}
+      data-options={JSON.stringify(choice.permissionOptions)}
+    />
+  );
 }
 
-const answer = (source: Source, scope: string | undefined, doc: Prefs, cliChoice?: Choice | null): string => {
+const queryChoice = (
+  source: Source,
+  scope: string | undefined,
+  doc: Prefs,
+  cliChoice?: Choice | null,
+  acp?: { agent: string; models?: AcpModels },
+): { permission: string; options: { value: string; label: string }[] } => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false, gcTime: Infinity } } });
   client.setQueryData(mq(LOCAL, "composer-prefs"), doc);
+  if (source === "acp" && acp?.models) {
+    client.setQueryData(mq(LOCAL, "models", "acp", acp.agent), acp.models);
+  }
   const html = renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <MachineProvider machine={LOCAL}>
-        <Probe source={source} scope={scope} cliChoice={cliChoice} />
+        <Probe source={source} scope={scope} cliChoice={cliChoice} acpAgent={acp?.agent ?? null} />
       </MachineProvider>
     </QueryClientProvider>,
   );
   client.clear();
-  return /data-permission="([^"]*)"/.exec(html)?.[1] ?? "";
+  const permission = /data-permission="([^"]*)"/.exec(html)?.[1] ?? "";
+  const rawOptions = /data-options="([^"]*)"/.exec(html)?.[1] ?? "[]";
+  const options = JSON.parse(rawOptions.replaceAll("&quot;", '"')) as { value: string; label: string }[];
+  return { permission, options };
 };
+
+const answer = (
+  source: Source,
+  scope: string | undefined,
+  doc: Prefs,
+  cliChoice?: Choice | null,
+  acp?: { agent: string; models?: AcpModels },
+): string => queryChoice(source, scope, doc, cliChoice, acp).permission;
 
 const at = "2026-10-20T00:00:00.000Z";
 
@@ -203,4 +244,136 @@ test("a successful start puts its permission in this page's composer cache at on
   );
   assert.equal(existing.sessions["claude/started-1"]?.model, "opus", "the row's other fields survive");
   assert.equal(existing.sessions["claude/started-1"]?.permission, "bypassPermissions");
+
+  const acpDoc = withStartedPermission(
+    { defaults: { acp: { permission: "accept-edits", updatedAt: at } }, sessions: {} },
+    "acp",
+    "acp-1",
+    "accept-edits",
+  );
+  assert.equal(acpDoc.sessions["acp/acp-1"]?.permission, "accept-edits");
+  assert.equal(acpDoc.defaults.acp?.permission, "accept-edits");
+});
+
+const acpClaudeModes: AcpModels = {
+  models: [],
+  source: "cache",
+  permissions: [
+    { id: "default", label: "Default" },
+    { id: "accept-edits", label: "Accept edits" },
+    { id: "auto", label: "Auto" },
+    { id: "plan", label: "Plan" },
+    { id: "bypassPermissions" },
+  ],
+  defaultPermission: "accept-edits",
+};
+
+const acpOtherModes: AcpModels = {
+  models: [],
+  source: "cache",
+  permissions: [
+    { id: "ask", label: "Ask" },
+    { id: "code", label: "Code" },
+  ],
+  defaultPermission: "code",
+};
+
+test("an ACP agent's published permission modes map labels and fall back to its defaultPermission or first option", () => {
+  const empty: Prefs = { defaults: {}, sessions: {} };
+  const result = queryChoice("acp", undefined, empty, null, { agent: "claude-acp", models: acpClaudeModes });
+  assert.equal(result.permission, "accept-edits");
+  assert.deepEqual(result.options, [
+    { value: "default", label: "Default" },
+    { value: "accept-edits", label: "Accept edits" },
+    { value: "auto", label: "Auto" },
+    { value: "plan", label: "Plan" },
+    { value: "bypassPermissions", label: "bypassPermissions" },
+  ]);
+
+  // Without a valid defaultPermission, the first published mode leads.
+  const noDefault: AcpModels = {
+    models: [],
+    source: "cache",
+    permissions: [{ id: "ask", label: "Ask" }, { id: "code", label: "Code" }],
+  };
+  assert.equal(answer("acp", undefined, empty, null, { agent: "a", models: noDefault }), "ask");
+  assert.equal(
+    answer("acp", undefined, empty, null, { agent: "a", models: { ...noDefault, defaultPermission: "unlisted" } }),
+    "ask",
+  );
+});
+
+test("an ACP agent publishing no permission modes leaves activePermission empty and options empty", () => {
+  const doc: Prefs = {
+    defaults: { acp: { permission: "accept-edits" } },
+    sessions: { "acp/s-1": { permission: "plan" } },
+  };
+  const none = queryChoice("acp", "s-1", doc, { model: null, effort: null, permission: "plan", at }, {
+    agent: "plain-acp",
+    models: { models: [], source: "cache" },
+  });
+  assert.equal(none.permission, "");
+  assert.deepEqual(none.options, []);
+
+  const emptyList = queryChoice("acp", undefined, doc, null, {
+    agent: "plain-acp",
+    models: { models: [], source: "cache", permissions: [] },
+  });
+  assert.equal(emptyList.permission, "");
+  assert.deepEqual(emptyList.options, []);
+});
+
+test("ACP existing sessions obey #563: own stored pick wins, safe transcript reading bridges, source default and dangerous observations never escalate", () => {
+  const doc: Prefs = {
+    defaults: { acp: { permission: "bypassPermissions", updatedAt: at } },
+    sessions: { "acp/A": { permission: "bypassPermissions", updatedAt: at } },
+  };
+  const acp = { agent: "claude-acp", models: acpClaudeModes };
+
+  // Session A's own stored dangerous pick is respected.
+  assert.equal(answer("acp", "A", doc, null, acp), "bypassPermissions");
+  // Session B never inherits defaults.acp.permission.
+  assert.equal(answer("acp", "B", doc, null, acp), "accept-edits");
+  // Safe transcript cliChoice.permission is adopted when no session row exists.
+  assert.equal(answer("acp", "B", doc, { model: null, effort: null, permission: "plan", at }, acp), "plan");
+  // Session's own stored pick outranks transcript cliChoice.permission.
+  const storedDoc: Prefs = {
+    defaults: { acp: { permission: "bypassPermissions", updatedAt: at } },
+    sessions: { "acp/B": { permission: "auto", updatedAt: at } },
+  };
+  assert.equal(answer("acp", "B", storedDoc, { model: null, effort: null, permission: "plan", at }, acp), "auto");
+  // Dangerous transcript reading is ignored on an existing session (#563).
+  assert.equal(
+    answer("acp", "B", { defaults: {}, sessions: {} }, { model: null, effort: null, permission: "bypassPermissions", at }, acp),
+    "accept-edits",
+  );
+  // Dangerous legacy per-session key is ignored too.
+  const key = machineStorageKey(LOCAL, "composer.permission.acp.B");
+  localStorage.setItem(key, "bypassPermissions");
+  try {
+    assert.equal(answer("acp", "B", { defaults: {}, sessions: {} }, null, acp), "accept-edits");
+  } finally {
+    localStorage.removeItem(key);
+  }
+});
+
+test("switching between ACP agents on a new session falls back to the new agent's default when the stored default is not in its list", () => {
+  const doc: Prefs = {
+    defaults: { acp: { permission: "plan", updatedAt: at } },
+    sessions: {},
+  };
+  // Agent A lists "plan", so the stored default applies.
+  assert.equal(answer("acp", undefined, doc, null, { agent: "claude-acp", models: acpClaudeModes }), "plan");
+  // Agent B does not list "plan", so it gracefully falls back to Agent B's defaultPermission ("code").
+  assert.equal(answer("acp", undefined, doc, null, { agent: "other-acp", models: acpOtherModes }), "code");
+  // Direct helper check for an unlisted defaultPermission falling back to options[0].
+  assert.equal(
+    resolveAcpPermission({
+      existing: false,
+      sourceDefault: "plan",
+      options: [{ value: "ask", label: "Ask" }, { value: "code", label: "Code" }],
+      defaultPermission: "missing",
+    }),
+    "ask",
+  );
 });

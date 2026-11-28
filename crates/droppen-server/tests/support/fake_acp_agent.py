@@ -72,7 +72,10 @@ MODELS = [("fake:small", "Small"), ("openrouter:vendor/big", "Big")]
 if os.environ.get("FAKE_AGENT_FIRST_MODEL"):
     MODELS.insert(0, (os.environ["FAKE_AGENT_FIRST_MODEL"], "First"))
 EFFORTS = ["auto", "low", "high"]
-# Each session's model and effort, as set_config_option leaves them.
+MODES = [("default", "Default"), ("accept-edits", "Accept edits"), ("auto", "Auto"), ("plan", "Plan")]
+NO_MODES = os.environ.get("FAKE_AGENT_NO_MODES") == "1"
+LEGACY_MODES = os.environ.get("FAKE_AGENT_LEGACY_MODES") == "1"
+# Each session's model, effort and mode, as set_config_option / set_mode leave them.
 runtime = {}
 def pauses(variable):
     return {
@@ -85,15 +88,35 @@ slow = pauses("FAKE_AGENT_SLOW")
 deaf = pauses("FAKE_AGENT_DEAF")
 
 
+def session_state(session):
+    return runtime.setdefault(session, {"model": MODELS[0][0], "reasoning_effort": "auto", "mode": MODES[0][0]})
+
+
 def config_options(session):
-    current = runtime.setdefault(session, {"model": MODELS[0][0], "reasoning_effort": "auto"})
-    return [
+    current = session_state(session)
+    opts = [
         {"id": "model", "name": "Model", "category": "model", "type": "select",
          "currentValue": current["model"], "options": [{"value": v, "name": n} for v, n in MODELS]},
         {"id": "reasoning_effort", "name": "Reasoning effort", "category": "thought_level", "type": "select",
          "currentValue": current["reasoning_effort"], "options": [{"value": v, "name": v.title()} for v in EFFORTS]},
         {"id": "fast", "name": "Fast", "type": "boolean", "currentValue": False},
     ]
+    if not NO_MODES and not LEGACY_MODES:
+        opts.append({
+            "id": "mode", "name": "Mode", "category": "mode", "type": "select",
+            "currentValue": current["mode"], "options": [{"value": v, "name": n} for v, n in MODES],
+        })
+    return opts
+
+
+def legacy_modes(session):
+    if NO_MODES:
+        return None
+    current = session_state(session)
+    return {
+        "currentModeId": current["mode"],
+        "availableModes": [{"id": v, "name": n} for v, n in MODES],
+    }
 
 
 def log(entry):
@@ -224,16 +247,30 @@ for raw in sys.stdin:
     elif method == "session/new":
         session = "f00dfeed0123456789abcdef01234567"
         runtime.pop(session, None)
-        answer(request, {"sessionId": session, "configOptions": config_options(session)})
+        body = {"sessionId": session, "configOptions": config_options(session)}
+        modes = legacy_modes(session)
+        if modes is not None:
+            body["modes"] = modes
+        answer(request, body)
     elif method == "session/set_config_option":
         session, config, value = params["sessionId"], params["configId"], params["value"]
-        allowed = {"model": [v for v, _ in MODELS], "reasoning_effort": EFFORTS}.get(config)
-        if allowed is None or value not in allowed:
+        allowed = {"model": [v for v, _ in MODELS], "reasoning_effort": EFFORTS}
+        if not NO_MODES and not LEGACY_MODES:
+            allowed["mode"] = [v for v, _ in MODES]
+        choices = allowed.get(config)
+        if choices is None or value not in choices:
             emit({"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32602, "message": f"invalid {config}: {value}"}})
         else:
-            config_options(session)
-            runtime[session][config] = value
+            session_state(session)[config] = value
             answer(request, {"configOptions": config_options(session)})
+    elif method == "session/set_mode":
+        session, mode_id = params["sessionId"], params["modeId"]
+        if NO_MODES or mode_id not in [v for v, _ in MODES]:
+            emit({"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32602, "message": f"invalid mode: {mode_id}"}})
+        else:
+            session_state(session)["mode"] = mode_id
+            update(session, {"sessionUpdate": "current_mode_update", "currentModeId": mode_id})
+            answer(request, {})
     elif method == "session/close":
         runtime.pop(params["sessionId"], None)
         answer(request, {})
@@ -241,7 +278,11 @@ for raw in sys.stdin:
         session = params["sessionId"]
         update(session, chunk("user_message_chunk", "an old question"))
         update(session, chunk("agent_message_chunk", "an old answer"))
-        answer(request, {"configOptions": config_options(session)})
+        body = {"configOptions": config_options(session)}
+        modes = legacy_modes(session)
+        if modes is not None:
+            body["modes"] = modes
+        answer(request, body)
     elif method == "session/prompt":
         threading.Thread(target=run_turn, args=(request,), daemon=True).start()
     elif "id" in request:

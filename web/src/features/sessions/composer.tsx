@@ -279,8 +279,8 @@ export function Composer({
             text: message.text,
             ...(message.images?.length ? { images: message.images } : {}),
             ...(message.files?.length ? { files: message.files } : {}),
-            // Omitted when empty: an ACP agent may choose its own model and has no
-            // permission modes, and refuses a message that names either.
+            // Omitted when empty: an ACP agent may choose its own model or publish
+            // no permission modes, and refuses a message that names an unsupported value.
             ...(activeModel.id ? { model: activeModel.id } : {}),
             // Omitted, not null: a model with no effort ladder refuses `--effort`
             // outright, and the flag is only built when a value is present.

@@ -25,7 +25,7 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { I18nextProvider } = await import("react-i18next");
 const { SelectField } = await import("../src/components/ui/select.js");
-const { ComposerSelect, ModelSelect } = await import("../src/features/sessions/composer-controls.js");
+const { ComposerChoiceChips, ComposerSelect, ModelSelect } = await import("../src/features/sessions/composer-controls.js");
 
 const i18n = makeI18n({ lng: "en", resources: { en: { translation: {} } } });
 
@@ -318,6 +318,67 @@ test("a permission that drops the guard rails stays drawn in the danger colour, 
   assert.equal(t.getAttribute("data-signal"), "danger");
   assert.match(t.className, /text-danger/);
   assert.match(t.className, /bg-danger\/10/);
+});
+
+test("ComposerChoiceChips renders ACP permission select with labels, hides it when empty, and works without models", async () => {
+  const picked: string[] = [];
+  const acpPermissions = [
+    { value: "default", label: "Default" },
+    { value: "accept-edits", label: "Accept edits" },
+    { value: "auto", label: "Auto" },
+    { value: "plan", label: "Plan" },
+    { value: "bypassPermissions", label: "Bypass" },
+  ];
+  const baseChoice = {
+    models: [] as { id: string; label: string | null; efforts: string[] | null; defaultEffort: string | null }[],
+    activeModel: { id: "", label: null, efforts: [] as string[], defaultEffort: null },
+    customModel: null,
+    effortOptions: [] as string[],
+    activeEffort: null as string | null,
+    modelsAreFallback: false,
+    modelsHidden: 0,
+    pickModel: () => {},
+    setEffort: () => {},
+    permissionOptions: acpPermissions,
+    activePermission: "accept-edits",
+    setPermission: (v: string) => void picked.push(v),
+  };
+
+  // Models empty, permissions present: permission picker renders without a model picker.
+  await render(<ComposerChoiceChips source="acp" choice={baseChoice} />);
+  const comboboxes = [...container.querySelectorAll<HTMLElement>('[role="combobox"]')];
+  assert.equal(comboboxes.length, 1);
+  assert.equal(comboboxes[0]!.getAttribute("aria-label"), "permission");
+  assert.equal(comboboxes[0]!.textContent, "Accept edits");
+  assert.equal(comboboxes[0]!.getAttribute("data-signal"), null);
+  await press(comboboxes[0]!);
+  assert.deepEqual(
+    options().map((o) => o.textContent),
+    ["Default", "Accept edits", "Auto", "Plan", "Bypass"],
+  );
+  await pick(option("Plan"));
+  assert.deepEqual(picked, ["plan"], "picking passes the mode id, not its display label");
+
+  // Dangerous ACP mode draws with danger signal.
+  await render(<ComposerChoiceChips source="acp" choice={{ ...baseChoice, activePermission: "bypassPermissions" }} />);
+  const dangerTrigger = container.querySelector<HTMLElement>('[role="combobox"][aria-label="permission"]');
+  assert.equal(dangerTrigger?.getAttribute("data-signal"), "danger");
+
+  // Both models and permissions empty: renders nothing.
+  await render(<ComposerChoiceChips source="acp" choice={{ ...baseChoice, permissionOptions: [], activePermission: "" }} />);
+  assert.equal(container.querySelector('[role="combobox"]'), null);
+
+  // Models present, permissions empty: renders model picker only, no permission picker.
+  const model = { id: "agent-model", label: "Agent Model", efforts: [], defaultEffort: null };
+  await render(
+    <ComposerChoiceChips
+      source="acp"
+      choice={{ ...baseChoice, models: [model], activeModel: model, permissionOptions: [], activePermission: "" }}
+    />,
+  );
+  const onlyModel = [...container.querySelectorAll<HTMLElement>('[role="combobox"]')];
+  assert.equal(onlyModel.length, 1);
+  assert.equal(onlyModel[0]!.getAttribute("aria-label"), "model");
 });
 
 test("the model picker's last entry opens the box to type an id into", async () => {
