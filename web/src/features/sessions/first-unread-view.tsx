@@ -108,7 +108,7 @@ export function useFirstUnread(input: {
         })
         .then((res) => settle(res.data), () => settle());
     },
-    [source, id],
+    [api, source, id],
   );
 
   const view = firstUnreadView(state);

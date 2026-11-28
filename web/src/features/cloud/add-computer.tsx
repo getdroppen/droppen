@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTimeout } from "usehooks-ts";
 import { formatCountdown } from "@/lib/format";
@@ -90,13 +90,10 @@ export function AddMachine(props: { account: CloudAccount; link: HubLink; origin
 function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account: CloudAccount; link: HubLink; origin: string; onDone: () => void; onNewCode: () => void }) {
   const { t } = useTranslation();
   const [state, setState] = useState<AddState>({ kind: "starting" });
-  const started = useRef(false);
   const me = useMe(account, link);
   // The hub's own address, which the device dials (not the app host this page may be on).
   const hubUrl = agentHub(origin);
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
     const abort = new AbortController();
     void (async () => {
       try {
@@ -104,6 +101,7 @@ function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account
         // The hub checks too (enrollments in progress count), answered below.
         const store = me;
         const hit = await freshLimit(store, HOSTS_KEY, (error) => console.warn("cloud: /v1/me before adding a machine:", error));
+        if (abort.signal.aborted) return;
         if (hit) return setState({ kind: "limit", hit });
         const before = (account.chain?.hosts() ?? []).filter((m) => m.status.type === "active").length;
         // On a v3 chain the hub must take v3 entries (it gates a new host): said before a code is issued.
@@ -113,16 +111,22 @@ function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account
           // Read again as it is signed: on a v3 chain the hub must take v3 entries (it gates a new host).
           writable: () => chainV3Writable(store?.view),
           courier: linkCourier(link, account, undefined, hubShell()?.relays),
-          onCode: (code, expiresMs) => setState({ kind: "waiting", code, deadline: codeDeadline(Date.now(), expiresMs) }),
+          onCode: (code, expiresMs) => {
+            if (!abort.signal.aborted) setState({ kind: "waiting", code, deadline: codeDeadline(Date.now(), expiresMs) });
+          },
           onStep: (step) => {
-            if (step === "key") setState((state) => (state.kind === "waiting" ? { kind: "key", code: state.code } : state));
+            if (!abort.signal.aborted && step === "key") {
+              setState((state) => (state.kind === "waiting" ? { kind: "key", code: state.code } : state));
+            }
           },
           signal: abort.signal,
         });
+        if (abort.signal.aborted) return;
         setState({ kind: "done", machine: added.machine, via: added.result, first: before === 0 });
         // Its usage and copy from now on.
         me?.soon();
       } catch (err) {
+        if (abort.signal.aborted) return;
         const hit = limitOf(err);
         if (hit) return setState({ kind: "limit", hit });
         if (err instanceof AccountError && err.kind === "expired") return setState({ kind: "expired" });
@@ -130,8 +134,7 @@ function AddMachineRound({ account, link, origin, onDone, onNewCode }: { account
       }
     })();
     return () => abort.abort();
-    // `me` is the account's one store: the same for as long as `account` is
-  }, [account, link]);
+  }, [account, link, me]);
 
   const pad = "px-6 py-5 max-md:px-4";
   if (state.kind === "starting") return <div className={pad}><CircleNotchIcon className="size-4 animate-spin text-faint" /></div>;

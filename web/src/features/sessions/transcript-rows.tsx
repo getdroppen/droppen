@@ -110,15 +110,22 @@ export const StepGroup = memo(function StepGroup({
       <div className={cn("mb-2 border-l border-border pl-2.5", inBubble ? "ml-1.5" : "mr-4 ml-[22px]")}>
         {items.map((item, i) => (
           <div key={i} data-ti={base + i}>
-            <StepNumberContext.Provider value={stepNumbers[i] ?? null}>
-              <ItemBlock item={item} />
-            </StepNumberContext.Provider>
+            {open && (
+              <StepNumberContext.Provider value={stepNumbers[i] ?? null}>
+                <ItemBlock item={item} />
+              </StepNumberContext.Provider>
+            )}
           </div>
         ))}
       </div>
     </details>
   );
-});
+}, (prev, next) =>
+  prev.base === next.base &&
+  prev.live === next.live &&
+  prev.items.length === next.items.length &&
+  prev.items.every((item, i) => item === next.items[i]),
+);
 
 /**
  * One agent's own transcript, fetched on demand.
@@ -128,7 +135,7 @@ export const StepGroup = memo(function StepGroup({
  * that list, and giving it a different reader would have been two answers to
  * "what did this agent do".
  */
-export function useAgentTranscript(session: SubagentCtx, agentId: string | null, open: boolean) {
+export function useAgentTranscript(session: SubagentCtx, agentId: string | null, open: boolean, active = true) {
   const api = useApi();
   const machine = useMachine();
   return useQuery({
@@ -141,8 +148,8 @@ export function useAgentTranscript(session: SubagentCtx, agentId: string | null,
       if (res.error) throw new ApiError(res.error);
       return res.data;
     },
-    // A running subagent keeps appending; follow it while expanded.
-    refetchInterval: open ? 4000 : false,
+    // A running subagent keeps appending; once settled, stop polling.
+    refetchInterval: open && active ? 4000 : false,
   });
 }
 
@@ -287,8 +294,6 @@ export function SubagentTool({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const query = useAgentTranscript(session, item.agent ?? null, open);
-  const data = query.data;
 
   // A ref rather than state: the latch changes nothing about what would be
   // rendered on its own, it only refuses to un-render a verdict already shown,
@@ -299,6 +304,8 @@ export function SubagentTool({
     subagentOutcome({ result, taskStatus, residentRunning, live }),
   );
   const outcome = latch.current;
+  const query = useAgentTranscript(session, item.agent ?? null, open, outcome === "running");
+  const data = query.data;
   const mark = outcome === "running" ? null : OUTCOME_MARK[outcome];
   const markTitle =
     outcome === "completed"

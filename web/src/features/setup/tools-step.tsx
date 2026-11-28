@@ -186,16 +186,26 @@ export function ToolsStep({ tools, online, toolsUi = IDLE_TOOLS_UI, onToolsUi }:
     if (!signingKey) return;
     const ids = signingKey.split(",") as ToolId[];
     let stopped = false;
+    const inFlight = new Set<ToolId>();
+    const settled = new Set<ToolId>();
     const timer = setInterval(() => {
       for (const id of ids) {
-        void actions.loginStatus(id).then(
-          (login) => {
-            if (stopped || login.state !== "signed-in") return;
-            showSetupToast(SIGNED_IN_TOAST[id]);
-            patch(id, { noBrowser: false, open: "none" });
-          },
-          () => undefined,
-        );
+        if (inFlight.has(id) || settled.has(id)) continue;
+        inFlight.add(id);
+        void actions
+          .loginStatus(id)
+          .then(
+            (login) => {
+              if (stopped || settled.has(id) || login.state !== "signed-in") return;
+              settled.add(id);
+              showSetupToast(SIGNED_IN_TOAST[id]);
+              patch(id, { noBrowser: false, open: "none" });
+            },
+            () => undefined,
+          )
+          .finally(() => {
+            inFlight.delete(id);
+          });
       }
     }, LOGIN_POLL_MS);
     return () => {

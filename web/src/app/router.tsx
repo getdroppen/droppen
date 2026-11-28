@@ -420,10 +420,15 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
+import { RouteErrorFallback } from "@/components/error-boundary";
 // A view's chunk starts loading when a link to it is hovered or touched, not
 // when it is clicked (`app/lazy-views.ts`) — if the background fetch after
 // the first page (`app/view-prefetch.ts`) has not brought it already.
-export const router = createRouter({ routeTree, defaultPreload: "intent" });
+export const router = createRouter({
+  routeTree,
+  defaultPreload: "intent",
+  defaultErrorComponent: RouteErrorFallback,
+});
 
 const stopWatchingFirstPaint = router.subscribe("onRendered", () => {
   stopWatchingFirstPaint();
