@@ -199,7 +199,11 @@ fn read_bounded_line<R: BufRead>(reader: &mut R, limit: usize) -> std::io::Resul
     let mut buf = Vec::new();
     let mut too_long = false;
     loop {
-        let available = reader.fill_buf()?;
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
         if available.is_empty() {
             if too_long {
                 return Ok(Some(StdinLine::TooLong));
@@ -741,5 +745,46 @@ mod tests {
 
         let built = transcript_url("http://127.0.0.1:4321", Source::Acp, "sess-1").expect("url");
         assert_eq!(built.as_str(), "http://127.0.0.1:4321/api/agents/acp/sess-1/transcript");
+    }
+
+    #[test]
+    fn read_bounded_line_retries_eintr() {
+        struct InterruptOnceReader<'a> {
+            interrupted: bool,
+            data: &'a [u8],
+            pos: usize,
+        }
+        impl std::io::Read for InterruptOnceReader<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let rem = &self.data[self.pos..];
+                let n = rem.len().min(buf.len());
+                buf[..n].copy_from_slice(&rem[..n]);
+                self.pos += n;
+                Ok(n)
+            }
+        }
+        impl BufRead for InterruptOnceReader<'_> {
+            fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+                if !self.interrupted {
+                    self.interrupted = true;
+                    return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "EINTR"));
+                }
+                Ok(&self.data[self.pos..])
+            }
+            fn consume(&mut self, amt: usize) {
+                self.pos = (self.pos + amt).min(self.data.len());
+            }
+        }
+
+        let mut reader = InterruptOnceReader {
+            interrupted: false,
+            data: b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n",
+            pos: 0,
+        };
+        let line = read_bounded_line(&mut reader, 1024).expect("should retry EINTR");
+        assert_eq!(
+            line,
+            Some(StdinLine::Line("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n".to_string()))
+        );
     }
 }

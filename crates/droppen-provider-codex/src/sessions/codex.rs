@@ -405,6 +405,41 @@ fn query_thread_row(db: &Path, id: &str) -> Option<Option<ThreadRow>> {
     }
 }
 
+/// `Some(true)` when `id` has a row in Codex's state DB with `archived != 0`,
+/// `Some(false)` when the DB is readable and the thread is not archived, and
+/// `None` when the DB is unavailable (fall back to scanning `archived_sessions`).
+fn query_thread_archived(db: &Path, id: &str) -> Option<bool> {
+    let connection = open_state_db(db)?;
+    let mut statement = connection.prepare("SELECT archived FROM threads WHERE id = ? LIMIT 1").ok()?;
+    match statement.query_row([id], |row| row.get::<_, i64>(0)) {
+        Ok(archived) => Some(archived != 0),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Some(false),
+        Err(_) => None,
+    }
+}
+
+async fn is_codex_archived(paths: &Paths, id: &str) -> bool {
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        return false;
+    }
+    let owned_id = id.to_string();
+    if let Some(archived) = CodexHome::of(paths)
+        .on_state_db(move |db| query_thread_archived(db, &owned_id))
+        .await
+        .flatten()
+    {
+        return archived;
+    }
+    let archived_dir = paths.codex_dir().join("archived_sessions");
+    if !tokio::fs::try_exists(&archived_dir).await.unwrap_or(false) {
+        return false;
+    }
+    collect_session_files(&archived_dir)
+        .await
+        .iter()
+        .any(|(name, _)| id_from_file_name(name).as_deref() == Some(id))
+}
+
 /// A delegated subagent thread: a row of Codex's `thread_spawn_edges`, joined
 /// to the thread it names.
 ///
@@ -888,6 +923,10 @@ impl droppen_sessions::Transcripts for CodexSessions {
     // need a lookup of its own.
     fn find<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, Option<SessionSummary>> {
         Box::pin(find_codex_session(paths, id))
+    }
+
+    fn is_archived<'a>(&'a self, paths: &'a Paths, id: &'a str) -> BoxFuture<'a, bool> {
+        Box::pin(is_codex_archived(paths, id))
     }
 
     // A codex thread lives under `~/.codex`, in no Claude root.
@@ -2941,5 +2980,48 @@ mod tests {
 
         assert_eq!(chain(&created), chain(&absent));
         assert_eq!(chain(&deleted), chain(&absent));
+    }
+
+    #[tokio::test]
+    async fn codex_is_archived_checks_state_db_and_archived_sessions_dir() {
+        use droppen_sessions::Transcripts;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        let db_path = CodexHome::of(&paths).state_db();
+        std::fs::create_dir_all(db_path.parent().unwrap()).expect("codex dir");
+
+        let archived_id = "11111111-2222-4333-8444-555555555555";
+        let active_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+        // Without state DB, fallback checks ~/.codex/archived_sessions.
+        let archived_dir = paths.codex_dir().join("archived_sessions");
+        std::fs::create_dir_all(&archived_dir).expect("archived_sessions dir");
+        std::fs::write(archived_dir.join(format!("rollout-2026-05-01T00-00-00-{archived_id}.jsonl")), "{}\n")
+            .expect("archived rollout");
+        assert!(CodexSessions.is_archived(&paths, archived_id).await);
+        assert!(!CodexSessions.is_archived(&paths, active_id).await);
+
+        // With state DB present, `archived = 1` vs `archived = 0` is authoritative.
+        let connection = rusqlite::Connection::open(&db_path).expect("state db");
+        connection
+            .execute_batch(
+                "CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    rollout_path TEXT, archived INTEGER, source TEXT, created_at INTEGER,
+                    updated_at INTEGER, cwd TEXT, title TEXT, first_user_message TEXT,
+                    cli_version TEXT, agent_nickname TEXT, agent_role TEXT
+                );",
+            )
+            .expect("schema");
+        connection
+            .execute(
+                "INSERT INTO threads (id, archived, source) VALUES (?, 1, 'cli'), (?, 0, 'cli')",
+                rusqlite::params![archived_id, active_id],
+            )
+            .expect("insert");
+        assert!(CodexSessions.is_archived(&paths, archived_id).await);
+        assert!(!CodexSessions.is_archived(&paths, active_id).await);
+        assert!(!CodexSessions.is_archived(&paths, "../escape").await);
     }
 }
