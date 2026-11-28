@@ -211,6 +211,12 @@ function desktopWindow(): boolean {
   return (window as unknown as { __droppenDesktop?: unknown }).__droppenDesktop !== undefined;
 }
 
+const PluginDialog: PluginHost["ui"]["Dialog"] = ({ open, onOpenChange, children }) => (
+  <Dialog open={open} onOpenChange={(next) => onOpenChange(next)}>
+    {children}
+  </Dialog>
+);
+
 /** Build the host one plugin gets for the life of the page. */
 export function createPluginHost(id: string, deps: HostDeps): PluginHost {
   const ns = pluginNamespace(id);
@@ -220,11 +226,7 @@ export function createPluginHost(id: string, deps: HostDeps): PluginHost {
     pluginId: id,
     storage: deps.storage ?? httpStorage(id, deps.machine),
     ui: {
-      Dialog: ({ open, onOpenChange, children }) => (
-        <Dialog open={open} onOpenChange={(next) => onOpenChange(next)}>
-          {children}
-        </Dialog>
-      ),
+      Dialog: PluginDialog,
       DialogContent,
       Spinner,
       confirm: requestConfirm,

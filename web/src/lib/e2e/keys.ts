@@ -19,7 +19,7 @@
  * encodings `verify_strict` refuses — in front of WebCrypto's own `verify`,
  * whose edge cases differ between browsers.
  */
-import { type Bytes, concat, copy, equal, fromHex, hex, utf8 } from "./bytes";
+import { type Bytes, concat, copy, fromHex, hex, utf8 } from "./bytes";
 import { decodeLe, inv0, isSquare, P as FIELD_P } from "./field";
 
 export const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420");

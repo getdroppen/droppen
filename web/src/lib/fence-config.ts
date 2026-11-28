@@ -109,14 +109,14 @@ function blockKey(line: string): { indent: number; key: string } | null {
 /** YAML double-quoted escapes, enough for a key Pele would read as `themeVariables`. */
 function decodeYamlKey(raw: string, quote: '"' | "'"): string {
   if (quote === "'") return raw.replace(/''/g, "'");
-  return raw.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (_whole, escape: string) => {
-    const kind = escape[0]!;
-    if (kind === "x" || kind === "u" || kind === "U") return String.fromCodePoint(Number.parseInt(escape.slice(1), 16));
+  return raw.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (_whole, esc: string) => {
+    const kind = esc[0]!;
+    if (kind === "x" || kind === "u" || kind === "U") return String.fromCodePoint(Number.parseInt(esc.slice(1), 16));
     if (kind === "n") return "\n";
     if (kind === "t") return "\t";
     if (kind === "r") return "\r";
     if (kind === "0") return "\0";
-    return escape;
+    return esc;
   });
 }
 

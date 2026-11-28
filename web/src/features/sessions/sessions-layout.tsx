@@ -57,7 +57,6 @@ import { readMachineItem, writeMachineItem } from "@/lib/machines/storage";
 import { MachineLink, MachineView, useMachineNavigate, useSectionPath } from "@/app/machine-route";
 import { SetupBars } from "@/features/setup/bars";
 
-type Source = components["schemas"]["Source"];
 type SessionSummary = components["schemas"]["SessionSummary"];
 type SessionChild = components["schemas"]["SessionChild"];
 

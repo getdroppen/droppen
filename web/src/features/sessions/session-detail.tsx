@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { AcpAgentChip, SourceIcon } from "@/components/source-icon";
 import { useParams } from "@tanstack/react-router";
 import {
@@ -7,7 +7,6 @@ import {
   CaretLeftIcon,
   GitBranchIcon,
   CircleNotchIcon,
-  SquareIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import {
