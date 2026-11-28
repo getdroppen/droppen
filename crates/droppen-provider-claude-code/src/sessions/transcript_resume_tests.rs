@@ -354,22 +354,27 @@ async fn a_mention_read_before_the_session_named_its_directory_gets_its_chip_onc
     assert_eq!(named.items[0].files.as_ref().map(Vec::len), Some(1));
 }
 
-/// The `stat` budget is spent from the first message on, read whole or in
-/// pieces: a message after it is spent gets no chip, until a file an
-/// earlier message named turns up and the walk starts over.
+/// The `stat` budget is spent newest-first, read whole or in pieces: a new
+/// message appended after an older budget-spending message still gets its chip,
+/// while an older message behind a newer spender waits until a file the newer
+/// message named turns up and frees budget.
 #[tokio::test]
 async fn the_stat_budget_is_spent_as_a_parse_from_the_start_spends_it() {
     let mut oracle = Oracle::new();
     let drafts: Vec<String> = (0..droppen_sessions::mentions::MAX_STATS_PER_TRANSCRIPT).map(|n| format!("`~/d{n}.md`")).collect();
-    oracle.append(&line(assistant(0, json!([{"type": "text", "text": format!("drafts: {}", drafts.join(" "))}]))));
+    oracle.append(&line(assistant(0, json!([{"type": "text", "text": "older `~/proj/notes.md`"}]))));
     oracle.step().await;
-    oracle.append(&line(assistant(1, json!([{"type": "text", "text": "and `~/proj/notes.md`"}]))));
+    oracle.append(&line(assistant(1, json!([{"type": "text", "text": format!("drafts: {}", drafts.join(" "))}]))));
     let spent = oracle.step().await;
-    assert!(spent.items[1].files.is_none(), "every stat went on the drafts");
+    assert!(spent.items[0].files.is_none(), "every stat went on the newer drafts");
+
+    oracle.append(&line(assistant(2, json!([{"type": "text", "text": "newest `~/proj/notes.md`"}]))));
+    let newest = oracle.step().await;
+    assert_eq!(newest.items[2].files.as_ref().map(Vec::len), Some(1), "newest message gets its chip");
 
     std::fs::write(oracle.home.join("d0.md"), "d").expect("write");
     let again = oracle.step().await;
-    assert_eq!(again.items[0].files.as_ref().map(Vec::len), Some(1));
+    assert_eq!(again.items[1].files.as_ref().map(Vec::len), Some(1));
 }
 
 /// A whole entry with no newline after it is read, and the next read goes

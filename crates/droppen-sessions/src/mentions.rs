@@ -178,12 +178,16 @@ pub fn resolve_within_home(home: &Path, candidate: &str, cwd: Option<&Path>) -> 
 /// Attach download chips for files an assistant message points at, the ones
 /// its CLI's markup names (`citations`, from the reader) first.
 ///
+/// The [`MAX_STATS_PER_TRANSCRIPT`] budget is spent newest-first so the latest
+/// assistant messages in a long session always get their chips even when older
+/// history mentions hundreds of paths.
+///
 /// Each item it changes keeps a copy of itself from before, for its
 /// fingerprint ([`TranscriptItem::as_transcribed`]).
 pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem], cwd: Option<&str>, citations_of: FileCitations) {
     let mut mentions = Mentions::new();
-    for item in items.iter_mut() {
-        if let Some(change) = mentions.look(home, item, cwd, citations_of).await {
+    for item in items.iter_mut().rev() {
+        if let Some(change) = mentions.look(home, item, cwd, citations_of, None).await {
             change.apply(item);
         }
     }
@@ -193,7 +197,7 @@ pub async fn annotate_mentioned_files(home: &Path, items: &mut [TranscriptItem],
 /// kept with a parse so that one going on from it annotates only what is new.
 ///
 /// Whatever it keeps, [`Mentions::annotate`] leaves every item as
-/// [`annotate_mentioned_files`] would leave it, walking all of them from the
+/// [`annotate_mentioned_files`] would leave it, walking all of them newest
 /// first, now. So the order the [`MAX_STATS_PER_TRANSCRIPT`] budget is spent
 /// in, and how a walk goes on, are this type's business alone: a parse only
 /// carries it.
@@ -203,6 +207,11 @@ pub struct Mentions {
     exists: HashMap<PathBuf, bool>,
     /// How many paths may still be looked at.
     budget: usize,
+    /// Whether any candidate path had to be skipped because `budget` hit zero.
+    /// While `false`, every item up to `upto` had all of its candidates
+    /// resolved regardless of walk order, so an append that also stays within
+    /// budget needs to inspect only the new items.
+    exhausted: bool,
     /// How many items, from the first, have been annotated.
     upto: usize,
     /// The directory relative paths were resolved against, which a
@@ -217,36 +226,28 @@ impl Default for Mentions {
 }
 
 impl Mentions {
-    /// Nothing looked at: a walk from the first item.
+    /// Nothing looked at: a fresh walk.
     pub fn new() -> Self {
         Self {
             exists: HashMap::new(),
             budget: MAX_STATS_PER_TRANSCRIPT,
+            exhausted: false,
             upto: 0,
             cwd: None,
         }
     }
 
-    /// Annotate the items of `log` that are not yet, so that every item is
-    /// as a walk of all of them from the first, now, would leave it.
+    /// Annotate the items of `log` so that every item is as a newest-first
+    /// walk of all of them, now, would leave it.
     ///
-    /// The budget is spent in item order, so an item's chips depend on what
-    /// the paths looked at before it turned out to be. While every one of
-    /// them is still what it was, and relative paths resolve against the
-    /// same `cwd`, the items annotated already are exactly as such a walk
-    /// leaves them, and it goes on from the first one not yet annotated.
-    /// Otherwise (a file a message named was written since, or deleted, or
-    /// the transcript has only now said where it runs) the walk starts over
-    /// from the items as written. Either way the chain does not move: the
-    /// chips are not the transcript's.
-    ///
-    /// A parser never changes an annotatable item after making it
-    /// ([`ItemLog::get_mut`]), so the items annotated already are the ones
-    /// below where the last walk stopped. One that took items out or put
-    /// some in below there ([`ItemLog::moved_from`]) moved what the walk saw:
-    /// while none of those it took out or moved along could be chipped, the
-    /// walk saw nothing of them, and goes on from the lowest one moved; when
-    /// one could, it starts over.
+    /// While the transcript stays within [`MAX_STATS_PER_TRANSCRIPT`], walk
+    /// order makes no difference to any item, so an append only inspects the
+    /// newly added items and leaves earlier `Arc`s untouched. Once the budget
+    /// is exhausted and a new annotatable item arrives (or when a file's state
+    /// changed, `cwd` changed, or an annotatable item moved), the walk runs
+    /// newest-first across `log`, reusing the verified-fresh `exists` cache so
+    /// already-checked paths pay no extra `stat` syscalls and mutating only
+    /// items whose chips or labels actually changed.
     pub async fn annotate(&mut self, home: &Path, log: &mut ItemLog, cwd: Option<&str>, citations_of: FileCitations) {
         let mut over = false;
         if log.moved_from() < self.upto {
@@ -255,19 +256,59 @@ impl Mentions {
                 false => self.upto = log.moved_from(),
             }
         }
-        if over || self.upto > log.len() || self.cwd.as_deref() != cwd || self.answers_moved().await {
-            for index in 0..log.len() {
-                if let Some(written) = log.get(index).filter(|item| item.is_annotated()).map(|item| item.as_transcribed().clone()) {
-                    *log.annotate_mut(index) = written;
+        let answers_moved = self.answers_moved().await;
+        let full_reset = over || self.upto > log.len() || self.cwd.as_deref() != cwd || answers_moved;
+
+        if !full_reset && !self.exhausted {
+            // Fast path: earlier items were never budget-capped, so try
+            // annotating only the new suffix newest-first.
+            for index in (self.upto..log.len()).rev() {
+                let Some(item) = log.get(index) else { continue };
+                if let Some(change) = self.look(home, item, cwd, citations_of, None).await {
+                    change.apply(log.annotate_mut(index));
                 }
             }
-            *self = Self::new();
-            self.cwd = cwd.map(str::to_owned);
+            if !self.exhausted || self.upto == 0 {
+                self.upto = log.len();
+                return;
+            }
+            // The new suffix crossed the budget ceiling: re-walk newest-first
+            // across the whole log, reusing the fresh `exists` answers.
+        } else if !full_reset && self.exhausted {
+            let has_new_annotatable = (self.upto..log.len()).any(|i| log.get(i).is_some_and(TranscriptItem::is_annotatable));
+            if !has_new_annotatable {
+                self.upto = log.len();
+                return;
+            }
         }
-        for index in self.upto..log.len() {
-            let Some(item) = log.get(index) else { break };
-            if let Some(change) = self.look(home, item, cwd, citations_of).await {
-                change.apply(log.annotate_mut(index));
+
+        // Reuse the previous `exists` answers only when we just verified none
+        // of them moved on disk.
+        let cached = (!answers_moved).then(|| std::mem::take(&mut self.exists));
+        *self = Self::new();
+        self.cwd = cwd.map(str::to_owned);
+
+        for index in (0..log.len()).rev() {
+            let Some(current) = log.get(index) else { continue };
+            let written = current.as_transcribed();
+            if !written.is_annotatable() {
+                continue;
+            }
+            let change = self.look(home, written, cwd, citations_of, cached.as_ref()).await;
+            match change {
+                Some(change) => {
+                    let mut next = written.clone();
+                    change.apply(&mut next);
+                    if current.files != next.files || current.text != next.text || !current.is_annotated() {
+                        *log.annotate_mut(index) = next;
+                    }
+                }
+                None => {
+                    if current.is_annotated() {
+                        let written = written.clone();
+                        *log.annotate_mut(index) = written;
+                    }
+                }
             }
         }
         self.upto = log.len();
@@ -291,7 +332,14 @@ impl Mentions {
 
     /// The chips `item` gets, and the citations their labels replace, when it
     /// gets any. The paths it looks at are spent from the budget.
-    async fn look(&mut self, home: &Path, item: &TranscriptItem, cwd: Option<&str>, citations_of: FileCitations) -> Option<Change> {
+    async fn look(
+        &mut self,
+        home: &Path,
+        item: &TranscriptItem,
+        cwd: Option<&str>,
+        citations_of: FileCitations,
+        cached: Option<&HashMap<PathBuf, bool>>,
+    ) -> Option<Change> {
         if !item.is_annotatable() {
             return None;
         }
@@ -315,10 +363,14 @@ impl Mentions {
                 Some(known) => *known,
                 None => {
                     if self.budget == 0 {
+                        self.exhausted = true;
                         continue;
                     }
                     self.budget -= 1;
-                    let is_file = tokio::fs::metadata(&absolute).await.map(|m| m.is_file()).unwrap_or(false);
+                    let is_file = match cached.and_then(|map| map.get(&absolute)) {
+                        Some(&known) => known,
+                        None => tokio::fs::metadata(&absolute).await.map(|m| m.is_file()).unwrap_or(false),
+                    };
                     self.exists.insert(absolute.clone(), is_file);
                     is_file
                 }
@@ -494,9 +546,9 @@ mod tests {
         assert_eq!(fingerprint_chain(file, &deleted), chain);
     }
 
-    /// The `stat` budget is spent in order, so which later mentions it reaches
-    /// depends on the files an earlier message names: here six of them
-    /// existing gives a later message its chip. The chain does not move.
+    /// The `stat` budget is spent newest-first, so which earlier mentions it
+    /// reaches depends on the files a newer message names: here six of them
+    /// existing gives an older message its chip. The chain does not move.
     #[tokio::test]
     async fn the_stat_budget_spent_differently_moves_no_fingerprint() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -504,26 +556,55 @@ mod tests {
         let drafts: Vec<String> = (0..MAX_STATS_PER_TRANSCRIPT).map(|n| format!("`d{n}.md`")).collect();
         let items = || {
             vec![
-                make_item(Role::Assistant, ItemKind::Text, &format!("drafts: {}", drafts.join(" ")), None),
                 make_item(Role::Assistant, ItemKind::Text, "wrote `report.md`", None),
+                make_item(Role::Assistant, ItemKind::Text, &format!("drafts: {}", drafts.join(" ")), None),
             ]
         };
         let cwd = home.path().to_str();
         let file = Path::new("/t/s.jsonl");
 
         let spent = annotated(home.path(), items(), cwd).await;
-        assert!(spent[0].files.is_none());
-        assert!(spent[1].files.is_none(), "every stat went on the drafts");
+        assert!(spent[1].files.is_none());
+        assert!(spent[0].files.is_none(), "every stat went on the newer drafts");
 
         for n in 0..MAX_FILES_PER_ITEM {
             std::fs::write(home.path().join(format!("d{n}.md")), "x").expect("write");
         }
         let left = annotated(home.path(), items(), cwd).await;
-        assert_eq!(left[0].files.as_ref().map(Vec::len), Some(MAX_FILES_PER_ITEM));
-        assert_eq!(left[1].files.as_ref().map(Vec::len), Some(1), "six stats found six drafts; the report got one too");
+        assert_eq!(left[1].files.as_ref().map(Vec::len), Some(MAX_FILES_PER_ITEM));
+        assert_eq!(left[0].files.as_ref().map(Vec::len), Some(1), "six stats found six drafts; the older report got one too");
 
         assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &spent));
         assert_eq!(fingerprint_chain(file, &left), fingerprint_chain(file, &items()));
+    }
+
+    /// In a long session where early messages mention more paths than the whole
+    /// `stat` budget, the newest messages still get their download chips — both
+    /// on a fresh parse and when appended incrementally.
+    #[tokio::test]
+    async fn newest_messages_still_get_chips_after_older_messages_exceed_budget() {
+        let home = tempfile::tempdir().expect("tempdir");
+        std::fs::write(home.path().join("early.md"), "old").expect("write");
+        std::fs::write(home.path().join("latest.md"), "new").expect("write");
+        let drafts: Vec<String> = (0..MAX_STATS_PER_TRANSCRIPT + 50).map(|n| format!("`~/gone{n}.md`")).collect();
+
+        let mut mentions = Mentions::new();
+        let mut log = ItemLog::new();
+        log.push(make_item(Role::Assistant, ItemKind::Text, "see `~/early.md`", None));
+        log.push(make_item(Role::Assistant, ItemKind::Text, &drafts.join(" "), None));
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+        assert!(log.items()[0].files.is_none(), "early message sits behind the budget spender");
+
+        let (items, _) = log.into_parts();
+        let mut log = ItemLog::resume(items);
+        log.push(make_item(Role::Assistant, ItemKind::Text, "wrote `~/latest.md`", None));
+        mentions.annotate(home.path(), &mut log, None, no_citations).await;
+
+        let mut whole: Vec<TranscriptItem> = log.items().iter().map(|item| item.as_transcribed().clone()).collect();
+        annotate_mentioned_files(home.path(), &mut whole, None, no_citations).await;
+        assert_eq!(whole[2].files.as_ref().map(Vec::len), Some(1), "newest message gets its chip");
+        assert_eq!(log.items()[2].files, whole[2].files, "incremental matches fresh walk");
+        assert_eq!(log.items()[0].files, whole[0].files);
     }
 
     /// Annotating a transcript's items a few at a time, as a parse that goes
@@ -593,10 +674,10 @@ mod tests {
         assert_eq!(served(&log), whole(&log).await, "started over");
     }
 
-    /// Where starting over matters: a message that spent the whole budget is
-    /// moved along by one put in ahead of it, which a walk from the first
-    /// item looks at first, with the budget whole. Walking on from where it
-    /// was put in, the budget would be spent already.
+    /// Where re-walking matters: a message that spent the whole budget gets a
+    /// newer message appended after it, which a newest-first walk looks at
+    /// first, with the budget whole — and an item inserted ahead of the spender
+    /// stays behind it, matching a fresh walk either way.
     #[tokio::test]
     async fn a_message_put_in_ahead_of_the_one_that_spent_the_budget_is_walked_with_it_whole() {
         let home = tempfile::tempdir().expect("tempdir");
@@ -610,11 +691,13 @@ mod tests {
         let (items, _) = log.into_parts();
         let mut log = ItemLog::resume(items);
         log.insert(0, [make_item(Role::Assistant, ItemKind::Text, "see `~/notes.md`", None)]);
+        log.push(make_item(Role::Assistant, ItemKind::Text, "latest `~/notes.md`", None));
         mentions.annotate(home.path(), &mut log, None, no_citations).await;
         let mut whole: Vec<TranscriptItem> = log.items().iter().map(|item| item.as_transcribed().clone()).collect();
         annotate_mentioned_files(home.path(), &mut whole, None, no_citations).await;
-        assert_eq!(whole[0].files.as_ref().map(Vec::len), Some(1), "a walk from the first item chips it");
-        assert_eq!(log.items()[0].files, whole[0].files, "and so does this one");
+        assert_eq!(whole[2].files.as_ref().map(Vec::len), Some(1), "a newest-first walk chips the latest item");
+        assert_eq!(log.items()[2].files, whole[2].files, "and so does incremental annotation");
+        assert_eq!(log.items()[0].files, whole[0].files);
     }
 
     /// A file the item already named keeps counting, as the transcript's own:
