@@ -398,6 +398,19 @@ fn queued_prompt_text(attachment: &Json) -> Option<String> {
     }
 }
 
+/// Whether a `queued_command` prompt block list carried native `image` or
+/// `document` blocks.
+fn queued_prompt_has_media(attachment: &Json) -> bool {
+    attachment
+        .get("prompt")
+        .and_then(Value::as_array)
+        .is_some_and(|blocks| {
+            blocks.iter().filter_map(Value::as_object).any(|block| {
+                matches!(block.get("type").and_then(Value::as_str), Some("image" | "document"))
+            })
+        })
+}
+
 /// The message a `queued_command` attachment carries, when it is somebody's.
 ///
 /// The CLI's input queue holds the user's steers, slash commands, its own task
@@ -407,6 +420,8 @@ struct QueuedMessage {
     /// The message text, with the inline base64 images dropped (the CLI's
     /// `[Image #N]` markers remain).
     text: String,
+    /// Whether the prompt carried native `image` or `document` content blocks.
+    has_media: bool,
     /// The `from` of a peer origin, when another agent wrote it. `Some(None)`
     /// is a peer that did not name itself; `None` is the user.
     peer_from: Option<Option<String>>,
@@ -423,12 +438,13 @@ impl QueuedMessage {
             return None;
         }
         let text = queued_prompt_text(attachment)?;
+        let has_media = queued_prompt_has_media(attachment);
         let peer_from = attachment
             .get("origin")
             .and_then(Value::as_object)
             .filter(|origin| origin.get("kind").and_then(Value::as_str) == Some("peer"))
             .map(|origin| origin.get("from").and_then(Value::as_str).map(str::to_owned));
-        Some(Self { text, peer_from })
+        Some(Self { text, has_media, peer_from })
     }
 
     /// Whether another agent wrote this rather than the user: its origin says
@@ -456,7 +472,8 @@ impl QueuedMessage {
 /// thing here that must stay invisible.
 fn queued_command_line(
     entry: &Json,
-    deliveries: Option<&mut ChatDeliveries>,
+    parse: &mut ClaudeParse,
+    paths: &droppen_instance::paths::Paths,
     timestamp: Option<&str>,
 ) -> Option<UserLine> {
     let queued = QueuedMessage::from_entry(entry)?;
@@ -468,7 +485,13 @@ fn queued_command_line(
     }
     // The queue also carries slash commands and, defensively, notification text
     // under some other mode; `claude_user_item` already classifies all of those.
-    let delivery = deliveries.and_then(|deliveries| deliveries.lookup(&queued.text, timestamp));
+    let delivery = if parse.is_chat || queued.has_media {
+        parse
+            .ensure_deliveries(paths)
+            .and_then(|deliveries| deliveries.lookup(&queued.text, timestamp))
+    } else {
+        None
+    };
     claude_user_item(&queued.text, timestamp, delivery.as_ref())
 }
 
@@ -501,6 +524,54 @@ pub(crate) fn absorbed_prompt(entry: &Value) -> Option<String> {
     (!queued.from_peer()).then_some(queued.text)
 }
 
+/// Apply a matched delivery record onto a user item: strip CLI `[Image #N]`
+/// markers and inlined chat file blocks, and merge native images/files with
+/// any fallback suffix attachments already parsed from `raw_text`.
+fn apply_delivery(item: &mut TranscriptItem, delivery: &DeliveredAttachments) {
+    if !delivery.images.is_empty() {
+        item.text = droppen_sessions::chat_delivery::strip_image_markers(&item.text)
+            .trim()
+            .to_string();
+    }
+    if !delivery.files.is_empty() {
+        item.text = droppen_sessions::util::strip_chat_file_blocks(&item.text, &delivery.files)
+            .trim()
+            .to_string();
+    }
+    if !delivery.images.is_empty() {
+        let mut merged = delivery.images.clone();
+        if let Some(existing) = item.images.take() {
+            for path in existing {
+                if !merged.contains(&path) {
+                    merged.push(path);
+                }
+            }
+        }
+        item.images = Some(merged);
+    }
+    if !delivery.files.is_empty() {
+        let mut merged: Vec<droppen_sessions::util::FileRef> = delivery
+            .files
+            .iter()
+            .map(|path| droppen_sessions::util::FileRef {
+                name: Path::new(path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                path: path.clone(),
+            })
+            .collect();
+        if let Some(existing) = item.files.take() {
+            for file in existing {
+                if !merged.iter().any(|seen| seen.path == file.path) {
+                    merged.push(file);
+                }
+            }
+        }
+        item.files = Some(merged);
+    }
+}
+
 /// User entries carry several kinds of machine chatter (slash-command metadata,
 /// task notifications, interrupt markers, attached-image suffixes). Turn them
 /// into quiet system lines / thumbnails instead of raw XML walls.
@@ -518,8 +589,9 @@ fn claude_user_item(raw_text: &str, timestamp: Option<&str>, delivery: Option<&D
         .get_or_init(|| regex::Regex::new(r"(?s)^<local-command-stdout>(.*?)</local-command-stdout>\s*$").expect("valid stdout pattern"));
     let interrupt = INTERRUPT.get_or_init(|| regex::Regex::new(r"^\[Request interrupted by user[^\]]*\]$").expect("valid interrupt pattern"));
 
+    let has_delivery_attachments = delivery.is_some_and(|d| !d.images.is_empty() || !d.files.is_empty());
     let text = raw_text.trim();
-    if text.is_empty() {
+    if text.is_empty() && !has_delivery_attachments {
         return None;
     }
     if let Some(caps) = command.captures(text) {
@@ -549,26 +621,11 @@ fn claude_user_item(raw_text: &str, timestamp: Option<&str>, delivery: Option<&D
         return Some(UserLine::Item(Box::new(task_notification_item(text, timestamp))));
     }
     let mut item = TranscriptItem::user_text(raw_text, timestamp);
-    // Only a delivery record turns a chat's blocks into a thumbnail and its
-    // inlined text into file chips. Text alone never does, so a message cannot
-    // forge either in any session's view.
+    // Only a delivery record turns inline blocks into thumbnails / chips and
+    // strips CLI `[Image #N]` markers or inlined file blocks. Text alone never
+    // does, so a message cannot forge either in any session's view.
     if let Some(delivery) = delivery {
-        item.text = droppen_sessions::util::strip_chat_file_blocks(&item.text, &delivery.files);
-        if !delivery.images.is_empty() {
-            item.images = Some(delivery.images.clone());
-        }
-        if !delivery.files.is_empty() {
-            item.files = Some(
-                delivery
-                    .files
-                    .iter()
-                    .map(|path| droppen_sessions::util::FileRef {
-                        name: Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
-                        path: path.clone(),
-                    })
-                    .collect(),
-            );
-        }
+        apply_delivery(&mut item, delivery);
     }
     Some(UserLine::Item(Box::new(item)))
 }
@@ -915,9 +972,12 @@ struct ClaudeParse {
     tool_paths: HashMap<String, String>,
     /// Session cwd resolves relative file mentions in assistant output.
     cwd: Option<String>,
-    /// A chat turn's attachment links are read from the delivery rows the
-    /// driver wrote; an ordinary session never constructs this, so parsing one
-    /// does no database work at all.
+    /// Whether this transcript belongs to an instant chat (cwd == chats_cwd).
+    is_chat: bool,
+    /// Native attachment links are read lazily from the delivery rows the
+    /// driver wrote: eagerly for chats, and on demand when a coding session's
+    /// user entry contains inline `image` or `document` blocks. An ordinary
+    /// text-only coding session never constructs this, doing no database work.
     deliveries: Option<ChatDeliveries>,
     deliveries_ready: bool,
     /// The delivery rows as they stood before the first was looked up
@@ -944,6 +1004,7 @@ impl ClaudeParse {
             pending_questions: HashMap::new(),
             tool_paths: HashMap::new(),
             cwd: None,
+            is_chat: false,
             deliveries: None,
             deliveries_ready: false,
             deliveries_rows: None,
@@ -953,9 +1014,23 @@ impl ClaudeParse {
         }
     }
 
-    /// Whether a parse can go on from this one: a chat's delivery rows are as
-    /// they were before this parse looked any up. A row recorded since may
-    /// belong to an entry already read without it (the driver records a
+    /// Lazily open the delivery store for this session (never for sidechain
+    /// subagents), snapshotting `deliveries_rows` before the first lookup.
+    fn ensure_deliveries(&mut self, paths: &droppen_instance::paths::Paths) -> Option<&mut ChatDeliveries> {
+        if self.sidechain {
+            return None;
+        }
+        if self.deliveries.is_none() {
+            let deliveries = ChatDeliveries::new(paths, Source::Claude, &self.session_id);
+            self.deliveries_rows = deliveries.rows();
+            self.deliveries = Some(deliveries);
+        }
+        self.deliveries.as_mut()
+    }
+
+    /// Whether a parse can go on from this one: the session's delivery rows
+    /// are as they were before this parse looked any up. A row recorded since
+    /// may belong to an entry already read without it (the driver records a
     /// delivery after it sends the message), and one pruned since is gone
     /// from a parse from the start; either way the session is read whole.
     fn current(&self) -> bool {
@@ -978,9 +1053,8 @@ impl ClaudeParse {
             if let Some(cwd) = self.cwd.as_deref() {
                 self.deliveries_ready = true;
                 if !self.sidechain && Path::new(cwd) == chats_cwd(paths) {
-                    let deliveries = ChatDeliveries::new(paths, Source::Claude, &self.session_id);
-                    self.deliveries_rows = deliveries.rows();
-                    self.deliveries = Some(deliveries);
+                    self.is_chat = true;
+                    let _ = self.ensure_deliveries(paths);
                 }
             }
         }
@@ -1105,19 +1179,24 @@ impl ClaudeParse {
                 return;
             }
             let blocks = content_blocks(entry.get("message"));
-            // A chat turn's attachment links come from the delivery record the
-            // driver wrote, keyed by this exact text. The text alone never
-            // makes a thumbnail or a chip.
+            // Attachment links come from the delivery record the driver wrote,
+            // keyed by this exact text. Chats always check (for inlined text
+            // files too); coding sessions only check when the entry actually
+            // carries native `image` or `document` content blocks.
+            let has_media_blocks = blocks.iter().any(|block| {
+                matches!(block.get("type").and_then(Value::as_str), Some("image" | "document"))
+            });
             let joined = blocks
                 .iter()
                 .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
                 .map(block_text)
                 .collect::<Vec<_>>()
                 .join("\n");
-            let delivery = if joined.is_empty() {
-                None
+            let mut pending_delivery = if self.is_chat || has_media_blocks {
+                self.ensure_deliveries(paths)
+                    .and_then(|deliveries| deliveries.lookup(&joined, timestamp))
             } else {
-                self.deliveries.as_mut().and_then(|deliveries| deliveries.lookup(&joined, timestamp))
+                None
             };
             let results = blocks
                 .iter()
@@ -1127,8 +1206,13 @@ impl ClaudeParse {
             let patch = (results == 1).then(|| structured_patch(&entry)).flatten();
             for block in blocks {
                 match block.get("type").and_then(Value::as_str) {
-                    Some("text") => match claude_user_item(&block_text(&block), timestamp, delivery.as_ref()) {
-                        Some(UserLine::Item(item)) => items.push(*item),
+                    Some("text") => match claude_user_item(&block_text(&block), timestamp, pending_delivery.as_ref()) {
+                        Some(UserLine::Item(item)) => {
+                            if item.role == Role::User {
+                                pending_delivery = None;
+                            }
+                            items.push(*item);
+                        }
                         Some(UserLine::CommandOutput(body)) => {
                             if let Some(item) = attach_command_output(items, &body, false, timestamp) {
                                 items.push(item);
@@ -1161,11 +1245,20 @@ impl ClaudeParse {
                     _ => {}
                 }
             }
+            // Attachment-only user turns (e.g., an image or PDF sent with no
+            // text block at all) still emit a user item carrying thumbnails/chips.
+            if let Some(delivery) = pending_delivery {
+                if !delivery.images.is_empty() || !delivery.files.is_empty() {
+                    let mut item = make_item(Role::User, ItemKind::Text, "", timestamp);
+                    apply_delivery(&mut item, &delivery);
+                    items.push(item);
+                }
+            }
         } else if entry_type == "attachment" {
             // Almost every attachment is a reminder the CLI wrote to itself, but
             // one shape — a queued command absorbed into a running turn — is the
             // only record of something the user said. See `queued_command_line`.
-            match queued_command_line(&entry, self.deliveries.as_mut(), timestamp) {
+            match queued_command_line(&entry, self, paths, timestamp) {
                 Some(UserLine::Item(item)) => items.push(*item),
                 Some(UserLine::CommandOutput(body)) => {
                     if let Some(item) = attach_command_output(items, &body, false, timestamp) {
@@ -1785,7 +1878,7 @@ mod tests {
 
         let items = parse_claude_transcript(&paths, &path, false).await.expect("parse");
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].text, "[Image #1] look", "the inlined block is stripped");
+        assert_eq!(items[0].text, "look", "the CLI image marker and inlined block are stripped");
         assert_eq!(items[0].images.as_deref(), Some([upload.to_string_lossy().into_owned()].as_slice()));
         let files = items[0].files.as_ref().expect("a file chip");
         assert_eq!(files.len(), 1);
@@ -2585,5 +2678,102 @@ mod tests {
         assert_eq!(items.len(), 1, "the fallback is an item rather than nothing");
         assert_eq!((items[0].role, items[0].kind), (Role::System, ItemKind::Text));
         assert_eq!(items[0].text, "model fallback: claude-fable-5 → claude-opus-4-8");
+    }
+
+    /// Coding sessions (outside chats_cwd) deliver native image and PDF blocks
+    /// and record them in `chat_deliveries`. Parsing must resolve those rows
+    /// for sessions too, strip leading `[Image #N]` markers, merge with any
+    /// fallback suffix attachments instead of overwriting, handle attachment-
+    /// only turns, and attach delivery metadata only once per user entry.
+    #[tokio::test]
+    async fn session_native_attachments_resolve_strip_markers_and_merge_fallbacks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = droppen_instance::paths::Paths::new(dir.path().to_path_buf());
+        let session_path = dir.path().join("sess-native.jsonl");
+        let workdir = dir.path().join("project");
+        let png = paths.uploads_dir().join("u1/shot.png").to_string_lossy().into_owned();
+        let pdf = paths.uploads_dir().join("u2/spec.pdf").to_string_lossy().into_owned();
+        let rs = paths.uploads_dir().join("u3/lib.rs").to_string_lossy().into_owned();
+        let hybrid_wire_text = format!("check these{}", droppen_provider::attachment_suffix(&[rs.clone()]));
+
+        // Delivery 1: hybrid turn (native PNG + native PDF + fallback .rs in suffix,
+        // joined with the second text block as the parser sees the entry).
+        droppen_sessions::chat_delivery::record(
+            &paths,
+            Source::Claude,
+            "sess-native",
+            "q-1",
+            &format!("{hybrid_wire_text}\nsecond text block"),
+            &[png.clone()],
+            &[pdf.clone()],
+        );
+        // Delivery 2: image-only turn with no user text.
+        droppen_sessions::chat_delivery::record(
+            &paths,
+            Source::Claude,
+            "sess-native",
+            "q-2",
+            "",
+            &[png.clone()],
+            &[],
+        );
+
+        let lines = [
+            serde_json::json!({
+                "type": "user",
+                "cwd": workdir.to_string_lossy(),
+                "timestamp": "2099-01-01T00:00:01.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AAAA" } },
+                        { "type": "document", "source": { "type": "base64", "media_type": "application/pdf", "data": "JVBERg==" } },
+                        { "type": "text", "text": format!("[Image #1] {hybrid_wire_text}") },
+                        { "type": "text", "text": "second text block" }
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "type": "user",
+                "cwd": workdir.to_string_lossy(),
+                "timestamp": "2099-01-01T00:00:02.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "AAAA" } }
+                    ]
+                }
+            }),
+        ];
+        let mut file = std::fs::File::create(&session_path).expect("create");
+        for line in &lines {
+            writeln!(file, "{line}").expect("write");
+        }
+        drop(file);
+
+        let items = parse_claude_transcript(&paths, &session_path, false).await.expect("parse");
+        assert_eq!(items.len(), 3, "two text blocks from entry 1 + one attachment-only item from entry 2");
+
+        // Entry 1, first text block: marker stripped, native PNG + PDF merged with fallback lib.rs.
+        assert_eq!(items[0].text, "check these");
+        assert_eq!(items[0].images.as_deref(), Some([png.clone()].as_slice()));
+        let file_paths: Vec<&str> = items[0]
+            .files
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect();
+        assert_eq!(file_paths, [pdf.as_str(), rs.as_str()]);
+
+        // Entry 1, second text block: delivery must not be duplicated onto it.
+        assert_eq!(items[1].text, "second text block");
+        assert_eq!(items[1].images, None);
+        assert_eq!(items[1].files, None);
+
+        // Entry 2: image-only user turn emits an item with its thumbnail.
+        assert_eq!(items[2].role, Role::User);
+        assert_eq!(items[2].text, "");
+        assert_eq!(items[2].images.as_deref(), Some([png].as_slice()));
     }
 }

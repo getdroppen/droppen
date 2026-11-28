@@ -36,7 +36,11 @@ pub(super) struct AbsorbAnchor {
 /// the CLI records the very text it was handed, and anything looser would let a
 /// short message — "继续" — match a fold of some other message.
 pub(super) fn same_prompt(written: &str, recorded: &str) -> bool {
-    let normal = |text: &str| text.trim().replace("\r\n", "\n");
+    let normal = |text: &str| {
+        let stripped = droppen_sessions::chat_delivery::strip_image_markers(text.trim());
+        let without_suffix = droppen_sessions::util::parse_attachment_suffix(stripped).text;
+        without_suffix.trim().replace("\r\n", "\n")
+    };
     normal(written) == normal(recorded)
 }
 
@@ -814,16 +818,28 @@ impl Driver {
         self.publish();
     }
 
-    /// The stdin line for one message: its text plus whatever its chat
-    /// attachments become at this moment, and the delivery to record **after**
-    /// the line is written.
+    /// The stdin line for one message: its text plus whatever its attachments
+    /// become at this moment, and the delivery to record **after** the line is
+    /// written.
     ///
-    /// A chat carries upload paths rather than bytes, so the bytes can be
-    /// megabytes each and the journal stays small. They are re-fenced and
-    /// re-read here, at the moment they go to the CLI: an upload swept since
-    /// the send fails the message with its own reason rather than sending an
-    /// empty block or a stale prompt.
+    /// Messages carry upload paths rather than bytes, so the journal stays
+    /// small while attachments can be megabytes each. At delivery:
+    ///
+    /// * **Instant chats** (`chat == true`, `--disallowedTools *`) are strict:
+    ///   images become native `image` blocks, PDFs become native `document`
+    ///   blocks (sharing the 20 MiB binary budget), and other files are
+    ///   inlined as UTF-8 text blocks. Unsupported or oversized files fail
+    ///   loudly rather than passing an unreadable path.
+    /// * **Coding sessions** (`chat == false`) send valid PNG/JPEG/GIF/WebP
+    ///   images as native `image` blocks and valid PDFs as native `document`
+    ///   blocks within the size caps, and fall back to appending the path
+    ///   suffix on the wire for non-PDF files or oversized/unsupported media
+    ///   so the agent can still inspect them via tools. Path escapes and
+    ///   hardlinks still fail loudly.
     async fn user_line_for(&self, pending: &Pending) -> Result<(String, Option<DeliveryRecord>), String> {
+        use droppen_provider::chat_attachments::{
+            is_pdf_path, read_chat_image, read_chat_pdf, read_chat_text_file, ChatAttachmentError, MAX_IMAGE_TOTAL_BYTES,
+        };
         let paths = &self.runs.host.paths;
         if pending.images.is_empty() && pending.files.is_empty() {
             // A chat message with nothing attached still gets a delivery row:
@@ -837,43 +853,111 @@ impl Driver {
             });
             return Ok((user_line(&pending.text), delivery));
         }
-        let mut images = Vec::with_capacity(pending.images.len());
-        let mut image_total = 0u64;
-        for path in &pending.images {
-            let image = droppen_provider::chat_attachments::read_chat_image(paths, path)
-                .await
-                .map_err(|error| error.to_string())?;
-            image_total = image_total.saturating_add(image.raw_len);
-            if image_total > droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES {
-                return Err(
-                    droppen_provider::chat_attachments::ChatAttachmentError::ImagesTooLarge {
-                        limit: droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES,
+
+        if pending.fingerprint.chat {
+            let mut images = Vec::with_capacity(pending.images.len());
+            let mut documents = Vec::new();
+            let mut binary_total = 0u64;
+            for path in &pending.images {
+                let image = read_chat_image(paths, path).await.map_err(|error| error.to_string())?;
+                binary_total = binary_total.saturating_add(image.raw_len);
+                if binary_total > MAX_IMAGE_TOTAL_BYTES {
+                    return Err(ChatAttachmentError::ImagesTooLarge {
+                        limit: MAX_IMAGE_TOTAL_BYTES,
                     }
-                    .to_string(),
-                );
+                    .to_string());
+                }
+                images.push((image.media_type, image.data));
             }
-            images.push((image.media_type, image.data));
+            let mut inlined = String::new();
+            let mut text_total = 0u64;
+            for path in &pending.files {
+                if is_pdf_path(path) {
+                    let doc = read_chat_pdf(paths, path).await.map_err(|error| error.to_string())?;
+                    binary_total = binary_total.saturating_add(doc.raw_len);
+                    if binary_total > MAX_IMAGE_TOTAL_BYTES {
+                        return Err(ChatAttachmentError::ImagesTooLarge {
+                            limit: MAX_IMAGE_TOTAL_BYTES,
+                        }
+                        .to_string());
+                    }
+                    documents.push((doc.media_type, doc.data));
+                } else {
+                    let content = read_chat_text_file(paths, path, &mut text_total)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    inlined.push_str(&droppen_sessions::util::chat_file_block(path, &content));
+                }
+            }
+            let text = if inlined.is_empty() {
+                pending.text.clone()
+            } else {
+                format!("{}{inlined}", pending.text)
+            };
+            let delivery = Some(DeliveryRecord {
+                id: pending.id.clone(),
+                text: text.clone(),
+                images: pending.images.clone(),
+                files: pending.files.clone(),
+            });
+            return Ok((user_line_with_blocks(&text, &images, &documents), delivery));
         }
-        let mut inlined = String::new();
-        let mut total = 0u64;
+
+        // Coding session: prefer native image/document blocks; fall back to
+        // path suffix on the wire for non-PDF files or oversized/unsupported
+        // media so the agent can still read them with tools.
+        let mut images = Vec::new();
+        let mut documents = Vec::new();
+        let mut native_images = Vec::new();
+        let mut native_files = Vec::new();
+        let mut fallback_paths = Vec::new();
+        let mut binary_total = 0u64;
+
+        for path in &pending.images {
+            match read_chat_image(paths, path).await {
+                Ok(image) if binary_total.saturating_add(image.raw_len) <= MAX_IMAGE_TOTAL_BYTES => {
+                    binary_total = binary_total.saturating_add(image.raw_len);
+                    images.push((image.media_type, image.data));
+                    native_images.push(path.clone());
+                }
+                Ok(_) => fallback_paths.push(path.clone()),
+                Err(error @ (ChatAttachmentError::OutsideUploads | ChatAttachmentError::HardLinked { .. })) => {
+                    return Err(error.to_string());
+                }
+                Err(_) => fallback_paths.push(path.clone()),
+            }
+        }
         for path in &pending.files {
-            let content = droppen_provider::chat_attachments::read_chat_text_file(paths, path, &mut total)
-                .await
-                .map_err(|error| error.to_string())?;
-            inlined.push_str(&droppen_sessions::util::chat_file_block(path, &content));
+            if is_pdf_path(path) {
+                match read_chat_pdf(paths, path).await {
+                    Ok(doc) if binary_total.saturating_add(doc.raw_len) <= MAX_IMAGE_TOTAL_BYTES => {
+                        binary_total = binary_total.saturating_add(doc.raw_len);
+                        documents.push((doc.media_type, doc.data));
+                        native_files.push(path.clone());
+                    }
+                    Ok(_) => fallback_paths.push(path.clone()),
+                    Err(error @ (ChatAttachmentError::OutsideUploads | ChatAttachmentError::HardLinked { .. })) => {
+                        return Err(error.to_string());
+                    }
+                    Err(_) => fallback_paths.push(path.clone()),
+                }
+            } else {
+                fallback_paths.push(path.clone());
+            }
         }
-        let text = if inlined.is_empty() {
+
+        let wire_text = if fallback_paths.is_empty() {
             pending.text.clone()
         } else {
-            format!("{}{inlined}", pending.text)
+            format!("{}{}", pending.text, droppen_provider::attachment_suffix(&fallback_paths))
         };
-        let delivery = pending.fingerprint.chat.then(|| DeliveryRecord {
+        let delivery = (!native_images.is_empty() || !native_files.is_empty()).then(|| DeliveryRecord {
             id: pending.id.clone(),
-            text: text.clone(),
-            images: pending.images.clone(),
-            files: pending.files.clone(),
+            text: wire_text.clone(),
+            images: native_images,
+            files: native_files,
         });
-        Ok((user_line_with_images(&text, &images), delivery))
+        Ok((user_line_with_blocks(&wire_text, &images, &documents), delivery))
     }
 
     /// Write the row the transcript parser reads for this delivery.

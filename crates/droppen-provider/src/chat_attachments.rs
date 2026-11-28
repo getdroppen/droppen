@@ -30,11 +30,15 @@ use droppen_instance::paths::Paths;
 
 /// The largest image a claude chat sends, in bytes after reading.
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
-/// The largest total of image bytes one message carries.
+/// The largest PDF document sent as a native `document` content block.
+pub const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
+/// The largest total of binary attachment bytes (images + PDF documents) one
+/// message carries as inline base64 content blocks.
 ///
-/// Twenty megabytes of image bytes become about 26.7 MB of base64 in a single
+/// Twenty megabytes of binary bytes become about 26.7 MB of base64 in a single
 /// stdin line; with the text and JSON framing that stays under the CLI's 32 MB
-/// request limit with headroom. Larger messages are refused rather than built.
+/// request limit with headroom. Larger messages are refused in chats or fall
+/// back to path references in sessions.
 pub const MAX_IMAGE_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
 /// The largest single text file a claude chat inlines.
 pub const MAX_TEXT_FILE_BYTES: u64 = 100 * 1024;
@@ -52,6 +56,17 @@ pub struct ChatImage {
     pub raw_len: u64,
 }
 
+/// A PDF document ready to travel as a native `document` content block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatDocument {
+    /// Always `"application/pdf"`.
+    pub media_type: &'static str,
+    /// The whole file, standard base64.
+    pub data: String,
+    /// The file's size before base64, for the per-message binary total.
+    pub raw_len: u64,
+}
+
 /// Why a chat attachment could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatAttachmentError {
@@ -61,6 +76,13 @@ pub enum ChatAttachmentError {
     Missing,
     /// Over [`MAX_IMAGE_BYTES`].
     ImageTooLarge {
+        /// The upload's file name.
+        name: String,
+        /// The cap that was passed.
+        limit: u64,
+    },
+    /// Over [`MAX_PDF_BYTES`].
+    PdfTooLarge {
         /// The upload's file name.
         name: String,
         /// The cap that was passed.
@@ -78,7 +100,7 @@ pub enum ChatAttachmentError {
         /// The cap that was passed.
         limit: u64,
     },
-    /// The message's images together are over [`MAX_IMAGE_TOTAL_BYTES`].
+    /// The message's inline binary blocks together are over [`MAX_IMAGE_TOTAL_BYTES`].
     ImagesTooLarge {
         /// The cap that was passed.
         limit: u64,
@@ -91,6 +113,11 @@ pub enum ChatAttachmentError {
     },
     /// Not one of the four image types the API takes.
     UnsupportedImage {
+        /// The upload's file name.
+        name: String,
+    },
+    /// Not a valid PDF document (`%PDF-` header).
+    UnsupportedDocument {
         /// The upload's file name.
         name: String,
     },
@@ -109,6 +136,9 @@ impl std::fmt::Display for ChatAttachmentError {
             Self::ImageTooLarge { name, limit } => {
                 write!(f, "{name} is too large for a claude chat (images are at most {} MB)", limit / (1024 * 1024))
             }
+            Self::PdfTooLarge { name, limit } => {
+                write!(f, "{name} is too large for a claude chat (PDFs are at most {} MB)", limit / (1024 * 1024))
+            }
             Self::FileTooLarge { name, limit } => {
                 write!(f, "{name} is too large for a claude chat (text files are at most {} KB)", limit / 1024)
             }
@@ -122,6 +152,9 @@ impl std::fmt::Display for ChatAttachmentError {
             Self::UnsupportedImage { name } => {
                 write!(f, "{name} is not an image a claude chat can take (PNG, JPEG, GIF or WebP)")
             }
+            Self::UnsupportedDocument { name } => {
+                write!(f, "{name} is not a valid PDF document")
+            }
             Self::NotText { name } => write!(f, "{name} is not a UTF-8 text file a claude chat can take"),
         }
     }
@@ -132,6 +165,16 @@ impl std::error::Error for ChatAttachmentError {}
 /// Decode the base64 payload of an `image` content block.
 pub fn image_bytes(data: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(data).ok()
+}
+
+/// Whether `path` has a `.pdf` file extension (case-insensitive).
+pub fn is_pdf_path(path: &str) -> bool {
+    Path::new(path).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+}
+
+/// Whether `bytes` begin with the PDF file signature (`%PDF-`).
+pub fn is_pdf_bytes(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF-")
 }
 
 /// The media type of `bytes`, when it is one the API takes.
@@ -205,6 +248,8 @@ fn name_of(requested: &str) -> String {
 enum Cap {
     /// [`MAX_IMAGE_BYTES`].
     Image,
+    /// [`MAX_PDF_BYTES`].
+    Pdf,
     /// [`MAX_TEXT_FILE_BYTES`].
     File,
 }
@@ -213,6 +258,7 @@ impl Cap {
     fn limit(self) -> u64 {
         match self {
             Self::Image => MAX_IMAGE_BYTES,
+            Self::Pdf => MAX_PDF_BYTES,
             Self::File => MAX_TEXT_FILE_BYTES,
         }
     }
@@ -222,6 +268,10 @@ impl Cap {
             Self::Image => ChatAttachmentError::ImageTooLarge {
                 name: name_of(requested),
                 limit: MAX_IMAGE_BYTES,
+            },
+            Self::Pdf => ChatAttachmentError::PdfTooLarge {
+                name: name_of(requested),
+                limit: MAX_PDF_BYTES,
             },
             Self::File => ChatAttachmentError::FileTooLarge {
                 name: name_of(requested),
@@ -290,6 +340,22 @@ pub async fn read_chat_image(paths: &Paths, requested: &str) -> Result<ChatImage
     let raw_len = bytes.len() as u64;
     Ok(ChatImage {
         media_type,
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        raw_len,
+    })
+}
+
+/// Read one PDF document from uploads, ready to become a native `document` content block.
+pub async fn read_chat_pdf(paths: &Paths, requested: &str) -> Result<ChatDocument, ChatAttachmentError> {
+    let bytes = read_fenced(paths.clone(), requested.to_string(), Cap::Pdf).await?;
+    if !is_pdf_bytes(&bytes) {
+        return Err(ChatAttachmentError::UnsupportedDocument {
+            name: name_of(requested),
+        });
+    }
+    let raw_len = bytes.len() as u64;
+    Ok(ChatDocument {
+        media_type: "application/pdf",
         data: base64::engine::general_purpose::STANDARD.encode(bytes),
         raw_len,
     })
@@ -446,5 +512,15 @@ mod tests {
         let text = upload(&paths, "notes.txt", b"hello");
         let mut total = 0;
         assert_eq!(read_chat_text_file(&paths, &text, &mut total).await.expect("text"), "hello");
+
+        let pdf = upload(&paths, "spec.pdf", b"%PDF-1.7\nhello");
+        let doc = read_chat_pdf(&paths, &pdf).await.expect("valid pdf");
+        assert_eq!(doc.media_type, "application/pdf");
+        assert_eq!(doc.raw_len, b"%PDF-1.7\nhello".len() as u64);
+        assert_eq!(image_bytes(&doc.data).as_deref(), Some(b"%PDF-1.7\nhello".as_slice()));
+
+        let fake_pdf = upload(&paths, "fake.pdf", b"not a pdf");
+        let error = read_chat_pdf(&paths, &fake_pdf).await.expect_err("not pdf");
+        assert!(matches!(error, ChatAttachmentError::UnsupportedDocument { .. }));
     }
 }

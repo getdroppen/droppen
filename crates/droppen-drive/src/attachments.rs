@@ -45,13 +45,13 @@ pub(crate) async fn validate_claude_chat_attachments(
     images: &[String],
     files: &[String],
 ) -> Result<(), ApiError> {
-    let mut image_total = 0u64;
+    let mut binary_total = 0u64;
     for path in images {
         let image = droppen_provider::chat_attachments::read_chat_image(paths, path)
             .await
             .map_err(chat_attachment_refusal)?;
-        image_total = image_total.saturating_add(image.raw_len);
-        if image_total > droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES {
+        binary_total = binary_total.saturating_add(image.raw_len);
+        if binary_total > droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES {
             return Err(ApiError::bad_request(
                 droppen_provider::chat_attachments::ChatAttachmentError::ImagesTooLarge {
                     limit: droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES,
@@ -62,9 +62,24 @@ pub(crate) async fn validate_claude_chat_attachments(
     }
     let mut total = 0u64;
     for path in files {
-        droppen_provider::chat_attachments::read_chat_text_file(paths, path, &mut total)
-            .await
-            .map_err(chat_attachment_refusal)?;
+        if droppen_provider::chat_attachments::is_pdf_path(path) {
+            let doc = droppen_provider::chat_attachments::read_chat_pdf(paths, path)
+                .await
+                .map_err(chat_attachment_refusal)?;
+            binary_total = binary_total.saturating_add(doc.raw_len);
+            if binary_total > droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES {
+                return Err(ApiError::bad_request(
+                    droppen_provider::chat_attachments::ChatAttachmentError::ImagesTooLarge {
+                        limit: droppen_provider::chat_attachments::MAX_IMAGE_TOTAL_BYTES,
+                    }
+                    .to_string(),
+                ));
+            }
+        } else {
+            droppen_provider::chat_attachments::read_chat_text_file(paths, path, &mut total)
+                .await
+                .map_err(chat_attachment_refusal)?;
+        }
     }
     Ok(())
 }
@@ -116,8 +131,22 @@ pub(crate) fn resolve_attachments(paths: &Paths, images: Vec<String>, files: Vec
                 if !inside {
                     return Err(ApiError::new(StatusCode::CONFLICT, "attachment paths must come from /api/uploads"));
                 }
-                if !std::fs::metadata(&real).is_ok_and(|meta| meta.is_file()) {
+                let meta = std::fs::metadata(&real).map_err(|_| attachment_missing())?;
+                if !meta.is_file() {
                     return Err(attachment_missing());
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if meta.nlink() > 1 {
+                        let name = resolved
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.clone());
+                        return Err(ApiError::bad_request(format!(
+                            "{name} is hard-linked to a file outside the uploads directory"
+                        )));
+                    }
                 }
                 Ok(resolved.to_string_lossy().into_owned())
             })
@@ -166,5 +195,21 @@ mod tests {
             refused.body().to_string(),
             r#"{"error":"attachment_missing","hint":"an attachment is no longer on this device; attach it again"}"#
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlinked_upload_is_refused_by_resolve_attachments() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let paths = Paths::new(home.path().to_path_buf());
+        let outside = home.path().join("secret.txt");
+        std::fs::write(&outside, b"secret").expect("outside");
+        let linked = paths.uploads_dir().join("abc/linked.txt");
+        std::fs::create_dir_all(linked.parent().expect("parent")).expect("uploads dir");
+        std::fs::hard_link(&outside, &linked).expect("hardlink");
+
+        let refused = resolve_attachments(&paths, vec![], vec![linked.to_string_lossy().into_owned()])
+            .expect_err("hardlink must be refused");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
     }
 }

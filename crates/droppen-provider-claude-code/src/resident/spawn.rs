@@ -7,7 +7,7 @@ use droppen_accounts::store::AccountProvider;
 use crate::claude_roots;
 use droppen_provider::common::{new_uuid, session_workdir, CHAT_SYSTEM_PROMPT};
 use crate::resident;
-use droppen_provider::{claude_prompt, require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
+use droppen_provider::{require_provider, AccountChoice, InjectError, SendOptions, SendTo, Sent, SpawnGate, StartAt};
 use crate::sessions::claude;
 use droppen_sessions::context::{context_window, LARGE_CONTEXT_WINDOW};
 use droppen_sessions::Source;
@@ -43,24 +43,22 @@ fn claude_chat_flags() -> Vec<String> {
 /// `-p` process, so nothing is lost by saying so.
 const RESIDENT_DISALLOWED_TOOLS: [&str; 2] = ["EnterPlanMode", "ExitPlanMode"];
 
-/// claude has no image flag; it views every attachment through the Read tool.
+/// Helper for legacy path-suffix tests.
+#[cfg(test)]
 pub(super) fn with_claude_attachments(text: &str, options: &SendOptions) -> String {
-    claude_prompt(text, &options.images, &options.files)
+    droppen_provider::claude_prompt(text, &options.images, &options.files)
 }
 
 /// The prompt a claude run's next user line starts from, and the upload paths
 /// that travel beside it.
 ///
-/// A session's attachments become paths in the prompt for Read, exactly as they
-/// always have. A chat has no tools at all: its text stays the user's words,
-/// and the upload paths are carried to the driver, which reads them at delivery
-/// into base64 image blocks and inlined UTF-8 file contents.
+/// Both sessions and chats keep the queued prompt text clean (the user's own
+/// words, with no baked-in attachment suffix) and carry the upload paths to
+/// the driver, which resolves them at delivery into native image / PDF
+/// document blocks (with path-suffix fallback in sessions for oversized or
+/// non-PDF files, and UTF-8 inline blocks in chats).
 fn claude_prompt_and_attachments(text: &str, options: &SendOptions) -> (String, Vec<String>, Vec<String>) {
-    if options.chat {
-        (text.to_string(), options.images.clone(), options.files.clone())
-    } else {
-        (with_claude_attachments(text, options), Vec::new(), Vec::new())
-    }
+    (text.to_string(), options.images.clone(), options.files.clone())
 }
 
 /// The settings half of a resident's command line: everything after the
@@ -94,14 +92,14 @@ fn claude_resident_flags(paths: &Paths, options: &SendOptions) -> Vec<String> {
     // every other permission prompt the same way, each of which the driver
     // refuses exactly as `--permission-mode` used to. See [`droppen_provider::questions`].
     args.extend(["--permission-prompt-tool".to_string(), "stdio".to_string()]);
-    // Prepare every process for later screenshots, even when its first prompt
-    // is text-only. Adding this flag later would require a process restart.
-    args.extend(["--add-dir".into(), paths.uploads_dir().to_string_lossy().into_owned()]);
     // One `--disallowedTools`, not two: it is variadic, so it goes last, and a
-    // chat's `*` already covers the plan tools.
+    // chat's `*` already covers the plan tools. Chats have no tools at all so
+    // they do not need `--add-dir <uploads>`; sessions keep it up front so any
+    // fallback non-PDF/oversized attachment never requires a respawn.
     if options.chat {
         args.extend(claude_chat_flags());
     } else {
+        args.extend(["--add-dir".into(), paths.uploads_dir().to_string_lossy().into_owned()]);
         args.push("--disallowedTools".into());
         args.extend(RESIDENT_DISALLOWED_TOOLS.iter().map(|tool| (*tool).to_string()));
     }
@@ -186,7 +184,7 @@ pub(super) fn claude_recipe(paths: &Paths, cwd: Option<&str>, options: &SendOpti
             // Never written by this build; read only to replace a resident the
             // intermediate Read-enabled build left behind.
             chat_reads: false,
-            uploads: true,
+            uploads: !options.chat,
             questions: true,
         },
     }
@@ -590,9 +588,8 @@ mod tests {
         assert!(with_claude_attachments("hello", &options).starts_with("hello\n\n[1 attached file(s)"));
     }
 
-    /// A chat's prompt text names no upload path at all: the paths travel
-    /// beside it and become blocks at delivery. A session keeps its path+Read
-    /// delivery exactly as it was.
+    /// Both chats and sessions keep queued prompt text clean (no baked-in
+    /// upload suffix) and carry upload paths to delivery time.
     #[test]
     fn a_chat_prompt_names_no_upload_path() {
         let attached = SendOptions {
@@ -613,8 +610,10 @@ mod tests {
             ..options()
         };
         let (prompt, images, files) = claude_prompt_and_attachments("look", &session);
-        assert!(prompt.contains("/uploads/a.png") && prompt.contains("/uploads/a.txt"));
-        assert!(images.is_empty() && files.is_empty(), "a session's paths stay in the prompt");
+        assert_eq!(prompt, "look");
+        assert!(!prompt.contains("/uploads"), "session queued prompt stays clean until delivery");
+        assert_eq!(images, ["/uploads/a.png"]);
+        assert_eq!(files, ["/uploads/a.txt"]);
     }
 
     #[test]
@@ -728,11 +727,14 @@ mod tests {
         for chat in [false, true] {
             let plain = SendOptions { chat, ..options() };
             let first = claude_recipe(&paths, None, &plain, Env::new(), ClaudeLogin::default());
-            assert!(first.fingerprint.uploads);
-            assert!(first
-                .args
-                .windows(2)
-                .any(|pair| pair == ["--add-dir", "/home/me/.local/share/remote-hand/uploads"]));
+            assert_eq!(first.fingerprint.uploads, !chat);
+            assert_eq!(
+                first
+                    .args
+                    .windows(2)
+                    .any(|pair| pair == ["--add-dir", "/home/me/.local/share/remote-hand/uploads"]),
+                !chat
+            );
             for attached in [
                 SendOptions {
                     images: vec!["/uploads/a.png".into()],
